@@ -4,6 +4,7 @@ import { sanitizeHeaders } from "../processors/sanitizer.js"
 
 export function monitorMiddleware() {
   return function (req: Request, res: Response, next: NextFunction) {
+    console.log("[SDK] Express middleware triggered for", req.method, req.originalUrl)
     const start = Date.now()
 
     const originalSend = res.send.bind(res)
@@ -24,7 +25,7 @@ export function monitorMiddleware() {
           query: req.query,
           bodySize: body ? Buffer.byteLength(body) : 0,
 
-          // ⚠️ optional chaining (depends on user app)
+         // optional user data
           userId: (req as any).user?.id || null,
         })
       } catch (err) {

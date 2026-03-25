@@ -1,8 +1,8 @@
 export interface SDKInitOptions {
   apiKey: string
+  apiSecret: string
   projectId: string
   environment?: string
-  baseUrl?: string
 }
 
 export interface RemoteConfig {
