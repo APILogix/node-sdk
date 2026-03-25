@@ -17,3 +17,30 @@ export async function sendInitRequest(apiKey: string, apiSecret: string, project
 
     return res.json()
 }
+
+
+
+export async function sendEvents(events: any[]) {
+  try {
+    const res = await fetch(`${DEFAULT_BASE_URL}/events`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ events }),
+    })
+
+    if (!res.ok) {
+      throw new Error(`Failed: ${res.status}`)
+    }
+
+    console.log(`[SDK] Sent ${events.length} events`)
+  } catch (err) {
+    console.error("[SDK] sendEvents error")
+
+    //  simple retry (basic version)
+    setTimeout(() => {
+      sendEvents(events)
+    }, 2000)
+  }
+}

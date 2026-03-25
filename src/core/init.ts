@@ -2,7 +2,7 @@ import type { SDKInitOptions } from "../types/config.js"
 import { client } from "./client.js"
 import { sendInitRequest } from "../transport/sender.js"
 import { setRemoteConfig } from "./config.js"
-
+import { startBatcher } from "../transport/batcher.js"
 export async function init(options: SDKInitOptions) {
   if (client.initialized) {
     console.warn("[SDK] Already initialized")
@@ -27,6 +27,7 @@ export async function init(options: SDKInitOptions) {
 
     client.markInitialized()
 
+    startBatcher()
     console.log("[SDK] Initialized successfully")
   } catch (err: any) {
     console.error("[SDK] Init failed:", err)
