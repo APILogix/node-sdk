@@ -1,4 +1,5 @@
 import { client } from "../core/client.js";
+import { eventQueue } from "../transport/queue.js";
 export function captureRequest(event) {
     if (!client.initialized)
         return;
@@ -8,7 +9,6 @@ export function captureRequest(event) {
     // Sampling
     if (Math.random() > config.samplingRate)
         return;
-    //  For now just log (next phase → queue)
-    console.log("[SDK REQUEST EVENT]", event);
+    eventQueue.add(event);
 }
 //# sourceMappingURL=captureRequest.js.map

@@ -1,0 +1,30 @@
+import { client } from "../core/client.js";
+import { eventQueue } from "../transport/queue.js";
+import { parseStack } from "../processors/stack-parser.js";
+import { generateFingerprint } from "../processors/fingerprint.js";
+export function captureError(error, context = {}) {
+    try {
+        if (!client.initialized)
+            return;
+        console.log("[SDK] captureError called with:", error, context);
+        console.log("[SDK] Capturing error:");
+        const config = client.config;
+        if (!config?.enableErrors)
+            return;
+        const stackFrames = parseStack(error.stack);
+        const fingerprint = generateFingerprint(error, stackFrames);
+        const event = {
+            type: "error",
+            message: error,
+            name: error.name,
+            stack: stackFrames,
+            fingerprint,
+            timestamp: Date.now(),
+            context,
+        };
+        eventQueue.add(event);
+    }
+    catch (err) {
+        console.error("[SDK] captureError failed");
+    }
+}

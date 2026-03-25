@@ -1,20 +1,25 @@
 import type { Request, Response, NextFunction } from "express"
 import { captureRequest } from "../capture/captureRequest.js"
 import { sanitizeHeaders } from "../processors/sanitizer.js"
-
+import { randomUUID } from "crypto"
 export function monitorMiddleware() {
   return function (req: Request, res: Response, next: NextFunction) {
     console.log("[SDK] Express middleware triggered for", req.method, req.originalUrl)
+   const requestId = randomUUID()
+
+    // attach to request
+    ;(req as any).__sdkRequestId = requestId
+
     const start = Date.now()
 
     const originalSend = res.send.bind(res)
 
-    res.send = function (body?: any): Response {
+    res.send = function (body?: any) {
       const latency = Date.now() - start
-
       try {
         captureRequest({
           type: "request",
+          requestId,
           url: req.originalUrl,
           method: req.method,
           statusCode: res.statusCode,

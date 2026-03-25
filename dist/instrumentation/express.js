@@ -1,8 +1,11 @@
 import { captureRequest } from "../capture/captureRequest.js";
 import { sanitizeHeaders } from "../processors/sanitizer.js";
+import { randomUUID } from "crypto";
 export function monitorMiddleware() {
     return function (req, res, next) {
         console.log("[SDK] Express middleware triggered for", req.method, req.originalUrl);
+        const requestId = randomUUID();
+        req.__sdkRequestId = requestId;
         const start = Date.now();
         const originalSend = res.send.bind(res);
         res.send = function (body) {
@@ -10,6 +13,7 @@ export function monitorMiddleware() {
             try {
                 captureRequest({
                     type: "request",
+                    requestId,
                     url: req.originalUrl,
                     method: req.method,
                     statusCode: res.statusCode,

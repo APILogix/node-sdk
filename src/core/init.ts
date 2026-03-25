@@ -1,38 +1,36 @@
-import type { SDKInitOptions } from "../types/config.js"
-import { client } from "./client.js"
-import { sendInitRequest } from "../transport/sender.js"
-import { setRemoteConfig } from "./config.js"
-import { startBatcher } from "../transport/batcher.js"
+import type { SDKInitOptions } from '../types/config.js'
+import { client } from './client.js'
+import { sendInitRequest } from '../transport/sender.js'
+import { setRemoteConfig } from './config.js'
+import { startBatcher } from '../transport/batcher.js'
+import { setupGlobalErrorHandlers } from '../instrumentation/global-errors.js'
 export async function init(options: SDKInitOptions) {
-  if (client.initialized) {
-    console.warn("[SDK] Already initialized")
-    return
-  }
-
-  try {
-    client.setOptions(options)
-
-    console.log("[SDK] Initializing...",options)
-    const response = await sendInitRequest(
-      options.apiKey,
-      options.apiSecret,
-      options.projectId
-    )
-
-    if (!response.success) {
-      throw new Error("Invalid init response")
+    if (client.initialized) {
+        console.warn('[SDK] Already initialized')
+        return
     }
 
-    setRemoteConfig(response.config)
+    try {
+        client.setOptions(options)
 
-    client.markInitialized()
+        console.log('[SDK] Initializing...', options)
+        const response = await sendInitRequest(options.apiKey, options.apiSecret, options.projectId)
 
-    startBatcher()
-    console.log("[SDK] Initialized successfully")
-  } catch (err: any) {
-    console.error("[SDK] Init failed:", err)
+        if (!response.success) {
+            throw new Error('Invalid init response')
+        }
 
-    // never crash app
-    client.initialized = false
-  }
+        setRemoteConfig(response.config)
+
+        client.markInitialized()
+
+        startBatcher()
+        setupGlobalErrorHandlers()
+        console.log('[SDK] Initialized successfully')
+    } catch (err: any) {
+        console.error('[SDK] Init failed:', err)
+
+        // never crash app
+        client.initialized = false
+    }
 }

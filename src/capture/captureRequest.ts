@@ -3,7 +3,6 @@ import { eventQueue } from "../transport/queue.js"
 
 export function captureRequest(event:any) {
   if (!client.initialized) return
-
   const config = client.config
 
   if (!config?.enablePerformance) return

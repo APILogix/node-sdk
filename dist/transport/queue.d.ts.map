@@ -1,1 +1,1 @@
-{"version":3,"file":"queue.d.ts","sourceRoot":"","sources":["../../src/transport/queue.ts"],"names":[],"mappings":""}
+{"version":3,"file":"queue.d.ts","sourceRoot":"","sources":["../../src/transport/queue.ts"],"names":[],"mappings":"AAAA,KAAK,KAAK,GAAG,GAAG,CAAA;AAEhB,cAAM,UAAU;IACd,OAAO,CAAC,KAAK,CAAc;IAC3B,OAAO,CAAC,OAAO,CAAO;IAEtB,GAAG,CAAC,KAAK,EAAE,KAAK;IAShB,KAAK,CAAC,SAAS,EAAE,MAAM,GAAG,KAAK,EAAE;IAIjC,IAAI;CAGL;AAED,eAAO,MAAM,UAAU,YAAmB,CAAA"}
