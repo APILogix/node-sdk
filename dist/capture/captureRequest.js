@@ -8,7 +8,7 @@ export function captureRequest(event) {
     // Sampling
     if (Math.random() > config.samplingRate)
         return;
-    // 🔥 For now just log (next phase → queue)
+    //  For now just log (next phase → queue)
     console.log("[SDK REQUEST EVENT]", event);
 }
 //# sourceMappingURL=captureRequest.js.map

@@ -3,20 +3,24 @@ import { sendInitRequest } from "../transport/sender.js";
 import { setRemoteConfig } from "./config.js";
 export async function init(options) {
     if (client.initialized) {
-        console.warn("SDK already initialized");
+        console.warn("[SDK] Already initialized");
         return;
     }
-    const baseUrl = options.baseUrl || "http://localhost:4000";
     try {
         client.setOptions(options);
-        const response = await sendInitRequest(baseUrl, options.apiKey, options.projectId);
+        console.log("[SDK] Initializing...", options);
+        const response = await sendInitRequest(options.apiKey, options.apiSecret, options.projectId);
+        if (!response.success) {
+            throw new Error("Invalid init response");
+        }
         setRemoteConfig(response.config);
         client.markInitialized();
-        console.log("SDK initialized successfully");
+        console.log("[SDK] Initialized successfully");
     }
     catch (err) {
-        console.error("SDK init failed:", err);
-        // IMPORTANT: Fail silently in production
+        console.error("[SDK] Init failed:", err);
+        // never crash app
+        client.initialized = false;
     }
 }
 //# sourceMappingURL=init.js.map

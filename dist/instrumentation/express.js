@@ -2,6 +2,7 @@ import { captureRequest } from "../capture/captureRequest.js";
 import { sanitizeHeaders } from "../processors/sanitizer.js";
 export function monitorMiddleware() {
     return function (req, res, next) {
+        console.log("[SDK] Express middleware triggered for", req.method, req.originalUrl);
         const start = Date.now();
         const originalSend = res.send.bind(res);
         res.send = function (body) {
@@ -17,7 +18,7 @@ export function monitorMiddleware() {
                     headers: sanitizeHeaders(req.headers),
                     query: req.query,
                     bodySize: body ? Buffer.byteLength(body) : 0,
-                    // ⚠️ optional chaining (depends on user app)
+                    // optional user data
                     userId: req.user?.id || null,
                 });
             }
