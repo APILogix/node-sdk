@@ -1,15 +1,17 @@
 import { captureError } from "../capture/captureError.js"
+import { toError } from "../core/errors.js"
+
+let registered = false
 
 export function setupGlobalErrorHandlers() {
+  if (registered) return
+  registered = true
+
   process.on("uncaughtException", (err) => {
     captureError(err, { mechanism: "uncaughtException" })
   })
 
   process.on("unhandledRejection", (reason: any) => {
-    const error = reason instanceof Error
-      ? reason
-      : new Error(String(reason))
-
-    captureError(error, { mechanism: "unhandledRejection" })
+    captureError(toError(reason), { mechanism: "unhandledRejection" })
   })
 }

@@ -1,46 +1,145 @@
-import { DEFAULT_BASE_URL } from '../constants/defaults.js'
+import { DEFAULT_TIMEOUT_MS } from '../constants/defaults.js'
+import { randomUUID } from 'crypto'
+import { client } from '../core/client.js'
+import { SDKError } from '../core/errors.js'
+import { postJson } from './http.js'
+import { retry } from './retry.js'
+import type { RemoteConfig } from '../types/config.js'
+import type { Event } from '../types/event.js'
 
-export async function sendInitRequest(apiKey: string, apiSecret: string, projectId: string) {
-    const res = await fetch(`${DEFAULT_BASE_URL}/sdk/init`, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': apiKey,
-            'x-api-secret': apiSecret
-        },
-        body: JSON.stringify({ projectId })
-    })
-    console.log('[SDK] Init response status:', res)
-    if (!res.ok) {
-        throw new Error(`SDK init failed: ${res.status}`)
-    }
-
-    return res.json()
+export interface InitResponse {
+    success: boolean
+    projectId?: string
+    config?: unknown
+    ingestion?: unknown
 }
 
+export async function sendInitRequest(apiKey: string, baseUrl: string, timeoutMs = 5000) {
+    validateApiKey(apiKey)
 
-
-export async function sendEvents(events: any[]) {
-  try {
-    const res = await fetch(`${DEFAULT_BASE_URL}/events`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ events }),
-    })
-
-    if (!res.ok) {
-      throw new Error(`Failed: ${res.status}`)
+    if (!baseUrl) {
+        throw new SDKError('baseUrl is required for init request', 'MISSING_BASE_URL')
     }
 
-    console.log(`[SDK] Sent ${events.length} events`)
-  } catch (err) {
-    console.error("[SDK] sendEvents error")
+    return postJson<InitResponse>(joinUrl(baseUrl, '/v1/init'), { apiKey }, {}, timeoutMs)
+}
 
-    //  simple retry (basic version)
-    setTimeout(() => {
-      sendEvents(events)
-    }, 2000)
-  }
+export async function sendEvents(events: Event[]) {
+    if (events.length === 0) return
+
+    const config: Readonly<RemoteConfig> = client.config
+    const apiKey = client.getApiKey()
+    const timeoutMs = DEFAULT_TIMEOUT_MS
+    let sentPayloads = 0
+
+    for (const payload of createPayloads(events.map(ensureEventId), apiKey, config.maxPayloadBytes)) {
+        try {
+            await retry(() => postJson<unknown>(config.ingestUrl, payload, {}, timeoutMs), {
+                retries: config.maxRetries,
+                retryable: isRetryable
+            })
+            sentPayloads += 1
+        } catch (error) {
+            throw new SDKError(
+                'Failed to send ingest payload',
+                'INGEST_SEND_FAILED',
+                {
+                    sentPayloads,
+                    failedPayloadEventCount: payload.events.length,
+                    totalEventCount: events.length
+                },
+                error
+            )
+        }
+    }
+}
+
+function ensureEventId(event: Event): Event {
+    if (event.eventId !== undefined) {
+        if (typeof event.eventId !== 'string' || event.eventId.trim().length === 0) {
+            throw new SDKError('eventId must be a non-empty string', 'INVALID_EVENT_ID')
+        }
+
+        return event
+    }
+
+    return {
+        ...event,
+        eventId: randomUUID()
+    }
+}
+
+function isRetryable(error: Error) {
+    if (!(error instanceof SDKError)) return false
+    if (error.code === 'NETWORK_ERROR') return true
+
+    const status = Number(error.context.status)
+    return status === 408 || status === 429 || status >= 500
+}
+
+function createPayloads(events: Event[], apiKey: string, maxPayloadBytes: number) {
+    if (!Number.isInteger(maxPayloadBytes) || maxPayloadBytes <= 0) {
+        throw new SDKError('maxPayloadBytes must be a positive integer', 'INVALID_MAX_PAYLOAD_BYTES', {
+            maxPayloadBytes
+        })
+    }
+
+    const payloads: Array<{ apiKey: string, events: Event[] }> = []
+    let current: Event[] = []
+
+    for (const event of events) {
+        const singlePayload = createIngestPayload(apiKey, [event])
+        const singlePayloadBytes = safeJsonByteLength(singlePayload, { maxPayloadBytes })
+
+        if (singlePayloadBytes > maxPayloadBytes) {
+            throw new SDKError('Single event exceeds configured payload maximum', 'EVENT_TOO_LARGE', {
+                payloadBytes: singlePayloadBytes,
+                maxPayloadBytes
+            })
+        }
+
+        const candidate = createIngestPayload(apiKey, [...current, event])
+        const candidateBytes = safeJsonByteLength(candidate, {
+            maxPayloadBytes,
+            currentBatchSize: current.length
+        })
+
+        if (current.length > 0 && candidateBytes > maxPayloadBytes) {
+            payloads.push(createIngestPayload(apiKey, current))
+            current = [event]
+        } else {
+            current.push(event)
+        }
+    }
+
+    if (current.length > 0) {
+        payloads.push(createIngestPayload(apiKey, current))
+    }
+
+    return payloads
+}
+
+function createIngestPayload(apiKey: string, events: Event[]) {
+    return {
+        apiKey,
+        events
+    }
+}
+
+function validateApiKey(apiKey: string) {
+    if (typeof apiKey !== 'string' || apiKey.trim().length === 0) {
+        throw new SDKError('apiKey is required', 'INVALID_API_KEY')
+    }
+}
+
+function joinUrl(baseUrl: string, path: string) {
+    return `${baseUrl.replace(/\/+$/, '')}/${path.replace(/^\/+/, '')}`
+}
+
+function safeJsonByteLength(value: unknown, context: Record<string, unknown>) {
+    try {
+        return Buffer.byteLength(JSON.stringify(value))
+    } catch (error) {
+        throw new SDKError('Payload is not JSON serializable', 'PAYLOAD_SERIALIZATION_FAILED', context, error)
+    }
 }

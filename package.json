@@ -5,10 +5,12 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "build": "npx tsc",
+    "clean": "node -e \"const fs=require('fs'); const path=require('path'); const root=process.cwd(); const remove=(p)=>fs.rmSync(p,{recursive:true,force:true}); remove(path.join(root,'dist')); const walk=(dir)=>{ if(!fs.existsSync(dir)) return; for(const entry of fs.readdirSync(dir,{withFileTypes:true})){ const full=path.join(dir,entry.name); if(entry.isDirectory()) walk(full); else if(/\\.(js|js\\.map|d\\.ts|d\\.ts\\.map)$/.test(entry.name)) fs.rmSync(full,{force:true}); } }; walk(path.join(root,'src'));\"",
+    "build": "npm run clean && npx tsc",
+    "test": "npm run build && node tests/sdk-smoke.mjs",
     "prepublishOnly": "npm run  build",
     "dev": "nodemon src/index.ts",
-    "start": "node   dist/index.ts "
+    "start": "node dist/index.js"
   },
   "files": [
     "dist/**/*"

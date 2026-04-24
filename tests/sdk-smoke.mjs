@@ -1,0 +1,269 @@
+import assert from "node:assert/strict"
+process.env.SDK_BASE_URL = "https://api.example.test"
+
+const { captureRequest, init, shutdown } = await import("../dist/index.js")
+const { postJson } = await import("../dist/transport/http.js")
+const { sendEvents, sendInitRequest } = await import("../dist/transport/sender.js")
+const { redact } = await import("../dist/utils/logger.js")
+
+function initResponse(config = {}) {
+  return new Response(JSON.stringify({
+    success: true,
+    projectId: "test-project-id",
+    config: {
+      samplingRate: 1,
+      enableErrors: true,
+      enablePerformance: true,
+      maxRetries: 0,
+      maxPayloadBytes: 100000,
+      ...config.config,
+    },
+    ingestion: {
+      endpoint: "https://ingest.example.test/v1/events",
+      batchSize: 10,
+      maxQueueSize: 100,
+      flushInterval: 1000,
+      ...config.ingestion,
+    },
+  }), { status: 200, headers: { "content-type": "application/json" } })
+}
+
+{
+  const calls = []
+  globalThis.fetch = async (url, options) => {
+    calls.push({
+      url: String(url),
+      method: options.method,
+      headers: options.headers,
+      body: options.body,
+    })
+
+    if (String(url).endsWith("/v1/init")) {
+      return initResponse()
+    }
+
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })
+  }
+
+  await init({ apiKey: "test-key" })
+  await sendEvents([{ type: "manual", timestamp: Date.now() }])
+
+  assert.equal(calls[0].url, "https://api.example.test/v1/init")
+  assert.deepEqual(JSON.parse(calls[0].body), { apiKey: "test-key" })
+  assert.equal(calls[0].headers["x-api-key"], undefined)
+
+  assert.equal(calls[1].url, "https://ingest.example.test/v1/events")
+  assert.equal(calls[1].headers["x-api-key"], undefined)
+  assert.equal(JSON.parse(calls[1].body).apiKey, "test-key")
+  assert.ok(JSON.parse(calls[1].body).events[0].eventId)
+
+  await assert.rejects(
+    () => init({ apiKey: "other-key" }),
+    error => error.code === "SDK_ALREADY_INITIALIZED",
+  )
+
+  await shutdown()
+}
+
+{
+  const calls = []
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url: String(url), body: options.body })
+    return initResponse()
+  }
+
+  await sendInitRequest("direct-key", "https://api.example.test/", 1000)
+  assert.equal(calls[0].url, "https://api.example.test/v1/init")
+  assert.deepEqual(JSON.parse(calls[0].body), { apiKey: "direct-key" })
+
+  await assert.rejects(
+    () => sendInitRequest("", "https://api.example.test", 1000),
+    error => error.code === "INVALID_API_KEY",
+  )
+}
+
+{
+  let resolveInit
+  globalThis.fetch = async (url) => {
+    if (String(url).endsWith("/v1/init")) {
+      await new Promise(resolve => {
+        resolveInit = resolve
+      })
+      return initResponse()
+    }
+
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })
+  }
+
+  const pending = init({ apiKey: "pending-key" })
+  await assert.rejects(
+    () => init({ apiKey: "different-pending-key" }),
+    error => error.code === "SDK_INIT_IN_PROGRESS",
+  )
+  resolveInit()
+  await pending
+  await shutdown()
+}
+
+{
+  globalThis.fetch = async () => initResponse({ ingestion: { maxQueueSize: undefined } })
+
+  await assert.rejects(
+    () => init({ apiKey: "bad-config-key" }),
+    error => error.code === "INVALID_INIT_CONFIG",
+  )
+}
+
+{
+  const calls = []
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url: String(url), body: options.body })
+
+    if (String(url).endsWith("/v1/init")) {
+      return initResponse({ config: { maxPayloadBytes: 110 } })
+    }
+
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })
+  }
+
+  await init({ apiKey: "split-key" })
+  await sendEvents([{ type: "x" }, { type: "x" }, { type: "x" }])
+
+  const ingestCalls = calls.filter(call => call.url === "https://ingest.example.test/v1/events")
+  assert.equal(ingestCalls.length, 3)
+
+  await shutdown()
+}
+
+{
+  globalThis.fetch = async (url) => {
+    if (String(url).endsWith("/v1/init")) return initResponse()
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })
+  }
+
+  await init({ apiKey: "invalid-event-key" })
+
+  await assert.rejects(
+    () => sendEvents([{ type: "manual", eventId: "" }]),
+    error => error.code === "INVALID_EVENT_ID",
+  )
+
+  const circular = { type: "manual" }
+  circular.self = circular
+
+  await assert.rejects(
+    () => sendEvents([circular]),
+    error => error.code === "PAYLOAD_SERIALIZATION_FAILED",
+  )
+
+  await shutdown()
+}
+
+{
+  globalThis.fetch = async (url) => {
+    if (String(url).endsWith("/v1/init")) return initResponse({ config: { maxPayloadBytes: 0 } })
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })
+  }
+
+  await assert.rejects(
+    () => init({ apiKey: "invalid-payload-config" }),
+    error => error.code === "INVALID_INIT_CONFIG",
+  )
+}
+
+{
+  let ingestAttempts = 0
+  globalThis.fetch = async (url, options) => {
+    if (String(url).endsWith("/v1/init")) {
+      return initResponse({ config: { maxPayloadBytes: 110 } })
+    }
+
+    ingestAttempts += 1
+    if (ingestAttempts === 2) {
+      return new Response(JSON.stringify({ failed: true }), {
+        status: 500,
+        headers: { "content-type": "application/json" },
+      })
+    }
+
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })
+  }
+
+  await init({ apiKey: "partial-key" })
+
+  await assert.rejects(
+    () => sendEvents([{ type: "x" }, { type: "x" }, { type: "x" }]),
+    error =>
+      error.code === "INGEST_SEND_FAILED" &&
+      error.context.sentPayloads === 1 &&
+      error.context.totalEventCount === 3,
+  )
+
+  await shutdown()
+}
+
+{
+  const calls = []
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url: String(url), body: options.body })
+
+    if (String(url).endsWith("/v1/init")) {
+      return initResponse({ ingestion: { batchSize: 1 } })
+    }
+
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })
+  }
+
+  captureRequest({
+    type: "request",
+    requestId: "pre-init",
+    url: "/pre-init",
+    method: "GET",
+    statusCode: 200,
+    latency: 1,
+    timestamp: Date.now(),
+  })
+  await init({ apiKey: "buffer-key" })
+  await shutdown()
+
+  const ingestCalls = calls.filter(call => call.url === "https://ingest.example.test/v1/events")
+  assert.equal(ingestCalls.length, 1)
+  assert.equal(JSON.parse(ingestCalls[0].body).apiKey, "buffer-key")
+  assert.equal(JSON.parse(ingestCalls[0].body).events[0].requestId, "pre-init")
+}
+
+{
+  globalThis.fetch = async () => new Response("<html>bad</html>", { status: 500 })
+
+  await assert.rejects(
+    () => postJson("https://api.example.test/fail", {}, {}, 1000),
+    error => error.code === "HTTP_ERROR" && error.context.status === 500,
+  )
+}
+
+{
+  const redacted = redact("authorization=Bearer abc apiKey=secret token=secret2")
+  assert.equal(redacted.includes("secret"), false)
+  assert.equal(redacted.includes("abc"), false)
+}
