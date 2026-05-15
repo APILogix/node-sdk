@@ -36,12 +36,15 @@ export function processEvent(rawEvent) {
             return true;
         }
         const config = client.config;
-        // Step 3: Feature flag gate
+        // Step 3: Feature flag gate (plan-enforced via resolved config)
         if (!isFeatureEnabled(event, config)) {
-            logger.debug('Event dropped — feature disabled', {
+            logger.debug('Event dropped — feature disabled by config or plan', {
                 eventType: event.type,
+                plan: config.plan,
                 enableErrors: config.enableErrors,
                 enablePerformance: config.enablePerformance,
+                enableTracing: config.enableTracing,
+                enableMetrics: config.enableMetrics,
             });
             return false;
         }

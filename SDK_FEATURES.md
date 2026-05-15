@@ -86,7 +86,65 @@ const result = await withSpan('db.query.findUser', async (span) => {
 | **PII Scrubbing** | ✅ Production | Deep regex-based sanitization of sensitive data |
 | **Transport Resilience** | ✅ Production | Circuit breaker, rate limiting, retry, compression |
 | **Graceful Shutdown** | ✅ Production | Signal handlers, flush timeout, plugin teardown |
-| **Remote Config** | ✅ Production | Server-driven feature flags and ingestion settings |
+| **Plan-Based Feature Gating** | ✅ Production | Backend-driven feature access (free/pro/enterprise) |
+
+---
+
+## Plan-Based Feature Gating
+
+The SDK uses a **plan tier** from the backend to control which features are available. All features are **ON by default** — the plan caps what's allowed.
+
+### Plan Tiers
+
+| Feature | Free | Pro | Enterprise |
+|---------|------|-----|------------|
+| Error Tracking | ✅ | ✅ | ✅ |
+| Breadcrumbs | ✅ (50 max) | ✅ (200 max) | ✅ (1000 max) |
+| Request Monitoring | ❌ | ✅ | ✅ |
+| Distributed Tracing | ❌ | ✅ | ✅ |
+| Metrics | ❌ | ❌ | ✅ |
+| Session Tracking | ❌ | ✅ | ✅ |
+| Custom Plugins | ❌ | ✅ (3 max) | ✅ (unlimited) |
+| Compression | none | gzip | gzip + brotli |
+| Sampling Override | ❌ | ✅ | ✅ |
+| beforeSend Hook | ❌ | ✅ | ✅ |
+| Max Batch Size | 5 | 25 | 100 |
+| Max Queue Size | 100 | 1000 | 10000 |
+
+### How It Works
+
+1. User calls `createSDK({ apiKey })` — just the API key
+2. Backend responds with `plan: "pro"` and optional feature overrides
+3. SDK enables everything the plan allows — no manual config needed
+4. User can **turn OFF** features but **cannot turn ON** features above their plan
+5. If backend is unreachable → fallback to free plan (errors + breadcrumbs only)
+
+### Upgrade Warnings
+
+When a user tries to use a feature above their plan, the SDK logs a clear warning:
+
+```
+[Pulse] WARN: [Plan: free] Distributed tracing requires a Pro or Enterprise plan (current: free)
+[Pulse] WARN: [Plan: free] batchSize capped to 5 (free plan limit)
+[Pulse] INFO: [Plan: free] 2 feature(s) adjusted to match plan limits. Upgrade at https://pulse.dev/pricing
+```
+
+### Backend Response (with Plan)
+
+```json
+{
+  "success": true,
+  "projectId": "proj_abc123",
+  "plan": "pro",
+  "planFeatures": {
+    "allowTracing": true,
+    "allowMetrics": false,
+    "maxBreadcrumbs": 200
+  },
+  "config": { ... },
+  "ingestion": { ... }
+}
+```
 
 ---
 
@@ -217,10 +275,10 @@ The SDK fetches configuration from the server during `init()`. This is the paylo
 #### Config Merging Priority
 
 ```
-User-provided options > Remote config > SDK defaults
+Plan limits (hard cap) > User options > Remote config > SDK defaults
 ```
 
-The SDK validates all config fields using Zod schemas. Invalid remote config triggers retry with exponential backoff (up to 5 attempts).
+The SDK validates all config fields using Zod schemas. After merge, all values are **clamped to plan limits**. Invalid remote config triggers retry with exponential backoff (up to 5 attempts).
 
 ### Resolved SDK Config
 
@@ -830,6 +888,9 @@ SeverityLevel, Severity, severityFromString
 
 // Plugins
 SDKPlugin, PluginMeta, PluginContext, EventProcessor, BreadcrumbProcessor
+
+// Plan
+PlanTier, PlanFeatures
 
 // Error
 CaptureErrorOptions, ParsedError, ErrorGrouping

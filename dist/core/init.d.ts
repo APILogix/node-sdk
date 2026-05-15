@@ -3,11 +3,15 @@
  *
  * Flow:
  * 1. Validate user options via zod schema
- * 2. Handshake with server (/v1/init) to get remote config
- * 3. Merge user options + remote config into ResolvedSDKConfig
- * 4. Initialize breadcrumb buffer, plugins, event processors
- * 5. Start batcher, register global error handlers, signal handlers
- * 6. SDK is ready — events flow through the pipeline
+ * 2. Handshake with server (/v1/init) to get remote config + plan tier
+ * 3. Resolve plan features (free / pro / enterprise)
+ * 4. Merge user options + remote config into ResolvedSDKConfig
+ * 5. Clamp resolved config to plan limits (features OFF if plan doesn't allow)
+ * 6. Initialize breadcrumb buffer, plugins, event processors
+ * 7. Start batcher, register global error handlers, signal handlers
+ * 8. SDK is ready — events flow through the pipeline
+ *
+ * All features are ON by default — the plan tier caps what's allowed.
  */
 import type { SDKInitOptions, RemoteConfig } from '../types/config.js';
 /**

@@ -3,14 +3,18 @@
  *
  * Flow:
  * 1. Validate user options via zod schema
- * 2. Handshake with server (/v1/init) to get remote config
- * 3. Merge user options + remote config into ResolvedSDKConfig
- * 4. Initialize breadcrumb buffer, plugins, event processors
- * 5. Start batcher, register global error handlers, signal handlers
- * 6. SDK is ready — events flow through the pipeline
+ * 2. Handshake with server (/v1/init) to get remote config + plan tier
+ * 3. Resolve plan features (free / pro / enterprise)
+ * 4. Merge user options + remote config into ResolvedSDKConfig
+ * 5. Clamp resolved config to plan limits (features OFF if plan doesn't allow)
+ * 6. Initialize breadcrumb buffer, plugins, event processors
+ * 7. Start batcher, register global error handlers, signal handlers
+ * 8. SDK is ready — events flow through the pipeline
+ *
+ * All features are ON by default — the plan tier caps what's allowed.
  */
 
-import type { SDKInitOptions, RemoteConfig, ResolvedSDKConfig } from '../types/config.js'
+import type { SDKInitOptions, RemoteConfig, ResolvedSDKConfig, PlanTier } from '../types/config.js'
 import { sdkInitOptionsSchema } from '../types/config.js'
 import { client } from './client.js'
 import type { InitResponse } from '../transport/sender.js'
@@ -26,6 +30,7 @@ import { registerSignalHandlers } from './lifecycle.js'
 import { sleep } from '../utils/time.js'
 import { initTracer } from '../tracing/tracer.js'
 import { getSessionManager } from '../session/session-manager.js'
+import { resolvePlanFeatures, clampToPlan, validatePluginCount, getOfflineFallbackPlan } from './plan-gate.js'
 
 const INIT_MAX_ATTEMPTS = 5
 const INIT_BASE_RETRY_DELAY_MS = 500
@@ -120,8 +125,23 @@ async function initialize(options: SDKInitOptions): Promise<Readonly<RemoteConfi
       const remoteConfig = validateRemoteConfig(response)
       client.setRemoteConfig(remoteConfig)
 
-      // Merge user options + remote config → ResolvedSDKConfig
-      const resolvedConfig = mergeConfig(options, remoteConfig)
+      // Resolve plan features from backend response
+      const planTier: PlanTier = remoteConfig.plan ?? 'free'
+      const planFeatures = resolvePlanFeatures(planTier, remoteConfig.planFeatures)
+
+      logger.info('Plan resolved', {
+        tier: planFeatures.tier,
+        allowTracing: planFeatures.allowTracing,
+        allowMetrics: planFeatures.allowMetrics,
+        allowSessions: planFeatures.allowSessions,
+        maxBreadcrumbs: planFeatures.maxBreadcrumbs,
+      })
+
+      // Merge user options + remote config → raw resolved config (all features ON)
+      const rawConfig = mergeConfig(options, remoteConfig, planFeatures)
+
+      // Clamp to plan limits — features above plan are forced OFF with warnings
+      const resolvedConfig = clampToPlan(rawConfig, planFeatures)
       client.setResolvedConfig(resolvedConfig)
 
       // Configure queue
@@ -129,16 +149,29 @@ async function initialize(options: SDKInitOptions): Promise<Readonly<RemoteConfi
       filterBufferedEvents(resolvedConfig)
 
       logger.debug('SDK config resolved', {
+        plan: resolvedConfig.plan,
         ingestUrl: resolvedConfig.ingestUrl,
         batchSize: resolvedConfig.batchSize,
         flushIntervalMs: resolvedConfig.flushIntervalMs,
         compression: resolvedConfig.compression,
         samplingRate: resolvedConfig.samplingRate,
+        enableErrors: resolvedConfig.enableErrors,
+        enablePerformance: resolvedConfig.enablePerformance,
+        enableTracing: resolvedConfig.enableTracing,
+        enableMetrics: resolvedConfig.enableMetrics,
       })
 
-      // Initialize plugins
-      if (options.plugins && options.plugins.length > 0) {
-        await initializePlugins(options.plugins, resolvedConfig, client.metadata)
+      // Validate plugins against plan limits
+      let pluginsToInit = options.plugins ?? []
+      if (pluginsToInit.length > 0) {
+        const { allowed, dropped } = validatePluginCount(pluginsToInit, planFeatures)
+        if (dropped > 0) {
+          logger.warn(`[Plan: ${planFeatures.tier}] ${dropped} plugin(s) dropped — plan allows max ${planFeatures.maxPlugins}. Upgrade at https://pulse.dev/pricing`)
+          pluginsToInit = pluginsToInit.slice(0, allowed)
+        }
+        if (pluginsToInit.length > 0) {
+          await initializePlugins(pluginsToInit, resolvedConfig, client.metadata)
+        }
       }
 
       // Register user-provided event processors
@@ -146,6 +179,11 @@ async function initialize(options: SDKInitOptions): Promise<Readonly<RemoteConfi
         for (const processor of options.eventProcessors) {
           client.registerEventProcessor(processor)
         }
+      }
+
+      // Validate beforeSend against plan
+      if (options.beforeSend && !planFeatures.allowBeforeSend) {
+        logger.warn(`[Plan: ${planFeatures.tier}] beforeSend hook requires a Pro or Enterprise plan — ignored`)
       }
 
       // Start subsystems
@@ -158,19 +196,28 @@ async function initialize(options: SDKInitOptions): Promise<Readonly<RemoteConfi
       setupGlobalErrorHandlers()
       registerSignalHandlers()
 
-      // Initialize OpenTelemetry tracing if enabled
+      // Initialize OpenTelemetry tracing if enabled (plan-gated)
       if (resolvedConfig.enableTracing) {
         initTracer(resolvedConfig)
       }
 
-      // Initialize session manager
-      getSessionManager()
+      // Initialize session manager if plan allows
+      if (planFeatures.allowSessions) {
+        getSessionManager()
+      }
 
       logger.info('SDK initialized successfully', {
+        plan: resolvedConfig.plan,
         service: resolvedConfig.service,
         environment: resolvedConfig.environment,
         release: resolvedConfig.release,
         pluginCount: client.plugins.length,
+        features: {
+          errors: resolvedConfig.enableErrors,
+          performance: resolvedConfig.enablePerformance,
+          tracing: resolvedConfig.enableTracing,
+          metrics: resolvedConfig.enableMetrics,
+        },
       })
 
       return remoteConfig
@@ -202,7 +249,15 @@ async function initialize(options: SDKInitOptions): Promise<Readonly<RemoteConfi
 
 // ─── Config Resolution ──────────────────────────────────────────────────────
 
-function mergeConfig(options: SDKInitOptions, remote: RemoteConfig): ResolvedSDKConfig {
+/**
+ * Merge user options + remote config into ResolvedSDKConfig.
+ * ALL features default to ON (true) — plan clamping happens after this.
+ */
+function mergeConfig(
+  options: SDKInitOptions,
+  remote: RemoteConfig,
+  planFeatures: import('../types/config.js').PlanFeatures,
+): ResolvedSDKConfig {
   return {
     apiKey: options.apiKey,
     service: options.service ?? 'unknown-service',
@@ -210,14 +265,20 @@ function mergeConfig(options: SDKInitOptions, remote: RemoteConfig): ResolvedSDK
     release: options.release ?? '0.0.0-unknown',
     debug: options.debug ?? false,
 
-    enableErrors: options.enableErrors ?? remote.enableErrors,
-    enablePerformance: options.enablePerformance ?? remote.enablePerformance,
+    // Plan info
+    plan: planFeatures.tier,
+    planFeatures,
+
+    // Feature flags — ALL default to ON (true)
+    // User can turn OFF; plan clamping (next step) enforces upper limit
+    enableErrors: options.enableErrors ?? true,
+    enablePerformance: options.enablePerformance ?? true,
     enableTracing: options.enableTracing ?? true,
     enableMetrics: options.enableMetrics ?? true,
 
     samplingRate: options.sampleRate ?? remote.samplingRate,
 
-    maxBreadcrumbs: options.maxBreadcrumbs ?? 100,
+    maxBreadcrumbs: options.maxBreadcrumbs ?? planFeatures.maxBreadcrumbs,
     maxQueueSize: remote.maxQueueSize,
     shutdownTimeoutMs: options.shutdownTimeoutMs ?? 10_000,
 
@@ -293,6 +354,10 @@ function validateRemoteConfig(response: InitResponse): RemoteConfig {
     ),
     maxRetries: optionalIntField(config['maxRetries'], 'maxRetries', DEFAULT_MAX_RETRIES, 0),
     maxPayloadBytes: optionalIntField(config['maxPayloadBytes'], 'maxPayloadBytes', DEFAULT_MAX_PAYLOAD_BYTES, 1),
+
+    // Plan tier (defaults to 'free' if not provided by backend)
+    plan: ((response as unknown as Record<string, unknown>).plan as PlanTier) ?? undefined,
+    planFeatures: (response as unknown as Record<string, unknown>).planFeatures as RemoteConfig['planFeatures'] ?? undefined,
   }
 }
 

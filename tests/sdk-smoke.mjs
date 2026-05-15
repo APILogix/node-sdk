@@ -10,6 +10,7 @@ function initResponse(config = {}) {
   return new Response(JSON.stringify({
     success: true,
     projectId: "test-project-id",
+    plan: config.plan ?? "enterprise",
     config: {
       samplingRate: 1,
       enableErrors: true,

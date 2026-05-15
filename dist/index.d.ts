@@ -50,7 +50,7 @@ export { monitorMiddleware } from './instrumentation/express.js';
 export { instrumentHttpClient } from './instrumentation/http.js';
 export type { Logger } from './utils/logger.js';
 export { setLogger, getLogger, setDebugMode } from './utils/logger.js';
-export type { SDKInitOptions, RemoteConfig, ResolvedSDKConfig, TransportOptions } from './types/config.js';
+export type { SDKInitOptions, RemoteConfig, ResolvedSDKConfig, TransportOptions, PlanTier, PlanFeatures } from './types/config.js';
 export type { SDKEvent, RequestEvent, ErrorEvent, MessageEvent, MetricEvent, EventMetadata, StackFrame } from './types/event.js';
 export type { Breadcrumb, BreadcrumbInput, BreadcrumbHint } from './types/breadcrumb.js';
 export type { SeverityLevel } from './types/severity.js';
@@ -58,4 +58,5 @@ export { Severity, severityFromString } from './types/severity.js';
 export type { SDKPlugin, PluginMeta, PluginContext, EventProcessor, BreadcrumbProcessor } from './types/plugin.js';
 export type { CaptureErrorOptions, ParsedError, ErrorGrouping } from './types/error.js';
 export type { TransportResult, IngestPayload, TransportHealth, TransportAdapter } from './types/transport.js';
+export { getPlanDefaults, isFeatureAllowed } from './core/plan-gate.js';
 //# sourceMappingURL=index.d.ts.map
