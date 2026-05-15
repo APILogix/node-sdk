@@ -21,6 +21,8 @@ import { getLogger, setDebugMode } from '../utils/logger.js';
 import { initializePlugins } from '../plugins/index.js';
 import { registerSignalHandlers } from './lifecycle.js';
 import { sleep } from '../utils/time.js';
+import { initTracer } from '../tracing/tracer.js';
+import { getSessionManager } from '../session/session-manager.js';
 const INIT_MAX_ATTEMPTS = 5;
 const INIT_BASE_RETRY_DELAY_MS = 500;
 const INIT_MAX_RETRY_DELAY_MS = 5000;
@@ -127,6 +129,12 @@ async function initialize(options) {
             });
             setupGlobalErrorHandlers();
             registerSignalHandlers();
+            // Initialize OpenTelemetry tracing if enabled
+            if (resolvedConfig.enableTracing) {
+                initTracer(resolvedConfig);
+            }
+            // Initialize session manager
+            getSessionManager();
             logger.info('SDK initialized successfully', {
                 service: resolvedConfig.service,
                 environment: resolvedConfig.environment,
@@ -165,8 +173,8 @@ function mergeConfig(options, remote) {
         debug: options.debug ?? false,
         enableErrors: options.enableErrors ?? remote.enableErrors,
         enablePerformance: options.enablePerformance ?? remote.enablePerformance,
-        enableTracing: options.enableTracing ?? false,
-        enableMetrics: options.enableMetrics ?? false,
+        enableTracing: options.enableTracing ?? true,
+        enableMetrics: options.enableMetrics ?? true,
         samplingRate: options.sampleRate ?? remote.samplingRate,
         maxBreadcrumbs: options.maxBreadcrumbs ?? 100,
         maxQueueSize: remote.maxQueueSize,
@@ -176,7 +184,7 @@ function mergeConfig(options, remote) {
         flushIntervalMs: options.transport?.flushIntervalMs ?? remote.flushIntervalMs,
         maxRetries: options.transport?.maxRetries ?? remote.maxRetries,
         timeoutMs: options.transport?.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-        compression: options.transport?.compression ?? 'gzip',
+        compression: options.transport?.compression ?? 'none',
         maxPayloadBytes: options.transport?.maxPayloadBytes ?? remote.maxPayloadBytes,
         maxConcurrentSends: options.transport?.maxConcurrentSends ?? 3,
     };

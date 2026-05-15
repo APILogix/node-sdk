@@ -4,7 +4,7 @@ import { client } from '../core/client.js'
 import { SDKError } from '../core/errors.js'
 import { postJson } from './http.js'
 import { retry } from './retry.js'
-import type { RemoteConfig } from '../types/config.js'
+import type { ResolvedSDKConfig } from '../types/config.js'
 import type { Event } from '../types/event.js'
 import { getLogger } from '../utils/logger.js'
 
@@ -29,9 +29,9 @@ export async function sendEvents(events: Event[]) {
     if (events.length === 0) return
 
     const logger = getLogger()
-    const config: Readonly<RemoteConfig> = client.config
+    const config: Readonly<ResolvedSDKConfig> = client.config
     const apiKey = client.getApiKey()
-    const timeoutMs = DEFAULT_TIMEOUT_MS
+    const timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS
     let sentPayloads = 0
 
     for (const payload of createPayloads(events.map(ensureEventId), apiKey, config.maxPayloadBytes)) {
@@ -44,7 +44,7 @@ export async function sendEvents(events: Event[]) {
                 timeoutMs,
             })
 
-            await retry(() => postJson<unknown>(config.ingestUrl, payload, {}, timeoutMs, { logFailures: false }), {
+            await retry(() => postJson<unknown>(config.ingestUrl, payload, {}, timeoutMs, { logFailures: false, compression: config.compression }), {
                 retries: config.maxRetries,
                 retryable: isRetryable,
                 onRetry: ({ error, attempt, nextAttempt, maxAttempts, nextRetryDelayMs }) => {

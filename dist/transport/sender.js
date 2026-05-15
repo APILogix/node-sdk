@@ -18,7 +18,7 @@ export async function sendEvents(events) {
     const logger = getLogger();
     const config = client.config;
     const apiKey = client.getApiKey();
-    const timeoutMs = DEFAULT_TIMEOUT_MS;
+    const timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     let sentPayloads = 0;
     for (const payload of createPayloads(events.map(ensureEventId), apiKey, config.maxPayloadBytes)) {
         try {
@@ -29,7 +29,7 @@ export async function sendEvents(events) {
                 payloadIndex: sentPayloads + 1,
                 timeoutMs,
             });
-            await retry(() => postJson(config.ingestUrl, payload, {}, timeoutMs, { logFailures: false }), {
+            await retry(() => postJson(config.ingestUrl, payload, {}, timeoutMs, { logFailures: false, compression: config.compression }), {
                 retries: config.maxRetries,
                 retryable: isRetryable,
                 onRetry: ({ error, attempt, nextAttempt, maxAttempts, nextRetryDelayMs }) => {

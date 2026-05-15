@@ -57,9 +57,22 @@ export { captureMetric, incrementCounter, setGauge, recordHistogram } from './ca
 
 export { addBreadcrumb, getRequestContext, getTraceId, getSpanId } from './core/context.js'
 
+// ─── Tracing ────────────────────────────────────────────────────────────────
+
+export { startSpan, withSpan, withSpanSync, getActiveSpan, flushTracer } from './tracing/tracer.js'
+export { extractTraceContext, injectTraceContext, parseTraceparent, createTraceparent } from './tracing/context-propagation.js'
+export type { SpanStatus, SpanOptions } from './tracing/span.js'
+export { PulseSpan } from './tracing/span.js'
+
+// ─── Session ────────────────────────────────────────────────────────────────
+
+export { getSessionManager } from './session/session-manager.js'
+export type { Session, SessionManagerOptions } from './session/session-manager.js'
+
 // ─── Instrumentation ────────────────────────────────────────────────────────
 
 export { monitorMiddleware } from './instrumentation/express.js'
+export { instrumentHttpClient } from './instrumentation/http.js'
 
 // ─── Logger ─────────────────────────────────────────────────────────────────
 
@@ -74,3 +87,5 @@ export type { Breadcrumb, BreadcrumbInput, BreadcrumbHint } from './types/breadc
 export type { SeverityLevel } from './types/severity.js'
 export { Severity, severityFromString } from './types/severity.js'
 export type { SDKPlugin, PluginMeta, PluginContext, EventProcessor, BreadcrumbProcessor } from './types/plugin.js'
+export type { CaptureErrorOptions, ParsedError, ErrorGrouping } from './types/error.js'
+export type { TransportResult, IngestPayload, TransportHealth, TransportAdapter } from './types/transport.js'

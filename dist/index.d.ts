@@ -40,7 +40,14 @@ export { captureMessage } from './capture/captureMessage.js';
 export { captureEvent } from './capture/captureEvent.js';
 export { captureMetric, incrementCounter, setGauge, recordHistogram } from './capture/captureMetric.js';
 export { addBreadcrumb, getRequestContext, getTraceId, getSpanId } from './core/context.js';
+export { startSpan, withSpan, withSpanSync, getActiveSpan, flushTracer } from './tracing/tracer.js';
+export { extractTraceContext, injectTraceContext, parseTraceparent, createTraceparent } from './tracing/context-propagation.js';
+export type { SpanStatus, SpanOptions } from './tracing/span.js';
+export { PulseSpan } from './tracing/span.js';
+export { getSessionManager } from './session/session-manager.js';
+export type { Session, SessionManagerOptions } from './session/session-manager.js';
 export { monitorMiddleware } from './instrumentation/express.js';
+export { instrumentHttpClient } from './instrumentation/http.js';
 export type { Logger } from './utils/logger.js';
 export { setLogger, getLogger, setDebugMode } from './utils/logger.js';
 export type { SDKInitOptions, RemoteConfig, ResolvedSDKConfig, TransportOptions } from './types/config.js';
@@ -49,4 +56,6 @@ export type { Breadcrumb, BreadcrumbInput, BreadcrumbHint } from './types/breadc
 export type { SeverityLevel } from './types/severity.js';
 export { Severity, severityFromString } from './types/severity.js';
 export type { SDKPlugin, PluginMeta, PluginContext, EventProcessor, BreadcrumbProcessor } from './types/plugin.js';
+export type { CaptureErrorOptions, ParsedError, ErrorGrouping } from './types/error.js';
+export type { TransportResult, IngestPayload, TransportHealth, TransportAdapter } from './types/transport.js';
 //# sourceMappingURL=index.d.ts.map

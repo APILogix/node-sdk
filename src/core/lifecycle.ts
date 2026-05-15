@@ -7,6 +7,8 @@ import { eventQueue } from '../transport/queue.js'
 import { client } from './client.js'
 import { getLogger } from '../utils/logger.js'
 import { teardownPlugins } from '../plugins/index.js'
+import { shutdownTracer } from '../tracing/tracer.js'
+import { resetSessionManager } from '../session/session-manager.js'
 
 let signalHandlersRegistered = false
 let isShuttingDown = false
@@ -46,6 +48,18 @@ export async function shutdown(timeoutMs?: number): Promise<void> {
       await teardownPlugins()
     } catch (teardownError) {
       logger.warn('Plugin teardown failed during shutdown', { error: teardownError })
+    }
+
+    try {
+      await shutdownTracer()
+    } catch (tracerError) {
+      logger.warn('Tracer shutdown failed during shutdown', { error: tracerError })
+    }
+
+    try {
+      resetSessionManager()
+    } catch (sessionError) {
+      logger.warn('Session manager reset failed during shutdown', { error: sessionError })
     }
   }
 

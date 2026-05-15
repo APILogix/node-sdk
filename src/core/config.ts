@@ -1,10 +1,10 @@
-import  type { RemoteConfig } from "../types/config.js"
-import   { client } from "./client.js"
+import type { ResolvedSDKConfig } from "../types/config.js"
+import { client } from "./client.js"
 
-export function setRemoteConfig(config: RemoteConfig) {
-  client.setConfig(config)
-}
-
-export function getConfig(): Readonly<RemoteConfig> {
+/**
+ * Get the resolved SDK configuration.
+ * Throws if SDK is not initialized.
+ */
+export function getConfig(): Readonly<ResolvedSDKConfig> {
   return client.config
 }

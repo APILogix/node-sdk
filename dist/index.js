@@ -46,8 +46,15 @@ export { captureEvent } from './capture/captureEvent.js';
 export { captureMetric, incrementCounter, setGauge, recordHistogram } from './capture/captureMetric.js';
 // ─── Context ────────────────────────────────────────────────────────────────
 export { addBreadcrumb, getRequestContext, getTraceId, getSpanId } from './core/context.js';
+// ─── Tracing ────────────────────────────────────────────────────────────────
+export { startSpan, withSpan, withSpanSync, getActiveSpan, flushTracer } from './tracing/tracer.js';
+export { extractTraceContext, injectTraceContext, parseTraceparent, createTraceparent } from './tracing/context-propagation.js';
+export { PulseSpan } from './tracing/span.js';
+// ─── Session ────────────────────────────────────────────────────────────────
+export { getSessionManager } from './session/session-manager.js';
 // ─── Instrumentation ────────────────────────────────────────────────────────
 export { monitorMiddleware } from './instrumentation/express.js';
+export { instrumentHttpClient } from './instrumentation/http.js';
 export { setLogger, getLogger, setDebugMode } from './utils/logger.js';
 export { Severity, severityFromString } from './types/severity.js';
 //# sourceMappingURL=index.js.map

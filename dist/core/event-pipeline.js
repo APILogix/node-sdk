@@ -175,7 +175,7 @@ function isFeatureEnabled(event, config) {
         case 'message':
             return true; // messages are always enabled
         case 'metric':
-            return true; // metrics are always enabled when captured
+            return config.enableMetrics;
         default:
             return true;
     }

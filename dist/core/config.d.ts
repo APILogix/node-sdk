@@ -1,4 +1,7 @@
-import type { RemoteConfig } from "../types/config.js";
-export declare function setRemoteConfig(config: RemoteConfig): void;
-export declare function getConfig(): Readonly<RemoteConfig>;
+import type { ResolvedSDKConfig } from "../types/config.js";
+/**
+ * Get the resolved SDK configuration.
+ * Throws if SDK is not initialized.
+ */
+export declare function getConfig(): Readonly<ResolvedSDKConfig>;
 //# sourceMappingURL=config.d.ts.map

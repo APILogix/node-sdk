@@ -186,7 +186,7 @@ function ensureBaseFields(raw: SDKEvent | Event): SDKEvent {
 
 function isFeatureEnabled(
   event: SDKEvent,
-  config: { enableErrors: boolean; enablePerformance: boolean }
+  config: { enableErrors: boolean; enablePerformance: boolean; enableMetrics: boolean; enableTracing: boolean }
 ): boolean {
   switch (event.type) {
     case 'error':
@@ -196,7 +196,7 @@ function isFeatureEnabled(
     case 'message':
       return true // messages are always enabled
     case 'metric':
-      return true // metrics are always enabled when captured
+      return config.enableMetrics
     default:
       return true
   }

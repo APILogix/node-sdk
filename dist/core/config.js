@@ -1,7 +1,8 @@
 import { client } from "./client.js";
-export function setRemoteConfig(config) {
-    client.setConfig(config);
-}
+/**
+ * Get the resolved SDK configuration.
+ * Throws if SDK is not initialized.
+ */
 export function getConfig() {
     return client.config;
 }
