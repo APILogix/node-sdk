@@ -5,6 +5,7 @@ export interface RetryOptions {
   baseDelayMs?: number
   maxDelayMs?: number
   retryable?: (error: Error) => boolean
+  onRetry?: (context: { error: Error; attempt: number; nextAttempt: number; maxAttempts: number; nextRetryDelayMs: number }) => void
 }
 
 export async function retry<T>(operation: () => Promise<T>, options: RetryOptions): Promise<T> {
@@ -23,7 +24,15 @@ export async function retry<T>(operation: () => Promise<T>, options: RetryOption
         throw lastError
       }
 
-      await sleep(backoffWithJitter(baseDelayMs, maxDelayMs, attempt))
+      const nextRetryDelayMs = backoffWithJitter(baseDelayMs, maxDelayMs, attempt)
+      options.onRetry?.({
+        error: lastError,
+        attempt: attempt + 1,
+        nextAttempt: attempt + 2,
+        maxAttempts: retries + 1,
+        nextRetryDelayMs,
+      })
+      await sleep(nextRetryDelayMs)
     }
   }
 

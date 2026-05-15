@@ -1,0 +1,86 @@
+import type { SeverityLevel } from './severity.js';
+import type { Breadcrumb } from './breadcrumb.js';
+export interface StackFrame {
+    readonly filename: string;
+    readonly function: string;
+    readonly lineno?: number | undefined;
+    readonly colno?: number | undefined;
+    readonly inApp: boolean;
+    readonly module?: string | undefined;
+}
+/** Metadata attached to every event automatically by the SDK. */
+export interface EventMetadata {
+    readonly sdkName: string;
+    readonly sdkVersion: string;
+    readonly service: string;
+    readonly environment: string;
+    readonly release: string;
+    readonly serverName?: string;
+}
+export interface RequestEvent {
+    readonly type: 'request';
+    eventId?: string;
+    readonly requestId: string;
+    readonly url: string;
+    readonly method: string;
+    readonly statusCode: number;
+    readonly latency: number;
+    readonly timestamp: number;
+    readonly headers?: Readonly<Record<string, unknown>> | undefined;
+    readonly query?: Readonly<Record<string, unknown>> | undefined;
+    readonly bodySize?: number | undefined;
+    readonly userId?: string | null | undefined;
+    readonly traceId?: string | undefined;
+    readonly spanId?: string | undefined;
+    readonly metadata?: EventMetadata | undefined;
+}
+export interface ErrorEvent {
+    readonly type: 'error';
+    eventId?: string;
+    readonly requestId?: string | undefined;
+    readonly message: string;
+    readonly name: string;
+    readonly stack: readonly StackFrame[];
+    readonly fingerprint: string;
+    readonly timestamp: number;
+    readonly severity: SeverityLevel;
+    readonly context: Readonly<Record<string, unknown>>;
+    readonly breadcrumbs?: readonly Breadcrumb[] | undefined;
+    readonly traceId?: string | undefined;
+    readonly spanId?: string | undefined;
+    readonly metadata?: EventMetadata | undefined;
+}
+export interface MessageEvent {
+    readonly type: 'message';
+    eventId?: string;
+    readonly message: string;
+    readonly severity: SeverityLevel;
+    readonly timestamp: number;
+    readonly context?: Readonly<Record<string, unknown>> | undefined;
+    readonly breadcrumbs?: readonly Breadcrumb[] | undefined;
+    readonly traceId?: string | undefined;
+    readonly spanId?: string | undefined;
+    readonly metadata?: EventMetadata | undefined;
+}
+export type MetricType = 'counter' | 'gauge' | 'histogram';
+export interface MetricEvent {
+    readonly type: 'metric';
+    eventId?: string;
+    readonly metricName: string;
+    readonly metricType: MetricType;
+    readonly value: number;
+    readonly unit?: string | undefined;
+    readonly tags?: Readonly<Record<string, string>> | undefined;
+    readonly timestamp: number;
+    readonly metadata?: EventMetadata | undefined;
+}
+/** Discriminated union of all event types. */
+export type SDKEvent = RequestEvent | ErrorEvent | MessageEvent | MetricEvent;
+/**
+ * Legacy compat — the old Event type. Use SDKEvent for new code.
+ * @deprecated Use SDKEvent instead.
+ */
+export type Event = SDKEvent | (Record<string, unknown> & {
+    eventId?: string;
+});
+//# sourceMappingURL=event.d.ts.map

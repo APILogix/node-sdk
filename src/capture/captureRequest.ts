@@ -1,22 +1,28 @@
-import { client } from "../core/client.js"
-import { eventQueue } from "../transport/queue.js"
-import { getLogger } from "../utils/logger.js"
-import type { RequestEvent } from "../types/event.js"
+/**
+ * Request capture — captures HTTP request/response events.
+ *
+ * Delegates to the central event pipeline for normalization, sanitization,
+ * sampling, and plugin processing.
+ */
 
-export function captureRequest(event: RequestEvent) {
-  if (!client.initialized) {
-    getLogger().warn("captureRequest called before SDK initialization; buffering event", {
-      eventType: event.type,
+import type { RequestEvent } from '../types/event.js'
+import { captureEvent } from './captureEvent.js'
+import { getLogger } from '../utils/logger.js'
+
+/**
+ * Capture an HTTP request event.
+ * Sampling is handled by the event pipeline — callers don't need to filter.
+ */
+export function captureRequest(event: RequestEvent): void {
+  const logger = getLogger()
+
+  try {
+    captureEvent(event)
+  } catch (err) {
+    logger.error('captureRequest failed', {
+      error: err,
       requestId: event.requestId,
+      endpoint: event.url,
     })
-    eventQueue.add(event)
-    return
   }
-  const config = client.config
-
-  if (!config?.enablePerformance) return
-
-  if (Math.random() > config.samplingRate) return
-
-  eventQueue.add(event)
 }

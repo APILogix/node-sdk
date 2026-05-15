@@ -6,6 +6,7 @@ import { postJson } from './http.js'
 import { retry } from './retry.js'
 import type { RemoteConfig } from '../types/config.js'
 import type { Event } from '../types/event.js'
+import { getLogger } from '../utils/logger.js'
 
 export interface InitResponse {
     success: boolean
@@ -21,12 +22,13 @@ export async function sendInitRequest(apiKey: string, baseUrl: string, timeoutMs
         throw new SDKError('baseUrl is required for init request', 'MISSING_BASE_URL')
     }
 
-    return postJson<InitResponse>(joinUrl(baseUrl, '/v1/init'), { apiKey }, {}, timeoutMs)
+    return postJson<InitResponse>(joinUrl(baseUrl, '/v1/init'), { apiKey }, {}, timeoutMs, { logFailures: false })
 }
 
 export async function sendEvents(events: Event[]) {
     if (events.length === 0) return
 
+    const logger = getLogger()
     const config: Readonly<RemoteConfig> = client.config
     const apiKey = client.getApiKey()
     const timeoutMs = DEFAULT_TIMEOUT_MS
@@ -34,12 +36,49 @@ export async function sendEvents(events: Event[]) {
 
     for (const payload of createPayloads(events.map(ensureEventId), apiKey, config.maxPayloadBytes)) {
         try {
-            await retry(() => postJson<unknown>(config.ingestUrl, payload, {}, timeoutMs), {
+            logger.debug('Ingest payload send started', {
+                event: 'INGEST_PAYLOAD_SEND_STARTED',
+                endpoint: config.ingestUrl,
+                eventCount: payload.events.length,
+                payloadIndex: sentPayloads + 1,
+                timeoutMs,
+            })
+
+            await retry(() => postJson<unknown>(config.ingestUrl, payload, {}, timeoutMs, { logFailures: false }), {
                 retries: config.maxRetries,
-                retryable: isRetryable
+                retryable: isRetryable,
+                onRetry: ({ error, attempt, nextAttempt, maxAttempts, nextRetryDelayMs }) => {
+                    if (attempt === 1 || nextAttempt === maxAttempts) {
+                        logger.warn('Ingest payload send failed; retrying', {
+                            event: 'INGEST_SEND_RETRY',
+                            error,
+                            endpoint: config.ingestUrl,
+                            attempt,
+                            nextAttempt,
+                            maxAttempts,
+                            nextRetryDelayMs,
+                            eventCount: payload.events.length,
+                            payloadIndex: sentPayloads + 1,
+                        })
+                    }
+                },
             })
             sentPayloads += 1
+            logger.info('Ingest payload sent', {
+                event: 'INGEST_PAYLOAD_SENT',
+                endpoint: config.ingestUrl,
+                eventCount: payload.events.length,
+                payloadIndex: sentPayloads,
+            })
         } catch (error) {
+            logger.error('Ingest payload send failed', {
+                event: 'INGEST_SEND_FAILED',
+                error,
+                endpoint: config.ingestUrl,
+                sentPayloads,
+                failedPayloadEventCount: payload.events.length,
+                totalEventCount: events.length,
+            })
             throw new SDKError(
                 'Failed to send ingest payload',
                 'INGEST_SEND_FAILED',
@@ -73,7 +112,7 @@ function isRetryable(error: Error) {
     if (!(error instanceof SDKError)) return false
     if (error.code === 'NETWORK_ERROR') return true
 
-    const status = Number(error.context.status)
+    const status = Number(error.context.statusCode ?? error.context.status)
     return status === 408 || status === 429 || status >= 500
 }
 

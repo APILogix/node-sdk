@@ -1,51 +1,88 @@
-import { client } from '../core/client.js'
-import { eventQueue } from '../transport/queue.js'
+/**
+ * Error capture — captures exceptions and routes them through the event pipeline.
+ *
+ * Features:
+ * - Pre-init buffering (events captured before SDK is ready are queued)
+ * - Automatic breadcrumb attachment from async context
+ * - Stack frame parsing and fingerprinting
+ * - Severity classification
+ * - Plugin processing via event pipeline
+ */
+
+import { toError } from '../core/errors.js'
+import { getLogger } from '../utils/logger.js'
 import { parseStack } from '../processors/stack-parser.js'
 import { generateFingerprint } from '../processors/fingerprint.js'
 import { getRequestContext } from '../core/context.js'
-import { getLogger } from '../utils/logger.js'
-import { toError } from '../core/errors.js'
+import { captureEvent } from './captureEvent.js'
+import { Severity, type SeverityLevel } from '../types/severity.js'
+import { epochMs } from '../utils/time.js'
+import type { ErrorEvent } from '../types/event.js'
 
-export function captureError(error: unknown, context: Record<string, unknown> = {}) {
-    const logger = getLogger()
-
-    try {
-        const normalized = toError(error)
-
-        if (!client.initialized) {
-            logger.warn('captureError called before SDK initialization; buffering event', {
-                errorName: normalized.name,
-                errorMessage: normalized.message,
-            })
-            eventQueue.add(createErrorEvent(normalized, context))
-            return
-        }
-
-        const ctx = getRequestContext()
-
-        const config = client.config
-        if (!config?.enableErrors) return
-
-        const event = createErrorEvent(normalized, context, ctx?.requestId)
-
-        eventQueue.add(event)
-    } catch (err) {
-        logger.error('captureError failed', { error: err })
-    }
+export interface CaptureErrorOptions {
+  /** Additional context data to attach to the error event. */
+  context?: Record<string, unknown>
+  /** Severity level override. Default: 'error'. */
+  severity?: SeverityLevel
+  /** Custom fingerprint string for grouping. */
+  fingerprint?: string
 }
 
-function createErrorEvent(error: Error, context: Record<string, unknown>, requestId?: string) {
-    const stackFrames = parseStack(error.stack)
-    const fingerprint = generateFingerprint(error, stackFrames)
+/**
+ * Capture an error/exception.
+ *
+ * @param error - The error to capture (Error, string, or unknown)
+ * @param options - Optional severity, context, and fingerprint overrides
+ */
+export function captureError(
+  error: unknown,
+  options: CaptureErrorOptions | Record<string, unknown> = {}
+): void {
+  const logger = getLogger()
 
-    return {
-        type: 'error',
-        requestId,
-        message: error.message,
-        name: error.name,
-        stack: stackFrames,
-        fingerprint,
-        timestamp: Date.now(),
-        context
+  try {
+    const normalized = toError(error)
+
+    // Support both old API (context object) and new API (CaptureErrorOptions)
+    const context = isOptionsObject(options)
+      ? (options.context ?? {})
+      : (options as Record<string, unknown>)
+    const severity = isOptionsObject(options)
+      ? (options.severity ?? Severity.Error)
+      : Severity.Error
+    const customFingerprint = isOptionsObject(options)
+      ? options.fingerprint
+      : undefined
+
+    const stackFrames = parseStack(normalized.stack)
+    const fingerprint = generateFingerprint(normalized, stackFrames, customFingerprint)
+
+    // Get breadcrumbs from async context
+    const ctx = getRequestContext()
+    const breadcrumbs = ctx?.breadcrumbs.toArray() ?? []
+
+    const event: ErrorEvent = {
+      type: 'error',
+      message: normalized.message,
+      name: normalized.name,
+      stack: stackFrames,
+      fingerprint,
+      severity,
+      timestamp: epochMs(),
+      context,
+      breadcrumbs: breadcrumbs.length > 0 ? breadcrumbs : undefined,
+      requestId: ctx?.requestId,
+      traceId: ctx?.traceId,
+      spanId: ctx?.spanId,
     }
+
+    captureEvent(event)
+  } catch (err) {
+    logger.error('captureError failed', { error: err })
+  }
+}
+
+function isOptionsObject(value: unknown): value is CaptureErrorOptions {
+  if (!value || typeof value !== 'object') return false
+  return 'severity' in value || 'fingerprint' in value || 'context' in value
 }

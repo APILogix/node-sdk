@@ -1,0 +1,40 @@
+/**
+ * SDK Logger — Sentry-style debug logging.
+ *
+ * When `debug: true` is set in SDK options:
+ *   - All SDK internal messages are printed via console.log/console.warn/console.error
+ *   - Structured context is JSON-stringified and printed alongside
+ *
+ * When `debug: false` (default):
+ *   - Only warnings and errors are printed
+ *   - Debug/info messages are silenced for zero noise in production
+ *
+ * PII redaction is always applied regardless of debug mode.
+ */
+export interface Logger {
+    debug(message: string, context?: Record<string, unknown>): void;
+    info(message: string, context?: Record<string, unknown>): void;
+    warn(message: string, context?: Record<string, unknown>): void;
+    error(message: string, context?: Record<string, unknown>): void;
+}
+/**
+ * Enable or disable debug logging globally.
+ * Called during SDK initialization based on `options.debug`.
+ */
+export declare function setDebugMode(enabled: boolean): void;
+/**
+ * Set the log prefix (defaults to 'Pulse').
+ */
+export declare function setLogPrefix(prefix: string): void;
+export declare function redact(value: unknown, depth?: number): unknown;
+export declare const consoleLogger: Logger;
+/**
+ * Replace the active logger with a custom implementation.
+ * Pass undefined/null to restore the default console logger.
+ */
+export declare function setLogger(logger: Logger | undefined | null): void;
+/**
+ * Get the active logger instance.
+ */
+export declare function getLogger(): Logger;
+//# sourceMappingURL=logger.d.ts.map

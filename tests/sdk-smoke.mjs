@@ -114,10 +114,8 @@ function initResponse(config = {}) {
 {
   globalThis.fetch = async () => initResponse({ ingestion: { maxQueueSize: undefined } })
 
-  await assert.rejects(
-    () => init({ apiKey: "bad-config-key" }),
-    error => error.code === "INVALID_INIT_CONFIG",
-  )
+  assert.equal(await init({ apiKey: "bad-config-key" }), undefined)
+  await shutdown()
 }
 
 {
@@ -180,10 +178,8 @@ function initResponse(config = {}) {
     })
   }
 
-  await assert.rejects(
-    () => init({ apiKey: "invalid-payload-config" }),
-    error => error.code === "INVALID_INIT_CONFIG",
-  )
+  assert.equal(await init({ apiKey: "invalid-payload-config" }), undefined)
+  await shutdown()
 }
 
 {
