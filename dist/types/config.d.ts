@@ -152,7 +152,18 @@ export declare const sdkInitOptionsSchema: z.ZodObject<{
     enableMetrics: z.ZodOptional<z.ZodBoolean>;
     sampleRate: z.ZodOptional<z.ZodNumber>;
     maxBreadcrumbs: z.ZodOptional<z.ZodNumber>;
+    plugins: z.ZodOptional<z.ZodReadonly<z.ZodArray<z.ZodCustom<SDKPlugin, SDKPlugin>>>>;
+    eventProcessors: z.ZodOptional<z.ZodReadonly<z.ZodArray<z.ZodCustom<EventProcessor, EventProcessor>>>>;
+    beforeBreadcrumb: z.ZodOptional<z.ZodCustom<BreadcrumbProcessor, BreadcrumbProcessor>>;
+    beforeSend: z.ZodOptional<z.ZodCustom<(event: Record<string, unknown>) => Record<string, unknown> | null, (event: Record<string, unknown>) => Record<string, unknown> | null>>;
     debug: z.ZodOptional<z.ZodBoolean>;
+    logLevel: z.ZodOptional<z.ZodEnum<{
+        debug: "debug";
+        info: "info";
+        warning: "warning";
+        error: "error";
+        fatal: "fatal";
+    }>>;
     baseUrl: z.ZodOptional<z.ZodString>;
     shutdownTimeoutMs: z.ZodOptional<z.ZodNumber>;
     transport: z.ZodOptional<z.ZodObject<{

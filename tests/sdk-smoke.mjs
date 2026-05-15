@@ -1,7 +1,8 @@
 import assert from "node:assert/strict"
 process.env.SDK_BASE_URL = "https://api.example.test"
 
-const { captureRequest, init, shutdown } = await import("../dist/index.js")
+const { captureMessage, captureRequest, init, shutdown } = await import("../dist/index.js")
+const { addBreadcrumb, createContextStore, withContext } = await import("../dist/core/context.js")
 const { postJson } = await import("../dist/transport/http.js")
 const { sendEvents, sendInitRequest } = await import("../dist/transport/sender.js")
 const { redact } = await import("../dist/utils/logger.js")
@@ -67,6 +68,111 @@ function initResponse(config = {}) {
   )
 
   await shutdown()
+}
+
+{
+  let pluginSetupCount = 0
+  let processorCount = 0
+  let beforeSendCount = 0
+  let beforeBreadcrumbCount = 0
+  const calls = []
+
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url: String(url), body: options.body })
+
+    if (String(url).endsWith("/v1/init")) {
+      return initResponse({ ingestion: { batchSize: 1 } })
+    }
+
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })
+  }
+
+  await init({
+    apiKey: "hooks-key",
+    plugins: [{
+      meta: { name: "test-plugin", version: "1.0.0" },
+      setup() {
+        pluginSetupCount += 1
+      },
+      processEvent(event) {
+        return { ...event, pluginProcessed: true }
+      },
+      processBreadcrumb(breadcrumb) {
+        return { ...breadcrumb, data: { ...(breadcrumb.data ?? {}), pluginBreadcrumb: true } }
+      },
+    }],
+    eventProcessors: [
+      event => {
+        processorCount += 1
+        return { ...event, processorProcessed: true }
+      },
+    ],
+    beforeBreadcrumb: breadcrumb => {
+      beforeBreadcrumbCount += 1
+      return { ...breadcrumb, data: { ...(breadcrumb.data ?? {}), beforeBreadcrumb: true } }
+    },
+    beforeSend: event => {
+      beforeSendCount += 1
+      return { ...event, beforeSendProcessed: true }
+    },
+  })
+
+  withContext(createContextStore("hook-request", 10), () => {
+    addBreadcrumb({ category: "test", message: "hook crumb" })
+    captureMessage("hook message")
+  })
+  await shutdown()
+
+  const ingestCall = calls.find(call => call.url === "https://ingest.example.test/v1/events")
+  const event = JSON.parse(ingestCall.body).events[0]
+
+  assert.equal(pluginSetupCount, 1)
+  assert.equal(processorCount, 1)
+  assert.equal(beforeSendCount, 1)
+  assert.equal(beforeBreadcrumbCount, 1)
+  assert.equal(event.pluginProcessed, true)
+  assert.equal(event.processorProcessed, true)
+  assert.equal(event.beforeSendProcessed, true)
+  assert.equal(event.breadcrumbs[0].data.beforeBreadcrumb, true)
+  assert.equal(event.breadcrumbs[0].data.pluginBreadcrumb, true)
+}
+
+{
+  let beforeSendCount = 0
+  const calls = []
+
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url: String(url), body: options.body })
+
+    if (String(url).endsWith("/v1/init")) {
+      return initResponse({ plan: "free", ingestion: { batchSize: 1 } })
+    }
+
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })
+  }
+
+  await init({
+    apiKey: "free-before-send-key",
+    beforeSend: event => {
+      beforeSendCount += 1
+      return { ...event, shouldNotAppear: true }
+    },
+  })
+
+  captureMessage("free hook message")
+  await shutdown()
+
+  const ingestCall = calls.find(call => call.url === "https://ingest.example.test/v1/events")
+  const event = JSON.parse(ingestCall.body).events[0]
+
+  assert.equal(beforeSendCount, 0)
+  assert.equal(event.shouldNotAppear, undefined)
 }
 
 {

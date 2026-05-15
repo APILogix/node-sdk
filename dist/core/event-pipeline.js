@@ -96,7 +96,7 @@ export function processEvent(rawEvent) {
             }
         }
         // Step 9: beforeSend hook (user-provided)
-        if (client.options?.beforeSend) {
+        if (client.options?.beforeSend && config.planFeatures.allowBeforeSend) {
             try {
                 const result = client.options.beforeSend(event);
                 if (result === null) {
@@ -114,7 +114,7 @@ export function processEvent(rawEvent) {
         }
         // Step 10: Plugin beforeSend hooks
         for (const plugin of client.plugins) {
-            if (plugin.beforeSend) {
+            if (plugin.beforeSend && config.planFeatures.allowBeforeSend) {
                 try {
                     const result = plugin.beforeSend(event);
                     if (result === null) {

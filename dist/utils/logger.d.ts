@@ -11,6 +11,7 @@
  *
  * PII redaction is always applied regardless of debug mode.
  */
+import { type SeverityLevel } from '../types/severity.js';
 export interface Logger {
     debug(message: string, context?: Record<string, unknown>): void;
     info(message: string, context?: Record<string, unknown>): void;
@@ -22,6 +23,10 @@ export interface Logger {
  * Called during SDK initialization based on `options.debug`.
  */
 export declare function setDebugMode(enabled: boolean): void;
+/**
+ * Set the minimum SDK internal log level.
+ */
+export declare function setLogLevel(level: SeverityLevel): void;
 /**
  * Set the log prefix (defaults to 'Pulse').
  */

@@ -1,9 +1,12 @@
 import { AsyncLocalStorage } from 'async_hooks'
 import type { Breadcrumb, BreadcrumbInput } from '../types/breadcrumb.js'
+import type { BreadcrumbHint } from '../types/breadcrumb.js'
 import type { SeverityLevel } from '../types/severity.js'
 import { Severity } from '../types/severity.js'
 import { isoNow } from '../utils/time.js'
 import { RingBuffer } from './ring-buffer.js'
+import { client } from './client.js'
+import { getLogger } from '../utils/logger.js'
 
 // ─── Context Store ──────────────────────────────────────────────────────────
 
@@ -69,13 +72,44 @@ export function addBreadcrumb(input: BreadcrumbInput): void {
   const store = asyncLocalStorage.getStore()
   if (!store) return
 
-  const breadcrumb: Breadcrumb = {
+  let breadcrumb: Breadcrumb = {
     timestamp: isoNow(),
     category: input.category,
     message: input.message,
     level: input.level ?? Severity.Info,
     type: input.type ?? 'default',
     data: input.data,
+  }
+
+  const logger = getLogger()
+  const hint: BreadcrumbHint = input.data === undefined
+    ? { originalEvent: input }
+    : { originalEvent: input, data: input.data }
+
+  if (client.options?.beforeBreadcrumb) {
+    try {
+      const result = client.options.beforeBreadcrumb(breadcrumb, hint)
+      if (result === null) return
+      breadcrumb = result
+    } catch (error) {
+      logger.warn('beforeBreadcrumb threw', { error })
+    }
+  }
+
+  if (client.initialized) {
+    for (const plugin of client.plugins) {
+      if (!plugin.processBreadcrumb) continue
+      try {
+        const result = plugin.processBreadcrumb(breadcrumb, hint)
+        if (result === null) return
+        breadcrumb = result
+      } catch (error) {
+        logger.warn('Plugin processBreadcrumb threw', {
+          pluginName: plugin.meta.name,
+          error,
+        })
+      }
+    }
   }
 
   store.breadcrumbs.push(breadcrumb)

@@ -24,7 +24,7 @@ import { setupGlobalErrorHandlers } from '../instrumentation/global-errors.js'
 import { eventQueue } from '../transport/queue.js'
 import { DEFAULT_BASE_URL, DEFAULT_MAX_PAYLOAD_BYTES, DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT_MS } from '../constants/defaults.js'
 import { SDKError } from './errors.js'
-import { getLogger, setDebugMode } from '../utils/logger.js'
+import { getLogger, setDebugMode, setLogLevel } from '../utils/logger.js'
 import { initializePlugins } from '../plugins/index.js'
 import { registerSignalHandlers } from './lifecycle.js'
 import { sleep } from '../utils/time.js'
@@ -44,8 +44,9 @@ const INIT_MAX_RETRY_DELAY_MS = 5000
  */
 export async function init(options: SDKInitOptions): Promise<Readonly<RemoteConfig> | undefined> {
   // Enable debug mode first so all init logging is visible if requested
-  if (options.debug) {
-    setDebugMode(true)
+  setDebugMode(options.debug ?? false)
+  if (options.logLevel) {
+    setLogLevel(options.logLevel)
   }
 
   validateInitOptions(options)
@@ -224,13 +225,22 @@ async function initialize(options: SDKInitOptions): Promise<Readonly<RemoteConfi
     } catch (error) {
       client.clearConfig()
 
-      if (attempt >= INIT_MAX_ATTEMPTS) {
+      if (!isRetryableInitError(error)) {
         client.clear()
         logger.error(
-          'SDK initialization failed after retry budget exhausted; host application will continue without SDK telemetry',
+          'SDK initialization failed with a non-retryable error; host application will continue without SDK telemetry',
           { error, endpoint, attempt, maxAttempts: INIT_MAX_ATTEMPTS }
         )
         return undefined
+      }
+
+      if (attempt >= INIT_MAX_ATTEMPTS) {
+        const fallbackConfig = initializeOfflineFallback(options, baseUrl, logger)
+        logger.error(
+          'SDK initialization failed after retry budget exhausted; using offline fallback telemetry config',
+          { error, endpoint, attempt, maxAttempts: INIT_MAX_ATTEMPTS }
+        )
+        return fallbackConfig
       }
 
       const nextRetryDelayMs = retryDelayMs(attempt)
@@ -430,7 +440,67 @@ function validateUrl(value: string, fieldName: string): void {
   }
 }
 
+function isRetryableInitError(error: unknown): boolean {
+  if (!(error instanceof SDKError)) return false
+  if (error.code === 'NETWORK_ERROR') return true
+
+  const status = Number(error.context.statusCode ?? error.context.status)
+  return status === 408 || status === 429 || status >= 500
+}
+
 function retryDelayMs(attempt: number): number {
   const exponential = Math.min(INIT_MAX_RETRY_DELAY_MS, INIT_BASE_RETRY_DELAY_MS * 2 ** (attempt - 1))
   return Math.floor(exponential / 2 + Math.random() * (exponential / 2))
+}
+
+function initializeOfflineFallback(
+  options: SDKInitOptions,
+  baseUrl: string,
+  logger: ReturnType<typeof getLogger>,
+): Readonly<RemoteConfig> {
+  const planFeatures = getOfflineFallbackPlan()
+  const ingestUrl = `${baseUrl.replace(/\/+$/, '')}/v1/events`
+  const remoteConfig: RemoteConfig = {
+    ingestUrl,
+    samplingRate: 1,
+    enableErrors: true,
+    enablePerformance: false,
+    maxQueueSize: planFeatures.maxQueueSize,
+    batchSize: planFeatures.maxBatchSize,
+    flushIntervalMs: DEFAULT_TIMEOUT_MS,
+    maxRetries: DEFAULT_MAX_RETRIES,
+    maxPayloadBytes: DEFAULT_MAX_PAYLOAD_BYTES,
+    plan: planFeatures.tier,
+    planFeatures,
+  }
+  const resolvedConfig = clampToPlan(mergeConfig(options, remoteConfig, planFeatures), planFeatures)
+
+  client.setRemoteConfig(remoteConfig)
+  client.setResolvedConfig(resolvedConfig)
+  eventQueue.configure(resolvedConfig.maxQueueSize)
+  filterBufferedEvents(resolvedConfig)
+
+  if (options.eventProcessors) {
+    for (const processor of options.eventProcessors) {
+      client.registerEventProcessor(processor)
+    }
+  }
+
+  startBatcher({
+    batchSize: resolvedConfig.batchSize,
+    flushIntervalMs: resolvedConfig.flushIntervalMs,
+    logger,
+    maxConcurrentSends: resolvedConfig.maxConcurrentSends,
+  })
+  setupGlobalErrorHandlers()
+  registerSignalHandlers()
+
+  logger.warn('SDK offline fallback initialized', {
+    plan: resolvedConfig.plan,
+    ingestUrl: resolvedConfig.ingestUrl,
+    enableErrors: resolvedConfig.enableErrors,
+    enablePerformance: resolvedConfig.enablePerformance,
+  })
+
+  return remoteConfig
 }

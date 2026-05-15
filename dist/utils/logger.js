@@ -12,15 +12,24 @@
  * PII redaction is always applied regardless of debug mode.
  */
 import { SDKError } from '../core/errors.js';
+import { Severity, severityMeetsThreshold } from '../types/severity.js';
 // ─── Configuration ──────────────────────────────────────────────────────────
 let debugMode = false;
 let logPrefix = 'Pulse';
+let minimumLogLevel = Severity.Warning;
 /**
  * Enable or disable debug logging globally.
  * Called during SDK initialization based on `options.debug`.
  */
 export function setDebugMode(enabled) {
     debugMode = enabled;
+    minimumLogLevel = enabled ? Severity.Debug : Severity.Warning;
+}
+/**
+ * Set the minimum SDK internal log level.
+ */
+export function setLogLevel(level) {
+    minimumLogLevel = level;
 }
 /**
  * Set the log prefix (defaults to 'Pulse').
@@ -88,21 +97,27 @@ function formatContext(context) {
 // ─── Console Logger (Sentry-style) ─────────────────────────────────────────
 export const consoleLogger = {
     debug(message, context) {
-        if (!debugMode)
+        if (!debugMode && !severityMeetsThreshold(Severity.Debug, minimumLogLevel))
+            return;
+        if (!severityMeetsThreshold(Severity.Debug, minimumLogLevel))
             return;
         console.log(`[${logPrefix}] DEBUG: ${message}${formatContext(context)}`);
     },
     info(message, context) {
-        if (!debugMode)
+        if (!severityMeetsThreshold(Severity.Info, minimumLogLevel))
             return;
         console.log(`[${logPrefix}] INFO: ${message}${formatContext(context)}`);
     },
     warn(message, context) {
         // Warnings always print — they indicate potential issues
+        if (!severityMeetsThreshold(Severity.Warning, minimumLogLevel))
+            return;
         console.warn(`[${logPrefix}] WARN: ${message}${formatContext(context)}`);
     },
     error(message, context) {
         // Errors always print — they indicate real failures
+        if (!severityMeetsThreshold(Severity.Error, minimumLogLevel))
+            return;
         console.error(`[${logPrefix}] ERROR: ${message}${formatContext(context)}`);
     },
 };

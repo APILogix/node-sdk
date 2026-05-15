@@ -55,7 +55,7 @@ export { getSessionManager } from './session/session-manager.js';
 // ─── Instrumentation ────────────────────────────────────────────────────────
 export { monitorMiddleware } from './instrumentation/express.js';
 export { instrumentHttpClient } from './instrumentation/http.js';
-export { setLogger, getLogger, setDebugMode } from './utils/logger.js';
+export { setLogger, getLogger, setDebugMode, setLogLevel } from './utils/logger.js';
 export { Severity, severityFromString } from './types/severity.js';
 // ─── Plan Gating ────────────────────────────────────────────────────────────
 export { getPlanDefaults, isFeatureAllowed } from './core/plan-gate.js';

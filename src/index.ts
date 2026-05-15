@@ -77,7 +77,7 @@ export { instrumentHttpClient } from './instrumentation/http.js'
 // ─── Logger ─────────────────────────────────────────────────────────────────
 
 export type { Logger } from './utils/logger.js'
-export { setLogger, getLogger, setDebugMode } from './utils/logger.js'
+export { setLogger, getLogger, setDebugMode, setLogLevel } from './utils/logger.js'
 
 // ─── Types (for consumers and plugin authors) ──────────────────────────────
 

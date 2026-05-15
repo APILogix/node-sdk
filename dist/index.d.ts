@@ -49,7 +49,7 @@ export type { Session, SessionManagerOptions } from './session/session-manager.j
 export { monitorMiddleware } from './instrumentation/express.js';
 export { instrumentHttpClient } from './instrumentation/http.js';
 export type { Logger } from './utils/logger.js';
-export { setLogger, getLogger, setDebugMode } from './utils/logger.js';
+export { setLogger, getLogger, setDebugMode, setLogLevel } from './utils/logger.js';
 export type { SDKInitOptions, RemoteConfig, ResolvedSDKConfig, TransportOptions, PlanTier, PlanFeatures } from './types/config.js';
 export type { SDKEvent, RequestEvent, ErrorEvent, MessageEvent, MetricEvent, EventMetadata, StackFrame } from './types/event.js';
 export type { Breadcrumb, BreadcrumbInput, BreadcrumbHint } from './types/breadcrumb.js';

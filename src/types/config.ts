@@ -202,7 +202,16 @@ export const sdkInitOptionsSchema = z.object({
   enableMetrics: z.boolean().optional(),
   sampleRate: z.number().min(0).max(1).optional(),
   maxBreadcrumbs: z.number().int().min(0).max(1000).optional(),
+  plugins: z.array(z.custom<SDKPlugin>()).readonly().optional(),
+  eventProcessors: z.array(z.custom<EventProcessor>()).readonly().optional(),
+  beforeBreadcrumb: z.custom<BreadcrumbProcessor>(value => typeof value === 'function').optional(),
+  beforeSend: z
+    .custom<(event: Record<string, unknown>) => Record<string, unknown> | null>(
+      value => typeof value === 'function'
+    )
+    .optional(),
   debug: z.boolean().optional(),
+  logLevel: z.enum(['debug', 'info', 'warning', 'error', 'fatal']).optional(),
   baseUrl: z.string().url().optional(),
   shutdownTimeoutMs: z.number().int().min(1000).max(60000).optional(),
   transport: z

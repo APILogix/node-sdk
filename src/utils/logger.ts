@@ -13,6 +13,7 @@
  */
 
 import { SDKError } from '../core/errors.js'
+import { Severity, type SeverityLevel, severityMeetsThreshold } from '../types/severity.js'
 
 export interface Logger {
   debug(message: string, context?: Record<string, unknown>): void
@@ -25,6 +26,7 @@ export interface Logger {
 
 let debugMode = false
 let logPrefix = 'Pulse'
+let minimumLogLevel: SeverityLevel = Severity.Warning
 
 /**
  * Enable or disable debug logging globally.
@@ -32,6 +34,14 @@ let logPrefix = 'Pulse'
  */
 export function setDebugMode(enabled: boolean): void {
   debugMode = enabled
+  minimumLogLevel = enabled ? Severity.Debug : Severity.Warning
+}
+
+/**
+ * Set the minimum SDK internal log level.
+ */
+export function setLogLevel(level: SeverityLevel): void {
+  minimumLogLevel = level
 }
 
 /**
@@ -113,22 +123,25 @@ function formatContext(context?: Record<string, unknown>): string {
 
 export const consoleLogger: Logger = {
   debug(message: string, context?: Record<string, unknown>): void {
-    if (!debugMode) return
+    if (!debugMode && !severityMeetsThreshold(Severity.Debug, minimumLogLevel)) return
+    if (!severityMeetsThreshold(Severity.Debug, minimumLogLevel)) return
     console.log(`[${logPrefix}] DEBUG: ${message}${formatContext(context)}`)
   },
 
   info(message: string, context?: Record<string, unknown>): void {
-    if (!debugMode) return
+    if (!severityMeetsThreshold(Severity.Info, minimumLogLevel)) return
     console.log(`[${logPrefix}] INFO: ${message}${formatContext(context)}`)
   },
 
   warn(message: string, context?: Record<string, unknown>): void {
     // Warnings always print — they indicate potential issues
+    if (!severityMeetsThreshold(Severity.Warning, minimumLogLevel)) return
     console.warn(`[${logPrefix}] WARN: ${message}${formatContext(context)}`)
   },
 
   error(message: string, context?: Record<string, unknown>): void {
     // Errors always print — they indicate real failures
+    if (!severityMeetsThreshold(Severity.Error, minimumLogLevel)) return
     console.error(`[${logPrefix}] ERROR: ${message}${formatContext(context)}`)
   },
 }
