@@ -160,14 +160,14 @@ export function processEvent(rawEvent) {
 }
 // ─── Internal Helpers ───────────────────────────────────────────────────────
 function ensureBaseFields(raw) {
-    const event = raw;
-    if (!event['eventId'] || typeof event['eventId'] !== 'string') {
-        event['eventId'] = generateId();
-    }
-    if (!event['timestamp'] || typeof event['timestamp'] !== 'number') {
-        event['timestamp'] = epochMs();
-    }
-    return event;
+    // Defensive copy — never mutate the caller's object reference
+    const eventId = (raw.eventId && typeof raw.eventId === 'string')
+        ? raw.eventId
+        : generateId();
+    const timestamp = ('timestamp' in raw && typeof raw.timestamp === 'number')
+        ? raw.timestamp
+        : epochMs();
+    return { ...raw, eventId, timestamp };
 }
 function isFeatureEnabled(event, config) {
     switch (event.type) {

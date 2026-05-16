@@ -21,12 +21,17 @@ export async function compressBrotli(data) {
     });
 }
 /**
+ * Minimum payload size for compression to be worthwhile.
+ * Below this threshold, compression overhead exceeds savings.
+ */
+const MIN_COMPRESSION_BYTES = 1024;
+/**
  * Compresses data using the specified algorithm.
- * Returns the original buffer if algorithm is 'none'.
+ * Returns the original buffer if algorithm is 'none' or payload is too small.
  */
 export async function compress(data, algorithm) {
     const originalSize = data.length;
-    if (algorithm === 'none') {
+    if (algorithm === 'none' || originalSize < MIN_COMPRESSION_BYTES) {
         return { buffer: data, algorithm: 'none', originalSize, compressedSize: originalSize };
     }
     const compressor = algorithm === 'brotli' ? compressBrotli : compressGzip;

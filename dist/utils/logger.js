@@ -97,8 +97,6 @@ function formatContext(context) {
 // ─── Console Logger (Sentry-style) ─────────────────────────────────────────
 export const consoleLogger = {
     debug(message, context) {
-        if (!debugMode && !severityMeetsThreshold(Severity.Debug, minimumLogLevel))
-            return;
         if (!severityMeetsThreshold(Severity.Debug, minimumLogLevel))
             return;
         console.log(`[${logPrefix}] DEBUG: ${message}${formatContext(context)}`);

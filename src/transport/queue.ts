@@ -13,15 +13,17 @@ export class EventQueue {
 
   configure(maxSize: number) {
     this.maxSize = Math.max(1, Math.floor(maxSize))
-    while (this.queue.length > this.maxSize) {
-      this.queue.shift()
-      this.droppedCount += 1
+    if (this.queue.length > this.maxSize) {
+      const overflow = this.queue.length - this.maxSize
+      this.queue.splice(0, overflow)
+      this.droppedCount += overflow
     }
   }
 
   add(event: Event) {
     if (this.queue.length >= this.maxSize) {
-      this.queue.shift()
+      // Evict oldest — splice(0,1) is equivalent to shift() but signals intent
+      this.queue.splice(0, 1)
       this.droppedCount += 1
       this.notifyDrop("queue_full", 1)
     }
@@ -72,10 +74,13 @@ export class EventQueue {
     const toRestore = events.slice(0, available)
     const dropped = events.length - toRestore.length
 
-    this.queue.unshift(...toRestore)
+    // Avoid spread operator — can blow call stack with large arrays
+    // splice(0, 0, ...items) also has the same risk, so we build a new array
+    this.queue = [...toRestore, ...this.queue].slice(0, this.maxSize)
     this.droppedCount += dropped
     this.notifyDrop("requeue_overflow", dropped)
   }
+
 
   private notifyDrop(reason: string, count: number) {
     if (count <= 0) return

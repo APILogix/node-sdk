@@ -34,7 +34,6 @@ export interface SpanOptions {
  */
 export class PulseSpan {
   private readonly otelSpan: OTelSpan
-  private readonly logger = getLogger()
   private ended = false
 
   constructor(otelSpan: OTelSpan) {
@@ -62,7 +61,7 @@ export class PulseSpan {
     try {
       this.otelSpan.setAttribute(key, value)
     } catch (err) {
-      this.logger.warn('Failed to set span attribute', { key, error: err })
+      getLogger().warn('Failed to set span attribute', { key, error: err })
     }
     return this
   }
@@ -73,7 +72,7 @@ export class PulseSpan {
     try {
       this.otelSpan.setAttributes(attributes)
     } catch (err) {
-      this.logger.warn('Failed to set span attributes', { error: err })
+      getLogger().warn('Failed to set span attributes', { error: err })
     }
     return this
   }
@@ -88,7 +87,7 @@ export class PulseSpan {
         this.otelSpan.addEvent(name)
       }
     } catch (err) {
-      this.logger.warn('Failed to add span event', { name, error: err })
+      getLogger().warn('Failed to add span event', { name, error: err })
     }
     return this
   }
@@ -106,7 +105,7 @@ export class PulseSpan {
         message: error.message,
       })
     } catch (err) {
-      this.logger.warn('Failed to record span error', { error: err })
+      getLogger().warn('Failed to record span error', { error: err })
     }
     return this
   }
@@ -123,7 +122,7 @@ export class PulseSpan {
             : SpanStatusCode.UNSET
       this.otelSpan.setStatus(message ? { code, message } : { code })
     } catch (err) {
-      this.logger.warn('Failed to set span status', { error: err })
+      getLogger().warn('Failed to set span status', { error: err })
     }
     return this
   }
@@ -135,7 +134,7 @@ export class PulseSpan {
     try {
       this.otelSpan.end(endTime)
     } catch (err) {
-      this.logger.warn('Failed to end span', { error: err })
+      getLogger().warn('Failed to end span', { error: err })
     }
   }
 

@@ -13,6 +13,11 @@ export declare function shutdown(timeoutMs?: number): Promise<void>;
  * Called once during SDK initialization.
  */
 export declare function registerSignalHandlers(): void;
+/**
+ * Remove signal handlers and reset state — enables clean reinit.
+ * @internal
+ */
+export declare function resetSignalHandlers(): void;
 /** Re-export flush for public API. */
 export { flush };
 //# sourceMappingURL=lifecycle.d.ts.map

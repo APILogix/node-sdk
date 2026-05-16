@@ -174,17 +174,15 @@ export function processEvent(rawEvent: SDKEvent | Event): boolean {
 // ─── Internal Helpers ───────────────────────────────────────────────────────
 
 function ensureBaseFields(raw: SDKEvent | Event): SDKEvent {
-  const event = raw as Record<string, unknown>
+  // Defensive copy — never mutate the caller's object reference
+  const eventId = (raw.eventId && typeof raw.eventId === 'string')
+    ? raw.eventId
+    : generateId()
+  const timestamp = ('timestamp' in raw && typeof raw.timestamp === 'number')
+    ? raw.timestamp
+    : epochMs()
 
-  if (!event['eventId'] || typeof event['eventId'] !== 'string') {
-    event['eventId'] = generateId()
-  }
-
-  if (!event['timestamp'] || typeof event['timestamp'] !== 'number') {
-    event['timestamp'] = epochMs()
-  }
-
-  return event as unknown as SDKEvent
+  return { ...raw, eventId, timestamp } as SDKEvent
 }
 
 function isFeatureEnabled(

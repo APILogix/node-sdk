@@ -14,6 +14,7 @@ import { DEFAULT_BATCH_SIZE, DEFAULT_FLUSH_INTERVAL_MS } from '../constants/defa
 import { getLogger } from '../utils/logger.js';
 import { CircuitBreaker } from './circuit-breaker.js';
 import { TokenBucketRateLimiter } from './rate-limit.js';
+import { MemoryPressureMonitor } from '../utils/backpressure.js';
 // ─── State ──────────────────────────────────────────────────────────────────
 let timer = null;
 let batchSize = DEFAULT_BATCH_SIZE;
@@ -32,6 +33,11 @@ const rateLimiter = new TokenBucketRateLimiter({
     capacity: 10, // Allow burst of 10 batch sends
     refillRate: 2, // Refill 2 tokens per second
 });
+const memoryMonitor = new MemoryPressureMonitor({
+    elevatedThreshold: 0.7,
+    criticalThreshold: 0.9,
+    pollIntervalMs: 5000,
+});
 export function startBatcher(options) {
     batchSize = options?.batchSize ?? batchSize;
     flushIntervalMs = options?.flushIntervalMs ?? flushIntervalMs;
@@ -40,6 +46,8 @@ export function startBatcher(options) {
     isRunning = true;
     if (timer)
         return;
+    // Start memory pressure monitoring
+    memoryMonitor.start();
     // Self-rescheduling timer — prevents overlapping ticks
     scheduleNextTick();
     logger.debug('Batcher started', {
@@ -59,11 +67,12 @@ export async function flush() {
         }
         catch (err) {
             circuitBreaker.recordFailure();
-            eventQueue.drop(events.length);
-            logger.error('Flush failed; dropping events after retry budget exhausted', {
+            // Re-queue events instead of permanently dropping them
+            eventQueue.requeueFront(events);
+            logger.error('Flush failed; events re-queued for next attempt', {
                 error: err,
                 eventCount: events.length,
-                deadLetterCount: eventQueue.getDeadLetterCount(),
+                queueSize: eventQueue.size(),
                 circuitState: circuitBreaker.getState(),
             });
             throw err;
@@ -76,6 +85,12 @@ export function stopBatcher() {
         clearTimeout(timer);
         timer = null;
     }
+    // Stop memory pressure monitoring
+    memoryMonitor.stop();
+    // Reset all stateful subsystems to prevent stale state on reinit
+    inFlightCount = 0;
+    circuitBreaker.reset();
+    rateLimiter.reset();
     logger.debug('Batcher stopped');
 }
 /** Get the current circuit breaker state for observability. */
@@ -91,7 +106,13 @@ function scheduleNextTick() {
     if (!isRunning)
         return;
     timer = setTimeout(async () => {
-        await tick();
+        try {
+            await tick();
+        }
+        catch (err) {
+            // Prevent unhandled rejection from silently killing the batcher
+            logger.error('Batch tick failed unexpectedly', { error: err });
+        }
         scheduleNextTick();
     }, flushIntervalMs);
     // Don't hold the process open just for batch ticks
@@ -101,6 +122,16 @@ async function tick() {
     // Guard: skip if nothing to send
     if (eventQueue.size() === 0)
         return;
+    // Guard: memory pressure — degrade gracefully under heap pressure
+    const pressure = memoryMonitor.getState();
+    if (pressure.level === 'critical') {
+        logger.warn('Batch tick skipped — critical memory pressure', {
+            heapUsedMb: pressure.heapUsedMb,
+            heapUtilization: pressure.heapUtilization.toFixed(2),
+            queueSize: eventQueue.size(),
+        });
+        return;
+    }
     // Guard: circuit breaker is open — buffer, don't send
     if (!circuitBreaker.canExecute()) {
         logger.debug('Batch tick skipped — circuit breaker OPEN', {
@@ -140,11 +171,12 @@ async function tick() {
     }
     catch (err) {
         circuitBreaker.recordFailure();
-        eventQueue.drop(events.length);
-        logger.error('Batch send failed; dropping events after retry budget exhausted', {
+        // Re-queue events instead of permanently dropping them
+        eventQueue.requeueFront(events);
+        logger.error('Batch send failed; events re-queued for next attempt', {
             error: err,
             eventCount: events.length,
-            deadLetterCount: eventQueue.getDeadLetterCount(),
+            queueSize: eventQueue.size(),
             circuitState: circuitBreaker.getState(),
         });
     }

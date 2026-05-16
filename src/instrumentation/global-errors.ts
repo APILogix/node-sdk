@@ -15,11 +15,15 @@ import { getLogger } from "../utils/logger.js"
 
 let registered = false
 
+// Store handler references for proper cleanup
+let uncaughtHandler: ((err: Error) => void) | null = null
+let rejectionHandler: ((reason: unknown) => void) | null = null
+
 export function setupGlobalErrorHandlers() {
   if (registered) return
   registered = true
 
-  process.on("uncaughtException", (err) => {
+  uncaughtHandler = (err: Error) => {
     const logger = getLogger()
 
     try {
@@ -42,21 +46,32 @@ export function setupGlobalErrorHandlers() {
       .catch(() => {
         // If flush fails (e.g., SDK not initialized), swallow silently
       })
-  })
+  }
 
-  process.on("unhandledRejection", (reason: unknown) => {
+  rejectionHandler = (reason: unknown) => {
     try {
       captureError(toError(reason), { mechanism: "unhandledRejection" })
     } catch {
       // Isolated — never crash the host
     }
-  })
+  }
+
+  process.on("uncaughtException", uncaughtHandler)
+  process.on("unhandledRejection", rejectionHandler)
 }
 
 /**
- * Reset registration state — for testing only.
- * @internal
+ * Remove all SDK global error handlers and reset state.
+ * Called during SDK shutdown to prevent listener leaks across reinit cycles.
  */
 export function resetGlobalErrorHandlers() {
+  if (uncaughtHandler) {
+    process.removeListener("uncaughtException", uncaughtHandler)
+    uncaughtHandler = null
+  }
+  if (rejectionHandler) {
+    process.removeListener("unhandledRejection", rejectionHandler)
+    rejectionHandler = null
+  }
   registered = false
 }

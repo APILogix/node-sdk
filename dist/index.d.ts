@@ -59,4 +59,26 @@ export type { SDKPlugin, PluginMeta, PluginContext, EventProcessor, BreadcrumbPr
 export type { CaptureErrorOptions, ParsedError, ErrorGrouping } from './types/error.js';
 export type { TransportResult, IngestPayload, TransportHealth, TransportAdapter } from './types/transport.js';
 export { getPlanDefaults, isFeatureAllowed } from './core/plan-gate.js';
+/**
+ * Get a comprehensive SDK health snapshot for operational dashboards.
+ * Safe to call at any time — returns degraded info if SDK isn't initialized.
+ */
+export declare function getSDKHealth(): {
+    initialized: boolean;
+    circuitState: string;
+    queueSize: number;
+    queueDropped: number;
+    queueDeadLetter: number;
+    memory: {
+        level: string;
+        heapUsedMb: number;
+        heapUtilization: number;
+    };
+    session: {
+        totalSessions: number;
+        crashFreeRate: number;
+        currentSessionId: string | null;
+    };
+    pluginCount: number;
+};
 //# sourceMappingURL=index.d.ts.map

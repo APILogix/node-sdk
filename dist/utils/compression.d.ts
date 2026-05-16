@@ -11,7 +11,7 @@ export declare function compressGzip(data: Buffer): Promise<Buffer>;
 export declare function compressBrotli(data: Buffer): Promise<Buffer>;
 /**
  * Compresses data using the specified algorithm.
- * Returns the original buffer if algorithm is 'none'.
+ * Returns the original buffer if algorithm is 'none' or payload is too small.
  */
 export declare function compress(data: Buffer, algorithm: CompressionAlgorithm): Promise<{
     buffer: Buffer;

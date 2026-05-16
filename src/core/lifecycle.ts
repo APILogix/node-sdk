@@ -9,9 +9,14 @@ import { getLogger } from '../utils/logger.js'
 import { teardownPlugins } from '../plugins/index.js'
 import { shutdownTracer } from '../tracing/tracer.js'
 import { resetSessionManager } from '../session/session-manager.js'
+import { resetGlobalErrorHandlers } from '../instrumentation/global-errors.js'
 
 let signalHandlersRegistered = false
 let isShuttingDown = false
+
+// Store signal handler references for proper cleanup on reinit
+let sigTermHandler: (() => void) | null = null
+let sigIntHandler: (() => void) | null = null
 
 /**
  * Graceful shutdown — flushes remaining events and tears down plugins.
@@ -61,6 +66,13 @@ export async function shutdown(timeoutMs?: number): Promise<void> {
     } catch (sessionError) {
       logger.warn('Session manager reset failed during shutdown', { error: sessionError })
     }
+
+    // Clean up global error handlers to prevent listener leaks
+    try {
+      resetGlobalErrorHandlers()
+    } catch (handlerError) {
+      logger.warn('Global error handler reset failed during shutdown', { error: handlerError })
+    }
   }
 
   try {
@@ -103,8 +115,27 @@ export function registerSignalHandlers(): void {
     })
   }
 
-  process.once('SIGTERM', () => handleSignal('SIGTERM'))
-  process.once('SIGINT', () => handleSignal('SIGINT'))
+  sigTermHandler = () => handleSignal('SIGTERM')
+  sigIntHandler = () => handleSignal('SIGINT')
+
+  process.once('SIGTERM', sigTermHandler)
+  process.once('SIGINT', sigIntHandler)
+}
+
+/**
+ * Remove signal handlers and reset state — enables clean reinit.
+ * @internal
+ */
+export function resetSignalHandlers(): void {
+  if (sigTermHandler) {
+    process.removeListener('SIGTERM', sigTermHandler)
+    sigTermHandler = null
+  }
+  if (sigIntHandler) {
+    process.removeListener('SIGINT', sigIntHandler)
+    sigIntHandler = null
+  }
+  signalHandlersRegistered = false
 }
 
 /** Re-export flush for public API. */

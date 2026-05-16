@@ -56,7 +56,6 @@ let initialized = false
  * This ensures spans get sanitized, plugin-processed, and batched.
  */
 class PipelineSpanExporter implements SpanExporter {
-  private readonly logger = getLogger()
 
   export(spans: ReadableSpan[], resultCallback: (result: { code: number; error?: Error }) => void): void {
     try {
@@ -66,7 +65,7 @@ class PipelineSpanExporter implements SpanExporter {
       }
       resultCallback({ code: 0 }) // SUCCESS
     } catch (err) {
-      this.logger.error('Span export failed', { error: err, spanCount: spans.length })
+      getLogger().error('Span export failed', { error: err, spanCount: spans.length })
       resultCallback({ code: 1, error: err instanceof Error ? err : new Error(String(err)) })
     }
   }

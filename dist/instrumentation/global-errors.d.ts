@@ -10,8 +10,8 @@
  */
 export declare function setupGlobalErrorHandlers(): void;
 /**
- * Reset registration state — for testing only.
- * @internal
+ * Remove all SDK global error handlers and reset state.
+ * Called during SDK shutdown to prevent listener leaks across reinit cycles.
  */
 export declare function resetGlobalErrorHandlers(): void;
 //# sourceMappingURL=global-errors.d.ts.map

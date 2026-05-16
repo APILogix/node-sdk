@@ -15,6 +15,7 @@ import { DEFAULT_BATCH_SIZE, DEFAULT_FLUSH_INTERVAL_MS } from '../constants/defa
 import { getLogger, type Logger } from '../utils/logger.js'
 import { CircuitBreaker } from './circuit-breaker.js'
 import { TokenBucketRateLimiter } from './rate-limit.js'
+import { MemoryPressureMonitor } from '../utils/backpressure.js'
 
 // ─── State ──────────────────────────────────────────────────────────────────
 
@@ -39,6 +40,12 @@ const rateLimiter = new TokenBucketRateLimiter({
   refillRate: 2,     // Refill 2 tokens per second
 })
 
+const memoryMonitor = new MemoryPressureMonitor({
+  elevatedThreshold: 0.7,
+  criticalThreshold: 0.9,
+  pollIntervalMs: 5000,
+})
+
 // ─── Public API ─────────────────────────────────────────────────────────────
 
 export interface BatcherOptions {
@@ -56,6 +63,9 @@ export function startBatcher(options?: BatcherOptions): void {
   isRunning = true
 
   if (timer) return
+
+  // Start memory pressure monitoring
+  memoryMonitor.start()
 
   // Self-rescheduling timer — prevents overlapping ticks
   scheduleNextTick()
@@ -77,11 +87,12 @@ export async function flush(): Promise<void> {
       circuitBreaker.recordSuccess()
     } catch (err) {
       circuitBreaker.recordFailure()
-      eventQueue.drop(events.length)
-      logger.error('Flush failed; dropping events after retry budget exhausted', {
+      // Re-queue events instead of permanently dropping them
+      eventQueue.requeueFront(events)
+      logger.error('Flush failed; events re-queued for next attempt', {
         error: err,
         eventCount: events.length,
-        deadLetterCount: eventQueue.getDeadLetterCount(),
+        queueSize: eventQueue.size(),
         circuitState: circuitBreaker.getState(),
       })
       throw err
@@ -95,6 +106,12 @@ export function stopBatcher(): void {
     clearTimeout(timer)
     timer = null
   }
+  // Stop memory pressure monitoring
+  memoryMonitor.stop()
+  // Reset all stateful subsystems to prevent stale state on reinit
+  inFlightCount = 0
+  circuitBreaker.reset()
+  rateLimiter.reset()
   logger.debug('Batcher stopped')
 }
 
@@ -114,7 +131,12 @@ function scheduleNextTick(): void {
   if (!isRunning) return
 
   timer = setTimeout(async () => {
-    await tick()
+    try {
+      await tick()
+    } catch (err) {
+      // Prevent unhandled rejection from silently killing the batcher
+      logger.error('Batch tick failed unexpectedly', { error: err })
+    }
     scheduleNextTick()
   }, flushIntervalMs)
 
@@ -125,6 +147,17 @@ function scheduleNextTick(): void {
 async function tick(): Promise<void> {
   // Guard: skip if nothing to send
   if (eventQueue.size() === 0) return
+
+  // Guard: memory pressure — degrade gracefully under heap pressure
+  const pressure = memoryMonitor.getState()
+  if (pressure.level === 'critical') {
+    logger.warn('Batch tick skipped — critical memory pressure', {
+      heapUsedMb: pressure.heapUsedMb,
+      heapUtilization: pressure.heapUtilization.toFixed(2),
+      queueSize: eventQueue.size(),
+    })
+    return
+  }
 
   // Guard: circuit breaker is open — buffer, don't send
   if (!circuitBreaker.canExecute()) {
@@ -169,12 +202,13 @@ async function tick(): Promise<void> {
     })
   } catch (err) {
     circuitBreaker.recordFailure()
-    eventQueue.drop(events.length)
+    // Re-queue events instead of permanently dropping them
+    eventQueue.requeueFront(events)
 
-    logger.error('Batch send failed; dropping events after retry budget exhausted', {
+    logger.error('Batch send failed; events re-queued for next attempt', {
       error: err,
       eventCount: events.length,
-      deadLetterCount: eventQueue.getDeadLetterCount(),
+      queueSize: eventQueue.size(),
       circuitState: circuitBreaker.getState(),
     })
   } finally {

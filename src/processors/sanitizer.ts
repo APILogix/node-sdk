@@ -17,20 +17,26 @@ const DEFAULT_SENSITIVE_KEYS = /(?:password|passwd|secret|token|api[-_]?key|api[
 
 // ─── PII Pattern Detection ──────────────────────────────────────────────────
 
-const PII_PATTERNS: ReadonlyArray<{ pattern: RegExp; replacement: string }> = [
-  // Email addresses
-  { pattern: /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, replacement: '[email]' },
-  // Credit card numbers (basic patterns)
-  { pattern: /\b(?:\d{4}[-\s]?){3}\d{4}\b/g, replacement: '[card]' },
-  // SSN-like patterns
-  { pattern: /\b\d{3}-\d{2}-\d{4}\b/g, replacement: '[ssn]' },
-  // Phone numbers (basic US pattern)
-  { pattern: /\b(?:\+1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/g, replacement: '[phone]' },
-  // Bearer tokens in strings
-  { pattern: /Bearer\s+[A-Za-z0-9._~+/=-]+/g, replacement: 'Bearer [REDACTED]' },
-  // Authorization params in URLs
-  { pattern: /(api[-_]?key|token|authorization|password|secret)=([^&\s]+)/gi, replacement: '$1=[REDACTED]' },
-]
+/**
+ * Factory for PII patterns — returns fresh regex instances to avoid
+ * cross-call state leaks from global regex lastIndex.
+ */
+function createPiiPatterns(): ReadonlyArray<{ pattern: RegExp; replacement: string }> {
+  return [
+    // Email addresses
+    { pattern: /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, replacement: '[email]' },
+    // Credit card numbers (basic patterns)
+    { pattern: /\b(?:\d{4}[-\s]?){3}\d{4}\b/g, replacement: '[card]' },
+    // SSN-like patterns
+    { pattern: /\b\d{3}-\d{2}-\d{4}\b/g, replacement: '[ssn]' },
+    // Phone numbers (basic US pattern)
+    { pattern: /\b(?:\+1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/g, replacement: '[phone]' },
+    // Bearer tokens in strings
+    { pattern: /Bearer\s+[A-Za-z0-9._~+/=-]+/g, replacement: 'Bearer [REDACTED]' },
+    // Authorization params in URLs
+    { pattern: /(api[-_]?key|token|authorization|password|secret)=([^&\s]+)/gi, replacement: '$1=[REDACTED]' },
+  ]
+}
 
 const REDACTED = '[REDACTED]'
 const MAX_SANITIZE_DEPTH = 10
@@ -95,9 +101,7 @@ function sanitizeValue(value: unknown, depth: number): unknown {
 
 function sanitizeString(value: string): string {
   let sanitized = value
-  for (const { pattern, replacement } of PII_PATTERNS) {
-    // Reset regex lastIndex for global patterns
-    pattern.lastIndex = 0
+  for (const { pattern, replacement } of createPiiPatterns()) {
     sanitized = sanitized.replace(pattern, replacement)
   }
   return sanitized

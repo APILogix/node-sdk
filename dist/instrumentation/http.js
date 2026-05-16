@@ -18,6 +18,7 @@ import { startSpan } from '../tracing/tracer.js';
 import { injectTraceContext } from '../tracing/context-propagation.js';
 import { addBreadcrumb, getRequestContext } from '../core/context.js';
 import { getLogger } from '../utils/logger.js';
+import { client } from '../core/client.js';
 let instrumented = false;
 /**
  * Patch Node.js http/https modules to automatically trace outbound requests.
@@ -39,6 +40,11 @@ function patchModule(mod, scheme) {
         const startTime = Date.now();
         // Extract URL info from arguments
         const urlInfo = extractUrlInfo(args, scheme);
+        // Self-request guard: skip instrumentation for SDK's own ingestion calls
+        // to prevent recursive spans that inflate trace data
+        if (client.initialized && isSdkInternalRequest(urlInfo.fullUrl)) {
+            return originalRequest.apply(mod, args);
+        }
         const spanName = `HTTP ${urlInfo.method} ${urlInfo.hostname}${urlInfo.path}`;
         // Start a trace span for this outbound request
         const span = startSpan(spanName, {
@@ -179,6 +185,26 @@ function extractUrlInfo(args, scheme) {
         // URL parsing failure — use defaults
     }
     return { method, hostname, path, fullUrl };
+}
+/**
+ * Check if a URL is the SDK's own ingestion endpoint — used to skip
+ * self-instrumentation and prevent recursive infinite spans.
+ */
+function isSdkInternalRequest(url) {
+    try {
+        if (!client.initialized)
+            return false;
+        const ingestUrl = client.config.ingestUrl;
+        if (!ingestUrl)
+            return false;
+        // Compare origin + pathname to avoid false negatives from query params
+        const target = new URL(url);
+        const ingest = new URL(ingestUrl);
+        return target.origin === ingest.origin && target.pathname === ingest.pathname;
+    }
+    catch {
+        return false;
+    }
 }
 /**
  * Reset instrumentation state — for testing.

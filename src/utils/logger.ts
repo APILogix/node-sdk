@@ -123,7 +123,6 @@ function formatContext(context?: Record<string, unknown>): string {
 
 export const consoleLogger: Logger = {
   debug(message: string, context?: Record<string, unknown>): void {
-    if (!debugMode && !severityMeetsThreshold(Severity.Debug, minimumLogLevel)) return
     if (!severityMeetsThreshold(Severity.Debug, minimumLogLevel)) return
     console.log(`[${logPrefix}] DEBUG: ${message}${formatContext(context)}`)
   },

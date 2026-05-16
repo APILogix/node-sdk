@@ -1,4 +1,8 @@
-export const DEFAULT_BASE_URL = process.env.SDK_BASE_URL || "http://192.168.112.1:3000/api";
+/**
+ * Base URL must be provided via SDK_BASE_URL env var or `baseUrl` in SDK config.
+ * Empty string signals "not configured" — init will throw a clear error.
+ */
+export const DEFAULT_BASE_URL = process.env.SDK_BASE_URL || "";
 export const DEFAULT_TIMEOUT_MS = 5000;
 export const DEFAULT_BATCH_SIZE = 50;
 export const DEFAULT_FLUSH_INTERVAL_MS = 5000;

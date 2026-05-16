@@ -116,6 +116,12 @@ function isRetryable(error: Error) {
     return status === 408 || status === 429 || status >= 500
 }
 
+/**
+ * Split events into payload chunks that fit within maxPayloadBytes.
+ *
+ * Uses incremental byte tracking — O(n) instead of re-serializing the
+ * entire growing batch on every event (which was O(n²)).
+ */
 function createPayloads(events: Event[], apiKey: string, maxPayloadBytes: number) {
     if (!Number.isInteger(maxPayloadBytes) || maxPayloadBytes <= 0) {
         throw new SDKError('maxPayloadBytes must be a positive integer', 'INVALID_MAX_PAYLOAD_BYTES', {
@@ -123,31 +129,35 @@ function createPayloads(events: Event[], apiKey: string, maxPayloadBytes: number
         })
     }
 
+    // Pre-compute the wrapper overhead: {"apiKey":"...","events":[]}
+    const wrapperOverhead = safeJsonByteLength(createIngestPayload(apiKey, []), { maxPayloadBytes })
+
     const payloads: Array<{ apiKey: string, events: Event[] }> = []
     let current: Event[] = []
+    let currentBatchBytes = wrapperOverhead
 
     for (const event of events) {
-        const singlePayload = createIngestPayload(apiKey, [event])
-        const singlePayloadBytes = safeJsonByteLength(singlePayload, { maxPayloadBytes })
+        const eventBytes = safeJsonByteLength(event, { maxPayloadBytes })
+        // Account for JSON array separator (comma between events)
+        const separatorBytes = current.length > 0 ? 1 : 0
 
-        if (singlePayloadBytes > maxPayloadBytes) {
+        // Guard: single event exceeds max
+        if (wrapperOverhead + eventBytes > maxPayloadBytes) {
             throw new SDKError('Single event exceeds configured payload maximum', 'EVENT_TOO_LARGE', {
-                payloadBytes: singlePayloadBytes,
+                payloadBytes: wrapperOverhead + eventBytes,
                 maxPayloadBytes
             })
         }
 
-        const candidate = createIngestPayload(apiKey, [...current, event])
-        const candidateBytes = safeJsonByteLength(candidate, {
-            maxPayloadBytes,
-            currentBatchSize: current.length
-        })
+        const candidateBytes = currentBatchBytes + eventBytes + separatorBytes
 
         if (current.length > 0 && candidateBytes > maxPayloadBytes) {
             payloads.push(createIngestPayload(apiKey, current))
             current = [event]
+            currentBatchBytes = wrapperOverhead + eventBytes
         } else {
             current.push(event)
+            currentBatchBytes = candidateBytes
         }
     }
 

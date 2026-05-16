@@ -93,34 +93,43 @@ function isRetryable(error) {
     const status = Number(error.context.statusCode ?? error.context.status);
     return status === 408 || status === 429 || status >= 500;
 }
+/**
+ * Split events into payload chunks that fit within maxPayloadBytes.
+ *
+ * Uses incremental byte tracking — O(n) instead of re-serializing the
+ * entire growing batch on every event (which was O(n²)).
+ */
 function createPayloads(events, apiKey, maxPayloadBytes) {
     if (!Number.isInteger(maxPayloadBytes) || maxPayloadBytes <= 0) {
         throw new SDKError('maxPayloadBytes must be a positive integer', 'INVALID_MAX_PAYLOAD_BYTES', {
             maxPayloadBytes
         });
     }
+    // Pre-compute the wrapper overhead: {"apiKey":"...","events":[]}
+    const wrapperOverhead = safeJsonByteLength(createIngestPayload(apiKey, []), { maxPayloadBytes });
     const payloads = [];
     let current = [];
+    let currentBatchBytes = wrapperOverhead;
     for (const event of events) {
-        const singlePayload = createIngestPayload(apiKey, [event]);
-        const singlePayloadBytes = safeJsonByteLength(singlePayload, { maxPayloadBytes });
-        if (singlePayloadBytes > maxPayloadBytes) {
+        const eventBytes = safeJsonByteLength(event, { maxPayloadBytes });
+        // Account for JSON array separator (comma between events)
+        const separatorBytes = current.length > 0 ? 1 : 0;
+        // Guard: single event exceeds max
+        if (wrapperOverhead + eventBytes > maxPayloadBytes) {
             throw new SDKError('Single event exceeds configured payload maximum', 'EVENT_TOO_LARGE', {
-                payloadBytes: singlePayloadBytes,
+                payloadBytes: wrapperOverhead + eventBytes,
                 maxPayloadBytes
             });
         }
-        const candidate = createIngestPayload(apiKey, [...current, event]);
-        const candidateBytes = safeJsonByteLength(candidate, {
-            maxPayloadBytes,
-            currentBatchSize: current.length
-        });
+        const candidateBytes = currentBatchBytes + eventBytes + separatorBytes;
         if (current.length > 0 && candidateBytes > maxPayloadBytes) {
             payloads.push(createIngestPayload(apiKey, current));
             current = [event];
+            currentBatchBytes = wrapperOverhead + eventBytes;
         }
         else {
             current.push(event);
+            currentBatchBytes = candidateBytes;
         }
     }
     if (current.length > 0) {

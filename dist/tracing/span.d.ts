@@ -24,7 +24,6 @@ export interface SpanOptions {
  */
 export declare class PulseSpan {
     private readonly otelSpan;
-    private readonly logger;
     private ended;
     constructor(otelSpan: OTelSpan);
     /** Get the span ID. */

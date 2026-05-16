@@ -63,7 +63,10 @@ export function fastifyPulsePlugin(fastify, opts, done) {
         reqRecord.__pulseSpan = span;
         reqRecord.__pulseStore = store;
         reqRecord.__pulseStartTime = Date.now();
-        next();
+        // Activate the context so getRequestContext() works in route handlers
+        withContext(store, () => {
+            next();
+        });
     });
     fastify.addHook('onResponse', (request, reply, hookDone) => {
         const req = request;

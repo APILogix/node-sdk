@@ -1,3 +1,7 @@
+/**
+ * Base URL must be provided via SDK_BASE_URL env var or `baseUrl` in SDK config.
+ * Empty string signals "not configured" — init will throw a clear error.
+ */
 export declare const DEFAULT_BASE_URL: string;
 export declare const DEFAULT_TIMEOUT_MS = 5000;
 export declare const DEFAULT_BATCH_SIZE = 50;

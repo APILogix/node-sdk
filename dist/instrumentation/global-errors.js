@@ -12,11 +12,14 @@ import { captureError } from "../capture/captureError.js";
 import { toError } from "../core/errors.js";
 import { getLogger } from "../utils/logger.js";
 let registered = false;
+// Store handler references for proper cleanup
+let uncaughtHandler = null;
+let rejectionHandler = null;
 export function setupGlobalErrorHandlers() {
     if (registered)
         return;
     registered = true;
-    process.on("uncaughtException", (err) => {
+    uncaughtHandler = (err) => {
         const logger = getLogger();
         try {
             captureError(err, { mechanism: "uncaughtException" });
@@ -37,21 +40,31 @@ export function setupGlobalErrorHandlers() {
             .catch(() => {
             // If flush fails (e.g., SDK not initialized), swallow silently
         });
-    });
-    process.on("unhandledRejection", (reason) => {
+    };
+    rejectionHandler = (reason) => {
         try {
             captureError(toError(reason), { mechanism: "unhandledRejection" });
         }
         catch {
             // Isolated — never crash the host
         }
-    });
+    };
+    process.on("uncaughtException", uncaughtHandler);
+    process.on("unhandledRejection", rejectionHandler);
 }
 /**
- * Reset registration state — for testing only.
- * @internal
+ * Remove all SDK global error handlers and reset state.
+ * Called during SDK shutdown to prevent listener leaks across reinit cycles.
  */
 export function resetGlobalErrorHandlers() {
+    if (uncaughtHandler) {
+        process.removeListener("uncaughtException", uncaughtHandler);
+        uncaughtHandler = null;
+    }
+    if (rejectionHandler) {
+        process.removeListener("unhandledRejection", rejectionHandler);
+        rejectionHandler = null;
+    }
     registered = false;
 }
 //# sourceMappingURL=global-errors.js.map

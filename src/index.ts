@@ -93,3 +93,50 @@ export type { TransportResult, IngestPayload, TransportHealth, TransportAdapter 
 // ─── Plan Gating ────────────────────────────────────────────────────────────
 
 export { getPlanDefaults, isFeatureAllowed } from './core/plan-gate.js'
+
+// ─── Diagnostics ────────────────────────────────────────────────────────────
+
+import { getCircuitState } from './transport/batcher.js'
+import { eventQueue } from './transport/queue.js'
+import { getSessionManager } from './session/session-manager.js'
+import { MemoryPressureMonitor } from './utils/backpressure.js'
+import { client } from './core/client.js'
+
+/**
+ * Get a comprehensive SDK health snapshot for operational dashboards.
+ * Safe to call at any time — returns degraded info if SDK isn't initialized.
+ */
+export function getSDKHealth(): {
+  initialized: boolean
+  circuitState: string
+  queueSize: number
+  queueDropped: number
+  queueDeadLetter: number
+  memory: { level: string; heapUsedMb: number; heapUtilization: number }
+  session: { totalSessions: number; crashFreeRate: number; currentSessionId: string | null }
+  pluginCount: number
+} {
+  const monitor = new MemoryPressureMonitor()
+  const memState = monitor.getState()
+  const sessionMgr = getSessionManager()
+  const sessionHealth = sessionMgr.getSessionHealth()
+
+  return {
+    initialized: client.initialized,
+    circuitState: getCircuitState(),
+    queueSize: eventQueue.size(),
+    queueDropped: eventQueue.getDroppedCount(),
+    queueDeadLetter: eventQueue.getDeadLetterCount(),
+    memory: {
+      level: memState.level,
+      heapUsedMb: Math.round(memState.heapUsedMb * 100) / 100,
+      heapUtilization: Math.round(memState.heapUtilization * 1000) / 1000,
+    },
+    session: {
+      totalSessions: sessionHealth.totalSessions,
+      crashFreeRate: sessionHealth.crashFreeRate,
+      currentSessionId: sessionHealth.currentSessionId,
+    },
+    pluginCount: client.initialized ? client.plugins.length : 0,
+  }
+}

@@ -139,8 +139,13 @@ export class SlidingWindowRateLimiter implements RateLimiter {
 
   private pruneExpired(now: number): void {
     const cutoff = now - this.windowMs
-    while (this.timestamps.length > 0 && (this.timestamps[0] ?? now) < cutoff) {
-      this.timestamps.shift()
+    // Find first non-expired index and splice in one operation — O(n) vs O(n²) shift loop
+    let firstValid = 0
+    while (firstValid < this.timestamps.length && (this.timestamps[firstValid] ?? now) < cutoff) {
+      firstValid++
+    }
+    if (firstValid > 0) {
+      this.timestamps.splice(0, firstValid)
     }
   }
 }

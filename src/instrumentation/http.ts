@@ -19,6 +19,7 @@ import { startSpan } from '../tracing/tracer.js'
 import { injectTraceContext } from '../tracing/context-propagation.js'
 import { addBreadcrumb, getRequestContext } from '../core/context.js'
 import { getLogger } from '../utils/logger.js'
+import { client } from '../core/client.js'
 
 let instrumented = false
 
@@ -50,6 +51,13 @@ function patchModule(mod: typeof http | typeof https, scheme: string): void {
 
     // Extract URL info from arguments
     const urlInfo = extractUrlInfo(args, scheme)
+
+    // Self-request guard: skip instrumentation for SDK's own ingestion calls
+    // to prevent recursive spans that inflate trace data
+    if (client.initialized && isSdkInternalRequest(urlInfo.fullUrl)) {
+      return (originalRequest as any).apply(mod, args) as http.ClientRequest
+    }
+
     const spanName = `HTTP ${urlInfo.method} ${urlInfo.hostname}${urlInfo.path}`
 
     // Start a trace span for this outbound request
@@ -210,6 +218,24 @@ function extractUrlInfo(args: unknown[], scheme: string): UrlInfo {
   }
 
   return { method, hostname, path, fullUrl }
+}
+
+/**
+ * Check if a URL is the SDK's own ingestion endpoint — used to skip
+ * self-instrumentation and prevent recursive infinite spans.
+ */
+function isSdkInternalRequest(url: string): boolean {
+  try {
+    if (!client.initialized) return false
+    const ingestUrl = client.config.ingestUrl
+    if (!ingestUrl) return false
+    // Compare origin + pathname to avoid false negatives from query params
+    const target = new URL(url)
+    const ingest = new URL(ingestUrl)
+    return target.origin === ingest.origin && target.pathname === ingest.pathname
+  } catch {
+    return false
+  }
 }
 
 /**

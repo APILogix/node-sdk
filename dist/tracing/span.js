@@ -16,7 +16,6 @@ import { getLogger } from '../utils/logger.js';
  */
 export class PulseSpan {
     otelSpan;
-    logger = getLogger();
     ended = false;
     constructor(otelSpan) {
         this.otelSpan = otelSpan;
@@ -41,7 +40,7 @@ export class PulseSpan {
             this.otelSpan.setAttribute(key, value);
         }
         catch (err) {
-            this.logger.warn('Failed to set span attribute', { key, error: err });
+            getLogger().warn('Failed to set span attribute', { key, error: err });
         }
         return this;
     }
@@ -53,7 +52,7 @@ export class PulseSpan {
             this.otelSpan.setAttributes(attributes);
         }
         catch (err) {
-            this.logger.warn('Failed to set span attributes', { error: err });
+            getLogger().warn('Failed to set span attributes', { error: err });
         }
         return this;
     }
@@ -70,7 +69,7 @@ export class PulseSpan {
             }
         }
         catch (err) {
-            this.logger.warn('Failed to add span event', { name, error: err });
+            getLogger().warn('Failed to add span event', { name, error: err });
         }
         return this;
     }
@@ -89,7 +88,7 @@ export class PulseSpan {
             });
         }
         catch (err) {
-            this.logger.warn('Failed to record span error', { error: err });
+            getLogger().warn('Failed to record span error', { error: err });
         }
         return this;
     }
@@ -106,7 +105,7 @@ export class PulseSpan {
             this.otelSpan.setStatus(message ? { code, message } : { code });
         }
         catch (err) {
-            this.logger.warn('Failed to set span status', { error: err });
+            getLogger().warn('Failed to set span status', { error: err });
         }
         return this;
     }
@@ -119,7 +118,7 @@ export class PulseSpan {
             this.otelSpan.end(endTime);
         }
         catch (err) {
-            this.logger.warn('Failed to end span', { error: err });
+            getLogger().warn('Failed to end span', { error: err });
         }
     }
     /** Get the underlying OTel span (for advanced use cases). */

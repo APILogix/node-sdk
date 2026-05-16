@@ -37,7 +37,6 @@ let initialized = false;
  * This ensures spans get sanitized, plugin-processed, and batched.
  */
 class PipelineSpanExporter {
-    logger = getLogger();
     export(spans, resultCallback) {
         try {
             for (const span of spans) {
@@ -47,7 +46,7 @@ class PipelineSpanExporter {
             resultCallback({ code: 0 }); // SUCCESS
         }
         catch (err) {
-            this.logger.error('Span export failed', { error: err, spanCount: spans.length });
+            getLogger().error('Span export failed', { error: err, spanCount: spans.length });
             resultCallback({ code: 1, error: err instanceof Error ? err : new Error(String(err)) });
         }
     }
