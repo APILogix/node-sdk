@@ -146,10 +146,17 @@ export function processEvent(rawEvent: SDKEvent | Event): boolean {
     }
 
     // Step 11: Sampling (for request/performance events)
+    // Uses trace-consistent deterministic sampling: all events in the same
+    // trace are either ALL kept or ALL dropped, preventing broken traces.
     if (event.type === 'request') {
-      if (Math.random() > config.samplingRate) {
+      const traceId = 'traceId' in event && typeof event.traceId === 'string'
+        ? event.traceId
+        : undefined
+
+      if (!shouldSample(config.samplingRate, traceId)) {
         logger.debug('Request event dropped by sampling', {
           samplingRate: config.samplingRate,
+          traceId,
         })
         return false
       }
@@ -230,4 +237,37 @@ function enrichFromContext(event: SDKEvent): SDKEvent {
   if (Object.keys(enrichment).length === 0) return event
 
   return { ...event, ...enrichment } as SDKEvent
+}
+
+/**
+ * Trace-consistent sampling — produces a deterministic sample decision
+ * for a given traceId so all events in the same trace are treated identically.
+ *
+ * When no traceId is available, falls back to random sampling.
+ */
+function shouldSample(rate: number, traceId?: string): boolean {
+  if (rate >= 1) return true
+  if (rate <= 0) return false
+
+  if (traceId) {
+    // Deterministic hash of traceId → normalized float in [0, 1)
+    const hash = deterministicHash(traceId)
+    return hash < rate
+  }
+
+  // Fallback: random sampling for events without trace context
+  return Math.random() < rate
+}
+
+/**
+ * FNV-1a 32-bit hash → normalized to [0, 1).
+ * Fast, non-cryptographic, good distribution for sampling decisions.
+ */
+function deterministicHash(input: string): number {
+  let hash = 0x811c9dc5 // FNV offset basis
+  for (let i = 0; i < input.length; i++) {
+    hash ^= input.charCodeAt(i)
+    hash = (hash * 0x01000193) >>> 0 // FNV prime, keep as uint32
+  }
+  return (hash >>> 0) / 0xffffffff
 }

@@ -78,7 +78,18 @@ export function startBatcher(options?: BatcherOptions): void {
 }
 
 export async function flush(): Promise<void> {
+  const MAX_FLUSH_ATTEMPTS = 3
+  let attempts = 0
+
   while (eventQueue.size() > 0) {
+    if (attempts >= MAX_FLUSH_ATTEMPTS) {
+      logger.warn('Flush max attempts reached — remaining events left in queue for next tick', {
+        remainingEvents: eventQueue.size(),
+        maxFlushAttempts: MAX_FLUSH_ATTEMPTS,
+      })
+      break
+    }
+
     const events = eventQueue.drain(batchSize)
     if (events.length === 0) break
 
@@ -94,8 +105,9 @@ export async function flush(): Promise<void> {
         eventCount: events.length,
         queueSize: eventQueue.size(),
         circuitState: circuitBreaker.getState(),
+        flushAttempt: attempts + 1,
       })
-      throw err
+      attempts += 1
     }
   }
 }

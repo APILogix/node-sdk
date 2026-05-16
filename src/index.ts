@@ -61,7 +61,7 @@ export { addBreadcrumb, getRequestContext, getTraceId, getSpanId } from './core/
 
 export { startSpan, withSpan, withSpanSync, getActiveSpan, flushTracer } from './tracing/tracer.js'
 export { extractTraceContext, injectTraceContext, parseTraceparent, createTraceparent } from './tracing/context-propagation.js'
-export type { SpanStatus, SpanOptions } from './tracing/span.js'
+export type { SpanStatus, SpanOptions, SpanLink } from './tracing/span.js'
 export { PulseSpan } from './tracing/span.js'
 
 // ─── Session ────────────────────────────────────────────────────────────────
@@ -76,8 +76,8 @@ export { instrumentHttpClient } from './instrumentation/http.js'
 
 // ─── Logger ─────────────────────────────────────────────────────────────────
 
-export type { Logger } from './utils/logger.js'
-export { setLogger, getLogger, setDebugMode, setLogLevel } from './utils/logger.js'
+export type { Logger, LogFormat } from './utils/logger.js'
+export { setLogger, getLogger, setDebugMode, setLogLevel, setLogFormat, getLogFormat, jsonLogger } from './utils/logger.js'
 
 // ─── Types (for consumers and plugin authors) ──────────────────────────────
 
@@ -93,6 +93,20 @@ export type { TransportResult, IngestPayload, TransportHealth, TransportAdapter 
 // ─── Plan Gating ────────────────────────────────────────────────────────────
 
 export { getPlanDefaults, isFeatureAllowed } from './core/plan-gate.js'
+
+// ─── Event Loop Monitoring ──────────────────────────────────────────────────────
+
+export { EventLoopLagMonitor } from './utils/event-loop-lag.js'
+export type { EventLoopLagStats, EventLoopLagOptions } from './utils/event-loop-lag.js'
+
+// ─── Resource Detection ───────────────────────────────────────────────────────
+
+export { detectResources } from './utils/resource-detector.js'
+export type { ResourceAttributes } from './utils/resource-detector.js'
+
+// ─── Transport Internals (advanced) ──────────────────────────────────────────
+
+export { RetryBudget, globalRetryBudget } from './transport/retry.js'
 
 // ─── Diagnostics ────────────────────────────────────────────────────────────
 

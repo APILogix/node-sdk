@@ -3,7 +3,7 @@ import { randomUUID } from 'crypto'
 import { client } from '../core/client.js'
 import { SDKError } from '../core/errors.js'
 import { postJson } from './http.js'
-import { retry } from './retry.js'
+import { retry, globalRetryBudget } from './retry.js'
 import type { ResolvedSDKConfig } from '../types/config.js'
 import type { Event } from '../types/event.js'
 import { getLogger } from '../utils/logger.js'
@@ -47,6 +47,7 @@ export async function sendEvents(events: Event[]) {
             await retry(() => postJson<unknown>(config.ingestUrl, payload, {}, timeoutMs, { logFailures: false, compression: config.compression }), {
                 retries: config.maxRetries,
                 retryable: isRetryable,
+                budget: globalRetryBudget,
                 onRetry: ({ error, attempt, nextAttempt, maxAttempts, nextRetryDelayMs }) => {
                     if (attempt === 1 || nextAttempt === maxAttempts) {
                         logger.warn('Ingest payload send failed; retrying', {
@@ -59,6 +60,7 @@ export async function sendEvents(events: Event[]) {
                             nextRetryDelayMs,
                             eventCount: payload.events.length,
                             payloadIndex: sentPayloads + 1,
+                            retryBudget: globalRetryBudget.getState(),
                         })
                     }
                 },

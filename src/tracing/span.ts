@@ -11,9 +11,12 @@
 
 import {
   type Span as OTelSpan,
+  type SpanContext,
   SpanStatusCode,
   type Attributes,
   type TimeInput,
+  type Link,
+  trace,
 } from '@opentelemetry/api'
 import { getLogger } from '../utils/logger.js'
 
@@ -26,6 +29,21 @@ export interface SpanOptions {
   parentSpanId?: string
   /** ISO timestamp to use as span start time. */
   startTime?: TimeInput
+  /** Span links — for modeling batch processing, fan-out, or queue consumer patterns. */
+  links?: SpanLink[]
+}
+
+/**
+ * A link to another span — used to model causal relationships that aren't
+ * parent-child (e.g., batch consumer linking to multiple producer spans).
+ */
+export interface SpanLink {
+  /** Trace ID of the linked span. */
+  traceId: string
+  /** Span ID of the linked span. */
+  spanId: string
+  /** Optional attributes describing the link relationship. */
+  attributes?: Attributes
 }
 
 /**
@@ -138,8 +156,62 @@ export class PulseSpan {
     }
   }
 
+  /**
+   * Add a link to another span — models non-parent-child causal relationships.
+   *
+   * Use cases:
+   * - Batch consumer linking to multiple producer spans
+   * - Fan-out patterns where one request triggers multiple downstream traces
+   * - Queue consumer linking to the producer trace
+   *
+   * @param link - The span link with traceId, spanId, and optional attributes
+   */
+  addLink(link: SpanLink): this {
+    if (this.ended) return this
+    try {
+      // OTel SDK doesn't have a direct addLink method after creation,
+      // so we record the link as a span event with structured attributes
+      const linkAttributes: Attributes = {
+        'link.traceId': link.traceId,
+        'link.spanId': link.spanId,
+        'link.type': 'causal',
+      }
+      if (link.attributes) {
+        for (const [key, value] of Object.entries(link.attributes)) {
+          if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+            linkAttributes[`link.${key}`] = value
+          }
+        }
+      }
+      this.otelSpan.addEvent('span.link', linkAttributes)
+    } catch (err) {
+      getLogger().warn('Failed to add span link', { error: err })
+    }
+    return this
+  }
+
   /** Get the underlying OTel span (for advanced use cases). */
   getOTelSpan(): OTelSpan {
     return this.otelSpan
+  }
+
+  /**
+   * Convert SpanLink[] to OTel Link[] format for use at span creation time.
+   * @internal
+   */
+  static toOTelLinks(links: SpanLink[]): Link[] {
+    return links.map(link => {
+      const otelLink: Link = {
+        context: {
+          traceId: link.traceId,
+          spanId: link.spanId,
+          traceFlags: 1, // sampled
+        } as SpanContext,
+      }
+      if (link.attributes) {
+        otelLink.attributes = link.attributes
+      }
+      return otelLink
+    })
   }
 }

@@ -31,6 +31,7 @@ import { sleep } from '../utils/time.js'
 import { initTracer } from '../tracing/tracer.js'
 import { getSessionManager } from '../session/session-manager.js'
 import { resolvePlanFeatures, clampToPlan, validatePluginCount, getOfflineFallbackPlan } from './plan-gate.js'
+import { detectResources } from '../utils/resource-detector.js'
 
 const INIT_MAX_ATTEMPTS = 5
 const INIT_BASE_RETRY_DELAY_MS = 500
@@ -207,6 +208,9 @@ async function initialize(options: SDKInitOptions): Promise<Readonly<RemoteConfi
         getSessionManager()
       }
 
+      // Detect runtime resources (host, container, cloud metadata)
+      const resources = detectResources(client.metadata.sdkVersion)
+
       logger.info('SDK initialized successfully', {
         plan: resolvedConfig.plan,
         service: resolvedConfig.service,
@@ -218,6 +222,13 @@ async function initialize(options: SDKInitOptions): Promise<Readonly<RemoteConfi
           performance: resolvedConfig.enablePerformance,
           tracing: resolvedConfig.enableTracing,
           metrics: resolvedConfig.enableMetrics,
+        },
+        resources: {
+          hostname: resources['host.name'],
+          runtime: resources['process.runtime.version'],
+          os: resources['os.platform'],
+          containerId: resources['container.id'],
+          cloud: resources['cloud.provider'],
         },
       })
 
