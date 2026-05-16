@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pulse SDK - Backend Configuration Guide</title>
+    <style>
+        :root {
+            --bg: #0d1117;
+            --bg-surface: #161b22;
+            --bg-hover: #21262d;
+            --text-main: #c9d1d9;
+            --text-muted: #8b949e;
+            --primary: #58a6ff;
+            --border: #30363d;
+            --success: #3fb950;
+            --warning: #d29922;
+            --string: #a5d6ff;
+            --keyword: #ff7b72;
+            --number: #79c0ff;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+            background-color: var(--bg);
+            color: var(--text-main);
+            line-height: 1.6;
+            margin: 0;
+            padding: 40px;
+        }
+        .container { max-width: 900px; margin: 0 auto; }
+        h1, h2, h3 { color: #ffffff; border-bottom: 1px solid var(--border); padding-bottom: 0.3em; margin-top: 2em; }
+        h1 { margin-top: 0; font-size: 2.5em; border-bottom: none; }
+        
+        pre {
+            background-color: var(--bg-surface);
+            border: 1px solid var(--border);
+            padding: 16px;
+            border-radius: 8px;
+            overflow-x: auto;
+            font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+            font-size: 0.9em;
+            color: var(--text-main);
+        }
+        .string { color: var(--string); }
+        .keyword { color: var(--keyword); }
+        .number { color: var(--number); }
+        
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { padding: 12px; text-align: left; border-bottom: 1px solid var(--border); }
+        th { background-color: var(--bg-surface); color: var(--text-muted); font-weight: 600; }
+        code { background: var(--bg-surface); padding: 2px 6px; border-radius: 4px; font-family: monospace; color: var(--string);}
+        
+        .alert {
+            padding: 16px;
+            border-left: 4px solid var(--warning);
+            background-color: rgba(210, 153, 34, 0.1);
+            margin: 20px 0;
+            border-radius: 0 4px 4px 0;
+        }
+        .alert h4 { margin: 0 0 8px 0; color: var(--warning); border: none; padding: 0; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Backend Integration & Remote Config</h1>
+        <p>The Pulse SDK relies on a backend handshake during <code>init()</code> to retrieve ingestion URLs, configuration limits, and the billing Plan Tier. This document details the exact JSON payloads the backend must accept and return.</p>
+
+        <h2>1. The Initialization Request (SDK → Backend)</h2>
+        <p>When <code>createSDK()</code> is called, the SDK makes a <code>POST</code> request to the base URL (e.g. <code>https://api.pulse.dev/v1/init</code>).</p>
+        
+        <p><strong>Method:</strong> <code>POST</code></p>
+        <p><strong>Body:</strong></p>
+<pre><code>{
+  <span class="keyword">"apiKey"</span>: <span class="string">"pk_live_a1b2c3d4e5..."</span>
+}</code></pre>
+        
+        <div class="alert">
+            <h4>Security Note: Body Only</h4>
+            <p>API keys are <strong>never</strong> sent in headers like <code>x-api-key</code>. They are strictly passed in the JSON body for both initialization and event ingestion requests to prevent accidental logging by middleboxes or proxies.</p>
+        </div>
+
+        <h2>2. The Initialization Response (Backend → SDK)</h2>
+        <p>The backend must validate the API key, determine the organization's plan, and return the following JSON structure.</p>
+
+<pre><code>{
+  <span class="keyword">"success"</span>: <span class="number">true</span>,
+  <span class="keyword">"projectId"</span>: <span class="string">"proj_abc123"</span>,
+  
+  <span class="keyword">"plan"</span>: <span class="string">"pro"</span>,
+  <span class="keyword">"planFeatures"</span>: {
+    <span class="keyword">"allowTracing"</span>: <span class="number">true</span>,
+    <span class="keyword">"allowMetrics"</span>: <span class="number">false</span>,
+    <span class="keyword">"maxBreadcrumbs"</span>: <span class="number">200</span>
+  },
+  
+  <span class="keyword">"config"</span>: {
+    <span class="keyword">"samplingRate"</span>: <span class="number">1.0</span>,
+    <span class="keyword">"enableErrors"</span>: <span class="number">true</span>,
+    <span class="keyword">"enablePerformance"</span>: <span class="number">true</span>,
+    <span class="keyword">"maxRetries"</span>: <span class="number">3</span>,
+    <span class="keyword">"maxPayloadBytes"</span>: <span class="number">524288</span>
+  },
+  
+  <span class="keyword">"ingestion"</span>: {
+    <span class="keyword">"endpoint"</span>: <span class="string">"https://ingest.pulse.dev/v1/events"</span>,
+    <span class="keyword">"batchSize"</span>: <span class="number">25</span>,
+    <span class="keyword">"maxQueueSize"</span>: <span class="number">1000</span>,
+    <span class="keyword">"flushInterval"</span>: <span class="number">1000</span>
+  }
+}</code></pre>
+
+        <h2>3. Field Reference</h2>
+
+        <h3>Plan Gating (<code>plan</code> and <code>planFeatures</code>)</h3>
+        <table>
+            <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+            <tr><td><code>plan</code></td><td><code>'free' | 'pro' | 'enterprise'</code></td><td>Determines hard feature limits.</td></tr>
+            <tr><td><code>planFeatures.allowTracing</code></td><td><code>boolean</code></td><td>Can the SDK start OpenTelemetry spans?</td></tr>
+            <tr><td><code>planFeatures.allowMetrics</code></td><td><code>boolean</code></td><td>Can the SDK capture histograms/counters?</td></tr>
+            <tr><td><code>planFeatures.maxBreadcrumbs</code></td><td><code>number</code></td><td>Capacity of the O(1) Ring Buffer.</td></tr>
+        </table>
+
+        <h3>SDK Config (<code>config</code>)</h3>
+        <table>
+            <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+            <tr><td><code>samplingRate</code></td><td><code>number</code></td><td>Fraction of events to send (0.0 to 1.0).</td></tr>
+            <tr><td><code>enableErrors</code></td><td><code>boolean</code></td><td>Master kill-switch for error tracking.</td></tr>
+            <tr><td><code>maxPayloadBytes</code></td><td><code>number</code></td><td>If a batch exceeds this, the SDK auto-splits it.</td></tr>
+        </table>
+
+        <h3>Ingestion Settings (<code>ingestion</code>)</h3>
+        <table>
+            <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+            <tr><td><code>endpoint</code></td><td><code>string</code></td><td>The dedicated route for sending batched telemetry.</td></tr>
+            <tr><td><code>batchSize</code></td><td><code>number</code></td><td>How many events to queue before flushing.</td></tr>
+            <tr><td><code>flushInterval</code></td><td><code>number</code></td><td>Time in ms to wait before forcing a flush.</td></tr>
+        </table>
+
+        <h2>4. Failure Handling & Retries</h2>
+        <p>If the backend returns a <code>4xx</code> or <code>5xx</code> response during initialization, the SDK implements an exponential backoff retry mechanism (max 5 attempts). If initialization permanently fails, the SDK falls back to a minimal "Free Plan" configuration and logs a structured warning.</p>
+    </div>
+</body>
+</html>

@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pulse SDK - Installation & Usage Guide</title>
+    <style>
+        :root {
+            --bg: #0d1117;
+            --bg-surface: #161b22;
+            --bg-hover: #21262d;
+            --text-main: #c9d1d9;
+            --text-muted: #8b949e;
+            --primary: #58a6ff;
+            --border: #30363d;
+            --success: #3fb950;
+            --keyword: #ff7b72;
+            --string: #a5d6ff;
+            --comment: #8b949e;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+            background-color: var(--bg);
+            color: var(--text-main);
+            line-height: 1.6;
+            margin: 0;
+            padding: 40px;
+        }
+        .container { max-width: 900px; margin: 0 auto; }
+        h1, h2, h3 { color: #ffffff; border-bottom: 1px solid var(--border); padding-bottom: 0.3em; margin-top: 2em; }
+        h1 { margin-top: 0; font-size: 2.5em; border-bottom: none; }
+        
+        pre {
+            background-color: var(--bg-surface);
+            border: 1px solid var(--border);
+            padding: 16px;
+            border-radius: 8px;
+            overflow-x: auto;
+            font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+            font-size: 0.9em;
+            color: var(--text-main);
+            line-height: 1.4;
+        }
+        .keyword { color: var(--keyword); }
+        .string { color: var(--string); }
+        .comment { color: var(--comment); font-style: italic; }
+        .func { color: #d2a8ff; }
+        
+        .setup-block {
+            background: var(--bg-surface);
+            border: 1px solid var(--border);
+            padding: 24px;
+            border-radius: 8px;
+            margin-top: 20px;
+        }
+        .setup-block h3 { margin-top: 0; border: none; color: var(--primary); }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Pulse SDK Integration Guide</h1>
+        <p>A step-by-step guide to installing and configuring the Enterprise Pulse SDK in your Node.js application.</p>
+
+        <h2>1. Installation</h2>
+        <pre><code>npm install @vikasbaplawat1/pulse-sdk</code></pre>
+
+        <h2>2. Quick Start (Zero-Config)</h2>
+        <p>The SDK operates on a <strong>Plan-Gating</strong> system. All features are enabled by default and are clamped to your billing plan remotely. Just provide your API key.</p>
+        <pre><code><span class="keyword">import</span> { <span class="func">createSDK</span> } <span class="keyword">from</span> <span class="string">'@vikasbaplawat1/pulse-sdk'</span>
+
+<span class="comment">// Must be the very first thing in your entry file</span>
+<span class="keyword">await</span> <span class="func">createSDK</span>({
+  apiKey: process.env.PULSE_API_KEY
+})</code></pre>
+
+        <h2>3. Framework Integrations</h2>
+
+        <div class="setup-block">
+            <h3>Express.js Implementation</h3>
+            <p>Using the provided middleware ensures accurate request timing, error trapping, and W3C trace context extraction.</p>
+<pre><code><span class="keyword">import</span> express <span class="keyword">from</span> <span class="string">'express'</span>
+<span class="keyword">import</span> { <span class="func">createSDK</span>, monitorMiddleware, captureError, instrumentHttpClient } <span class="keyword">from</span> <span class="string">'@vikasbaplawat1/pulse-sdk'</span>
+
+<span class="keyword">await</span> <span class="func">createSDK</span>({ apiKey: process.env.PULSE_API_KEY, service: <span class="string">'api-gateway'</span> })
+
+<span class="comment">// Enable auto-tracing for outbound HTTP requests (fetch / axios)</span>
+<span class="func">instrumentHttpClient</span>()
+
+<span class="keyword">const</span> app = <span class="func">express</span>()
+
+<span class="comment">// 1. Add monitor middleware BEFORE any routes</span>
+app.<span class="func">use</span>(monitorMiddleware)
+
+app.<span class="func">get</span>(<span class="string">'/users'</span>, (req, res) => {
+    res.<span class="func">json</span>({ ok: <span class="keyword">true</span> })
+})
+
+<span class="comment">// 2. Add error capturing middleware AFTER all routes</span>
+app.<span class="func">use</span>((err, req, res, next) => {
+    <span class="func">captureError</span>(err, { context: { url: req.originalUrl } })
+    res.<span class="func">status</span>(500).<span class="func">send</span>(<span class="string">'Error'</span>)
+})
+
+app.<span class="func">listen</span>(3000)</code></pre>
+        </div>
+
+        <div class="setup-block">
+            <h3>Fastify Implementation</h3>
+            <p>Fastify is fully supported via a native plugin.</p>
+<pre><code><span class="keyword">import</span> Fastify <span class="keyword">from</span> <span class="string">'fastify'</span>
+<span class="keyword">import</span> { <span class="func">createSDK</span>, fastifyPulsePlugin } <span class="keyword">from</span> <span class="string">'@vikasbaplawat1/pulse-sdk'</span>
+
+<span class="keyword">await</span> <span class="func">createSDK</span>({ apiKey: process.env.PULSE_API_KEY, service: <span class="string">'order-service'</span> })
+
+<span class="keyword">const</span> app = <span class="func">Fastify</span>()
+
+<span class="comment">// Register the Pulse plugin globally</span>
+app.<span class="func">register</span>(fastifyPulsePlugin, {
+    ignorePaths: [<span class="string">'/health'</span>, <span class="string">'/ready'</span>],
+    captureHeaders: <span class="keyword">true</span>
+})
+
+app.<span class="func">get</span>(<span class="string">'/orders'</span>, <span class="keyword">async</span> (request, reply) => {
+    <span class="keyword">return</span> { status: <span class="string">'processing'</span> }
+})
+
+app.<span class="func">listen</span>({ port: 3000 })</code></pre>
+        </div>
+
+        <h2>4. Using Core Features</h2>
+
+        <h3>Distributed Tracing (Spans)</h3>
+        <p>Wrap critical operations in <code>withSpan</code> to automatically track duration, status, and exceptions.</p>
+<pre><code><span class="keyword">import</span> { withSpan } <span class="keyword">from</span> <span class="string">'@vikasbaplawat1/pulse-sdk'</span>
+
+<span class="keyword">async</span> <span class="keyword">function</span> <span class="func">processPayment</span>(amount) {
+    <span class="keyword">return</span> <span class="func">withSpan</span>(<span class="string">'stripe.charge'</span>, <span class="keyword">async</span> (span) => {
+        span.<span class="func">setAttribute</span>(<span class="string">'payment.amount'</span>, amount)
+        
+        <span class="keyword">const</span> result = <span class="keyword">await</span> stripe.charges.<span class="func">create</span>({ amount })
+        
+        span.<span class="func">addEvent</span>(<span class="string">'charge_successful'</span>)
+        <span class="keyword">return</span> result
+    })
+}</code></pre>
+
+        <h3>Metrics & Telemetry</h3>
+<pre><code><span class="keyword">import</span> { incrementCounter, recordHistogram } <span class="keyword">from</span> <span class="string">'@vikasbaplawat1/pulse-sdk'</span>
+
+<span class="comment">// Count business events</span>
+<span class="func">incrementCounter</span>(<span class="string">'orders.created'</span>, { region: <span class="string">'us-east'</span> })
+
+<span class="comment">// Track durations or distributions</span>
+<span class="func">recordHistogram</span>(<span class="string">'db.query.duration'</span>, 42.5, { table: <span class="string">'users'</span>, unit: <span class="string">'ms'</span> })</code></pre>
+
+    </div>
+</body>
+</html>
