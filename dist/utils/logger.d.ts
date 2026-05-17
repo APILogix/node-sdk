@@ -34,6 +34,30 @@ export declare function setLogPrefix(prefix: string): void;
 export declare function redact(value: unknown, depth?: number): unknown;
 export declare const consoleLogger: Logger;
 /**
+ * Structured JSON logger — emits newline-delimited JSON (NDJSON) suitable
+ * for production log aggregation systems (ELK, Datadog, CloudWatch, etc.).
+ *
+ * Every log entry includes:
+ * - ISO timestamp
+ * - Log level
+ * - Message
+ * - Active traceId/spanId (if OTel tracing is active)
+ * - SDK prefix tag
+ * - Redacted structured context
+ */
+export declare const jsonLogger: Logger;
+export type LogFormat = 'text' | 'json';
+/**
+ * Set the log output format.
+ * 'text' = Sentry-style prefixed console output (default, good for dev)
+ * 'json' = NDJSON structured output (production, log aggregation)
+ */
+export declare function setLogFormat(format: LogFormat): void;
+/**
+ * Get the current log format.
+ */
+export declare function getLogFormat(): LogFormat;
+/**
  * Replace the active logger with a custom implementation.
  * Pass undefined/null to restore the default console logger.
  */

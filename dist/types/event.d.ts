@@ -74,8 +74,34 @@ export interface MetricEvent {
     readonly timestamp: number;
     readonly metadata?: EventMetadata | undefined;
 }
+export interface SpanEventItem {
+    readonly name: string;
+    readonly timestamp: number;
+    readonly attributes?: Readonly<Record<string, unknown>> | undefined;
+}
+export interface SpanLink {
+    readonly traceId: string;
+    readonly spanId: string;
+}
+export interface SpanEvent {
+    readonly type: 'span';
+    eventId?: string;
+    readonly timestamp?: number;
+    readonly spanId: string;
+    readonly traceId: string;
+    readonly parentSpanId?: string | undefined;
+    readonly name: string;
+    readonly startTime: number;
+    readonly endTime: number;
+    readonly duration: number;
+    readonly status: 'ok' | 'error' | 'unset';
+    readonly attributes?: Readonly<Record<string, unknown>> | undefined;
+    readonly events?: readonly SpanEventItem[] | undefined;
+    readonly links?: readonly SpanLink[] | undefined;
+    readonly metadata?: EventMetadata | undefined;
+}
 /** Discriminated union of all event types. */
-export type SDKEvent = RequestEvent | ErrorEvent | MessageEvent | MetricEvent;
+export type SDKEvent = RequestEvent | ErrorEvent | MessageEvent | MetricEvent | SpanEvent;
 /**
  * Legacy compat — the old Event type. Use SDKEvent for new code.
  * @deprecated Use SDKEvent instead.

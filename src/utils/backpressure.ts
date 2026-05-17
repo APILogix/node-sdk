@@ -20,6 +20,8 @@ export interface MemoryPressureOptions {
   readonly criticalThreshold?: number
   /** Polling interval in milliseconds. Default: 5000 */
   readonly pollIntervalMs?: number
+  /** Minimum heap total (MB) before utilization thresholds apply. Default: 100 */
+  readonly minHeapTotalMb?: number
 }
 
 /**
@@ -36,6 +38,7 @@ export class MemoryPressureMonitor extends EventEmitter {
   private readonly elevatedThreshold: number
   private readonly criticalThreshold: number
   private readonly pollIntervalMs: number
+  private readonly minHeapTotalMb: number
   private timer: NodeJS.Timeout | null = null
   private lastLevel: PressureLevel = 'normal'
 
@@ -44,6 +47,7 @@ export class MemoryPressureMonitor extends EventEmitter {
     this.elevatedThreshold = options.elevatedThreshold ?? 0.7
     this.criticalThreshold = options.criticalThreshold ?? 0.9
     this.pollIntervalMs = options.pollIntervalMs ?? 5000
+    this.minHeapTotalMb = options.minHeapTotalMb ?? 100
   }
 
   /** Start monitoring memory pressure. */
@@ -74,11 +78,16 @@ export class MemoryPressureMonitor extends EventEmitter {
     const rssMb = mem.rss / (1024 * 1024)
     const heapUtilization = mem.heapTotal > 0 ? mem.heapUsed / mem.heapTotal : 0
 
+    // If heap is small (< minHeapTotalMb), utilization ratio is meaningless
+    // V8 starts with a tiny heap that grows on demand — high ratio on small
+    // heap does NOT indicate actual pressure.
     let level: PressureLevel = 'normal'
-    if (heapUtilization >= this.criticalThreshold) {
-      level = 'critical'
-    } else if (heapUtilization >= this.elevatedThreshold) {
-      level = 'elevated'
+    if (heapTotalMb >= this.minHeapTotalMb) {
+      if (heapUtilization >= this.criticalThreshold) {
+        level = 'critical'
+      } else if (heapUtilization >= this.elevatedThreshold) {
+        level = 'elevated'
+      }
     }
 
     return { level, heapUsedMb, heapTotalMb, rssMb, heapUtilization }

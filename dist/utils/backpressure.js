@@ -13,6 +13,7 @@ export class MemoryPressureMonitor extends EventEmitter {
     elevatedThreshold;
     criticalThreshold;
     pollIntervalMs;
+    minHeapTotalMb;
     timer = null;
     lastLevel = 'normal';
     constructor(options = {}) {
@@ -20,6 +21,7 @@ export class MemoryPressureMonitor extends EventEmitter {
         this.elevatedThreshold = options.elevatedThreshold ?? 0.7;
         this.criticalThreshold = options.criticalThreshold ?? 0.9;
         this.pollIntervalMs = options.pollIntervalMs ?? 5000;
+        this.minHeapTotalMb = options.minHeapTotalMb ?? 100;
     }
     /** Start monitoring memory pressure. */
     start() {
@@ -45,12 +47,17 @@ export class MemoryPressureMonitor extends EventEmitter {
         const heapTotalMb = mem.heapTotal / (1024 * 1024);
         const rssMb = mem.rss / (1024 * 1024);
         const heapUtilization = mem.heapTotal > 0 ? mem.heapUsed / mem.heapTotal : 0;
+        // If heap is small (< minHeapTotalMb), utilization ratio is meaningless
+        // V8 starts with a tiny heap that grows on demand — high ratio on small
+        // heap does NOT indicate actual pressure.
         let level = 'normal';
-        if (heapUtilization >= this.criticalThreshold) {
-            level = 'critical';
-        }
-        else if (heapUtilization >= this.elevatedThreshold) {
-            level = 'elevated';
+        if (heapTotalMb >= this.minHeapTotalMb) {
+            if (heapUtilization >= this.criticalThreshold) {
+                level = 'critical';
+            }
+            else if (heapUtilization >= this.elevatedThreshold) {
+                level = 'elevated';
+            }
         }
         return { level, heapUsedMb, heapTotalMb, rssMb, heapUtilization };
     }

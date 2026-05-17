@@ -20,6 +20,7 @@ export { init } from './core/init.js'
 export { flush, shutdown } from './core/lifecycle.js'
 export { getConfig } from './core/config.js'
 export { SDKError } from './core/errors.js'
+export { client } from './core/client.js'
 
 // ─── Ergonomic Entry Point ──────────────────────────────────────────────────
 

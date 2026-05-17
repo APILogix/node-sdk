@@ -8,6 +8,7 @@ class SDKClient {
     // ─── State ──────────────────────────────────────────────────────────────
     configValue = null;
     remoteConfigValue = null;
+    initResponseValue = null;
     initPromise = null;
     apiKeyValue = null;
     initIdentityValue = null;
@@ -46,6 +47,12 @@ class SDKClient {
     get remoteConfig() {
         return this.remoteConfigValue;
     }
+    get initResponse() {
+        return this.initResponseValue;
+    }
+    get projectId() {
+        return this.initResponseValue?.projectId ?? null;
+    }
     get options() {
         return this.optionsValue;
     }
@@ -80,6 +87,9 @@ class SDKClient {
     setRemoteConfig(config) {
         this.remoteConfigValue = deepFreeze(structuredClone(config));
     }
+    setInitResponse(response) {
+        this.initResponseValue = deepFreeze(structuredClone(response));
+    }
     /** @deprecated Use setResolvedConfig instead */
     setConfig(config) {
         this.setRemoteConfig(config);
@@ -87,10 +97,12 @@ class SDKClient {
     clearConfig() {
         this.configValue = null;
         this.remoteConfigValue = null;
+        this.initResponseValue = null;
     }
     clear() {
         this.configValue = null;
         this.remoteConfigValue = null;
+        this.initResponseValue = null;
         this.apiKeyValue = null;
         this.initIdentityValue = null;
         this.pendingInitIdentityValue = null;

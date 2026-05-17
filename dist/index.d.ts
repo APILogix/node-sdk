@@ -17,6 +17,7 @@ export { init } from './core/init.js';
 export { flush, shutdown } from './core/lifecycle.js';
 export { getConfig } from './core/config.js';
 export { SDKError } from './core/errors.js';
+export { client } from './core/client.js';
 import type { SDKInitOptions, RemoteConfig } from './types/config.js';
 /**
  * Create and initialize the SDK — the recommended entry point.
@@ -42,14 +43,14 @@ export { captureMetric, incrementCounter, setGauge, recordHistogram } from './ca
 export { addBreadcrumb, getRequestContext, getTraceId, getSpanId } from './core/context.js';
 export { startSpan, withSpan, withSpanSync, getActiveSpan, flushTracer } from './tracing/tracer.js';
 export { extractTraceContext, injectTraceContext, parseTraceparent, createTraceparent } from './tracing/context-propagation.js';
-export type { SpanStatus, SpanOptions } from './tracing/span.js';
+export type { SpanStatus, SpanOptions, SpanLink } from './tracing/span.js';
 export { PulseSpan } from './tracing/span.js';
 export { getSessionManager } from './session/session-manager.js';
 export type { Session, SessionManagerOptions } from './session/session-manager.js';
 export { monitorMiddleware } from './instrumentation/express.js';
 export { instrumentHttpClient } from './instrumentation/http.js';
-export type { Logger } from './utils/logger.js';
-export { setLogger, getLogger, setDebugMode, setLogLevel } from './utils/logger.js';
+export type { Logger, LogFormat } from './utils/logger.js';
+export { setLogger, getLogger, setDebugMode, setLogLevel, setLogFormat, getLogFormat, jsonLogger } from './utils/logger.js';
 export type { SDKInitOptions, RemoteConfig, ResolvedSDKConfig, TransportOptions, PlanTier, PlanFeatures } from './types/config.js';
 export type { SDKEvent, RequestEvent, ErrorEvent, MessageEvent, MetricEvent, EventMetadata, StackFrame } from './types/event.js';
 export type { Breadcrumb, BreadcrumbInput, BreadcrumbHint } from './types/breadcrumb.js';
@@ -59,6 +60,11 @@ export type { SDKPlugin, PluginMeta, PluginContext, EventProcessor, BreadcrumbPr
 export type { CaptureErrorOptions, ParsedError, ErrorGrouping } from './types/error.js';
 export type { TransportResult, IngestPayload, TransportHealth, TransportAdapter } from './types/transport.js';
 export { getPlanDefaults, isFeatureAllowed } from './core/plan-gate.js';
+export { EventLoopLagMonitor } from './utils/event-loop-lag.js';
+export type { EventLoopLagStats, EventLoopLagOptions } from './utils/event-loop-lag.js';
+export { detectResources } from './utils/resource-detector.js';
+export type { ResourceAttributes } from './utils/resource-detector.js';
+export { RetryBudget, globalRetryBudget } from './transport/retry.js';
 /**
  * Get a comprehensive SDK health snapshot for operational dashboards.
  * Safe to call at any time — returns degraded info if SDK isn't initialized.

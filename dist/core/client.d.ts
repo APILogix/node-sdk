@@ -3,10 +3,12 @@ import type { SDKPlugin, EventProcessor } from '../types/plugin.js';
 import type { EventMetadata } from '../types/event.js';
 import type { Breadcrumb } from '../types/breadcrumb.js';
 import { RingBuffer } from './ring-buffer.js';
+import type { InitResponse } from '../transport/sender.js';
 declare class SDKClient {
     private static instance;
     private configValue;
     private remoteConfigValue;
+    private initResponseValue;
     private initPromise;
     private apiKeyValue;
     private initIdentityValue;
@@ -21,6 +23,8 @@ declare class SDKClient {
     get initialized(): boolean;
     get config(): Readonly<ResolvedSDKConfig>;
     get remoteConfig(): Readonly<RemoteConfig> | null;
+    get initResponse(): Readonly<InitResponse> | null;
+    get projectId(): string | null;
     get options(): Readonly<SDKInitOptions> | null;
     get metadata(): Readonly<EventMetadata>;
     get plugins(): readonly SDKPlugin[];
@@ -29,6 +33,7 @@ declare class SDKClient {
     setOptions(options: SDKInitOptions): void;
     setResolvedConfig(config: ResolvedSDKConfig): void;
     setRemoteConfig(config: RemoteConfig): void;
+    setInitResponse(response: InitResponse): void;
     /** @deprecated Use setResolvedConfig instead */
     setConfig(config: RemoteConfig): void;
     clearConfig(): void;

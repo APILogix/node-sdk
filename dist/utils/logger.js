@@ -119,6 +119,107 @@ export const consoleLogger = {
         console.error(`[${logPrefix}] ERROR: ${message}${formatContext(context)}`);
     },
 };
+// ─── Structured JSON Logger (Production-grade) ─────────────────────────────
+/**
+ * Get active trace context from the OTel API for log correlation.
+ * Returns traceId and spanId if a span is active, otherwise undefined.
+ */
+function getActiveTraceContext() {
+    try {
+        // Lazy import to avoid circular dependency issues
+        const otelApi = require('@opentelemetry/api');
+        const activeSpan = otelApi.trace.getActiveSpan();
+        if (activeSpan) {
+            const ctx = activeSpan.spanContext();
+            return { traceId: ctx.traceId, spanId: ctx.spanId };
+        }
+    }
+    catch {
+        // OTel not available or no active span — expected
+    }
+    return {};
+}
+/**
+ * Structured JSON logger — emits newline-delimited JSON (NDJSON) suitable
+ * for production log aggregation systems (ELK, Datadog, CloudWatch, etc.).
+ *
+ * Every log entry includes:
+ * - ISO timestamp
+ * - Log level
+ * - Message
+ * - Active traceId/spanId (if OTel tracing is active)
+ * - SDK prefix tag
+ * - Redacted structured context
+ */
+export const jsonLogger = {
+    debug(message, context) {
+        if (!severityMeetsThreshold(Severity.Debug, minimumLogLevel))
+            return;
+        emitJsonLog('debug', message, context);
+    },
+    info(message, context) {
+        if (!severityMeetsThreshold(Severity.Info, minimumLogLevel))
+            return;
+        emitJsonLog('info', message, context);
+    },
+    warn(message, context) {
+        if (!severityMeetsThreshold(Severity.Warning, minimumLogLevel))
+            return;
+        emitJsonLog('warn', message, context);
+    },
+    error(message, context) {
+        if (!severityMeetsThreshold(Severity.Error, minimumLogLevel))
+            return;
+        emitJsonLog('error', message, context);
+    },
+};
+function emitJsonLog(level, message, context) {
+    const trace = getActiveTraceContext();
+    const entry = {
+        timestamp: new Date().toISOString(),
+        level,
+        logger: logPrefix,
+        message,
+    };
+    // Inject trace correlation if available
+    if (trace.traceId)
+        entry['trace.id'] = trace.traceId;
+    if (trace.spanId)
+        entry['span.id'] = trace.spanId;
+    // Merge redacted context
+    if (context && Object.keys(context).length > 0) {
+        try {
+            entry['context'] = redact(context);
+        }
+        catch {
+            entry['context'] = '[unserializable]';
+        }
+    }
+    const output = level === 'error' || level === 'warn' ? console.error : console.log;
+    try {
+        output(JSON.stringify(entry));
+    }
+    catch {
+        // Fallback if JSON.stringify fails on the entry itself
+        output(`{"timestamp":"${entry.timestamp}","level":"${level}","message":"${message}","error":"log_serialization_failed"}`);
+    }
+}
+let currentLogFormat = 'text';
+/**
+ * Set the log output format.
+ * 'text' = Sentry-style prefixed console output (default, good for dev)
+ * 'json' = NDJSON structured output (production, log aggregation)
+ */
+export function setLogFormat(format) {
+    currentLogFormat = format;
+    activeLogger = format === 'json' ? jsonLogger : consoleLogger;
+}
+/**
+ * Get the current log format.
+ */
+export function getLogFormat() {
+    return currentLogFormat;
+}
 // ─── Active Logger Management ───────────────────────────────────────────────
 let activeLogger = consoleLogger;
 /**
@@ -126,7 +227,7 @@ let activeLogger = consoleLogger;
  * Pass undefined/null to restore the default console logger.
  */
 export function setLogger(logger) {
-    activeLogger = logger ?? consoleLogger;
+    activeLogger = logger ?? (currentLogFormat === 'json' ? jsonLogger : consoleLogger);
 }
 /**
  * Get the active logger instance.

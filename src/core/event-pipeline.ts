@@ -148,6 +148,7 @@ export function processEvent(rawEvent: SDKEvent | Event): boolean {
     // Step 11: Sampling (for request/performance events)
     // Uses trace-consistent deterministic sampling: all events in the same
     // trace are either ALL kept or ALL dropped, preventing broken traces.
+    // Span events are never sampled — they represent actual traced operations.
     if (event.type === 'request') {
       const traceId = 'traceId' in event && typeof event.traceId === 'string'
         ? event.traceId
@@ -205,6 +206,8 @@ function isFeatureEnabled(
       return true // messages are always enabled
     case 'metric':
       return config.enableMetrics
+    case 'span':
+      return config.enableTracing
     default:
       return true
   }

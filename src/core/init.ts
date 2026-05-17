@@ -126,6 +126,7 @@ async function initialize(options: SDKInitOptions): Promise<Readonly<RemoteConfi
 
       const remoteConfig = validateRemoteConfig(response)
       client.setRemoteConfig(remoteConfig)
+      client.setInitResponse(response)
 
       // Resolve plan features from backend response
       const planTier: PlanTier = remoteConfig.plan ?? 'free'

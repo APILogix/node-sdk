@@ -79,7 +79,7 @@ export function detectResources(sdkVersion: string): ResourceAttributes {
     'host.total_memory_mb': Math.round(totalmem() / (1024 * 1024)),
 
     // Container (best-effort)
-    'container.id': detectContainerId(),
+    ...(detectContainerId() ? { 'container.id': detectContainerId()! } : {}),
 
     // Kubernetes (from standard env vars)
     ...detectKubernetesMetadata(),

@@ -2,6 +2,8 @@ import type { Event } from '../types/event.js';
 export interface InitResponse {
     success: boolean;
     projectId?: string;
+    plan?: string;
+    planFeatures?: Record<string, unknown>;
     config?: unknown;
     ingestion?: unknown;
 }

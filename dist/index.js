@@ -18,6 +18,7 @@ export { init } from './core/init.js';
 export { flush, shutdown } from './core/lifecycle.js';
 export { getConfig } from './core/config.js';
 export { SDKError } from './core/errors.js';
+export { client } from './core/client.js';
 // ─── Ergonomic Entry Point ──────────────────────────────────────────────────
 import { init } from './core/init.js';
 /**
@@ -55,10 +56,16 @@ export { getSessionManager } from './session/session-manager.js';
 // ─── Instrumentation ────────────────────────────────────────────────────────
 export { monitorMiddleware } from './instrumentation/express.js';
 export { instrumentHttpClient } from './instrumentation/http.js';
-export { setLogger, getLogger, setDebugMode, setLogLevel } from './utils/logger.js';
+export { setLogger, getLogger, setDebugMode, setLogLevel, setLogFormat, getLogFormat, jsonLogger } from './utils/logger.js';
 export { Severity, severityFromString } from './types/severity.js';
 // ─── Plan Gating ────────────────────────────────────────────────────────────
 export { getPlanDefaults, isFeatureAllowed } from './core/plan-gate.js';
+// ─── Event Loop Monitoring ──────────────────────────────────────────────────────
+export { EventLoopLagMonitor } from './utils/event-loop-lag.js';
+// ─── Resource Detection ───────────────────────────────────────────────────────
+export { detectResources } from './utils/resource-detector.js';
+// ─── Transport Internals (advanced) ──────────────────────────────────────────
+export { RetryBudget, globalRetryBudget } from './transport/retry.js';
 // ─── Diagnostics ────────────────────────────────────────────────────────────
 import { getCircuitState } from './transport/batcher.js';
 import { eventQueue } from './transport/queue.js';

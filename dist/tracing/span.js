@@ -8,7 +8,7 @@
  * - Status management
  * - Integration with SDK context (breadcrumbs, user, tags)
  */
-import { SpanStatusCode, } from '@opentelemetry/api';
+import { SpanStatusCode, trace, } from '@opentelemetry/api';
 import { getLogger } from '../utils/logger.js';
 /**
  * PulseSpan wraps an OTel Span with ergonomic helpers.
@@ -121,9 +121,63 @@ export class PulseSpan {
             getLogger().warn('Failed to end span', { error: err });
         }
     }
+    /**
+     * Add a link to another span — models non-parent-child causal relationships.
+     *
+     * Use cases:
+     * - Batch consumer linking to multiple producer spans
+     * - Fan-out patterns where one request triggers multiple downstream traces
+     * - Queue consumer linking to the producer trace
+     *
+     * @param link - The span link with traceId, spanId, and optional attributes
+     */
+    addLink(link) {
+        if (this.ended)
+            return this;
+        try {
+            // OTel SDK doesn't have a direct addLink method after creation,
+            // so we record the link as a span event with structured attributes
+            const linkAttributes = {
+                'link.traceId': link.traceId,
+                'link.spanId': link.spanId,
+                'link.type': 'causal',
+            };
+            if (link.attributes) {
+                for (const [key, value] of Object.entries(link.attributes)) {
+                    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+                        linkAttributes[`link.${key}`] = value;
+                    }
+                }
+            }
+            this.otelSpan.addEvent('span.link', linkAttributes);
+        }
+        catch (err) {
+            getLogger().warn('Failed to add span link', { error: err });
+        }
+        return this;
+    }
     /** Get the underlying OTel span (for advanced use cases). */
     getOTelSpan() {
         return this.otelSpan;
+    }
+    /**
+     * Convert SpanLink[] to OTel Link[] format for use at span creation time.
+     * @internal
+     */
+    static toOTelLinks(links) {
+        return links.map(link => {
+            const otelLink = {
+                context: {
+                    traceId: link.traceId,
+                    spanId: link.spanId,
+                    traceFlags: 1, // sampled
+                },
+            };
+            if (link.attributes) {
+                otelLink.attributes = link.attributes;
+            }
+            return otelLink;
+        });
     }
 }
 //# sourceMappingURL=span.js.map

@@ -17,6 +17,8 @@ export interface MemoryPressureOptions {
     readonly criticalThreshold?: number;
     /** Polling interval in milliseconds. Default: 5000 */
     readonly pollIntervalMs?: number;
+    /** Minimum heap total (MB) before utilization thresholds apply. Default: 100 */
+    readonly minHeapTotalMb?: number;
 }
 /**
  * Monitors process memory and emits events when pressure levels change.
@@ -32,6 +34,7 @@ export declare class MemoryPressureMonitor extends EventEmitter {
     private readonly elevatedThreshold;
     private readonly criticalThreshold;
     private readonly pollIntervalMs;
+    private readonly minHeapTotalMb;
     private timer;
     private lastLevel;
     constructor(options?: MemoryPressureOptions);

@@ -82,42 +82,39 @@ class PipelineSpanExporter implements SpanExporter {
     const ctx = span.spanContext()
     const attrs = span.attributes
     const status = span.status
+    const parentSpanId = (span as unknown as Record<string, unknown>).parentSpanId as string | undefined
+    const durationMs = hrTimeToMs(span.duration)
+
+    const statusLabel = status.code === 0 ? 'unset' : status.code === 1 ? 'ok' : 'error'
 
     return {
-      type: 'request',
-      eventId: ctx.spanId,
-      timestamp: hrTimeToMs(span.startTime),
-      url: String(attrs['http.url'] ?? attrs['url.full'] ?? attrs['http.target'] ?? span.name),
-      method: String(attrs['http.method'] ?? attrs['http.request.method'] ?? 'INTERNAL'),
-      statusCode: Number(attrs['http.status_code'] ?? attrs['http.response.status_code'] ?? (status.code === 2 ? 500 : 200)),
-      latency: hrTimeToMs(span.duration),
-      traceId: ctx.traceId,
+      type: 'span',
+      eventId: `span_${ctx.spanId}`,
       spanId: ctx.spanId,
+      traceId: ctx.traceId,
+      parentSpanId,
+      name: span.name,
+      startTime: hrTimeToMs(span.startTime),
+      endTime: hrTimeToMs(span.endTime),
+      duration: durationMs,
+      status: statusLabel,
+      attributes: Object.fromEntries(
+        Object.entries(attrs).filter(([, v]) => v !== undefined)
+      ),
+      events: span.events.map(e => ({
+        name: e.name,
+        timestamp: hrTimeToMs(e.time),
+        attributes: e.attributes,
+      })),
+      links: span.links.map(l => ({
+        traceId: l.context.traceId,
+        spanId: l.context.spanId,
+      })),
       metadata: {
-        sdk: { name: '@vikasbaplawat1/pulse-sdk', version: '2.0.0' },
-        runtime: { name: 'node', version: process.version },
-        os: { name: process.platform, version: os.release() },
-        trace: {
-          spanName: span.name,
-          spanKind: SpanKind[span.kind] ?? 'INTERNAL',
-          parentSpanId: (span as unknown as Record<string, unknown>).parentSpanId ?? undefined,
-          attributes: Object.fromEntries(
-            Object.entries(attrs).filter(([, v]) => v !== undefined)
-          ),
-          events: span.events.map(e => ({
-            name: e.name,
-            time: hrTimeToMs(e.time),
-            attributes: e.attributes,
-          })),
-          status: {
-            code: status.code,
-            message: status.message,
-          },
-          links: span.links.map(l => ({
-            traceId: l.context.traceId,
-            spanId: l.context.spanId,
-          })),
-        },
+        sdkName: '@vikasbaplawat1/pulse-sdk',
+        sdkVersion: '2.0.0',
+        service: '',
+        environment: '',
       },
     }
   }

@@ -16,6 +16,7 @@ import { getLogger, type Logger } from '../utils/logger.js'
 import { CircuitBreaker } from './circuit-breaker.js'
 import { TokenBucketRateLimiter } from './rate-limit.js'
 import { MemoryPressureMonitor } from '../utils/backpressure.js'
+import { client } from '../core/client.js'
 
 // ─── State ──────────────────────────────────────────────────────────────────
 
@@ -96,12 +97,13 @@ export async function flush(): Promise<void> {
     try {
       await sendEvents(events)
       circuitBreaker.recordSuccess()
+      logger.info('Flush sent successfully', { eventCount: events.length })
     } catch (err) {
       circuitBreaker.recordFailure()
       // Re-queue events instead of permanently dropping them
       eventQueue.requeueFront(events)
-      logger.error('Flush failed; events re-queued for next attempt', {
-        error: err,
+      logger.error('Flush failed; events re-queued', {
+        error: err instanceof Error ? err.message : String(err),
         eventCount: events.length,
         queueSize: eventQueue.size(),
         circuitState: circuitBreaker.getState(),
@@ -160,11 +162,20 @@ async function tick(): Promise<void> {
   // Guard: skip if nothing to send
   if (eventQueue.size() === 0) return
 
+  // Guard: SDK must be initialized before sending
+  if (!client.initialized) {
+    logger.debug('Batch tick skipped — SDK not yet initialized', {
+      queueSize: eventQueue.size(),
+    })
+    return
+  }
+
   // Guard: memory pressure — degrade gracefully under heap pressure
   const pressure = memoryMonitor.getState()
   if (pressure.level === 'critical') {
     logger.warn('Batch tick skipped — critical memory pressure', {
       heapUsedMb: pressure.heapUsedMb,
+      heapTotalMb: pressure.heapTotalMb,
       heapUtilization: pressure.heapUtilization.toFixed(2),
       queueSize: eventQueue.size(),
     })
@@ -173,7 +184,7 @@ async function tick(): Promise<void> {
 
   // Guard: circuit breaker is open — buffer, don't send
   if (!circuitBreaker.canExecute()) {
-    logger.debug('Batch tick skipped — circuit breaker OPEN', {
+    logger.warn('Batch tick skipped — circuit breaker OPEN (will auto-reset after timeout)', {
       circuitState: circuitBreaker.getState(),
       queueSize: eventQueue.size(),
     })
@@ -182,8 +193,7 @@ async function tick(): Promise<void> {
 
   // Guard: rate limiter throttle
   if (!rateLimiter.tryAcquire()) {
-    logger.debug('Batch tick skipped — rate limited', {
-      rateLimiterState: rateLimiter.getState(),
+    logger.warn('Batch tick skipped — rate limited', {
       queueSize: eventQueue.size(),
     })
     return
@@ -191,7 +201,7 @@ async function tick(): Promise<void> {
 
   // Guard: concurrent flight limit
   if (inFlightCount >= maxConcurrentSends) {
-    logger.debug('Batch tick skipped — max concurrent sends reached', {
+    logger.warn('Batch tick skipped — max concurrent sends reached', {
       inFlightCount,
       maxConcurrentSends,
     })
@@ -207,7 +217,7 @@ async function tick(): Promise<void> {
     await sendEvents(events)
     circuitBreaker.recordSuccess()
 
-    logger.debug('Batch sent successfully', {
+    logger.info('Batch sent successfully', {
       eventCount: events.length,
       queueRemaining: eventQueue.size(),
       circuitState: circuitBreaker.getState(),
@@ -217,11 +227,13 @@ async function tick(): Promise<void> {
     // Re-queue events instead of permanently dropping them
     eventQueue.requeueFront(events)
 
-    logger.error('Batch send failed; events re-queued for next attempt', {
-      error: err,
+    const cbState = circuitBreaker.getState()
+    logger.error('Batch send failed; events re-queued', {
+      error: err instanceof Error ? err.message : String(err),
       eventCount: events.length,
       queueSize: eventQueue.size(),
-      circuitState: circuitBreaker.getState(),
+      circuitState: cbState,
+      willSkipFutureBatches: cbState === 'OPEN',
     })
   } finally {
     inFlightCount -= 1

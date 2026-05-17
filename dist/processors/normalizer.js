@@ -45,6 +45,23 @@ export function normalizeEvent(event, metadata) {
                 ...base,
                 metricName: truncateString(base.metricName, 256),
             };
+        case 'span':
+            return {
+                ...base,
+                name: truncateString(base.name, 256),
+                attributes: base.attributes
+                    ? truncateObject(base.attributes, MAX_OBJECT_DEPTH)
+                    : undefined,
+                events: base.events
+                    ? base.events.slice(0, MAX_ARRAY_LENGTH).map(e => ({
+                        ...e,
+                        name: truncateString(e.name, 256),
+                        attributes: e.attributes
+                            ? truncateObject(e.attributes, MAX_OBJECT_DEPTH)
+                            : undefined,
+                    }))
+                    : undefined,
+            };
         default:
             return base;
     }

@@ -5,6 +5,7 @@ import type { EventMetadata } from '../types/event.js'
 import type { Breadcrumb } from '../types/breadcrumb.js'
 import { RingBuffer } from './ring-buffer.js'
 import { SDKError } from './errors.js'
+import type { InitResponse } from '../transport/sender.js'
 
 const SDK_NAME = '@vikasbaplawat1/pulse-sdk'
 const SDK_VERSION = '2.0.0'
@@ -15,6 +16,7 @@ class SDKClient {
   // ─── State ──────────────────────────────────────────────────────────────
   private configValue: Readonly<ResolvedSDKConfig> | null = null
   private remoteConfigValue: Readonly<RemoteConfig> | null = null
+  private initResponseValue: InitResponse | null = null
   private initPromise: Promise<Readonly<RemoteConfig> | undefined> | null = null
   private apiKeyValue: string | null = null
   private initIdentityValue: string | null = null
@@ -63,6 +65,14 @@ class SDKClient {
     return this.remoteConfigValue
   }
 
+  get initResponse(): Readonly<InitResponse> | null {
+    return this.initResponseValue
+  }
+
+  get projectId(): string | null {
+    return this.initResponseValue?.projectId ?? null
+  }
+
   get options(): Readonly<SDKInitOptions> | null {
     return this.optionsValue
   }
@@ -107,6 +117,10 @@ class SDKClient {
     this.remoteConfigValue = deepFreeze(structuredClone(config))
   }
 
+  setInitResponse(response: InitResponse): void {
+    this.initResponseValue = deepFreeze(structuredClone(response))
+  }
+
   /** @deprecated Use setResolvedConfig instead */
   setConfig(config: RemoteConfig): void {
     this.setRemoteConfig(config)
@@ -115,11 +129,13 @@ class SDKClient {
   clearConfig(): void {
     this.configValue = null
     this.remoteConfigValue = null
+    this.initResponseValue = null
   }
 
   clear(): void {
     this.configValue = null
     this.remoteConfigValue = null
+    this.initResponseValue = null
     this.apiKeyValue = null
     this.initIdentityValue = null
     this.pendingInitIdentityValue = null
