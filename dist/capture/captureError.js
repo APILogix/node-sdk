@@ -16,17 +16,17 @@ import { getRequestContext } from '../core/context.js';
 import { captureEvent } from './captureEvent.js';
 import { Severity } from '../types/severity.js';
 import { epochMs } from '../utils/time.js';
+import { sourceMapResolver } from '../processors/source-map-resolver.js';
 /**
  * Capture an error/exception.
  *
  * @param error - The error to capture (Error, string, or unknown)
  * @param options - Optional severity, context, and fingerprint overrides
  */
-export function captureError(error, options = {}) {
+export async function captureError(error, options = {}) {
     const logger = getLogger();
     try {
         const normalized = toError(error);
-        // Support both old API (context object) and new API (CaptureErrorOptions)
         const context = isOptionsObject(options)
             ? (options.context ?? {})
             : options;
@@ -36,9 +36,9 @@ export function captureError(error, options = {}) {
         const customFingerprint = isOptionsObject(options)
             ? options.fingerprint
             : undefined;
-        const stackFrames = parseStack(normalized.stack);
+        let stackFrames = parseStack(normalized.stack);
+        stackFrames = await sourceMapResolver.resolveStackFrames(stackFrames);
         const fingerprint = generateFingerprint(normalized, stackFrames, customFingerprint);
-        // Get breadcrumbs from async context
         const ctx = getRequestContext();
         const breadcrumbs = ctx?.breadcrumbs.toArray() ?? [];
         const event = {

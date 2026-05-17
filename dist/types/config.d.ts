@@ -72,6 +72,15 @@ export interface SDKInitOptions {
     readonly baseUrl?: string;
     /** Graceful shutdown timeout in milliseconds. Defaults to 10000. */
     readonly shutdownTimeoutMs?: number;
+    /** Source map configuration for de-obfuscating stack frames. */
+    readonly sourceMaps?: {
+        /** Additional directories to search for source maps. */
+        readonly paths?: readonly string[];
+        /** Enable loading remote source maps via HTTP. Default: false. */
+        readonly allowRemote?: boolean;
+        /** Embed original source content in resolved frames. Default: false. */
+        readonly embedSourceContent?: boolean;
+    };
 }
 /**
  * Transport configuration — controls batching, retries, compression.
@@ -166,6 +175,11 @@ export declare const sdkInitOptionsSchema: z.ZodObject<{
     }>>;
     baseUrl: z.ZodOptional<z.ZodString>;
     shutdownTimeoutMs: z.ZodOptional<z.ZodNumber>;
+    sourceMaps: z.ZodOptional<z.ZodObject<{
+        paths: z.ZodOptional<z.ZodReadonly<z.ZodArray<z.ZodString>>>;
+        allowRemote: z.ZodOptional<z.ZodBoolean>;
+        embedSourceContent: z.ZodOptional<z.ZodBoolean>;
+    }, z.core.$strip>>;
     transport: z.ZodOptional<z.ZodObject<{
         batchSize: z.ZodOptional<z.ZodNumber>;
         flushIntervalMs: z.ZodOptional<z.ZodNumber>;

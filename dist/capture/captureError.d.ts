@@ -23,5 +23,5 @@ export interface CaptureErrorOptions {
  * @param error - The error to capture (Error, string, or unknown)
  * @param options - Optional severity, context, and fingerprint overrides
  */
-export declare function captureError(error: unknown, options?: CaptureErrorOptions | Record<string, unknown>): void;
+export declare function captureError(error: unknown, options?: CaptureErrorOptions | Record<string, unknown>): Promise<void>;
 //# sourceMappingURL=captureError.d.ts.map

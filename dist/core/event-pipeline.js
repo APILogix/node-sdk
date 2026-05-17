@@ -15,6 +15,9 @@ import { sanitizeEvent } from '../processors/sanitizer.js';
 import { getLogger } from '../utils/logger.js';
 import { generateId } from '../utils/uuid.js';
 import { epochMs } from '../utils/time.js';
+import { errorDeduplicator } from '../processors/deduplicator.js';
+import { applyScopeToEvent } from './scope.js';
+import { persistentStorage } from '../storage/persistent-storage.js';
 /**
  * Process and enqueue an event through the full pipeline.
  * This is the single entry point for all event capture.
@@ -54,7 +57,20 @@ export function processEvent(rawEvent) {
         event = sanitizeEvent(event);
         // Step 6: Enrich with request context (trace/span IDs, breadcrumbs)
         event = enrichFromContext(event);
-        // Step 7: Plugin event processors
+        // Step 6.5: Error deduplication — suppress duplicate errors within window
+        if (event.type === 'error' && 'fingerprint' in event && typeof event.fingerprint === 'string') {
+            if (errorDeduplicator.isDuplicate(event.fingerprint)) {
+                logger.debug('Event dropped — duplicate error within suppression window', {
+                    fingerprint: event.fingerprint,
+                    eventType: event.type,
+                    eventId: event.eventId,
+                });
+                return false;
+            }
+        }
+        // Step 7: Apply global scope (user, tags, extra, contexts)
+        event = applyScopeToEvent(event);
+        // Step 8: Plugin event processors
         for (const plugin of client.plugins) {
             if (plugin.processEvent) {
                 try {
@@ -78,7 +94,7 @@ export function processEvent(rawEvent) {
                 }
             }
         }
-        // Step 8: User-registered event processors
+        // Step 9: User-registered event processors
         for (const processor of client.eventProcessors) {
             try {
                 const result = processor(event);
@@ -95,7 +111,7 @@ export function processEvent(rawEvent) {
                 logger.warn('EventProcessor threw', { error: processorError });
             }
         }
-        // Step 9: beforeSend hook (user-provided)
+        // Step 10: beforeSend hook (user-provided)
         if (client.options?.beforeSend && config.planFeatures.allowBeforeSend) {
             try {
                 const result = client.options.beforeSend(event);
@@ -112,7 +128,7 @@ export function processEvent(rawEvent) {
                 logger.warn('beforeSend threw', { error: beforeSendError });
             }
         }
-        // Step 10: Plugin beforeSend hooks
+        // Step 11: Plugin beforeSend hooks
         for (const plugin of client.plugins) {
             if (plugin.beforeSend && config.planFeatures.allowBeforeSend) {
                 try {
@@ -134,7 +150,7 @@ export function processEvent(rawEvent) {
                 }
             }
         }
-        // Step 11: Sampling (for request/performance events)
+        // Step 12: Sampling (for request/performance events)
         // Uses trace-consistent deterministic sampling: all events in the same
         // trace are either ALL kept or ALL dropped, preventing broken traces.
         // Span events are never sampled — they represent actual traced operations.
@@ -150,8 +166,10 @@ export function processEvent(rawEvent) {
                 return false;
             }
         }
-        // Step 12: Enqueue
+        // Step 13: Enqueue
         eventQueue.add(event);
+        // Step 14: Persist to disk for crash recovery
+        persistentStorage.persist(event);
         logger.debug('Event queued', {
             eventType: event.type,
             eventId: event.eventId,

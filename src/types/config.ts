@@ -101,6 +101,16 @@ export interface SDKInitOptions {
 
   /** Graceful shutdown timeout in milliseconds. Defaults to 10000. */
   readonly shutdownTimeoutMs?: number
+
+  /** Source map configuration for de-obfuscating stack frames. */
+  readonly sourceMaps?: {
+    /** Additional directories to search for source maps. */
+    readonly paths?: readonly string[]
+    /** Enable loading remote source maps via HTTP. Default: false. */
+    readonly allowRemote?: boolean
+    /** Embed original source content in resolved frames. Default: false. */
+    readonly embedSourceContent?: boolean
+  }
 }
 
 /**
@@ -214,6 +224,13 @@ export const sdkInitOptionsSchema = z.object({
   logLevel: z.enum(['debug', 'info', 'warning', 'error', 'fatal']).optional(),
   baseUrl: z.string().url().optional(),
   shutdownTimeoutMs: z.number().int().min(1000).max(60000).optional(),
+  sourceMaps: z
+    .object({
+      paths: z.array(z.string()).readonly().optional(),
+      allowRemote: z.boolean().optional(),
+      embedSourceContent: z.boolean().optional(),
+    })
+    .optional(),
   transport: z
     .object({
       batchSize: z.number().int().min(1).max(10000).optional(),

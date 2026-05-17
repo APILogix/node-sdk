@@ -14,6 +14,7 @@
  * All features are ON by default — the plan tier caps what's allowed.
  */
 
+import { createHash } from 'crypto'
 import type { SDKInitOptions, RemoteConfig, ResolvedSDKConfig, PlanTier } from '../types/config.js'
 import { sdkInitOptionsSchema } from '../types/config.js'
 import { client } from './client.js'
@@ -32,6 +33,9 @@ import { initTracer } from '../tracing/tracer.js'
 import { getSessionManager } from '../session/session-manager.js'
 import { resolvePlanFeatures, clampToPlan, validatePluginCount, getOfflineFallbackPlan } from './plan-gate.js'
 import { detectResources } from '../utils/resource-detector.js'
+import { errorDeduplicator } from '../processors/deduplicator.js'
+import { persistentStorage } from '../storage/persistent-storage.js'
+import { sourceMapResolver } from '../processors/source-map-resolver.js'
 
 const INIT_MAX_ATTEMPTS = 5
 const INIT_BASE_RETRY_DELAY_MS = 500
@@ -189,6 +193,23 @@ async function initialize(options: SDKInitOptions): Promise<Readonly<RemoteConfi
         logger.warn(`[Plan: ${planFeatures.tier}] beforeSend hook requires a Pro or Enterprise plan — ignored`)
       }
 
+      // Initialize persistent storage and replay persisted events
+      const apiKeyHash = createHash('sha256').update(options.apiKey).digest('hex')
+      persistentStorage.configure({ apiKeyHash })
+      const persistedEvents = await persistentStorage.init()
+      for (const event of persistedEvents) {
+        eventQueue.add(event)
+      }
+
+      // Configure source map resolver if options provided
+      if (options.sourceMaps) {
+        sourceMapResolver.configure({
+          sourceMapPaths: options.sourceMaps.paths ? Array.from(options.sourceMaps.paths) : [],
+          allowRemoteSourceMaps: options.sourceMaps.allowRemote ?? false,
+          embedSourceContent: options.sourceMaps.embedSourceContent ?? false,
+        })
+      }
+
       // Start subsystems
       startBatcher({
         batchSize: resolvedConfig.batchSize,
@@ -198,6 +219,7 @@ async function initialize(options: SDKInitOptions): Promise<Readonly<RemoteConfi
       })
       setupGlobalErrorHandlers()
       registerSignalHandlers()
+      errorDeduplicator.start()
 
       // Initialize OpenTelemetry tracing if enabled (plan-gated)
       if (resolvedConfig.enableTracing) {
@@ -506,6 +528,7 @@ function initializeOfflineFallback(
   })
   setupGlobalErrorHandlers()
   registerSignalHandlers()
+  errorDeduplicator.start()
 
   logger.warn('SDK offline fallback initialized', {
     plan: resolvedConfig.plan,

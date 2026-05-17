@@ -21,6 +21,13 @@ export const sdkInitOptionsSchema = z.object({
     logLevel: z.enum(['debug', 'info', 'warning', 'error', 'fatal']).optional(),
     baseUrl: z.string().url().optional(),
     shutdownTimeoutMs: z.number().int().min(1000).max(60000).optional(),
+    sourceMaps: z
+        .object({
+        paths: z.array(z.string()).readonly().optional(),
+        allowRemote: z.boolean().optional(),
+        embedSourceContent: z.boolean().optional(),
+    })
+        .optional(),
     transport: z
         .object({
         batchSize: z.number().int().min(1).max(10000).optional(),

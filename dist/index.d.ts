@@ -41,6 +41,8 @@ export { captureMessage } from './capture/captureMessage.js';
 export { captureEvent } from './capture/captureEvent.js';
 export { captureMetric, incrementCounter, setGauge, recordHistogram } from './capture/captureMetric.js';
 export { addBreadcrumb, getRequestContext, getTraceId, getSpanId } from './core/context.js';
+export { setUser, setTag, setTags, removeTag, setExtra, setExtras, removeExtra, setContext, getScopeData, clearScope, withScope, } from './core/scope.js';
+export type { User, ScopeData } from './core/scope.js';
 export { startSpan, withSpan, withSpanSync, getActiveSpan, flushTracer } from './tracing/tracer.js';
 export { extractTraceContext, injectTraceContext, parseTraceparent, createTraceparent } from './tracing/context-propagation.js';
 export type { SpanStatus, SpanOptions, SpanLink } from './tracing/span.js';
@@ -65,6 +67,11 @@ export type { EventLoopLagStats, EventLoopLagOptions } from './utils/event-loop-
 export { detectResources } from './utils/resource-detector.js';
 export type { ResourceAttributes } from './utils/resource-detector.js';
 export { RetryBudget, globalRetryBudget } from './transport/retry.js';
+export { errorDeduplicator } from './processors/deduplicator.js';
+export { persistentStorage } from './storage/persistent-storage.js';
+export { sourceMapResolver } from './processors/source-map-resolver.js';
+export type { PersistentStorageOptions } from './storage/persistent-storage.js';
+export type { SourceMapResolverOptions } from './processors/source-map-resolver.js';
 /**
  * Get a comprehensive SDK health snapshot for operational dashboards.
  * Safe to call at any time — returns degraded info if SDK isn't initialized.
@@ -86,5 +93,18 @@ export declare function getSDKHealth(): {
         currentSessionId: string | null;
     };
     pluginCount: number;
+    dedup: {
+        trackedErrors: number;
+        suppressedCount: number;
+    };
+    persistence: {
+        initialized: boolean;
+        eventCount: number;
+        fileSizeBytes: number;
+    };
+    sourceMaps: {
+        cacheSize: number;
+        hitRate: number;
+    };
 };
 //# sourceMappingURL=index.d.ts.map

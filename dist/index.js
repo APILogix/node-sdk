@@ -47,6 +47,8 @@ export { captureEvent } from './capture/captureEvent.js';
 export { captureMetric, incrementCounter, setGauge, recordHistogram } from './capture/captureMetric.js';
 // ─── Context ────────────────────────────────────────────────────────────────
 export { addBreadcrumb, getRequestContext, getTraceId, getSpanId } from './core/context.js';
+// ─── Scope Management ───────────────────────────────────────────────────────
+export { setUser, setTag, setTags, removeTag, setExtra, setExtras, removeExtra, setContext, getScopeData, clearScope, withScope, } from './core/scope.js';
 // ─── Tracing ────────────────────────────────────────────────────────────────
 export { startSpan, withSpan, withSpanSync, getActiveSpan, flushTracer } from './tracing/tracer.js';
 export { extractTraceContext, injectTraceContext, parseTraceparent, createTraceparent } from './tracing/context-propagation.js';
@@ -66,12 +68,19 @@ export { EventLoopLagMonitor } from './utils/event-loop-lag.js';
 export { detectResources } from './utils/resource-detector.js';
 // ─── Transport Internals (advanced) ──────────────────────────────────────────
 export { RetryBudget, globalRetryBudget } from './transport/retry.js';
+// ─── Advanced Diagnostics ───────────────────────────────────────────────────
+export { errorDeduplicator } from './processors/deduplicator.js';
+export { persistentStorage } from './storage/persistent-storage.js';
+export { sourceMapResolver } from './processors/source-map-resolver.js';
 // ─── Diagnostics ────────────────────────────────────────────────────────────
 import { getCircuitState } from './transport/batcher.js';
 import { eventQueue } from './transport/queue.js';
 import { getSessionManager } from './session/session-manager.js';
 import { MemoryPressureMonitor } from './utils/backpressure.js';
 import { client } from './core/client.js';
+import { errorDeduplicator } from './processors/deduplicator.js';
+import { persistentStorage } from './storage/persistent-storage.js';
+import { sourceMapResolver } from './processors/source-map-resolver.js';
 /**
  * Get a comprehensive SDK health snapshot for operational dashboards.
  * Safe to call at any time — returns degraded info if SDK isn't initialized.
@@ -81,6 +90,9 @@ export function getSDKHealth() {
     const memState = monitor.getState();
     const sessionMgr = getSessionManager();
     const sessionHealth = sessionMgr.getSessionHealth();
+    const dedupStats = errorDeduplicator.getStats();
+    const persistenceStats = persistentStorage.getStats();
+    const sourceMapStats = sourceMapResolver.getStats();
     return {
         initialized: client.initialized,
         circuitState: getCircuitState(),
@@ -98,6 +110,19 @@ export function getSDKHealth() {
             currentSessionId: sessionHealth.currentSessionId,
         },
         pluginCount: client.initialized ? client.plugins.length : 0,
+        dedup: {
+            trackedErrors: dedupStats.trackedErrors,
+            suppressedCount: dedupStats.suppressedCount,
+        },
+        persistence: {
+            initialized: persistenceStats.initialized,
+            eventCount: persistenceStats.eventCount,
+            fileSizeBytes: persistenceStats.fileSizeBytes,
+        },
+        sourceMaps: {
+            cacheSize: sourceMapStats.cacheSize,
+            hitRate: sourceMapStats.hitRate,
+        },
     };
 }
 //# sourceMappingURL=index.js.map

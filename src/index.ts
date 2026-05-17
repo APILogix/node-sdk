@@ -58,6 +58,23 @@ export { captureMetric, incrementCounter, setGauge, recordHistogram } from './ca
 
 export { addBreadcrumb, getRequestContext, getTraceId, getSpanId } from './core/context.js'
 
+// ─── Scope Management ───────────────────────────────────────────────────────
+
+export {
+  setUser,
+  setTag,
+  setTags,
+  removeTag,
+  setExtra,
+  setExtras,
+  removeExtra,
+  setContext,
+  getScopeData,
+  clearScope,
+  withScope,
+} from './core/scope.js'
+export type { User, ScopeData } from './core/scope.js'
+
 // ─── Tracing ────────────────────────────────────────────────────────────────
 
 export { startSpan, withSpan, withSpanSync, getActiveSpan, flushTracer } from './tracing/tracer.js'
@@ -109,6 +126,14 @@ export type { ResourceAttributes } from './utils/resource-detector.js'
 
 export { RetryBudget, globalRetryBudget } from './transport/retry.js'
 
+// ─── Advanced Diagnostics ───────────────────────────────────────────────────
+
+export { errorDeduplicator } from './processors/deduplicator.js'
+export { persistentStorage } from './storage/persistent-storage.js'
+export { sourceMapResolver } from './processors/source-map-resolver.js'
+export type { PersistentStorageOptions } from './storage/persistent-storage.js'
+export type { SourceMapResolverOptions } from './processors/source-map-resolver.js'
+
 // ─── Diagnostics ────────────────────────────────────────────────────────────
 
 import { getCircuitState } from './transport/batcher.js'
@@ -116,6 +141,9 @@ import { eventQueue } from './transport/queue.js'
 import { getSessionManager } from './session/session-manager.js'
 import { MemoryPressureMonitor } from './utils/backpressure.js'
 import { client } from './core/client.js'
+import { errorDeduplicator } from './processors/deduplicator.js'
+import { persistentStorage } from './storage/persistent-storage.js'
+import { sourceMapResolver } from './processors/source-map-resolver.js'
 
 /**
  * Get a comprehensive SDK health snapshot for operational dashboards.
@@ -130,11 +158,17 @@ export function getSDKHealth(): {
   memory: { level: string; heapUsedMb: number; heapUtilization: number }
   session: { totalSessions: number; crashFreeRate: number; currentSessionId: string | null }
   pluginCount: number
+  dedup: { trackedErrors: number; suppressedCount: number }
+  persistence: { initialized: boolean; eventCount: number; fileSizeBytes: number }
+  sourceMaps: { cacheSize: number; hitRate: number }
 } {
   const monitor = new MemoryPressureMonitor()
   const memState = monitor.getState()
   const sessionMgr = getSessionManager()
   const sessionHealth = sessionMgr.getSessionHealth()
+  const dedupStats = errorDeduplicator.getStats()
+  const persistenceStats = persistentStorage.getStats()
+  const sourceMapStats = sourceMapResolver.getStats()
 
   return {
     initialized: client.initialized,
@@ -153,5 +187,18 @@ export function getSDKHealth(): {
       currentSessionId: sessionHealth.currentSessionId,
     },
     pluginCount: client.initialized ? client.plugins.length : 0,
+    dedup: {
+      trackedErrors: dedupStats.trackedErrors,
+      suppressedCount: dedupStats.suppressedCount,
+    },
+    persistence: {
+      initialized: persistenceStats.initialized,
+      eventCount: persistenceStats.eventCount,
+      fileSizeBytes: persistenceStats.fileSizeBytes,
+    },
+    sourceMaps: {
+      cacheSize: sourceMapStats.cacheSize,
+      hitRate: sourceMapStats.hitRate,
+    },
   }
 }

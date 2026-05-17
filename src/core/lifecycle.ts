@@ -10,6 +10,8 @@ import { teardownPlugins } from '../plugins/index.js'
 import { shutdownTracer } from '../tracing/tracer.js'
 import { resetSessionManager } from '../session/session-manager.js'
 import { resetGlobalErrorHandlers } from '../instrumentation/global-errors.js'
+import { errorDeduplicator } from '../processors/deduplicator.js'
+import { persistentStorage } from '../storage/persistent-storage.js'
 
 let signalHandlersRegistered = false
 let isShuttingDown = false
@@ -72,6 +74,18 @@ export async function shutdown(timeoutMs?: number): Promise<void> {
       resetGlobalErrorHandlers()
     } catch (handlerError) {
       logger.warn('Global error handler reset failed during shutdown', { error: handlerError })
+    }
+
+    try {
+      errorDeduplicator.stop()
+    } catch (dedupError) {
+      logger.warn('Error deduplicator stop failed during shutdown', { error: dedupError })
+    }
+
+    try {
+      persistentStorage.shutdown()
+    } catch (storageError) {
+      logger.warn('Persistent storage shutdown failed', { error: storageError })
     }
   }
 
