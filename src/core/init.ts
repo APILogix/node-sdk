@@ -36,6 +36,8 @@ import { detectResources } from '../utils/resource-detector.js'
 import { errorDeduplicator } from '../processors/deduplicator.js'
 import { persistentStorage } from '../storage/persistent-storage.js'
 import { sourceMapResolver } from '../processors/source-map-resolver.js'
+import { metricsRegistry } from '../metrics/registry.js'
+import { slowRequestDetector } from '../processors/slow-request-detector.js'
 
 const INIT_MAX_ATTEMPTS = 5
 const INIT_BASE_RETRY_DELAY_MS = 500
@@ -210,6 +212,9 @@ async function initialize(options: SDKInitOptions): Promise<Readonly<RemoteConfi
         })
       }
 
+      // Configure slow request detector
+      slowRequestDetector.configure({})
+
       // Start subsystems
       startBatcher({
         batchSize: resolvedConfig.batchSize,
@@ -220,6 +225,7 @@ async function initialize(options: SDKInitOptions): Promise<Readonly<RemoteConfi
       setupGlobalErrorHandlers()
       registerSignalHandlers()
       errorDeduplicator.start()
+      metricsRegistry.start()
 
       // Initialize OpenTelemetry tracing if enabled (plan-gated)
       if (resolvedConfig.enableTracing) {

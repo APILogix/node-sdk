@@ -12,7 +12,7 @@
  * - Automatic cleanup of stale entries (TTL-based)
  * - Memory-mapped replay for fast startup
  */
-import { existsSync, mkdirSync, readFileSync, appendFileSync, renameSync, unlinkSync, statSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, appendFileSync, writeFileSync, renameSync, unlinkSync, statSync } from 'fs';
 import { join, dirname } from 'path';
 import { tmpdir } from 'os';
 import { createHash } from 'crypto';
@@ -266,8 +266,8 @@ class PersistentStorage {
     rewriteFile(events) {
         try {
             const entries = events.map(event => JSON.stringify({ event, persistedAt: epochMs() })).join('\n') + '\n';
-            // Atomic write: write to temp, then rename
-            appendFileSync(this.tempFile, entries, { encoding: 'utf8' });
+            // Atomic write: write to temp (overwrite, not append), then rename
+            writeFileSync(this.tempFile, entries, { encoding: 'utf8' });
             renameSync(this.tempFile, this.dataFile);
         }
         catch (error) {

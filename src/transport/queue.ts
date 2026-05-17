@@ -74,9 +74,21 @@ export class EventQueue {
     const toRestore = events.slice(0, available)
     const dropped = events.length - toRestore.length
 
-    // Avoid spread operator — can blow call stack with large arrays
-    // splice(0, 0, ...items) also has the same risk, so we build a new array
-    this.queue = [...toRestore, ...this.queue].slice(0, this.maxSize)
+    // Safe prepend without spread operator to avoid call stack overflow
+    // with large arrays. Push items in reverse order to maintain sequence.
+    for (let i = toRestore.length - 1; i >= 0; i--) {
+      const event = toRestore[i]
+      if (event !== undefined) {
+        this.queue.unshift(event)
+      }
+    }
+
+    // Enforce max size if we exceeded during prepend
+    if (this.queue.length > this.maxSize) {
+      const excess = this.queue.length - this.maxSize
+      this.queue.splice(this.maxSize, excess)
+    }
+
     this.droppedCount += dropped
     this.notifyDrop("requeue_overflow", dropped)
   }

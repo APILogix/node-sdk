@@ -16,7 +16,7 @@
  * - Original source content embedding
  */
 
-import { existsSync, readFileSync } from 'fs'
+import { existsSync, readFileSync, readFile } from 'fs'
 import { resolve, dirname, join } from 'path'
 import { getLogger } from '../utils/logger.js'
 import type { StackFrame } from '../types/event.js'
@@ -241,20 +241,36 @@ class SourceMapResolver {
       }
 
       if (sourceMapUrl.startsWith('http://') || sourceMapUrl.startsWith('https://')) {
-        const response = await fetch(sourceMapUrl)
-        if (!response.ok) return null
-        return (await response.json()) as SourceMapV3
+        const controller = new AbortController()
+        const timeoutId = setTimeout(() => controller.abort(), 5000)
+        try {
+          const response = await fetch(sourceMapUrl, { signal: controller.signal })
+          if (!response.ok) return null
+          return (await response.json()) as SourceMapV3
+        } finally {
+          clearTimeout(timeoutId)
+        }
       }
 
       if (existsSync(sourceMapUrl)) {
-        const content = readFileSync(sourceMapUrl, { encoding: 'utf8' })
+        const content = await new Promise<string>((resolve, reject) => {
+          readFile(sourceMapUrl, { encoding: 'utf8' }, (err, data) => {
+            if (err) reject(err)
+            else resolve(data)
+          })
+        })
         return JSON.parse(content) as SourceMapV3
       }
 
       for (const searchPath of this.sourceMapPaths) {
         const fullPath = join(searchPath, sourceMapUrl.replace(/^.*[\\/]/, ''))
         if (existsSync(fullPath)) {
-          const content = readFileSync(fullPath, { encoding: 'utf8' })
+          const content = await new Promise<string>((resolve, reject) => {
+            readFile(fullPath, { encoding: 'utf8' }, (err, data) => {
+              if (err) reject(err)
+              else resolve(data)
+            })
+          })
           return JSON.parse(content) as SourceMapV3
         }
       }

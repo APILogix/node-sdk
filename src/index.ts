@@ -52,7 +52,7 @@ export { captureError } from './capture/captureError.js'
 export { captureRequest } from './capture/captureRequest.js'
 export { captureMessage } from './capture/captureMessage.js'
 export { captureEvent } from './capture/captureEvent.js'
-export { captureMetric, incrementCounter, setGauge, recordHistogram } from './capture/captureMetric.js'
+export { captureMetric, incrementCounter, setGauge, recordHistogram, addUpDownCounter } from './capture/captureMetric.js'
 
 // ─── Context ────────────────────────────────────────────────────────────────
 
@@ -131,8 +131,12 @@ export { RetryBudget, globalRetryBudget } from './transport/retry.js'
 export { errorDeduplicator } from './processors/deduplicator.js'
 export { persistentStorage } from './storage/persistent-storage.js'
 export { sourceMapResolver } from './processors/source-map-resolver.js'
+export { metricsRegistry } from './metrics/registry.js'
+export { slowRequestDetector } from './processors/slow-request-detector.js'
 export type { PersistentStorageOptions } from './storage/persistent-storage.js'
 export type { SourceMapResolverOptions } from './processors/source-map-resolver.js'
+export type { MetricRegistryOptions, HistogramOptions, CounterOptions, MetricLabels } from './metrics/registry.js'
+export type { SlowRequestOptions } from './processors/slow-request-detector.js'
 
 // ─── Diagnostics ────────────────────────────────────────────────────────────
 
@@ -144,6 +148,8 @@ import { client } from './core/client.js'
 import { errorDeduplicator } from './processors/deduplicator.js'
 import { persistentStorage } from './storage/persistent-storage.js'
 import { sourceMapResolver } from './processors/source-map-resolver.js'
+import { metricsRegistry } from './metrics/registry.js'
+import { slowRequestDetector } from './processors/slow-request-detector.js'
 
 /**
  * Get a comprehensive SDK health snapshot for operational dashboards.
@@ -161,6 +167,8 @@ export function getSDKHealth(): {
   dedup: { trackedErrors: number; suppressedCount: number }
   persistence: { initialized: boolean; eventCount: number; fileSizeBytes: number }
   sourceMaps: { cacheSize: number; hitRate: number }
+  metrics: { histogramCount: number; counterCount: number; gaugeCount: number; totalFlushed: number }
+  slowRequests: { totalChecked: number; totalSlow: number; slowRate: number; trackedRoutes: number }
 } {
   const monitor = new MemoryPressureMonitor()
   const memState = monitor.getState()
@@ -169,6 +177,8 @@ export function getSDKHealth(): {
   const dedupStats = errorDeduplicator.getStats()
   const persistenceStats = persistentStorage.getStats()
   const sourceMapStats = sourceMapResolver.getStats()
+  const metricsStats = metricsRegistry.getStats()
+  const slowReqStats = slowRequestDetector.getStats()
 
   return {
     initialized: client.initialized,
@@ -199,6 +209,18 @@ export function getSDKHealth(): {
     sourceMaps: {
       cacheSize: sourceMapStats.cacheSize,
       hitRate: sourceMapStats.hitRate,
+    },
+    metrics: {
+      histogramCount: metricsStats.histogramCount,
+      counterCount: metricsStats.counterCount,
+      gaugeCount: metricsStats.gaugeCount,
+      totalFlushed: metricsStats.totalFlushed,
+    },
+    slowRequests: {
+      totalChecked: slowReqStats.totalChecked,
+      totalSlow: slowReqStats.totalSlow,
+      slowRate: slowReqStats.slowRate,
+      trackedRoutes: slowReqStats.trackedRoutes,
     },
   }
 }

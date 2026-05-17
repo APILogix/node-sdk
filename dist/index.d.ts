@@ -39,7 +39,7 @@ export { captureError } from './capture/captureError.js';
 export { captureRequest } from './capture/captureRequest.js';
 export { captureMessage } from './capture/captureMessage.js';
 export { captureEvent } from './capture/captureEvent.js';
-export { captureMetric, incrementCounter, setGauge, recordHistogram } from './capture/captureMetric.js';
+export { captureMetric, incrementCounter, setGauge, recordHistogram, addUpDownCounter } from './capture/captureMetric.js';
 export { addBreadcrumb, getRequestContext, getTraceId, getSpanId } from './core/context.js';
 export { setUser, setTag, setTags, removeTag, setExtra, setExtras, removeExtra, setContext, getScopeData, clearScope, withScope, } from './core/scope.js';
 export type { User, ScopeData } from './core/scope.js';
@@ -70,8 +70,12 @@ export { RetryBudget, globalRetryBudget } from './transport/retry.js';
 export { errorDeduplicator } from './processors/deduplicator.js';
 export { persistentStorage } from './storage/persistent-storage.js';
 export { sourceMapResolver } from './processors/source-map-resolver.js';
+export { metricsRegistry } from './metrics/registry.js';
+export { slowRequestDetector } from './processors/slow-request-detector.js';
 export type { PersistentStorageOptions } from './storage/persistent-storage.js';
 export type { SourceMapResolverOptions } from './processors/source-map-resolver.js';
+export type { MetricRegistryOptions, HistogramOptions, CounterOptions, MetricLabels } from './metrics/registry.js';
+export type { SlowRequestOptions } from './processors/slow-request-detector.js';
 /**
  * Get a comprehensive SDK health snapshot for operational dashboards.
  * Safe to call at any time — returns degraded info if SDK isn't initialized.
@@ -105,6 +109,18 @@ export declare function getSDKHealth(): {
     sourceMaps: {
         cacheSize: number;
         hitRate: number;
+    };
+    metrics: {
+        histogramCount: number;
+        counterCount: number;
+        gaugeCount: number;
+        totalFlushed: number;
+    };
+    slowRequests: {
+        totalChecked: number;
+        totalSlow: number;
+        slowRate: number;
+        trackedRoutes: number;
     };
 };
 //# sourceMappingURL=index.d.ts.map

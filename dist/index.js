@@ -44,7 +44,7 @@ export { captureError } from './capture/captureError.js';
 export { captureRequest } from './capture/captureRequest.js';
 export { captureMessage } from './capture/captureMessage.js';
 export { captureEvent } from './capture/captureEvent.js';
-export { captureMetric, incrementCounter, setGauge, recordHistogram } from './capture/captureMetric.js';
+export { captureMetric, incrementCounter, setGauge, recordHistogram, addUpDownCounter } from './capture/captureMetric.js';
 // ─── Context ────────────────────────────────────────────────────────────────
 export { addBreadcrumb, getRequestContext, getTraceId, getSpanId } from './core/context.js';
 // ─── Scope Management ───────────────────────────────────────────────────────
@@ -72,6 +72,8 @@ export { RetryBudget, globalRetryBudget } from './transport/retry.js';
 export { errorDeduplicator } from './processors/deduplicator.js';
 export { persistentStorage } from './storage/persistent-storage.js';
 export { sourceMapResolver } from './processors/source-map-resolver.js';
+export { metricsRegistry } from './metrics/registry.js';
+export { slowRequestDetector } from './processors/slow-request-detector.js';
 // ─── Diagnostics ────────────────────────────────────────────────────────────
 import { getCircuitState } from './transport/batcher.js';
 import { eventQueue } from './transport/queue.js';
@@ -81,6 +83,8 @@ import { client } from './core/client.js';
 import { errorDeduplicator } from './processors/deduplicator.js';
 import { persistentStorage } from './storage/persistent-storage.js';
 import { sourceMapResolver } from './processors/source-map-resolver.js';
+import { metricsRegistry } from './metrics/registry.js';
+import { slowRequestDetector } from './processors/slow-request-detector.js';
 /**
  * Get a comprehensive SDK health snapshot for operational dashboards.
  * Safe to call at any time — returns degraded info if SDK isn't initialized.
@@ -93,6 +97,8 @@ export function getSDKHealth() {
     const dedupStats = errorDeduplicator.getStats();
     const persistenceStats = persistentStorage.getStats();
     const sourceMapStats = sourceMapResolver.getStats();
+    const metricsStats = metricsRegistry.getStats();
+    const slowReqStats = slowRequestDetector.getStats();
     return {
         initialized: client.initialized,
         circuitState: getCircuitState(),
@@ -122,6 +128,18 @@ export function getSDKHealth() {
         sourceMaps: {
             cacheSize: sourceMapStats.cacheSize,
             hitRate: sourceMapStats.hitRate,
+        },
+        metrics: {
+            histogramCount: metricsStats.histogramCount,
+            counterCount: metricsStats.counterCount,
+            gaugeCount: metricsStats.gaugeCount,
+            totalFlushed: metricsStats.totalFlushed,
+        },
+        slowRequests: {
+            totalChecked: slowReqStats.totalChecked,
+            totalSlow: slowReqStats.totalSlow,
+            slowRate: slowReqStats.slowRate,
+            trackedRoutes: slowReqStats.trackedRoutes,
         },
     };
 }

@@ -1,5 +1,8 @@
 /**
  * Metric capture — captures counter, gauge, and histogram metric events.
+ *
+ * Uses the enterprise metrics registry for client-side aggregation.
+ * Falls back to raw event capture if registry is not initialized.
  */
 import type { MetricType } from '../types/event.js';
 /**
@@ -20,4 +23,9 @@ export declare function incrementCounter(name: string, value?: number, tags?: Re
 export declare function setGauge(name: string, value: number, tags?: Record<string, string>): void;
 /** Record a histogram value (e.g., latency, size). */
 export declare function recordHistogram(name: string, value: number, tags?: Record<string, string>, unit?: string): void;
+/**
+ * Add to an up-down counter (can go negative).
+ * Used for tracking active connections, queue depth, etc.
+ */
+export declare function addUpDownCounter(name: string, value: number, tags?: Record<string, string>): void;
 //# sourceMappingURL=captureMetric.d.ts.map

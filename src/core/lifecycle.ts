@@ -12,6 +12,7 @@ import { resetSessionManager } from '../session/session-manager.js'
 import { resetGlobalErrorHandlers } from '../instrumentation/global-errors.js'
 import { errorDeduplicator } from '../processors/deduplicator.js'
 import { persistentStorage } from '../storage/persistent-storage.js'
+import { metricsRegistry } from '../metrics/registry.js'
 
 let signalHandlersRegistered = false
 let isShuttingDown = false
@@ -86,6 +87,13 @@ export async function shutdown(timeoutMs?: number): Promise<void> {
       persistentStorage.shutdown()
     } catch (storageError) {
       logger.warn('Persistent storage shutdown failed', { error: storageError })
+    }
+
+    try {
+      metricsRegistry.flush()
+      metricsRegistry.stop()
+    } catch (metricsError) {
+      logger.warn('Metrics registry shutdown failed', { error: metricsError })
     }
   }
 

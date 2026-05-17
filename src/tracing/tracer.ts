@@ -46,6 +46,7 @@ import os from 'node:os'
 
 let provider: NodeTracerProvider | null = null
 let tracer: Tracer | null = null
+let noopTracer: Tracer | null = null
 let initialized = false
 
 // ─── Span Exporter → SDK Event Pipeline ─────────────────────────────────────
@@ -199,8 +200,10 @@ export function startSpan(name: string, options?: SpanOptions): PulseSpan {
 
   if (!tracer) {
     logger.debug('startSpan called but tracer is not initialized — returning no-op span', { name })
-    // Return a no-op span using the API's built-in no-op
-    const noopSpan = trace.getTracer('noop').startSpan(name)
+    if (!noopTracer) {
+      noopTracer = trace.getTracer('@vikasbaplawat1/pulse-sdk/noop')
+    }
+    const noopSpan = noopTracer.startSpan(name)
     return new PulseSpan(noopSpan)
   }
 
@@ -213,7 +216,10 @@ export function startSpan(name: string, options?: SpanOptions): PulseSpan {
     return new PulseSpan(span)
   } catch (err) {
     logger.warn('Failed to start span', { name, error: err })
-    const noopSpan = trace.getTracer('noop').startSpan(name)
+    if (!noopTracer) {
+      noopTracer = trace.getTracer('@vikasbaplawat1/pulse-sdk/noop')
+    }
+    const noopSpan = noopTracer.startSpan(name)
     return new PulseSpan(noopSpan)
   }
 }

@@ -16,6 +16,7 @@ import { generateId } from '../utils/uuid.js'
 import { createContextStore, withContext, addBreadcrumb } from '../core/context.js'
 import { getLogger } from '../utils/logger.js'
 import { client } from '../core/client.js'
+import { slowRequestDetector } from '../processors/slow-request-detector.js'
 
 export function monitorMiddleware() {
   return function (req: Request, res: Response, next: NextFunction) {
@@ -59,6 +60,14 @@ export function monitorMiddleware() {
             bodySize: getBodySize(body),
             userId: ((req as unknown as Record<string, { id?: string }>).user)?.id ?? null,
           })
+
+          slowRequestDetector.check({
+            route: req.originalUrl ?? req.url,
+            method: req.method,
+            latencyMs: latency,
+            statusCode: res.statusCode,
+            requestId,
+          })
         } catch (err) {
           logger.error('captureRequest failed', {
             error: err,
@@ -70,14 +79,17 @@ export function monitorMiddleware() {
         }
       }
 
+      // Register finish/close listeners BEFORE calling next() to ensure
+      // they are attached even for fast responses that complete synchronously.
+      res.once('finish', () => captureOnce())
+      res.once('close', () => captureOnce())
+
+      // Monkey-patch res.send to capture body size when explicitly sent
       const originalSend = res.send.bind(res)
       res.send = function (body?: unknown) {
         captureOnce(body)
         return originalSend(body)
       } as typeof res.send
-
-      res.once('finish', () => captureOnce())
-      res.once('close', () => captureOnce())
 
       next()
     })
