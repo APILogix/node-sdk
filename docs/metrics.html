@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Metrics - Pulse SDK</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="docs-container">
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <div class="sidebar-logo">Pulse <span>SDK</span></div>
+      </div>
+      <nav class="sidebar-nav">
+        <div class="nav-section">
+          <div class="nav-section-title">Getting Started</div>
+          <a href="index.html" class="nav-link">Overview</a>
+          <a href="architecture.html" class="nav-link">Architecture</a>
+          <a href="initialization.html" class="nav-link">Initialization</a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">Core Concepts</div>
+          <a href="event-pipeline.html" class="nav-link">Event Pipeline</a>
+          <a href="transport.html" class="nav-link">Transport System</a>
+          <a href="tracing.html" class="nav-link">Tracing</a>
+          <a href="metrics.html" class="nav-link active">Metrics</a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">Security</div>
+          <a href="security.html" class="nav-link">PII & Redaction</a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">Reference</div>
+          <a href="api_reference.html" class="nav-link">API Reference</a>
+          <a href="configuration.html" class="nav-link">Configuration</a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">Enterprise</div>
+          <a href="enterprise.html" class="nav-link">Readiness Report</a>
+        </div>
+      </nav>
+    </aside>
+
+    <main class="main-content">
+      <header class="content-header">
+        <div class="header-title">Metrics System</div>
+        <div class="header-actions">
+          <input type="text" class="search-box" id="search-input" placeholder="Search... (press /)">
+          <button class="theme-toggle" id="theme-toggle">Dark Mode</button>
+        </div>
+      </header>
+
+      <div class="content-body">
+        <h1>Metrics System</h1>
+        <p>Client-side aggregation for counters, gauges, and histograms with percentile computation.</p>
+
+        <h2>Metric Types</h2>
+
+        <h3>Counter</h3>
+        <p>Monotonically increasing value - ideal for request counts, error counts:</p>
+        <pre><code>// Increment counter by 1 (default)
+incrementCounter('http.requests')
+
+// Increment by custom value
+incrementCounter('http.requests', 1, { method: 'GET', status: '200' })
+
+// Direct capture
+captureMetric('http.requests', 1, 'counter', { tags: { method: 'GET' } })</code></pre>
+
+        <h3>Gauge</h3>
+        <p>Point-in-time value - ideal for memory usage, active connections:</p>
+        <pre><code>setGauge('memory.heap.used', 150000000, { unit: 'bytes' })
+setGauge('active.connections', 42, { service: 'api' })</code></pre>
+
+        <h3>Histogram</h3>
+        <p>Distribution of values - ideal for latency, request size:</p>
+        <pre><code>recordHistogram('http.request.duration', 125.5, { method: 'GET' }, 'ms')
+recordHistogram('request.size', 2048, { endpoint: '/api/users' }, 'bytes')</code></pre>
+
+        <h3>Up-Down Counter</h3>
+        <p>Can increase or decrease - ideal for queue depth, active users:</p>
+        <pre><code>addUpDownCounter('queue.depth', 1, { queue: 'default' })
+addUpDownCounter('queue.depth', -1, { queue: 'default' })</code></pre>
+
+        <h2>Client-Side Aggregation</h2>
+        <p>The metrics registry performs client-side aggregation before export:</p>
+        <pre><code>class HistogramAggregator {
+  record(value: number, labels: MetricLabels): void {
+    // Store raw values
+    this.values.push(value)
+    this.count++
+    this.sum += value
+  }
+
+  flush(): AggregatedMetric[] {
+    const sorted = [...this.values].sort((a, b) => a - b)
+    return {
+      count: this.count,
+      sum: this.sum,
+      min: sorted[0],
+      max: sorted[sorted.length - 1],
+      p50: percentile(sorted, 50),
+      p90: percentile(sorted, 90),
+      p95: percentile(sorted, 95),
+      p99: percentile(sorted, 99),
+      avg: this.sum / this.count,
+    }
+  }
+}</code></pre>
+
+        <h2>Percentile Computation</h2>
+        <p>Histograms automatically compute percentiles:</p>
+        <ul>
+          <li><strong>p50 (median):</strong> 50% of values are below this</li>
+          <li><strong>p90:</strong> 90% of values are below this</li>
+          <li><strong>p95:</strong> 95% of values are below this</li>
+          <li><strong>p99:</strong> 99% of values are below this</li>
+        </ul>
+
+        <h2>Cardinality Protection</h2>
+        <p>Prevents label explosion that could cause memory issues:</p>
+        <pre><code>const MAX_CARDINALITY = 1000 // Per metric
+
+record(value, labels) {
+  const key = this.labelKey(labels)
+  if (this.labelSets.size >= this.maxCardinality && !this.labelSets.has(key)) {
+    // Drop - cardinality limit reached
+    return
+  }
+}</code></pre>
+
+        <h2>Flush Intervals</h2>
+        <p>Metrics are aggregated and exported at regular intervals:</p>
+        <table>
+          <thead>
+            <tr>
+              <th>Metric Type</th>
+              <th>Flush Interval</th>
+              <th>Aggregation</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Counter</td>
+              <td>10 seconds</td>
+              <td>Sum over window</td>
+            </tr>
+            <tr>
+              <td>Histogram</td>
+              <td>10 seconds</td>
+              <td>Percentiles</td>
+            </tr>
+            <tr>
+              <td>Gauge</td>
+              <td>10 seconds</td>
+              <td>Last value</td>
+            </tr>
+            <tr>
+              <td>Up-Down Counter</td>
+              <td>10 seconds</td>
+              <td>Current value</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="callout callout-info">
+          <strong>Plan Requirement:</strong> Metrics collection is available on <span class="tag tag-enterprise">Enterprise</span> plans only.
+        </div>
+      </div>
+    </main>
+  </div>
+  <script src="script.js"></script>
+</body>
+</html>

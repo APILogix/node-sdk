@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Security - Pulse SDK</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="docs-container">
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <div class="sidebar-logo">Pulse <span>SDK</span></div>
+      </div>
+      <nav class="sidebar-nav">
+        <div class="nav-section">
+          <div class="nav-section-title">Getting Started</div>
+          <a href="index.html" class="nav-link">Overview</a>
+          <a href="architecture.html" class="nav-link">Architecture</a>
+          <a href="initialization.html" class="nav-link">Initialization</a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">Core Concepts</div>
+          <a href="event-pipeline.html" class="nav-link">Event Pipeline</a>
+          <a href="transport.html" class="nav-link">Transport System</a>
+          <a href="tracing.html" class="nav-link">Tracing</a>
+          <a href="metrics.html" class="nav-link">Metrics</a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">Security</div>
+          <a href="security.html" class="nav-link active">PII & Redaction</a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">Reference</div>
+          <a href="api_reference.html" class="nav-link">API Reference</a>
+          <a href="configuration.html" class="nav-link">Configuration</a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">Enterprise</div>
+          <a href="enterprise.html" class="nav-link">Readiness Report</a>
+        </div>
+      </nav>
+    </aside>
+
+    <main class="main-content">
+      <header class="content-header">
+        <div class="header-title">PII & Redaction</div>
+        <div class="header-actions">
+          <input type="text" class="search-box" id="search-input" placeholder="Search... (press /)">
+          <button class="theme-toggle" id="theme-toggle">Dark Mode</button>
+        </div>
+      </header>
+
+      <div class="content-body">
+        <h1>Security & PII Redaction</h1>
+        <p>Automatic PII scrubbing, sensitive data handling, and plan-based access control.</p>
+
+        <h2>PII Detection Patterns</h2>
+        <p>The sanitizer automatically detects and redacts:</p>
+        <table>
+          <thead>
+            <tr>
+              <th>Pattern Type</th>
+              <th>Regex</th>
+              <th>Replacement</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Email Addresses</td>
+              <td><code>[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}</code></td>
+              <td><code>[email]</code></td>
+            </tr>
+            <tr>
+              <td>Credit Card Numbers</td>
+              <td><code>\b(?:\d{4}[-\s]?){3}\d{4}\b</code></td>
+              <td><code>[card]</code></td>
+            </tr>
+            <tr>
+              <td>SSN</td>
+              <td><code>\b\d{3}-\d{2}-\d{4}\b</code></td>
+              <td><code>[ssn]</code></td>
+            </tr>
+            <tr>
+              <td>Phone Numbers</td>
+              <td><code>\b(?:\+1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b</code></td>
+              <td><code>[phone]</code></td>
+            </tr>
+            <tr>
+              <td>Bearer Tokens</td>
+              <td><code>Bearer\s+[A-Za-z0-9._~+/=-]+</code></td>
+              <td><code>Bearer [REDACTED]</code></td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h2>Sensitive Key Detection</h2>
+        <p>Keys matching these patterns are redacted at any depth:</p>
+        <pre><code>const DEFAULT_SENSITIVE_KEYS = /(?:password|passwd|secret|token|api[-_]?key|
+api[-_]?secret|authorization|cookie|session[-_]?id|credential|
+private[-_]?key|access[-_]?token|refresh[-_]?token)/i</code></pre>
+
+        <h2>Sanitization Flow</h2>
+        <pre><code>export function sanitizeEvent(event: SDKEvent): SDKEvent {
+  return sanitizeValue(event, 0) as SDKEvent
+}
+
+function sanitizeValue(value: unknown, depth: number): unknown {
+  if (depth >= MAX_SANITIZE_DEPTH) return value
+
+  if (typeof value === 'string') {
+    return sanitizeString(value)
+  }
+
+  if (Array.isArray(value)) {
+    return value.map(item => sanitizeValue(item, depth + 1))
+  }
+
+  if (value && typeof value === 'object') {
+    const result: Record<string, unknown> = {}
+    for (const [key, nested] of Object.entries(value)) {
+      if (isSensitiveKey(key)) {
+        result[key] = REDACTED
+      } else {
+        result[key] = sanitizeValue(nested, depth + 1)
+      }
+    }
+    return result
+  }
+
+  return value
+}</code></pre>
+
+        <h2>Header Redaction</h2>
+        <p>HTTP headers are sanitized before being attached to request events:</p>
+        <pre><code>export function sanitizeHeaders(headers: Record<string, unknown>): Record<string, unknown> {
+  const sanitized: Record<string, unknown> = {}
+
+  for (const [key, value] of Object.entries(headers)) {
+    if (isSensitiveKey(key)) {
+      sanitized[key] = REDACTED
+    } else if (typeof value === 'string') {
+      sanitized[key] = sanitizeString(value)
+    } else {
+      sanitized[key] = value
+    }
+  }
+
+  return sanitized
+}</code></pre>
+        <h3>Redacted Headers</h3>
+        <ul>
+          <li>authorization</li>
+          <li>cookie</li>
+          <li>x-api-key</li>
+          <li>x-auth-token</li>
+          <li>proxy-authorization</li>
+        </ul>
+
+        <h2>Logger Redaction</h2>
+        <p>SDK internal logs also have PII redaction:</p>
+        <pre><code>const SENSITIVE_KEY_PATTERN = /api[-_]?key|api[-_]?secret|
+authorization|cookie|token|password|secret|credential/i
+
+export function redact(value: unknown, depth = 0): unknown {
+  // Recursive redaction of sensitive keys and patterns
+}</code></pre>
+
+        <h2>Plan-Based Access Control</h2>
+        <p>Features are gated by plan tier to control data exposure:</p>
+        <pre><code>export function clampToPlan(config, plan): ResolvedSDKConfig {
+  // Features above plan are forced OFF
+  const enableErrors = plan.allowErrors ? config.enableErrors : false
+  const enablePerformance = plan.allowPerformance ? config.enablePerformance : false
+  const enableTracing = plan.allowTracing ? config.enableTracing : false
+  const enableMetrics = plan.allowMetrics ? config.enableMetrics : false
+
+  // Compression restricted by plan
+  if (!plan.allowedCompression.includes(compression)) {
+    compression = 'none'
+  }
+
+  return clampedConfig
+}</code></pre>
+
+        <div class="callout callout-success">
+          <strong>Security Summary:</strong> All sensitive data is automatically redacted before leaving your application. No PII is transmitted to the backend.
+        </div>
+      </div>
+    </main>
+  </div>
+  <script src="script.js"></script>
+</body>
+</html>

@@ -12,6 +12,7 @@ import { resetGlobalErrorHandlers } from '../instrumentation/global-errors.js';
 import { errorDeduplicator } from '../processors/deduplicator.js';
 import { persistentStorage } from '../storage/persistent-storage.js';
 import { metricsRegistry } from '../metrics/registry.js';
+import { otelMetrics } from '../metrics/otel-adapter.js';
 let signalHandlersRegistered = false;
 let isShuttingDown = false;
 // Store signal handler references for proper cleanup on reinit
@@ -86,7 +87,13 @@ export async function shutdown(timeoutMs) {
             metricsRegistry.stop();
         }
         catch (metricsError) {
-            logger.warn('Metrics registry shutdown failed', { error: metricsError });
+            logger.warn('Metrics registry shutdown failed during shutdown', { error: metricsError });
+        }
+        try {
+            await otelMetrics.shutdown();
+        }
+        catch (otelMetricsError) {
+            logger.warn('OTel metrics shutdown failed during shutdown', { error: otelMetricsError });
         }
     };
     try {

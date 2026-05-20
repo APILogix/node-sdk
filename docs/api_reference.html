@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>API Reference - Pulse SDK</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="docs-container">
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <div class="sidebar-logo">Pulse <span>SDK</span></div>
+      </div>
+      <nav class="sidebar-nav">
+        <div class="nav-section">
+          <div class="nav-section-title">Getting Started</div>
+          <a href="index.html" class="nav-link">Overview</a>
+          <a href="architecture.html" class="nav-link">Architecture</a>
+          <a href="initialization.html" class="nav-link">Initialization</a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">Core Concepts</div>
+          <a href="event-pipeline.html" class="nav-link">Event Pipeline</a>
+          <a href="transport.html" class="nav-link">Transport System</a>
+          <a href="tracing.html" class="nav-link">Tracing</a>
+          <a href="metrics.html" class="nav-link">Metrics</a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">Security</div>
+          <a href="security.html" class="nav-link">PII & Redaction</a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">Reference</div>
+          <a href="api_reference.html" class="nav-link active">API Reference</a>
+          <a href="configuration.html" class="nav-link">Configuration</a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">Enterprise</div>
+          <a href="enterprise.html" class="nav-link">Readiness Report</a>
+        </div>
+      </nav>
+    </aside>
+
+    <main class="main-content">
+      <header class="content-header">
+        <div class="header-title">API Reference</div>
+        <div class="header-actions">
+          <input type="text" class="search-box" id="search-input" placeholder="Search... (press /)">
+          <button class="theme-toggle" id="theme-toggle">Dark Mode</button>
+        </div>
+      </header>
+
+      <div class="content-body">
+        <h1>API Reference</h1>
+        <p>Complete reference for all public SDK APIs with examples.</p>
+
+        <h2>Core Functions</h2>
+
+        <h3>createSDK(options)</h3>
+        <p>Initialize the SDK - recommended entry point.</p>
+        <pre><code>import { createSDK } from '@vikasbaplawat1/pulse-sdk'
+
+const sdk = await createSDK({
+  apiKey: process.env.PULSE_API_KEY,
+  service: 'my-service',
+  environment: 'production',
+  debug: true,
+})</code></pre>
+        <table>
+          <thead>
+            <tr>
+              <th>Parameter</th>
+              <th>Type</th>
+              <th>Required</th>
+              <th>Description</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>apiKey</td>
+              <td>string</td>
+              <td>Yes</td>
+              <td>Project API key</td>
+            </tr>
+            <tr>
+              <td>service</td>
+              <td>string</td>
+              <td>No</td>
+              <td>Service name (default: "unknown-service")</td>
+            </tr>
+            <tr>
+              <td>environment</td>
+              <td>string</td>
+              <td>No</td>
+              <td>Environment (default: "production")</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h3>init(options)</h3>
+        <p>Initialize the SDK - alternative to createSDK.</p>
+        <pre><code>import { init } from '@vikasbaplawat1/pulse-sdk'
+await init({ apiKey: '...', service: 'my-service' })</code></pre>
+
+        <h3>flush(), shutdown()</h3>
+        <p>Manual flush and graceful shutdown.</p>
+        <pre><code>import { flush, shutdown } from '@vikasbaplawat1/pulse-sdk'
+
+// Flush pending events
+await flush()
+
+// Graceful shutdown with timeout
+await shutdown(10000) // 10 second timeout</code></pre>
+
+        <h2>Capture Functions</h2>
+
+        <h3>captureError(error, options?)</h3>
+        <p>Capture an exception or error.</p>
+        <pre><code>import { captureError } from '@vikasbaplawat1/pulse-sdk'
+
+try {
+  await riskyOperation()
+} catch (error) {
+  captureError(error, {
+    severity: 'error',
+    context: { userId: '123' },
+    fingerprint: 'custom-fingerprint'
+  })
+}</code></pre>
+
+        <h3>captureRequest(event)</h3>
+        <p>Capture an HTTP request event.</p>
+        <pre><code>import { captureRequest } from '@vikasbaplawat1/pulse-sdk'
+
+captureRequest({
+  type: 'request',
+  requestId: 'req-123',
+  url: '/api/users',
+  method: 'GET',
+  statusCode: 200,
+  latency: 125,
+  timestamp: Date.now(),
+})</code></pre>
+
+        <h3>captureMessage(message, level?)</h3>
+        <p>Capture a log message.</p>
+        <pre><code>import { captureMessage } from '@vikasbaplawat1/pulse-sdk'
+
+captureMessage('User logged in', 'info')</code></pre>
+
+        <h3>captureMetric(name, value, type, options?)</h3>
+        <p>Capture a metric sample.</p>
+        <pre><code>import { captureMetric } from '@vikasbaplawat1/pulse-sdk'
+
+captureMetric('http.request.duration', 125.5, 'histogram', {
+  tags: { method: 'GET' },
+  unit: 'ms'
+})</code></pre>
+
+        <h2>Scope Management</h2>
+
+        <h3>setUser(user | null)</h3>
+        <p>Set the current user for all events.</p>
+        <pre><code>import { setUser } from '@vikasbaplawat1/pulse-sdk'
+
+setUser({ id: 'user-123', email: 'user@example.com' })
+// Clear user
+setUser(null)</code></pre>
+
+        <h3>setTag(key, value)</h3>
+        <p>Set a tag for filtering.</p>
+        <pre><code>import { setTag } from '@vikasbaplawat1/pulse-sdk'
+
+setTag('environment', 'production')
+setTag('version', '1.2.0')</code></pre>
+
+        <h3>setExtra(key, value)</h3>
+        <p>Set extra context.</p>
+        <pre><code>import { setExtra } from '@vikasbaplawat1/pulse-sdk'
+
+setExtra('requestId', 'req-456')
+setExtra('feature', 'new-dashboard')</code></pre>
+
+        <h3>setContext(name, context)</h3>
+        <p>Set named context.</p>
+        <pre><code>import { setContext } from '@vikasbaplawat1/pulse-sdk'
+
+setContext('device', { model: 'iPhone 15', os: 'iOS 17' })
+setContext('os', { name: 'macOS', version: '14'' })</code></pre>
+
+        <h2>Tracing</h2>
+
+        <h3>startSpan(name, options?)</h3>
+        <p>Start a new span.</p>
+        <pre><code>import { startSpan } from '@vikasbaplawat1/pulse-sdk'
+
+const span = startSpan('db.query', {
+  attributes: { 'db.system': 'postgres' }
+})
+span.setAttribute('db.statement', 'SELECT * FROM users')
+// ... operation ...
+span.end()</code></pre>
+
+        <h3>withSpan(name, fn, options?)</h3>
+        <p>Execute function within a span.</p>
+        <pre><code>import { withSpan } from '@vikasbaplawat1/pulse-sdk'
+
+const result = await withSpan('process-file', async (span) => {
+  span.setAttribute('file.size', file.size)
+  return await processFile(file)
+})</code></pre>
+
+        <h3>withSpanSync(name, fn, options?)</h3>
+        <p>Synchronous version of withSpan.</p>
+        <pre><code>import { withSpanSync } from '@vikasbaplawat1/pulse-sdk'
+
+const result = withSpanSync('parse-json', (span) => {
+  return JSON.parse(jsonString)
+})</code></pre>
+
+        <h2>Context</h2>
+
+        <h3>addBreadcrumb(input)</h3>
+        <p>Add a breadcrumb to the current context.</p>
+        <pre><code>import { addBreadcrumb } from '@vikasbaplawat1/pulse-sdk'
+
+addBreadcrumb({
+  category: 'http',
+  message: 'GET /api/users',
+  type: 'http',
+  data: { method: 'GET', statusCode: 200 }
+})</code></pre>
+
+        <h3>getTraceId(), getSpanId()</h3>
+        <p>Get current trace/span IDs.</p>
+        <pre><code>import { getTraceId, getSpanId } from '@vikasbaplawat1/pulse-sdk'
+
+const traceId = getTraceId()
+const spanId = getSpanId()</code></pre>
+
+        <h2>Diagnostics</h2>
+
+        <h3>getSDKHealth()</h3>
+        <p>Get SDK health snapshot for monitoring.</p>
+        <pre><code>import { getSDKHealth } from '@vikasbaplawat1/pulse-sdk'
+
+const health = getSDKHealth()
+console.log(health)
+// {
+//   initialized: true,
+//   circuitState: 'CLOSED',
+//   queueSize: 50,
+//   memory: { level: 'normal', heapUsedMb: 45.2 },
+//   session: { crashFreeRate: 0.98 },
+//   ...
+// }</code></pre>
+
+        <h2>Instrumentation</h2>
+
+        <h3>monitorMiddleware()</h3>
+        <p>Express middleware for request tracking.</p>
+        <pre><code>import { monitorMiddleware } from '@vikasbaplawat1/pulse-sdk'
+
+const app = express()
+app.use(monitorMiddleware())</code></pre>
+
+        <h3>instrumentHttpClient()</h3>
+        <p>Auto-instrument outbound HTTP requests.</p>
+        <pre><code>import { instrumentHttpClient } from '@vikasbaplawat1/pulse-sdk'
+
+instrumentHttpClient() // Call once at startup</code></pre>
+
+        <div class="callout callout-info">
+          <strong>Note:</strong> All capture functions return void but are safe to call - errors are caught internally and never throw.
+        </div>
+      </div>
+    </main>
+  </div>
+  <script src="script.js"></script>
+</body>
+</html>

@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tracing - Pulse SDK</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="docs-container">
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <div class="sidebar-logo">Pulse <span>SDK</span></div>
+      </div>
+      <nav class="sidebar-nav">
+        <div class="nav-section">
+          <div class="nav-section-title">Getting Started</div>
+          <a href="index.html" class="nav-link">Overview</a>
+          <a href="architecture.html" class="nav-link">Architecture</a>
+          <a href="initialization.html" class="nav-link">Initialization</a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">Core Concepts</div>
+          <a href="event-pipeline.html" class="nav-link">Event Pipeline</a>
+          <a href="transport.html" class="nav-link">Transport System</a>
+          <a name="tracing" class="nav-link active">Tracing</a>
+          <a href="metrics.html" class="nav-link">Metrics</a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">Security</div>
+          <a href="security.html" class="nav-link">PII & Redaction</a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">Reference</div>
+          <a href="api_reference.html" class="nav-link">API Reference</a>
+          <a href="configuration.html" class="nav-link">Configuration</a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">Enterprise</div>
+          <a href="enterprise.html" class="nav-link">Readiness Report</a>
+        </div>
+      </nav>
+    </aside>
+
+    <main class="main-content">
+      <header class="content-header">
+        <div class="header-title">Distributed Tracing</div>
+        <div class="header-actions">
+          <input type="text" class="search-box" id="search-input" placeholder="Search... (press /)">
+          <button class="theme-toggle" id="theme-toggle">Dark Mode</button>
+        </div>
+      </header>
+
+      <div class="content-body">
+        <h1>Distributed Tracing</h1>
+        <p>OpenTelemetry-based distributed tracing with W3C trace context propagation.</p>
+
+        <h2>Architecture</h2>
+        <p>The SDK integrates with OpenTelemetry to provide enterprise-grade tracing:</p>
+        <pre><code>import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node'
+import { BatchSpanProcessor } from '@opentelemetry/sdk-trace-base'
+import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks'
+
+// Custom exporter routes spans through SDK pipeline
+class PipelineSpanExporter implements SpanExporter {
+  export(spans: ReadableSpan[], resultCallback) {
+    for (const span of spans) {
+      const traceEvent = this.spanToEvent(span)
+      processEvent(traceEvent) // Through event pipeline
+    }
+    resultCallback({ code: 0 })
+  }
+}</code></pre>
+
+        <h2>Tracer Initialization</h2>
+        <pre><code>export function initTracer(config: ResolvedSDKConfig): void {
+  const resource = resourceFromAttributes({
+    [ATTR_SERVICE_NAME]: config.service,
+    [ATTR_SERVICE_VERSION]: config.release,
+    [ATTR_DEPLOYMENT_ENVIRONMENT_NAME]: config.environment,
+    'host.name': os.hostname(),
+    'process.runtime.version': process.version,
+  })
+
+  provider = new NodeTracerProvider({
+    resource,
+    spanProcessors: [
+      new BatchSpanProcessor(new PipelineSpanExporter(), {
+        maxQueueSize: 2048,
+        maxExportBatchSize: 512,
+        scheduledDelayMillis: 5000,
+      }),
+    ],
+  })
+
+  const contextManager = new AsyncLocalStorageContextManager()
+  contextManager.enable()
+  provider.register({ contextManager })
+}</code></pre>
+
+        <h2>Span Creation</h2>
+        <pre><code>// Start a new span
+const span = startSpan('HTTP GET /api/users', {
+  attributes: { 'http.method': 'GET', 'http.url': '/api/users' }
+})
+
+// Or use helper for automatic end
+const result = await withSpan('db.query', async (span) => {
+  span.setAttribute('db.system', 'postgres')
+  return await db.query(sql)
+}, { attributes: { 'db.statement': sql } })</code></pre>
+
+        <h2>PulseSpan API</h2>
+        <pre><code>export class PulseSpan {
+  get spanId(): string
+  get traceId(): string
+  get isRecording(): boolean
+
+  setAttribute(key: string, value: string | number | boolean): this
+  setAttributes(attributes: Attributes): this
+  addEvent(name: string, attributes?: Attributes): this
+  recordError(error: Error, attributes?: Attributes): this
+  setStatus(status: SpanStatus, message?: string): this
+  end(endTime?: TimeInput): void
+  addLink(link: SpanLink): this
+}</code></pre>
+
+        <h2>Context Propagation</h2>
+        <p>W3C Trace Context propagation for distributed tracing across services:</p>
+        <pre><code>// Extract trace context from incoming request
+export function extractTraceContext(headers): Context {
+  const extracted = propagation.extract(otelContext.active(), headers, headerGetter)
+  return extracted
+}
+
+// Inject trace context into outgoing request
+export function injectTraceContext(headers: Record<string, string>, ctx?: Context): void {
+  propagation.inject(ctx ?? otelContext.active(), headers, headerSetter)
+  // Also inject custom Pulse headers
+  headers['x-pulse-trace-id'] = spanContext.traceId
+  headers['x-pulse-span-id'] = spanContext.spanId
+}</code></pre>
+        <h3>Supported Headers</h3>
+        <ul>
+          <li><code>traceparent</code> - W3C Trace Context (primary)</li>
+          <li><code>tracestate</code> - Vendor-specific baggage</li>
+          <li><code>x-pulse-trace-id</code> - Pulse custom header</li>
+          <li><code>x-pulse-span-id</code> - Pulse custom header</li>
+          <li><code>x-pulse-sampled</code> - Sampling decision</li>
+        </ul>
+
+        <h2>Express Middleware Integration</h2>
+        <pre><code>// In your Express app
+import { monitorMiddleware } from '@vikasbaplawat1/pulse-sdk'
+
+app.use(monitorMiddleware()) // Auto-creates request context</code></pre>
+        <p>The middleware:</p>
+        <ul>
+          <li>Creates AsyncLocalStorage context per request</li>
+          <li>Extracts trace context from incoming headers</li>
+          <li>Creates request span with OTel attributes</li>
+          <li>Adds breadcrumbs for HTTP requests</li>
+        </ul>
+
+        <h2>HTTP Client Instrumentation</h2>
+        <pre><code>// Auto-trace outbound HTTP requests
+import { instrumentHttpClient } from '@vikasbaplawat1/pulse-sdk'
+
+instrumentHttpClient() // Call once at startup
+
+// All http/https requests are now auto-instrumented
+fetch('https://api.example.com/users') // Creates span automatically</code></pre>
+        <ul>
+          <li>Patches Node.js http/https modules</li>
+          <li>Creates client span for each request</li>
+          <li>Injects trace context headers</li>
+          <li>Records response status and duration</li>
+        </ul>
+
+        <h2>Span Lifecycle</h2>
+        <ol>
+          <li><strong>Created:</strong> Span started with name and optional attributes</li>
+          <li><strong>Recording:</strong> Attributes added, events recorded, errors captured</li>
+          <li><strong>Ended:</strong> Span finished, duration calculated</li>
+          <li><strong>Exported:</strong> Sent through BatchSpanProcessor to SDK pipeline</li>
+        </ol>
+
+        <div class="callout callout-info">
+          <strong>Plan Requirement:</strong> Distributed tracing is available on <span class="tag tag-pro">Pro</span> and <span class="tag tag-enterprise">Enterprise</span> plans.
+        </div>
+      </div>
+    </main>
+  </div>
+  <script src="script.js"></script>
+</body>
+</html>

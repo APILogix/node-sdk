@@ -34,7 +34,9 @@ import { errorDeduplicator } from '../processors/deduplicator.js';
 import { persistentStorage } from '../storage/persistent-storage.js';
 import { sourceMapResolver } from '../processors/source-map-resolver.js';
 import { metricsRegistry } from '../metrics/registry.js';
+import { otelMetrics } from '../metrics/otel-adapter.js';
 import { slowRequestDetector } from '../processors/slow-request-detector.js';
+import { registerAutoInstrumentations } from '../instrumentation/auto-instrument.js';
 const INIT_MAX_ATTEMPTS = 5;
 const INIT_BASE_RETRY_DELAY_MS = 500;
 const INIT_MAX_RETRY_DELAY_MS = 5000;
@@ -191,9 +193,22 @@ async function initialize(options) {
             registerSignalHandlers();
             errorDeduplicator.start();
             metricsRegistry.start();
+            // Initialize OpenTelemetry metrics if enabled (plan-gated)
+            if (resolvedConfig.enableMetrics) {
+                otelMetrics.init({
+                    service: resolvedConfig.service,
+                    environment: resolvedConfig.environment,
+                    release: resolvedConfig.release,
+                }, resolvedConfig.otelMetrics);
+            }
             // Initialize OpenTelemetry tracing if enabled (plan-gated)
             if (resolvedConfig.enableTracing) {
                 initTracer(resolvedConfig);
+                // Register auto-instrumentations after tracer is ready
+                registerAutoInstrumentations({
+                    http: true,
+                    express: true,
+                });
             }
             // Initialize session manager if plan allows
             if (planFeatures.allowSessions) {
@@ -281,6 +296,12 @@ function mergeConfig(options, remote, planFeatures) {
         compression: options.transport?.compression ?? 'none',
         maxPayloadBytes: options.transport?.maxPayloadBytes ?? remote.maxPayloadBytes,
         maxConcurrentSends: options.transport?.maxConcurrentSends ?? 3,
+        // OTel Metrics
+        otelMetrics: {
+            maxHistogramBuckets: options.otelMetrics?.maxHistogramBuckets ?? 160,
+            percentiles: options.otelMetrics?.percentiles ?? [50, 75, 90, 95, 99],
+            cardinalityLimit: options.otelMetrics?.cardinalityLimit ?? 2000,
+        },
     };
 }
 // ─── Validation ─────────────────────────────────────────────────────────────

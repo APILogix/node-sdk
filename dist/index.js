@@ -69,6 +69,10 @@ export { detectResources } from './utils/resource-detector.js';
 // ─── Transport Internals (advanced) ──────────────────────────────────────────
 export { RetryBudget, globalRetryBudget } from './transport/retry.js';
 // ─── Advanced Diagnostics ───────────────────────────────────────────────────
+export { otelMetrics } from './metrics/otel-adapter.js';
+// ─── Auto Instrumentation ───────────────────────────────────────────────────
+export { registerAutoInstrumentations } from './instrumentation/auto-instrument.js';
+// ─── Advanced Diagnostics ───────────────────────────────────────────────────
 export { errorDeduplicator } from './processors/deduplicator.js';
 export { persistentStorage } from './storage/persistent-storage.js';
 export { sourceMapResolver } from './processors/source-map-resolver.js';

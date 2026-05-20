@@ -111,6 +111,16 @@ export interface SDKInitOptions {
     /** Embed original source content in resolved frames. Default: false. */
     readonly embedSourceContent?: boolean
   }
+
+  /** OpenTelemetry metrics configuration. */
+  readonly otelMetrics?: {
+    /** Max bucket size for exponential histograms. Default: 160 */
+    readonly maxHistogramBuckets?: number
+    /** Percentiles to compute. Default: [50, 75, 90, 95, 99] */
+    readonly percentiles?: number[]
+    /** Cardinality limit per instrument. Default: 2000 */
+    readonly cardinalityLimit?: number
+  }
 }
 
 /**
@@ -197,6 +207,13 @@ export interface ResolvedSDKConfig {
   readonly compression: 'gzip' | 'brotli' | 'none'
   readonly maxPayloadBytes: number
   readonly maxConcurrentSends: number
+
+  // OTel Metrics
+  readonly otelMetrics: {
+    maxHistogramBuckets: number
+    percentiles: number[]
+    cardinalityLimit: number
+  }
 }
 
 // ─── Zod Schemas ────────────────────────────────────────────────────────────

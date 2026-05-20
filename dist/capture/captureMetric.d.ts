@@ -1,8 +1,9 @@
 /**
  * Metric capture — captures counter, gauge, and histogram metric events.
  *
- * Uses the enterprise metrics registry for client-side aggregation.
- * Falls back to raw event capture if registry is not initialized.
+ * Histograms use OpenTelemetry exponential histograms for O(1) recording
+ * and high-precision percentile computation.
+ * Counters/gauges use the enterprise metrics registry for aggregation.
  */
 import type { MetricType } from '../types/event.js';
 /**
@@ -21,7 +22,7 @@ export declare function captureMetric(name: string, value: number, type?: Metric
 export declare function incrementCounter(name: string, value?: number, tags?: Record<string, string>): void;
 /** Set a gauge metric to the given value. */
 export declare function setGauge(name: string, value: number, tags?: Record<string, string>): void;
-/** Record a histogram value (e.g., latency, size). */
+/** Record a histogram value (e.g., latency, size) using OTel exponential histogram. */
 export declare function recordHistogram(name: string, value: number, tags?: Record<string, string>, unit?: string): void;
 /**
  * Add to an up-down counter (can go negative).

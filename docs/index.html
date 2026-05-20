@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pulse SDK - Enterprise Observability Documentation</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="docs-container">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <div class="sidebar-logo">
+          Pulse <span>SDK</span>
+        </div>
+      </div>
+      <nav class="sidebar-nav">
+        <div class="nav-section">
+          <div class="nav-section-title">Getting Started</div>
+          <a href="index.html" class="nav-link active">Overview</a>
+          <a href="architecture.html" class="nav-link">Architecture</a>
+          <a href="initialization.html" class="nav-link">Initialization</a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">Core Concepts</div>
+          <a href="event-pipeline.html" class="nav-link">Event Pipeline</a>
+          <a href="transport.html" class="nav-link">Transport System</a>
+          <a href="tracing.html" class="nav-link">Tracing</a>
+          <a href="metrics.html" class="nav-link">Metrics</a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">Security</div>
+          <a href="security.html" class="nav-link">PII & Redaction</a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">Reference</div>
+          <a href="api_reference.html" class="nav-link">API Reference</a>
+          <a href="configuration.html" class="nav-link">Configuration</a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">Enterprise</div>
+          <a href="enterprise.html" class="nav-link">Readiness Report</a>
+        </div>
+      </nav>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="main-content">
+      <header class="content-header">
+        <div class="header-title">Enterprise Observability SDK</div>
+        <div class="header-actions">
+          <input type="text" class="search-box" id="search-input" placeholder="Search... (press /)">
+          <button class="theme-toggle" id="theme-toggle">Dark Mode</button>
+        </div>
+      </header>
+
+      <div class="content-body">
+        <h1>Pulse SDK Documentation</h1>
+        <p class="lead">Enterprise-grade observability SDK for Node.js applications with error tracking, distributed tracing, metrics, and session monitoring.</p>
+
+        <div class="feature-grid">
+          <div class="feature-card">
+            <div class="feature-icon">&#9888;</div>
+            <div class="feature-title">Error Tracking</div>
+            <div class="feature-desc">Capture exceptions with stack traces, fingerprinting, and automatic deduplication.</div>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon">&#128279;</div>
+            <div class="feature-title">Distributed Tracing</div>
+            <div class="feature-desc">OpenTelemetry-based tracing with W3C context propagation across services.</div>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon">&#128200;</div>
+            <div class="feature-title">Metrics</div>
+            <div class="feature-desc">Counters, gauges, and histograms with client-side aggregation and percentiles.</div>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon">&#128203;</div>
+            <div class="feature-title">Breadcrumbs</div>
+            <div class="feature-desc">Event timeline with ring buffer storage for debugging user sessions.</div>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon">&#128736;</div>
+            <div class="feature-title">Sessions</div>
+            <div class="feature-desc">Automatic session tracking with crash-free rate calculation.</div>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon">&#128274;</div>
+            <div class="feature-title">Security</div>
+            <div class="feature-desc">Automatic PII redaction, sensitive data masking, and plan-based access control.</div>
+          </div>
+        </div>
+
+        <h2>Quick Start</h2>
+        <pre><code>npm install @vikasbaplawat1/pulse-sdk</code></pre>
+
+        <pre><code>import { createSDK, captureError } from '@vikasbaplawat1/pulse-sdk'
+
+// Initialize the SDK
+await createSDK({
+  apiKey: process.env.PULSE_API_KEY,
+  service: 'my-service',
+  environment: 'production',
+})
+
+// Capture errors
+try {
+  await riskyOperation()
+} catch (error) {
+  captureError(error)
+}</code></pre>
+
+        <h2>Supported Frameworks</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Framework</th>
+              <th>Integration</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Express</td>
+              <td>monitorMiddleware()</td>
+              <td><span class="tag tag-pro">Supported</span></td>
+            </tr>
+            <tr>
+              <td>Fastify</td>
+              <td>instrumentFastify()</td>
+              <td><span class="tag tag-pro">Supported</span></td>
+            </tr>
+            <tr>
+              <td>HTTP Client</td>
+              <td>instrumentHttpClient()</td>
+              <td><span class="tag tag-pro">Supported</span></td>
+            </tr>
+            <tr>
+              <td>Node.js</td>
+              <td>Global error handlers</td>
+              <td><span class="tag tag-free">Built-in</span></td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h2>Plan Tiers</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Feature</th>
+              <th>Free</th>
+              <th>Pro</th>
+              <th>Enterprise</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Error Tracking</td>
+              <td>&#10003;</td>
+              <td>&#10003;</td>
+              <td>&#10003;</td>
+            </tr>
+            <tr>
+              <td>Performance Monitoring</td>
+              <td>-</td>
+              <td>&#10003;</td>
+              <td>&#10003;</td>
+            </tr>
+            <tr>
+              <td>Distributed Tracing</td>
+              <td>-</td>
+              <td>&#10003;</td>
+              <td>&#10003;</td>
+            </tr>
+            <tr>
+              <td>Metrics</td>
+              <td>-</td>
+              <td>-</td>
+              <td>&#10003;</td>
+            </tr>
+            <tr>
+              <td>Custom Plugins</td>
+              <td>-</td>
+              <td>&#10003;</td>
+              <td>&#10003;</td>
+            </tr>
+            <tr>
+              <td>Max Queue Size</td>
+              <td>100</td>
+              <td>1,000</td>
+              <td>10,000</td>
+            </tr>
+            <tr>
+              <td>Max Breadcrumbs</td>
+              <td>50</td>
+              <td>200</td>
+              <td>1,000</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h2>Architecture Overview</h2>
+        <p>The SDK follows a modular architecture with clear separation of concerns:</p>
+        <ul>
+          <li><strong>Capture Layer:</strong> Entry points for errors, requests, messages, and metrics</li>
+          <li><strong>Processing Pipeline:</strong> 14-stage event processing with normalization, sanitization, and enrichment</li>
+          <li><strong>Transport Layer:</strong> Queue management, batch processing, circuit breaker, and retry logic</li>
+          <li><strong>Instrumentation:</strong> Framework integrations (Express, Fastify) and auto-tracing</li>
+        </ul>
+
+        <div class="callout callout-info">
+          <strong>Version:</strong> This documentation covers Pulse SDK v2.0.0
+        </div>
+      </div>
+    </main>
+  </div>
+  <script src="script.js"></script>
+</body>
+</html>

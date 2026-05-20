@@ -67,6 +67,10 @@ export type { EventLoopLagStats, EventLoopLagOptions } from './utils/event-loop-
 export { detectResources } from './utils/resource-detector.js';
 export type { ResourceAttributes } from './utils/resource-detector.js';
 export { RetryBudget, globalRetryBudget } from './transport/retry.js';
+export { otelMetrics } from './metrics/otel-adapter.js';
+export type { OtelMetricsConfig } from './metrics/otel-adapter.js';
+export { registerAutoInstrumentations } from './instrumentation/auto-instrument.js';
+export type { AutoInstrumentOptions } from './instrumentation/auto-instrument.js';
 export { errorDeduplicator } from './processors/deduplicator.js';
 export { persistentStorage } from './storage/persistent-storage.js';
 export { sourceMapResolver } from './processors/source-map-resolver.js';

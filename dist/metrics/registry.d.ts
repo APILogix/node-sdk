@@ -1,18 +1,20 @@
 /**
- * Enterprise Metrics Registry — client-side aggregation for production-scale telemetry.
+ * Enterprise Metrics Registry — hybrid architecture:
+ * - Histograms: Powered by OpenTelemetry exponential histograms (O(1) per record)
+ * - Counters/Gauges: Custom windowed aggregation (lightweight, no OTel overhead)
  *
  * Provides:
+ * - ExponentialHistogram with OTel for high-precision latency percentiles
  * - Windowed Counter aggregation (sum over configurable intervals)
- * - Histogram with client-side percentile computation (p50, p90, p95, p99, max)
  * - Gauge (last-value, point-in-time)
  * - UpDownCounter (monotonic up/down tracking)
- * - Summary (count + sum over time windows)
  * - Cardinality protection per metric
  * - Automatic flush on interval
  * - Memory-safe bounded storage
  *
- * Architecture follows OpenTelemetry Metrics SDK patterns:
- *   MetricReader → Aggregator → Export via SDK event pipeline
+ * Architecture:
+ *   Histogram → OTel MeterProvider → ExponentialHistogramAggregation → PulseMetricReader → EventPipeline
+ *   Counter/Gauge → Custom Aggregator → EventPipeline
  */
 import type { MetricType } from '../types/event.js';
 export interface MetricLabels {
@@ -23,7 +25,7 @@ export interface MetricOptions {
     timestamp?: number;
 }
 export interface HistogramOptions {
-    /** Bucket boundaries for histogram. Default: [5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000] */
+    /** Bucket boundaries for histogram. Used as fallback if OTel not available. */
     boundaries?: number[];
     /** Max unique label combinations per metric. Default: 1000 */
     maxCardinality?: number;
@@ -53,6 +55,7 @@ interface AggregatedMetric {
     min: number;
     max: number;
     p50: number;
+    p75: number;
     p90: number;
     p95: number;
     p99: number;
@@ -60,7 +63,7 @@ interface AggregatedMetric {
     rate: number;
 }
 declare class MetricsRegistry {
-    private histograms;
+    private fallbackHistograms;
     private counters;
     private upDownCounters;
     private gauges;
@@ -75,6 +78,11 @@ declare class MetricsRegistry {
     constructor(options?: MetricRegistryOptions);
     start(): void;
     stop(): void;
+    /**
+     * Record a histogram value.
+     * Uses OTel exponential histogram when available (O(1) per record).
+     * Falls back to custom aggregator if OTel not initialized.
+     */
     recordHistogram(name: string, value: number, options?: MetricOptions & HistogramOptions): void;
     incrementCounter(name: string, value?: number, options?: MetricOptions & CounterOptions): void;
     addUpDownCounter(name: string, value: number, options?: MetricOptions & CounterOptions): void;
@@ -88,6 +96,12 @@ declare class MetricsRegistry {
         gaugeCount: number;
         totalFlushed: number;
         totalDropped: number;
+        otelStats?: {
+            histogramCount: number;
+            counterCount: number;
+            upDownCounterCount: number;
+            gaugeCount: number;
+        } | undefined;
     };
     reset(): void;
 }

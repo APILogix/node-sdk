@@ -1,8 +1,9 @@
 /**
  * Metric capture — captures counter, gauge, and histogram metric events.
  *
- * Uses the enterprise metrics registry for client-side aggregation.
- * Falls back to raw event capture if registry is not initialized.
+ * Histograms use OpenTelemetry exponential histograms for O(1) recording
+ * and high-precision percentile computation.
+ * Counters/gauges use the enterprise metrics registry for aggregation.
  */
 
 import type { MetricEvent, MetricType } from '../types/event.js'
@@ -28,20 +29,18 @@ export function captureMetric(
   const logger = getLogger()
 
   try {
-    if (metricsRegistry.getStats().initialized) {
-      const labels = options?.tags ?? {}
-      if (type === 'histogram') {
-        metricsRegistry.recordHistogram(name, value, { labels })
-        return
-      }
-      if (type === 'counter') {
-        metricsRegistry.incrementCounter(name, value, { labels })
-        return
-      }
-      if (type === 'gauge') {
-        metricsRegistry.setGauge(name, value, { labels })
-        return
-      }
+    const labels = options?.tags ?? {}
+    if (type === 'histogram') {
+      metricsRegistry.recordHistogram(name, value, { labels })
+      return
+    }
+    if (type === 'counter') {
+      metricsRegistry.incrementCounter(name, value, { labels })
+      return
+    }
+    if (type === 'gauge') {
+      metricsRegistry.setGauge(name, value, { labels })
+      return
     }
 
     const event: MetricEvent = {
@@ -68,11 +67,7 @@ export function incrementCounter(
   value = 1,
   tags?: Record<string, string>
 ): void {
-  if (metricsRegistry.getStats().initialized) {
-    metricsRegistry.incrementCounter(name, value, { labels: tags ?? {} })
-    return
-  }
-  captureMetric(name, value, 'counter', tags ? { tags } : undefined)
+  metricsRegistry.incrementCounter(name, value, { labels: tags ?? {} })
 }
 
 /** Set a gauge metric to the given value. */
@@ -81,28 +76,17 @@ export function setGauge(
   value: number,
   tags?: Record<string, string>
 ): void {
-  if (metricsRegistry.getStats().initialized) {
-    metricsRegistry.setGauge(name, value, { labels: tags ?? {} })
-    return
-  }
-  captureMetric(name, value, 'gauge', tags ? { tags } : undefined)
+  metricsRegistry.setGauge(name, value, { labels: tags ?? {} })
 }
 
-/** Record a histogram value (e.g., latency, size). */
+/** Record a histogram value (e.g., latency, size) using OTel exponential histogram. */
 export function recordHistogram(
   name: string,
   value: number,
   tags?: Record<string, string>,
   unit?: string
 ): void {
-  if (metricsRegistry.getStats().initialized) {
-    metricsRegistry.recordHistogram(name, value, { labels: tags ?? {} })
-    return
-  }
-  const opts: { tags?: Record<string, string>; unit?: string } = {}
-  if (tags) opts.tags = tags
-  if (unit) opts.unit = unit
-  captureMetric(name, value, 'histogram', Object.keys(opts).length > 0 ? opts : undefined)
+  metricsRegistry.recordHistogram(name, value, { labels: tags ?? {} })
 }
 
 /**
@@ -114,9 +98,5 @@ export function addUpDownCounter(
   value: number,
   tags?: Record<string, string>
 ): void {
-  if (metricsRegistry.getStats().initialized) {
-    metricsRegistry.addUpDownCounter(name, value, { labels: tags ?? {} })
-    return
-  }
-  captureMetric(name, value, 'gauge', tags ? { tags } : undefined)
+  metricsRegistry.addUpDownCounter(name, value, { labels: tags ?? {} })
 }

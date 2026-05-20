@@ -1,24 +1,27 @@
 /**
- * Enterprise Metrics Registry — client-side aggregation for production-scale telemetry.
+ * Enterprise Metrics Registry — hybrid architecture:
+ * - Histograms: Powered by OpenTelemetry exponential histograms (O(1) per record)
+ * - Counters/Gauges: Custom windowed aggregation (lightweight, no OTel overhead)
  *
  * Provides:
+ * - ExponentialHistogram with OTel for high-precision latency percentiles
  * - Windowed Counter aggregation (sum over configurable intervals)
- * - Histogram with client-side percentile computation (p50, p90, p95, p99, max)
  * - Gauge (last-value, point-in-time)
  * - UpDownCounter (monotonic up/down tracking)
- * - Summary (count + sum over time windows)
  * - Cardinality protection per metric
  * - Automatic flush on interval
  * - Memory-safe bounded storage
  *
- * Architecture follows OpenTelemetry Metrics SDK patterns:
- *   MetricReader → Aggregator → Export via SDK event pipeline
+ * Architecture:
+ *   Histogram → OTel MeterProvider → ExponentialHistogramAggregation → PulseMetricReader → EventPipeline
+ *   Counter/Gauge → Custom Aggregator → EventPipeline
  */
 import { getLogger } from '../utils/logger.js';
 import { epochMs } from '../utils/time.js';
 import { generateId } from '../utils/uuid.js';
 import { captureEvent } from '../capture/captureEvent.js';
-// ─── Histogram Aggregator ───────────────────────────────────────────────────
+import { otelMetrics } from './otel-adapter.js';
+// ─── Histogram Aggregator (fallback when OTel unavailable) ──────────────────
 class HistogramAggregator {
     boundaries;
     maxCardinality;
@@ -58,7 +61,6 @@ class HistogramAggregator {
     flush() {
         const results = [];
         const now = epochMs();
-        // Global aggregation
         if (this.values.length > 0) {
             const sorted = [...this.values].sort((a, b) => a - b);
             results.push({
@@ -72,6 +74,7 @@ class HistogramAggregator {
                 min: this.min === Infinity ? 0 : this.min,
                 max: this.max === -Infinity ? 0 : this.max,
                 p50: percentile(sorted, 50),
+                p75: percentile(sorted, 75),
                 p90: percentile(sorted, 90),
                 p95: percentile(sorted, 95),
                 p99: percentile(sorted, 99),
@@ -79,7 +82,6 @@ class HistogramAggregator {
                 rate: 0,
             });
         }
-        // Per-label aggregation
         for (const [key, vals] of this.labelSets.entries()) {
             if (vals.length === 0)
                 continue;
@@ -96,6 +98,7 @@ class HistogramAggregator {
                 min: sorted[0] ?? 0,
                 max: sorted[sorted.length - 1] ?? 0,
                 p50: percentile(sorted, 50),
+                p75: percentile(sorted, 75),
                 p90: percentile(sorted, 90),
                 p95: percentile(sorted, 95),
                 p99: percentile(sorted, 99),
@@ -182,6 +185,7 @@ class WindowedCounter {
                 min: window.value,
                 max: window.value,
                 p50: window.value,
+                p75: window.value,
                 p90: window.value,
                 p95: window.value,
                 p99: window.value,
@@ -265,6 +269,7 @@ class UpDownCounter {
                 min: value,
                 max: value,
                 p50: value,
+                p75: value,
                 p90: value,
                 p95: value,
                 p99: value,
@@ -330,6 +335,7 @@ class GaugeAggregator {
                 min: entry.value,
                 max: entry.value,
                 p50: entry.value,
+                p75: entry.value,
                 p90: entry.value,
                 p95: entry.value,
                 p99: entry.value,
@@ -357,9 +363,9 @@ class GaugeAggregator {
         return labels;
     }
 }
-// ─── Metrics Registry ───────────────────────────────────────────────────────
+// ─── Metrics Registry (Hybrid) ──────────────────────────────────────────────
 class MetricsRegistry {
-    histograms = new Map();
+    fallbackHistograms = new Map();
     counters = new Map();
     upDownCounters = new Map();
     gauges = new Map();
@@ -391,20 +397,29 @@ class MetricsRegistry {
         }
         this.initialized = false;
     }
+    /**
+     * Record a histogram value.
+     * Uses OTel exponential histogram when available (O(1) per record).
+     * Falls back to custom aggregator if OTel not initialized.
+     */
     recordHistogram(name, value, options = {}) {
         if (!this.initialized)
             return;
-        if (this.histograms.size >= this.maxMetrics && !this.histograms.has(name)) {
+        if (otelMetrics.isInitialized()) {
+            otelMetrics.recordHistogram(name, value, options.labels ?? {});
+            return;
+        }
+        if (this.fallbackHistograms.size >= this.maxMetrics && !this.fallbackHistograms.has(name)) {
             this.totalDropped++;
             return;
         }
-        let agg = this.histograms.get(name);
+        let agg = this.fallbackHistograms.get(name);
         if (!agg) {
             agg = new HistogramAggregator({
                 boundaries: options.boundaries ?? this.defaultBoundaries,
                 maxCardinality: options.maxCardinality ?? this.defaultMaxCardinality,
             });
-            this.histograms.set(name, agg);
+            this.fallbackHistograms.set(name, agg);
         }
         agg.record(value, options.labels ?? {});
     }
@@ -452,7 +467,10 @@ class MetricsRegistry {
     }
     flush() {
         const aggregated = [];
-        for (const [name, agg] of this.histograms.entries()) {
+        if (otelMetrics.isInitialized()) {
+            otelMetrics.flush().catch(() => { });
+        }
+        for (const [name, agg] of this.fallbackHistograms.entries()) {
             const results = agg.flush();
             for (const r of results) {
                 r.name = name;
@@ -494,6 +512,7 @@ class MetricsRegistry {
                 min: metric.min,
                 max: metric.max,
                 p50: metric.p50,
+                p75: metric.p75,
                 p90: metric.p90,
                 p95: metric.p95,
                 p99: metric.p99,
@@ -505,18 +524,27 @@ class MetricsRegistry {
         }
     }
     getStats() {
+        const otelStats = otelMetrics.getStats();
         return {
             initialized: this.initialized,
-            histogramCount: this.histograms.size,
+            histogramCount: this.fallbackHistograms.size,
             counterCount: this.counters.size,
             upDownCounterCount: this.upDownCounters.size,
             gaugeCount: this.gauges.size,
             totalFlushed: this.totalFlushed,
             totalDropped: this.totalDropped,
+            otelStats: otelStats.initialized
+                ? {
+                    histogramCount: otelStats.histogramCount,
+                    counterCount: otelStats.counterCount,
+                    upDownCounterCount: otelStats.upDownCounterCount,
+                    gaugeCount: otelStats.gaugeCount,
+                }
+                : undefined,
         };
     }
     reset() {
-        this.histograms.clear();
+        this.fallbackHistograms.clear();
         this.counters.clear();
         this.upDownCounters.clear();
         this.gauges.clear();

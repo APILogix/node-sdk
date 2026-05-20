@@ -73,6 +73,17 @@ export interface MetricEvent {
     readonly tags?: Readonly<Record<string, string>> | undefined;
     readonly timestamp: number;
     readonly metadata?: EventMetadata | undefined;
+    readonly count?: number | undefined;
+    readonly sum?: number | undefined;
+    readonly min?: number | undefined;
+    readonly max?: number | undefined;
+    readonly p50?: number | undefined;
+    readonly p75?: number | undefined;
+    readonly p90?: number | undefined;
+    readonly p95?: number | undefined;
+    readonly p99?: number | undefined;
+    readonly avg?: number | undefined;
+    readonly rate?: number | undefined;
 }
 export interface SpanEventItem {
     readonly name: string;

@@ -1,0 +1,1301 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pulse SDK - Complete Feature Guide &amp; Implementation</title>
+    <style>
+        :root {
+            --bg: #0d1117;
+            --bg-surface: #161b22;
+            --bg-hover: #21262d;
+            --text-main: #c9d1d9;
+            --text-muted: #8b949e;
+            --primary: #58a6ff;
+            --border: #30363d;
+            --success: #3fb950;
+            --warning: #d29922;
+            --danger: #f85149;
+            --purple: #d2a8ff;
+            --cyan: #79c0ff;
+            --orange: #ffa657;
+        }
+        * { box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+            background-color: var(--bg);
+            color: var(--text-main);
+            line-height: 1.7;
+            margin: 0;
+            padding: 0;
+        }
+        .docs-layout { display: flex; min-height: 100vh; }
+        .sidebar {
+            width: 270px;
+            background: var(--bg-surface);
+            border-right: 1px solid var(--border);
+            position: fixed;
+            height: 100vh;
+            overflow-y: auto;
+            padding: 24px 0;
+            flex-shrink: 0;
+            z-index: 100;
+        }
+        .sidebar-header { padding: 0 20px 20px; border-bottom: 1px solid var(--border); margin-bottom: 16px; }
+        .sidebar-logo { font-size: 1.3em; font-weight: 700; color: #fff; }
+        .sidebar-logo span { color: var(--primary); }
+        .nav-section { margin-bottom: 6px; }
+        .nav-section-title { font-size: 0.72em; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-muted); padding: 8px 20px 4px; font-weight: 600; }
+        .nav-link { display: block; padding: 5px 20px; color: var(--text-muted); text-decoration: none; font-size: 0.85em; border-left: 2px solid transparent; transition: all 0.12s; }
+        .nav-link:hover { color: var(--text-main); background: var(--bg-hover); }
+        .nav-link.active { color: var(--primary); border-left-color: var(--primary); background: rgba(88,166,255,0.05); }
+        .main-content { margin-left: 270px; padding: 40px 60px; max-width: 1100px; }
+        h1, h2, h3, h4 { color: #ffffff; }
+        h1 { font-size: 2.3em; margin-top: 0; border-bottom: 2px solid var(--border); padding-bottom: 0.4em; }
+        h2 { font-size: 1.55em; border-bottom: 1px solid var(--border); padding-bottom: 0.3em; margin-top: 2.5em; }
+        h3 { font-size: 1.15em; margin-top: 1.8em; color: var(--primary); border: none; padding: 0; margin-bottom: 0.5em; }
+        h4 { font-size: 0.95em; margin-top: 1.5em; color: #fff; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; }
+        p { color: var(--text-main); max-width: 820px; }
+        code { font-family: 'SFMono-Regular', Consolas, monospace; background: var(--bg-surface); padding: 2px 6px; border-radius: 4px; font-size: 0.87em; color: var(--cyan); }
+        pre { background: var(--bg-surface); border: 1px solid var(--border); padding: 18px; border-radius: 8px; overflow-x: auto; font-size: 0.83em; line-height: 1.55; }
+        pre code { background: none; padding: 0; }
+        .badge { display: inline-block; font-size: 0.68em; padding: 3px 10px; border-radius: 20px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; }
+        .badge-free { background: rgba(88,166,255,0.15); color: var(--primary); border: 1px solid var(--primary); }
+        .badge-pro { background: rgba(210,153,34,0.15); color: var(--warning); border: 1px solid var(--warning); }
+        .badge-ent { background: rgba(63,185,80,0.15); color: var(--success); border: 1px solid var(--success); }
+        .badge-all { background: rgba(215,168,255,0.12); color: var(--purple); border: 1px solid var(--purple); }
+        .badge-plan { background: rgba(255,166,87,0.12); color: var(--orange); border: 1px solid var(--orange); }
+        .feature-card { background: var(--bg-surface); border: 1px solid var(--border); border-radius: 10px; padding: 24px 28px; margin: 20px 0; }
+        .feature-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; flex-wrap: wrap; gap: 10px; }
+        .phase { background: var(--bg-hover); border-radius: 6px; padding: 12px 16px; margin: 10px 0; border-left: 3px solid var(--primary); }
+        .phase-code { font-size: 0.82em; color: var(--cyan); }
+        table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 0.88em; }
+        th, td { padding: 10px 14px; text-align: left; border-bottom: 1px solid var(--border); }
+        th { background: var(--bg-surface); color: var(--text-muted); font-weight: 600; font-size: 0.8em; text-transform: uppercase; letter-spacing: 0.06em; }
+        td { color: var(--text-main); }
+        tr:hover td { background: var(--bg-hover); }
+        .flow-step { display: flex; gap: 14px; align-items: flex-start; margin: 14px 0; }
+        .step-num { background: var(--primary); color: #000; width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 0.82em; flex-shrink: 0; }
+        .step-content { flex: 1; }
+        .step-title { font-weight: 600; color: #fff; margin-bottom: 3px; font-size: 0.92em; }
+        .step-detail { color: var(--text-muted); font-size: 0.85em; }
+        .callout { padding: 14px 18px; border-radius: 8px; margin: 18px 0; border-left: 4px solid; }
+        .callout-info { background: rgba(88,166,255,0.07); border-color: var(--primary); }
+        .callout-warning { background: rgba(210,153,34,0.07); border-color: var(--warning); }
+        .callout-danger { background: rgba(248,81,73,0.07); border-color: var(--danger); }
+        .callout-success { background: rgba(63,185,80,0.07); border-color: var(--success); }
+        .callout-title { font-weight: 700; font-size: 0.88em; margin-bottom: 3px; }
+        .callout-info .callout-title { color: var(--primary); }
+        .callout-warning .callout-title { color: var(--warning); }
+        .callout-danger .callout-title { color: var(--danger); }
+        .callout-success .callout-title { color: var(--success); }
+        ul, ol { padding-left: 22px; color: var(--text-main); }
+        li { margin-bottom: 5px; }
+        .impl-block { background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px; padding: 18px; margin: 14px 0; }
+        .impl-title { font-weight: 700; color: #fff; margin-bottom: 10px; font-size: 0.92em; }
+        .impl-file { font-size: 0.79em; color: var(--warning); margin-bottom: 8px; }
+        .tag { display: inline-block; background: var(--bg-hover); color: var(--text-muted); padding: 2px 8px; border-radius: 4px; font-size: 0.76em; margin-right: 4px; }
+        .index-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; margin: 20px 0; }
+        .index-card { background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px; padding: 18px; }
+        .index-card h4 { margin: 0 0 8px 0; color: var(--primary); font-size: 0.9em; text-transform: none; letter-spacing: 0; }
+        .index-card p { font-size: 0.84em; margin: 0; color: var(--text-muted); }
+        .toc { background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px; padding: 18px 22px; margin: 20px 0; }
+        .toc-title { font-weight: 700; color: #fff; margin-bottom: 10px; font-size: 0.92em; }
+        .toc ul { list-style: none; padding: 0; margin: 0; }
+        .toc li { margin-bottom: 3px; }
+        .toc a { color: var(--text-muted); text-decoration: none; font-size: 0.86em; }
+        .toc a:hover { color: var(--primary); }
+        .separator { border: none; border-top: 1px solid var(--border); margin: 32px 0; }
+        @media (max-width: 900px) {
+            .sidebar { display: none; }
+            .main-content { margin-left: 0; padding: 24px; }
+        }
+    </style>
+</head>
+<body>
+<div class="docs-layout">
+    <aside class="sidebar">
+        <div class="sidebar-header">
+            <div class="sidebar-logo">Pulse <span>SDK</span></div>
+        </div>
+        <nav class="sidebar-nav">
+            <div class="nav-section">
+                <div class="nav-section-title">Overview</div>
+                <a href="#overview" class="nav-link">Introduction</a>
+                <a href="#architecture" class="nav-link">Architecture</a>
+                <a href="#event-flow" class="nav-link">Event Flow</a>
+                <a href="#plan-tiers" class="nav-link">Plan Tiers</a>
+                <a href="#all-events" class="nav-link">All Event Types</a>
+            </div>
+            <div class="nav-section">
+                <div class="nav-section-title">Core Capture Features</div>
+                <a href="#f-init" class="nav-link">SDK Initialization</a>
+                <a href="#f-error" class="nav-link">Error Tracking</a>
+                <a href="#f-request" class="nav-link">Request Monitoring</a>
+                <a href="#f-message" class="nav-link">Message Capture</a>
+                <a href="#f-metric" class="nav-link">Metrics Collection</a>
+                <a href="#f-tracing" class="nav-link">Distributed Tracing</a>
+                <a href="#f-breadcrumb" class="nav-link">Breadcrumb Timeline</a>
+                <a href="#f-session" class="nav-link">Session Management</a>
+            </div>
+            <div class="nav-section">
+                <div class="nav-section-title">Security &amp; Quality</div>
+                <a href="#f-sanitizer" class="nav-link">PII Sanitization</a>
+                <a href="#f-dedup" class="nav-link">Error Deduplication</a>
+                <a href="#f-fingerprint" class="nav-link">Error Fingerprinting</a>
+                <a href="#f-sourcemap" class="nav-link">Source Map Resolution</a>
+                <a href="#f-slow" class="nav-link">Slow Request Detection</a>
+            </div>
+            <div class="nav-section">
+                <div class="nav-section-title">Transport &amp; Resilience</div>
+                <a href="#f-pipeline" class="nav-link">Event Pipeline</a>
+                <a href="#f-queue" class="nav-link">Event Queue</a>
+                <a href="#f-batcher" class="nav-link">Batching</a>
+                <a href="#f-sender" class="nav-link">HTTP Transport</a>
+                <a href="#f-retry" class="nav-link">Retry &amp; Backoff</a>
+                <a href="#f-circuit" class="nav-link">Circuit Breaker</a>
+                <a href="#f-rate" class="nav-link">Rate Limiting</a>
+                <a href="#f-compression" class="nav-link">Compression</a>
+                <a href="#f-persist" class="nav-link">Persistent Storage</a>
+            </div>
+            <div class="nav-section">
+                <div class="nav-section-title">Extensibility</div>
+                <a href="#f-scope" class="nav-link">Scope Management</a>
+                <a href="#f-plugin" class="nav-link">Plugin System</a>
+                <a href="#f-context" class="nav-link">Context Propagation</a>
+                <a href="#f-instrument" class="nav-link">Auto-Instrumentation</a>
+            </div>
+            <div class="nav-section">
+                <div class="nav-section-title">Reliability</div>
+                <a href="#f-graceful" class="nav-link">Graceful Shutdown</a>
+                <a href="#f-global" class="nav-link">Global Error Handlers</a>
+                <a href="#f-pressure" class="nav-link">Backpressure Monitoring</a>
+                <a href="#f-diagnostics" class="nav-link">SDK Diagnostics</a>
+            </div>
+            <div class="nav-section">
+                <div class="nav-section-title">Reference</div>
+                <a href="#feature-summary" class="nav-link">Feature Summary</a>
+            </div>
+        </nav>
+    </aside>
+
+    <main class="main-content">
+        <h1>Pulse SDK &mdash; Complete Feature Guide &amp; Implementation</h1>
+
+        <div class="callout callout-info">
+            <div class="callout-title">About This Document</div>
+            <p style="font-size:0.87em;margin:0;">Comprehensive breakdown of every feature in the Pulse SDK &mdash; including the workcycle (how it operates from trigger to backend delivery), implementation references with source file locations, and plan tier availability. The SDK is organized into 12 module groups, 34 distinct features, and captures 5 event types.</p>
+        </div>
+
+        <!-- ═══════════════════════════════════════════════════════════ -->
+        <!-- OVERVIEW                                                   -->
+        <!-- ═══════════════════════════════════════════════════════════ -->
+        <h2 id="overview">1. Overview</h2>
+        <p>The Pulse SDK is a zero-config Node.js telemetry SDK that captures errors, performance metrics, distributed traces, and custom events from server-side applications. It is designed to be:</p>
+        <ul>
+            <li><strong>Defensive</strong> &mdash; Never crashes the host application; all errors are caught and logged</li>
+            <li><strong>Resilient</strong> &mdash; Works offline with reduced capabilities; retries failed sends with backoff</li>
+            <li><strong>Plan-Gated</strong> &mdash; Enterprise features controlled securely via backend plan tiers</li>
+            <li><strong>Async-Aware</strong> &mdash; Uses AsyncLocalStorage for per-request context propagation</li>
+        </ul>
+
+        <h3>SDK Communication Contract</h3>
+        <table>
+            <thead><tr><th>Endpoint</th><th>Method</th><th>Payload</th><th>Auth</th></thead>
+            <tbody>
+                <tr><td><code>/v1/init</code></td><td>POST</td><td><code>{ apiKey }</code></td><td>apiKey in JSON body only</td></tr>
+                <tr><td><code>/v1/events</code></td><td>POST</td><td><code>{ apiKey, events[] }</code></td><td>apiKey in JSON body only</td></tr>
+            </tbody>
+        </table>
+
+        <div class="callout callout-warning">
+            <div class="callout-title">Security Note</div>
+            <p style="font-size:0.87em;margin:0;">API keys are <strong>never</strong> sent in HTTP headers. They are strictly passed in the JSON body to prevent accidental logging by proxies, load balancers, or CDN middleboxes.</p>
+        </div>
+
+        <!-- ═══════════════════════════════════════════════════════════ -->
+        <!-- ARCHITECTURE                                               -->
+        <!-- ═══════════════════════════════════════════════════════════ -->
+        <h2 id="architecture">2. High-Level Architecture</h2>
+        <p>The SDK is organized into 12 distinct module groups across the <code>sdk-node/src/</code> directory:</p>
+
+        <div class="index-grid">
+            <div class="index-card">
+                <h4>Initialization</h4>
+                <p>init.ts, client.ts, lifecycle.ts, plan-gate.ts</p>
+            </div>
+            <div class="index-card">
+                <h4>Capture System</h4>
+                <p>captureError.ts, captureRequest.ts, captureMessage.ts, captureMetric.ts, captureEvent.ts</p>
+            </div>
+            <div class="index-card">
+                <h4>Event Pipeline</h4>
+                <p>event-pipeline.ts, normalizer.ts, sanitizer.ts, deduplicator.ts</p>
+            </div>
+            <div class="index-card">
+                <h4>Transport</h4>
+                <p>queue.ts, batcher.ts, sender.ts, http.ts, retry.ts, circuit-breaker.ts, rate-limit.ts</p>
+            </div>
+            <div class="index-card">
+                <h4>Tracing</h4>
+                <p>tracer.ts, span.ts, context-propagation.ts</p>
+            </div>
+            <div class="index-card">
+                <h4>Metrics</h4>
+                <p>registry.ts</p>
+            </div>
+            <div class="index-card">
+                <h4>Session</h4>
+                <p>session-manager.ts</p>
+            </div>
+            <div class="index-card">
+                <h4>Instrumentation</h4>
+                <p>express.ts, http.ts, global-errors.ts</p>
+            </div>
+            <div class="index-card">
+                <h4>Scope &amp; Context</h4>
+                <p>scope.ts, context.ts, ring-buffer.ts</p>
+            </div>
+            <div class="index-card">
+                <h4>Storage</h4>
+                <p>persistent-storage.ts</p>
+            </div>
+            <div class="index-card">
+                <h4>Processors</h4>
+                <p>sanitizer.ts, stack-parser.ts, fingerprint.ts, slow-request-detector.ts, source-map-resolver.ts</p>
+            </div>
+            <div class="index-card">
+                <h4>Utils</h4>
+                <p>logger.ts, uuid.ts, time.ts, hash.ts, compression.ts, backpressure.ts, resource-detector.ts, event-loop-lag.ts</p>
+            </div>
+        </div>
+
+        <!-- ═══════════════════════════════════════════════════════════ -->
+        <!-- EVENT FLOW                                                 -->
+        <!-- ═══════════════════════════════════════════════════════════ -->
+        <h2 id="event-flow">3. End-to-End Event Flow</h2>
+        <p>Every event captured by the SDK flows through this 6-stage lifecycle:</p>
+
+        <div class="flow-step">
+            <div class="step-num">1</div>
+            <div class="step-content">
+                <div class="step-title">Capture Entry Point</div>
+                <div class="step-detail">User calls a capture function (captureError, captureRequest, captureMessage, captureMetric, captureEvent) or auto-capture via Express middleware / global error handlers triggers this. <span class="tag">src/capture/</span></div>
+            </div>
+        </div>
+        <div class="flow-step">
+            <div class="step-num">2</div>
+            <div class="step-content">
+                <div class="step-title">12-Step Event Pipeline</div>
+                <div class="step-detail">processEvent() orchestrates: assign eventId+timestamp, pre-init buffering, feature gate check, normalize, sanitize PII, enrich with context, error deduplication, apply global scope, plugin processors, user event processors, beforeSend hook, plugin beforeSend, trace-consistent sampling. <span class="tag">src/core/event-pipeline.ts</span></div>
+            </div>
+        </div>
+        <div class="flow-step">
+            <div class="step-num">3</div>
+            <div class="step-content">
+                <div class="step-title">Enqueue + Persist</div>
+                <div class="step-detail">Processed event added to bounded EventQueue (FIFO eviction). Written to NDJSON file for crash recovery. <span class="tag">src/transport/queue.ts</span> <span class="tag">src/storage/persistent-storage.ts</span></div>
+            </div>
+        </div>
+        <div class="flow-step">
+            <div class="step-num">4</div>
+            <div class="step-content">
+                <div class="step-title">Batching</div>
+                <div class="step-detail">Batcher timer fires every flushIntervalMs. Guards checked (circuit breaker, rate limiter, memory pressure, concurrency). Queue drained by batchSize. <span class="tag">src/transport/batcher.ts</span></div>
+            </div>
+        </div>
+        <div class="flow-step">
+            <div class="step-num">5</div>
+            <div class="step-content">
+                <div class="step-title">HTTP Send with Retry</div>
+                <div class="step-detail">Batched payload compressed (gzip/brotli), POSTed to ingestUrl with apiKey in body. Failed sends retried with exponential jitter backoff. Global retry budget limits concurrent retries. <span class="tag">src/transport/sender.ts</span> <span class="tag">src/transport/retry.ts</span></div>
+            </div>
+        </div>
+        <div class="flow-step">
+            <div class="step-num">6</div>
+            <div class="step-content">
+                <div class="step-title">Graceful Shutdown</div>
+                <div class="step-detail">SIGTERM/SIGINT received. Batcher stopped. Remaining events flushed. Plugins torn down in reverse order. Tracer, session, handlers cleaned up. <span class="tag">src/core/lifecycle.ts</span></div>
+            </div>
+        </div>
+
+        <!-- ═══════════════════════════════════════════════════════════ -->
+        <!-- PLAN TIERS                                                -->
+        <!-- ═══════════════════════════════════════════════════════════ -->
+        <h2 id="plan-tiers">4. Plan Tiers &amp; Feature Matrix</h2>
+        <p>All features default to ON. The plan tier caps the upper limit. The backend drives the plan via the <code>/v1/init</code> response.</p>
+
+        <table class="plan-table">
+            <thead><tr><th>Feature</th><th>Free</th><th>Pro</th><th>Enterprise</th></thead>
+            <tbody>
+                <tr><td>Error Tracking</td><td style="text-align:center;color:var(--success);font-weight:700;">Yes</td><td style="text-align:center;color:var(--success);font-weight:700;">Yes</td><td style="text-align:center;color:var(--success);font-weight:700;">Yes</td></tr>
+                <tr><td>Message Capture</td><td style="text-align:center;color:var(--success);font-weight:700;">Yes</td><td style="text-align:center;color:var(--success);font-weight:700;">Yes</td><td style="text-align:center;color:var(--success);font-weight:700;">Yes</td></tr>
+                <tr><td>Global Error Handlers</td><td style="text-align:center;color:var(--success);font-weight:700;">Yes</td><td style="text-align:center;color:var(--success);font-weight:700;">Yes</td><td style="text-align:center;color:var(--success);font-weight:700;">Yes</td></tr>
+                <tr><td>Request Monitoring</td><td style="text-align:center;color:var(--danger);font-weight:700;">No</td><td style="text-align:center;color:var(--success);font-weight:700;">Yes</td><td style="text-align:center;color:var(--success);font-weight:700;">Yes</td></tr>
+                <tr><td>Distributed Tracing (OTel)</td><td style="text-align:center;color:var(--danger);font-weight:700;">No</td><td style="text-align:center;color:var(--success);font-weight:700;">Yes</td><td style="text-align:center;color:var(--success);font-weight:700;">Yes</td></tr>
+                <tr><td>Session Management</td><td style="text-align:center;color:var(--danger);font-weight:700;">No</td><td style="text-align:center;color:var(--success);font-weight:700;">Yes</td><td style="text-align:center;color:var(--success);font-weight:700;">Yes</td></tr>
+                <tr><td>Metrics Collection</td><td style="text-align:center;color:var(--danger);font-weight:700;">No</td><td style="text-align:center;color:var(--danger);font-weight:700;">No</td><td style="text-align:center;color:var(--success);font-weight:700;">Yes</td></tr>
+                <tr><td>Breadcrumbs (max)</td><td style="text-align:center;font-weight:700;">50</td><td style="text-align:center;font-weight:700;">200</td><td style="text-align:center;font-weight:700;">1000</td></tr>
+                <tr><td>Custom Plugins (max)</td><td style="text-align:center;color:var(--danger);font-weight:700;">0</td><td style="text-align:center;font-weight:700;">3</td><td style="text-align:center;font-weight:700;">Unlimited</td></tr>
+                <tr><td>beforeSend Hook</td><td style="text-align:center;color:var(--danger);font-weight:700;">No</td><td style="text-align:center;color:var(--success);font-weight:700;">Yes</td><td style="text-align:center;color:var(--success);font-weight:700;">Yes</td></tr>
+                <tr><td>Sampling Override</td><td style="text-align:center;color:var(--danger);font-weight:700;">No</td><td style="text-align:center;color:var(--success);font-weight:700;">Yes</td><td style="text-align:center;color:var(--success);font-weight:700;">Yes</td></tr>
+                <tr><td>Batch Size (max)</td><td style="text-align:center;font-weight:700;">5</td><td style="text-align:center;font-weight:700;">25</td><td style="text-align:center;font-weight:700;">100</td></tr>
+                <tr><td>Queue Size (max)</td><td style="text-align:center;font-weight:700;">100</td><td style="text-align:center;font-weight:700;">1000</td><td style="text-align:center;font-weight:700;">10000</td></tr>
+                <tr><td>Compression</td><td style="text-align:center;font-weight:700;">None</td><td style="text-align:center;font-weight:700;">gzip</td><td style="text-align:center;font-weight:700;">gzip + brotli</td></tr>
+            </tbody>
+        </table>
+
+        <!-- ═══════════════════════════════════════════════════════════ -->
+        <!-- ALL EVENT TYPES                                           -->
+        <!-- ═══════════════════════════════════════════════════════════ -->
+        <h2 id="all-events">5. All Event Types Captured by the SDK</h2>
+        <p>The SDK captures exactly 5 event types, each represented by a discriminated union type in <code>src/types/event.ts</code>:</p>
+
+        <h3>5.1 ErrorEvent <span class="badge badge-free" style="font-size:0.65em;vertical-align:middle;">Free Tier+</span></h3>
+        <pre><code>{
+  type: "error",
+  eventId?: string,
+  requestId?: string,
+  message: string,
+  name: string,
+  stack: { filename, function, lineno?, colno?, inApp, module? }[],
+  fingerprint: string,          // SHA-256 hash for grouping
+  timestamp: number,
+  severity: "debug" | "info" | "warning" | "error" | "fatal",
+  context: Record&lt;string, unknown&gt;,
+  breadcrumbs?: Breadcrumb[],
+  traceId?: string,
+  spanId?: string,
+  metadata: { sdkName, sdkVersion, service, environment, release }
+}
+
+// Captured by: captureError(), global error handlers
+// Auto-attached: breadcrumbs, traceId, spanId from context
+</code></pre>
+
+        <h3>5.2 RequestEvent <span class="badge badge-pro" style="font-size:0.65em;vertical-align:middle;">Pro Tier+</span></h3>
+        <pre><code>{
+  type: "request",
+  eventId?: string,
+  requestId: string,
+  url: string,
+  method: string,
+  statusCode: number,
+  latency: number,              // milliseconds
+  timestamp: number,
+  headers?: Record&lt;string, unknown&gt;,
+  query?: Record&lt;string, unknown&gt;,
+  bodySize?: number,
+  userId?: string | null,
+  traceId?: string,
+  spanId?: string,
+  metadata?: EventMetadata
+}
+
+// Captured by: monitorMiddleware() (Express)
+// Headers and query params are sanitized via sanitizeHeaders()
+</code></pre>
+
+        <h3>5.3 MessageEvent <span class="badge badge-all" style="font-size:0.65em;vertical-align:middle;">All Tiers</span></h3>
+        <pre><code>{
+  type: "message",
+  eventId?: string,
+  message: string,
+  severity: "debug" | "info" | "warning" | "error" | "fatal",
+  timestamp: number,
+  context?: Record&lt;string, unknown&gt;,
+  breadcrumbs?: Breadcrumb[],
+  traceId?: string,
+  spanId?: string,
+  metadata?: EventMetadata
+}
+
+// Captured by: captureMessage()
+// Auto-attached: breadcrumbs, traceId, spanId from context
+</code></pre>
+
+        <h3>5.4 MetricEvent <span class="badge badge-ent" style="font-size:0.65em;vertical-align:middle;">Enterprise Only</span></h3>
+        <pre><code>{
+  type: "metric",
+  eventId?: string,
+  metricName: string,
+  metricType: "counter" | "gauge" | "histogram",
+  value: number,
+  unit?: string,
+  tags?: Record&lt;string, string&gt;,
+  timestamp: number,
+  metadata?: EventMetadata
+}
+
+// Captured by: captureMetric(), incrementCounter(), setGauge(),
+//              recordHistogram(), addUpDownCounter()
+// Metrics aggregated client-side in MetricsRegistry before flush
+</code></pre>
+
+        <h3>5.5 SpanEvent <span class="badge badge-pro" style="font-size:0.65em;vertical-align:middle;">Pro Tier+</span></h3>
+        <pre><code>{
+  type: "span",
+  eventId?: string,
+  spanId: string,
+  traceId: string,
+  parentSpanId?: string,
+  name: string,
+  startTime: number,
+  endTime: number,
+  duration: number,
+  status: "ok" | "error" | "unset",
+  attributes?: Record&lt;string, unknown&gt;,
+  events?: { name, timestamp, attributes? }[],
+  links?: { traceId, spanId }[],
+  metadata?: EventMetadata
+}
+
+// Captured by: startSpan(), withSpan(), withSpanSync()
+// Converted from OpenTelemetry spans via PipelineSpanExporter
+// Exported through the event pipeline via captureEvent()
+</code></pre>
+
+        <h3>Event Type Summary</h3>
+        <table>
+            <thead><tr><th>Type</th><th>Discriminator</th><th>Tier</th><th>Breadcrumbs</th><th>Trace-Linked</th><th>Primary Capture</th></thead>
+            <tbody>
+                <tr><td>ErrorEvent</td><td><code>type === 'error'</code></td><td>Free</td><td>Yes</td><td>Yes</td><td>captureError()</td></tr>
+                <tr><td>RequestEvent</td><td><code>type === 'request'</code></td><td>Pro</td><td>No</td><td>Yes</td><td>monitorMiddleware()</td></tr>
+                <tr><td>MessageEvent</td><td><code>type === 'message'</code></td><td>Free</td><td>Yes</td><td>Yes</td><td>captureMessage()</td></tr>
+                <tr><td>MetricEvent</td><td><code>type === 'metric'</code></td><td>Enterprise</td><td>No</td><td>No</td><td>captureMetric()</td></tr>
+                <tr><td>SpanEvent</td><td><code>type === 'span'</code></td><td>Pro</td><td>No</td><td>Yes</td><td>startSpan() / OTel</td></tr>
+            </tbody>
+        </table>
+
+        <!-- ═══════════════════════════════════════════════════════════ -->
+        <!-- INDIVIDUAL FEATURES                                        -->
+        <!-- ═══════════════════════════════════════════════════════════ -->
+
+        <hr class="separator">
+        <h2 id="f-init">6. SDK Initialization &amp; Remote Config</h2>
+        <div class="feature-card">
+            <div class="feature-header">
+                <span class="badge badge-all">All Tiers</span>
+            </div>
+        </div>
+
+        <div class="phase">
+            <div class="phase-title">Workcycle</div>
+            <div class="phase-code">init() called &rarr; Zod validation &rarr; POST /v1/init &rarr; Remote config + plan tier received &rarr; Plan features resolved (defaults merged) &rarr; Config merged &amp; clamped to plan limits &rarr; Subsystems started &rarr; SDK ready</div>
+        </div>
+
+        <h4>Workcycle Phases:</h4>
+        <ol>
+            <li><strong>Validation:</strong> User options validated against <code>sdkInitOptionsSchema</code> (Zod)</li>
+            <li><strong>Handshake:</strong> POST to <code>/v1/init</code> with API key in body</li>
+            <li><strong>Plan Resolution:</strong> Backend returns plan tier + planFeatures; defaults applied if missing</li>
+            <li><strong>Config Merge:</strong> User options + remote config merged; all features default ON</li>
+            <li><strong>Plan Clamping:</strong> Features above plan tier forced OFF; numeric limits capped; warnings logged</li>
+            <li><strong>Subsystem Start:</strong> Batcher, global error handlers, signal handlers, error deduplicator, metrics registry, session manager (if allowed), OpenTelemetry tracer (if allowed)</li>
+            <li><strong>Persistent Recovery:</strong> Replay events from NDJSON file into queue</li>
+            <li><strong>Offline Fallback:</strong> If /v1/init fails after 5 retries, falls back to errors-only mode (Free plan defaults, enableErrors: true)</li>
+        </ol>
+
+        <div class="impl-block">
+            <div class="impl-file">src/core/init.ts &mdash; Primary implementation (547 lines)</div>
+            <div class="impl-title">Key Files</div>
+            <ul style="margin:8px 0 0;">
+                <li><code>src/core/init.ts</code> &mdash; Main init flow with retry logic (up to 5 attempts, exponential jitter)</li>
+                <li><code>src/core/client.ts</code> &mdash; Singleton SDKClient managing all state (options, config, plugins, breadcrumbs)</li>
+                <li><code>src/core/plan-gate.ts</code> &mdash; Plan defaults, resolution (resolvePlanFeatures), and clamping (clampToPlan)</li>
+                <li><code>src/types/config.ts</code> &mdash; Zod schema (sdkInitOptionsSchema) and all config type definitions</li>
+                <li><code>src/transport/sender.ts</code> &mdash; <code>sendInitRequest()</code> for /v1/init</li>
+                <li><code>src/core/lifecycle.ts</code> &mdash; Graceful shutdown and signal handlers</li>
+            </ul>
+        </div>
+
+        <hr class="separator">
+        <h2 id="f-error">7. Error Tracking &amp; Crash Reporting</h2>
+        <div class="feature-card">
+            <div class="feature-header">
+                <span class="badge badge-free">Free Tier+</span>
+            </div>
+        </div>
+
+        <div class="phase">
+            <div class="phase-title">Workcycle</div>
+            <div class="phase-code">captureError(err, options?) &rarr; Error normalization (toError) &rarr; V8 stack parsing &rarr; Source map resolution &rarr; SHA-256 fingerprinting &rarr; Breadcrumb attachment &rarr; processEvent() &rarr; Pipeline &rarr; Queue &rarr; Batcher</div>
+        </div>
+
+        <h4>Implementation Details:</h4>
+        <ul>
+            <li><strong>Error Normalization:</strong> <code>toError()</code> converts any input (Error, string, unknown) to a standard Error object</li>
+            <li><strong>Stack Parsing:</strong> <code>parseStack()</code> parses V8 stack traces, handles ESM filenames, eval frames, and classifies frames as in-app (project) vs. library</li>
+            <li><strong>Fingerprinting:</strong> <code>generateFingerprint()</code> computes SHA-256 hash of error name + message + in-app stack frames for grouping</li>
+            <li><strong>Source Map Resolution:</strong> <code>sourceMapResolver.resolveStackFrames()</code> de-obfuscates production stack traces</li>
+            <li><strong>Severity Override:</strong> User can provide custom severity level (debug/info/warning/error/fatal)</li>
+            <li><strong>Custom Fingerprint:</strong> User can provide custom fingerprint string via <code>options.fingerprint</code></li>
+            <li><strong>Custom Context:</strong> Arbitrary context object attached via <code>options.context</code></li>
+        </ul>
+
+        <div class="impl-block">
+            <div class="impl-file">src/capture/captureError.ts &mdash; Entry point</div>
+            <div class="impl-title">Key Files</div>
+            <ul style="margin:8px 0 0;">
+                <li><code>src/capture/captureError.ts</code> &mdash; <code>captureError()</code> function</li>
+                <li><code>src/core/errors.ts</code> &mdash; <code>toError()</code> normalization</li>
+                <li><code>src/processors/stack-parser.ts</code> &mdash; V8 stack parsing</li>
+                <li><code>src/processors/fingerprint.ts</code> &mdash; SHA-256 fingerprinting</li>
+                <li><code>src/processors/source-map-resolver.ts</code> &mdash; Source map de-obfuscation</li>
+            </ul>
+        </div>
+
+        <hr class="separator">
+        <h2 id="f-request">8. Request Monitoring (Performance)</h2>
+        <div class="feature-card">
+            <div class="feature-header">
+                <span class="badge badge-pro">Pro Tier+</span>
+            </div>
+        </div>
+
+        <div class="phase">
+            <div class="phase-title">Workcycle</div>
+            <div class="phase-code">monitorMiddleware() registers &rarr; Request enters &rarr; Context store created (requestId) &rarr; HTTP breadcrumb added &rarr; Request processing &rarr; res.send monkey-patched &rarr; finish/close events &rarr; captureRequest() &rarr; Pipeline &rarr; Queue</div>
+        </div>
+
+        <h4>Implementation Details:</h4>
+        <ul>
+            <li><strong>Per-Request Context:</strong> Each request gets an AsyncLocalStorage context with a unique requestId</li>
+            <li><strong>Response Capture:</strong> Monkey-patches <code>res.send()</code> and listens for <code>finish</code>/<code>close</code> events on the response object</li>
+            <li><strong>Body Size Measurement:</strong> Measures response body size (Buffer, string, or JSON.stringify)</li>
+            <li><strong>User Identification:</strong> Extracts <code>req.user?.id</code> if available (framework-agnostic)</li>
+            <li><strong>Header Sanitization:</strong> All headers passed through <code>sanitizeHeaders()</code> before capture</li>
+            <li><strong>Query Parameters:</strong> Full query object captured (also sanitized)</li>
+            <li><strong>Slow Request Detection:</strong> Every request checked by <code>slowRequestDetector.check()</code></li>
+            <li><strong>Sampling:</strong> Request events are trace-consistent deterministically sampled</li>
+        </ul>
+
+        <div class="impl-block">
+            <div class="impl-file">src/instrumentation/express.ts + src/capture/captureRequest.ts</div>
+            <div class="impl-title">Key Files</div>
+            <ul style="margin:8px 0 0;">
+                <li><code>src/instrumentation/express.ts</code> &mdash; <code>monitorMiddleware()</code> Express middleware</li>
+                <li><code>src/capture/captureRequest.ts</code> &mdash; <code>captureRequest()</code> function</li>
+                <li><code>src/processors/slow-request-detector.ts</code> &mdash; Slow request tracking by route</li>
+                <li><code>src/core/context.ts</code> &mdash; AsyncLocalStorage context store</li>
+            </ul>
+        </div>
+
+        <hr class="separator">
+        <h2 id="f-message">9. Message Capture</h2>
+        <div class="feature-card">
+            <div class="feature-header">
+                <span class="badge badge-all">All Tiers</span>
+            </div>
+        </div>
+
+        <div class="phase">
+            <div class="phase-title">Workcycle</div>
+            <div class="phase-code">captureMessage(msg, severity?, context?) &rarr; MessageEvent constructed &rarr; Breadcrumbs attached from context &rarr; processEvent() &rarr; Pipeline &rarr; Queue</div>
+        </div>
+
+        <ul>
+            <li><strong>Severity Levels:</strong> Any SeverityLevel (debug, info, warning, error, fatal). Default: info</li>
+            <li><strong>Context Attachment:</strong> Arbitrary context object can be attached</li>
+            <li><strong>Always Enabled:</strong> Message capture is never gated by plan tier</li>
+            <li><strong>Sentry-Compatible:</strong> Mirrors Sentry's captureMessage() API surface</li>
+        </ul>
+
+        <div class="impl-block">
+            <div class="impl-file">src/capture/captureMessage.ts</div>
+        </div>
+
+        <hr class="separator">
+        <h2 id="f-metric">10. Metrics Collection</h2>
+        <div class="feature-card">
+            <div class="feature-header">
+                <span class="badge badge-ent">Enterprise Only</span>
+            </div>
+        </div>
+
+        <div class="phase">
+            <div class="phase-title">Workcycle</div>
+            <div class="phase-code">captureMetric(name, value, type, options?) &rarr; MetricsRegistry aggregation &rarr; Timer fires &rarr; Flushed as MetricEvent[] &rarr; captureEvent() each &rarr; Pipeline &rarr; Queue</div>
+        </div>
+
+        <h4>Metric Types:</h4>
+        <ul>
+            <li><strong>Counter:</strong> Monotonically increasing values. <code>incrementCounter()</code>, <code>addUpDownCounter()</code> (can go negative)</li>
+            <li><strong>Gauge:</strong> Point-in-time values. <code>setGauge()</code></li>
+            <li><strong>Histogram:</strong> Statistical distributions. <code>recordHistogram()</code> with percentile support</li>
+        </ul>
+
+        <h4>Implementation Details:</h4>
+        <ul>
+            <li><strong>Client-Side Aggregation:</strong> <code>MetricsRegistry</code> aggregates values locally before flush (reduces event volume)</li>
+            <li><strong>Timer-Based Flush:</strong> Registry flushes on an internal timer, creating individual MetricEvents</li>
+            <li><strong>Tags/Labels:</strong> Metrics support key-value tags for cardinality control</li>
+            <li><strong>Unit Support:</strong> Histogram values can have a unit (ms, bytes, count)</li>
+            <li><strong>Direct Capture:</strong> If registry not initialized, falls back to direct <code>captureMetric()</code></li>
+        </ul>
+
+        <div class="impl-block">
+            <div class="impl-file">src/capture/captureMetric.ts + src/metrics/registry.ts</div>
+            <div class="impl-title">Key Files</div>
+            <ul style="margin:8px 0 0;">
+                <li><code>src/capture/captureMetric.ts</code> &mdash; All metric capture functions</li>
+                <li><code>src/metrics/registry.ts</code> &mdash; <code>MetricsRegistry</code> with histogram percentiles, cardinality protection</li>
+            </ul>
+        </div>
+
+        <hr class="separator">
+        <h2 id="f-tracing">11. Distributed Tracing (OpenTelemetry)</h2>
+        <div class="feature-card">
+            <div class="feature-header">
+                <span class="badge badge-pro">Pro Tier+</span>
+            </div>
+        </div>
+
+        <div class="phase">
+            <div class="phase-title">Workcycle</div>
+            <div class="phase-code">initTracer() &rarr; OTel SDK initialized &rarr; startSpan(name) &rarr; PulseSpan created &rarr; Attributes/events set &rarr; Span ends &rarr; PipelineSpanExporter converts to SpanEvent &rarr; captureEvent() &rarr; Pipeline &rarr; Queue</div>
+        </div>
+
+        <h4>Implementation Details:</h4>
+        <ul>
+            <li><strong>OpenTelemetry Integration:</strong> Wraps OTel SDK with SDK-specific enrichment via <code>PulseSpan</code></li>
+            <li><strong>W3C Trace Context:</strong> <code>traceparent</code> and <code>tracestate</code> headers injected via <code>injectTraceContext()</code> and extracted via <code>extractTraceContext()</code></li>
+            <li><strong>Span Lifecycle:</strong> <code>startSpan()</code> creates; <code>end()</code> closes; <code>withSpan()</code>/<code>withSpanSync()</code> auto-close on scope exit</li>
+            <li><strong>Attributes:</strong> <code>setAttribute()</code> / <code>setAttributes()</code> for key-value pairs</li>
+            <li><strong>Events:</strong> <code>addEvent()</code> for span annotations</li>
+            <li><strong>Error Recording:</strong> <code>recordError()</code> sets status to ERROR and records the exception</li>
+            <li><strong>Span Links:</strong> Non-parent-child causal relationships via <code>addLink()</code></li>
+            <li><strong>Pipeline Span Exporter:</strong> Custom exporter converts OTel spans to <code>SpanEvent</code></li>
+            <li><strong>HTTP Client Auto-Tracing:</strong> <code>instrumentHttpClient()</code> monkey-patches <code>http/https.request</code></li>
+            <li><strong>Resource Detection:</strong> Auto-detects OS, hostname, runtime, container ID, cloud provider</li>
+        </ul>
+
+        <div class="impl-block">
+            <div class="impl-file">src/tracing/tracer.ts + src/tracing/span.ts</div>
+            <div class="impl-title">Key Files</div>
+            <ul style="margin:8px 0 0;">
+                <li><code>src/tracing/tracer.ts</code> &mdash; <code>initTracer()</code>, <code>startSpan()</code>, <code>withSpan()</code>, <code>withSpanSync()</code>, <code>getActiveSpan()</code>, <code>flushTracer()</code></li>
+                <li><code>src/tracing/span.ts</code> &mdash; <code>PulseSpan</code> class wrapping OTel Span</li>
+                <li><code>src/tracing/context-propagation.ts</code> &mdash; W3C trace context inject/extract</li>
+                <li><code>src/instrumentation/http.ts</code> &mdash; HTTP client auto-tracing</li>
+            </ul>
+        </div>
+
+        <hr class="separator">
+        <h2 id="f-breadcrumb">12. Breadcrumb Timeline</h2>
+        <div class="feature-card">
+            <div class="feature-header">
+                <span class="badge badge-free">Free Tier+ (Limits Apply)</span>
+            </div>
+        </div>
+
+        <div class="phase">
+            <div class="phase-title">Workcycle</div>
+            <div class="phase-code">addBreadcrumb(input) &rarr; RingBuffer insertion (O(1)) &rarr; Oldest evicted if capacity reached &rarr; Breadcrumbs auto-attached to next error/message event via AsyncLocalStorage context</div>
+        </div>
+
+        <h4>Implementation Details:</h4>
+        <ul>
+            <li><strong>O(1) Ring Buffer:</strong> Fixed-capacity circular buffer; eviction is O(1)</li>
+            <li><strong>Auto-Capture:</strong> HTTP breadcrumbs auto-added by Express middleware and HTTP client instrumentation</li>
+            <li><strong>beforeBreadcrumb Hook:</strong> Optional processor to modify or drop breadcrumbs before insertion</li>
+            <li><strong>Plan Limits:</strong> Capacity varies by plan (Free: 50, Pro: 200, Enterprise: 1000)</li>
+            <li><strong>Request-Scoped:</strong> Stored in AsyncLocalStorage for per-request isolation</li>
+        </ul>
+
+        <h4>Breadcrumb Types (9 total):</h4>
+        <table>
+            <thead><tr><th>Type</th><th>Description</th><th>Auto-Captured By</th></thead>
+            <tbody>
+                <tr><td><code>default</code></td><td>General event</td><td>User API</td></tr>
+                <tr><td><code>http</code></td><td>HTTP request/response</td><td>Express middleware, HTTP client instrumentation</td></tr>
+                <tr><td><code>navigation</code></td><td>Page navigation</td><td>User API</td></tr>
+                <tr><td><code>error</code></td><td>Error event</td><td>User API</td></tr>
+                <tr><td><code>query</code></td><td>Database query</td><td>User API</td></tr>
+                <tr><td><code>ui</code></td><td>User interaction</td><td>User API</td></tr>
+                <tr><td><code>user</code></td><td>User action</td><td>User API</td></tr>
+                <tr><td><code>info</code></td><td>Informational</td><td>User API</td></tr>
+                <tr><td><code>debug</code></td><td>Debug event</td><td>User API</td></tr>
+            </tbody>
+        </table>
+
+        <div class="impl-block">
+            <div class="impl-file">src/core/context.ts + src/core/ring-buffer.ts</div>
+            <div class="impl-title">Key Files</div>
+            <ul style="margin:8px 0 0;">
+                <li><code>src/core/ring-buffer.ts</code> &mdash; O(1) circular buffer implementation</li>
+                <li><code>src/core/context.ts</code> &mdash; <code>addBreadcrumb()</code> and AsyncLocalStorage integration</li>
+                <li><code>src/types/breadcrumb.ts</code> &mdash; Type definitions</li>
+            </ul>
+        </div>
+
+        <hr class="separator">
+        <h2 id="f-session">13. Session Management</h2>
+        <div class="feature-card">
+            <div class="feature-header">
+                <span class="badge badge-pro">Pro Tier+</span>
+            </div>
+        </div>
+
+        <div class="phase">
+            <div class="phase-title">Workcycle</div>
+            <div class="phase-code">getSession() &rarr; No session or expired? &rarr; createSession() &rarr; UUID v4 assigned &rarr; recordActivity() on each event &rarr; recordError() marks crashed &rarr; Idle timeout or max duration &rarr; endSession()</div>
+        </div>
+
+        <h4>Implementation Details:</h4>
+        <ul>
+            <li><strong>Session ID:</strong> UUID v4 for each new session</li>
+            <li><strong>Expiry Triggers:</strong> Idle timeout (default: 30 min), max duration (default: 4 hours), or explicit end</li>
+            <li><strong>Crash Detection:</strong> First error in a session marks <code>crashed: true</code></li>
+            <li><strong>Crash-Free Rate:</strong> <code>(totalSessions - crashedSessions) / totalSessions</code></li>
+            <li><strong>Singleton:</strong> Global <code>getSessionManager()</code> returns shared instance</li>
+        </ul>
+
+        <div class="impl-block">
+            <div class="impl-file">src/session/session-manager.ts</div>
+        </div>
+
+        <hr class="separator">
+        <h2 id="f-sanitizer">14. PII Sanitization</h2>
+        <div class="feature-card">
+            <div class="feature-header">
+                <span class="badge badge-all">All Tiers</span>
+            </div>
+        </div>
+
+        <div class="phase">
+            <div class="phase-title">Workcycle</div>
+            <div class="phase-code">processEvent() Step 5 &rarr; sanitizeEvent(event) &rarr; Recursive object traversal &rarr; Pattern matching on string values &rarr; Sensitive keys &rarr; Redacted &rarr; Sanitized event returned</div>
+        </div>
+
+        <h4>Patterns Detected:</h4>
+        <table>
+            <thead><tr><th>Category</th><th>Patterns</th><th>Replacement</th></thead>
+            <tbody>
+                <tr><td>Emails</td><td>Regex email pattern</td><td><code>[EMAIL_REDACTED]</code></td></tr>
+                <tr><td>Credit Cards</td><td>Visa, MasterCard, AmEx patterns</td><td><code>[CARD_REDACTED]</code></td></tr>
+                <tr><td>SSN</td><td>XXX-XX-XXXX pattern</td><td><code>[SSN_REDACTED]</code></td></tr>
+                <tr><td>Phone</td><td>International phone patterns</td><td><code>[PHONE_REDACTED]</code></td></tr>
+                <tr><td>JWT Tokens</td><td>Bearer token pattern</td><td><code>[TOKEN_REDACTED]</code></td></tr>
+                <tr><td>Sensitive Keys</td><td>password, secret, apiKey, authorization, token, credential, private_key, etc.</td><td><code>[REDACTED]</code></td></tr>
+            </tbody>
+        </table>
+
+        <div class="impl-block">
+            <div class="impl-file">src/processors/sanitizer.ts</div>
+        </div>
+
+        <hr class="separator">
+        <h2 id="f-dedup">15. Error Deduplication</h2>
+        <div class="feature-card">
+            <div class="feature-header">
+                <span class="badge badge-all">All Tiers</span>
+            </div>
+        </div>
+
+        <div class="phase">
+            <div class="phase-title">Workcycle</div>
+            <div class="phase-code">Error captured &rarr; Fingerprint extracted &rarr; errorDeduplicator.isDuplicate(fingerprint) &rarr; True? &rarr; Event dropped from pipeline &rarr; False? &rarr; Event continues &rarr; Fingerprint tracked with timestamp</div>
+        </div>
+
+        <div class="impl-block">
+            <div class="impl-file">src/processors/deduplicator.ts</div>
+        </div>
+
+        <hr class="separator">
+        <h2 id="f-fingerprint">16. Error Fingerprinting</h2>
+        <div class="feature-card">
+            <div class="feature-header">
+                <span class="badge badge-free">Free Tier+</span>
+            </div>
+        </div>
+
+        <div class="phase">
+            <div class="phase-title">Workcycle</div>
+            <div class="phase-code">Error + stack frames &rarr; generateFingerprint(err, frames, custom?) &rarr; Fingerprint string built (name + message + first 3 in-app frames) &rarr; SHA-256 hash computed &rarr; Hex string returned</div>
+        </div>
+
+        <ul>
+            <li><strong>Grouping Key:</strong> Errors with identical fingerprints grouped in dashboard</li>
+            <li><strong>Custom Override:</strong> User can provide custom fingerprint string</li>
+            <li><strong>Stack-Invariant:</strong> Uses only in-app frames (skips library frames)</li>
+            <li><strong>SHA-256:</strong> Node.js <code>crypto</code> module</li>
+        </ul>
+
+        <div class="impl-block">
+            <div class="impl-file">src/processors/fingerprint.ts</div>
+        </div>
+
+        <hr class="separator">
+        <h2 id="f-sourcemap">17. Source Map Resolution</h2>
+        <div class="feature-card">
+            <div class="feature-header">
+                <span class="badge badge-free">Free Tier+</span>
+            </div>
+        </div>
+
+        <div class="phase">
+            <div class="phase-title">Workcycle</div>
+            <div class="phase-code">Stack frames parsed &rarr; resolveStackFrames(frames) &rarr; Source map lookup (local paths or remote URL) &rarr; Original source location resolved &rarr; Content embedded if configured &rarr; Resolved frames returned</div>
+        </div>
+
+        <div class="impl-block">
+            <div class="impl-file">src/processors/source-map-resolver.ts</div>
+        </div>
+
+        <hr class="separator">
+        <h2 id="f-slow">18. Slow Request Detection</h2>
+        <div class="feature-card">
+            <div class="feature-header">
+                <span class="badge badge-pro">Pro Tier+</span>
+            </div>
+        </div>
+
+        <div class="phase">
+            <div class="phase-title">Workcycle</div>
+            <div class="phase-code">Request completes &rarr; slowRequestDetector.check({ latencyMs, route }) &rarr; Thresholds checked per route &rarr; Flagged if exceeds threshold &rarr; Metrics recorded</div>
+        </div>
+
+        <div class="impl-block">
+            <div class="impl-file">src/processors/slow-request-detector.ts</div>
+        </div>
+
+        <hr class="separator">
+        <h2 id="f-pipeline">19. Event Pipeline (Processing Chain)</h2>
+        <div class="feature-card">
+            <div class="feature-header">
+                <span class="badge badge-all">All Tiers</span>
+            </div>
+        </div>
+
+        <p>The central <code>processEvent()</code> function in <code>src/core/event-pipeline.ts</code> orchestrates 14 steps. Each step is a pure function (event in, event out or null). Returning null drops the event.</p>
+
+        <table>
+            <thead><tr><th>Step</th><th>Name</th><th>Location</th><th>Description</th></thead>
+            <tbody>
+                <tr><td>1</td><td>Base Fields</td><td>pipeline:205</td><td>Assign eventId (UUID) and timestamp if missing</td></tr>
+                <tr><td>2</td><td>Pre-init Buffering</td><td>pipeline:38</td><td>If SDK not initialized, buffer event for replay later</td></tr>
+                <tr><td>3</td><td>Feature Gate</td><td>pipeline:217</td><td>Check enableErrors/Performance/Tracing/Metrics per event type</td></tr>
+                <tr><td>4</td><td>Normalize</td><td>normalizer.ts</td><td>Fill defaults, truncate oversized fields</td></tr>
+                <tr><td>5</td><td>Sanitize</td><td>sanitizer.ts</td><td>Deep PII scrubbing</td></tr>
+                <tr><td>6</td><td>Context Enrich</td><td>pipeline:237</td><td>Attach traceId, spanId, breadcrumbs from AsyncLocalStorage</td></tr>
+                <tr><td>6.5</td><td>Deduplicate</td><td>deduplicator.ts</td><td>Suppress duplicate errors within time window</td></tr>
+                <tr><td>7</td><td>Scope Apply</td><td>scope.ts:315</td><td>Merge user, tags, extra, contexts from global scope</td></tr>
+                <tr><td>8</td><td>Plugin Processors</td><td>pipeline:87</td><td>Run registered plugin.processEvent hooks</td></tr>
+                <tr><td>9</td><td>User Processors</td><td>pipeline:111</td><td>Run user-registered event processors</td></tr>
+                <tr><td>10</td><td>beforeSend Hook</td><td>pipeline:128</td><td>User callback; return null to drop event</td></tr>
+                <tr><td>11</td><td>Plugin beforeSend</td><td>pipeline:145</td><td>Run plugin.beforeSend hooks</td></tr>
+                <tr><td>12</td><td>Sampling</td><td>pipeline:266</td><td>FNV-1a deterministic sampling per traceId</td></tr>
+                <tr><td>13</td><td>Enqueue</td><td>queue.ts</td><td>Add to bounded EventQueue</td></tr>
+                <tr><td>14</td><td>Persist</td><td>persistent-storage.ts</td><td>Write to NDJSON file for crash recovery</td></tr>
+            </tbody>
+        </table>
+
+        <hr class="separator">
+        <h2 id="f-queue">20. Event Queue</h2>
+        <div class="feature-card">
+            <div class="feature-header">
+                <span class="badge badge-all">All Tiers</span>
+            </div>
+        </div>
+
+        <div class="phase">
+            <div class="phase-title">Workcycle</div>
+            <div class="phase-code">add(event) &rarr; Queue full? &rarr; Evict oldest (splice 0,1) &rarr; Drop count incremented &rarr; Event appended &rarr; drain(batchSize) returns first N &rarr; requeueFront(events) prepends safely</div>
+        </div>
+
+        <ul>
+            <li><strong>Bounded Capacity:</strong> Configured via <code>maxQueueSize</code> (plan-limited)</li>
+            <li><strong>FIFO Eviction:</strong> Oldest events evicted when capacity exceeded</li>
+            <li><strong>Drop Notifications:</strong> Registered drop handler called on eviction</li>
+            <li><strong>Safe Requeue:</strong> <code>requeueFront()</code> prepends in reverse order to avoid call stack overflow</li>
+        </ul>
+
+        <div class="impl-block">
+            <div class="impl-file">src/transport/queue.ts</div>
+        </div>
+
+        <hr class="separator">
+        <h2 id="f-batcher">21. Batching</h2>
+        <div class="feature-card">
+            <div class="feature-header">
+                <span class="badge badge-all">All Tiers</span>
+            </div>
+        </div>
+
+        <div class="phase">
+            <div class="phase-title">Workcycle</div>
+            <div class="phase-code">startBatcher() &rarr; Timer starts (flushIntervalMs) &rarr; Timer fires &rarr; Guards checked (circuit breaker, rate limiter, memory, concurrency) &rarr; Queue drained &rarr; sendEvents() &rarr; Success? Reset CB | Failure? requeueFront() + trip CB</div>
+        </div>
+
+        <div class="impl-block">
+            <div class="impl-file">src/transport/batcher.ts</div>
+        </div>
+
+        <hr class="separator">
+        <h2 id="f-sender">22. HTTP Transport</h2>
+        <div class="feature-card">
+            <div class="feature-header">
+                <span class="badge badge-all">All Tiers</span>
+            </div>
+        </div>
+
+        <div class="phase">
+            <div class="phase-title">Workcycle</div>
+            <div class="phase-code">sendEvents(events[]) &rarr; createPayloads() &rarr; Split if exceeds maxPayloadBytes (O(n) incremental) &rarr; For each: retry loop &rarr; postJson() &rarr; Compression &rarr; POST to ingestUrl</div>
+        </div>
+
+        <ul>
+            <li><strong>Payload Splitting:</strong> Automatically splits large batches; O(n) byte tracking avoids re-serialization</li>
+            <li><strong>API Key in Body:</strong> API key always in JSON body, never in headers</li>
+            <li><strong>Timeout:</strong> Configurable HTTP timeout (default: 5000ms)</li>
+            <li><strong>Retryable:</strong> 408, 429, 5xx HTTP codes + network errors</li>
+        </ul>
+
+        <div class="impl-block">
+            <div class="impl-file">src/transport/sender.ts</div>
+        </div>
+
+        <hr class="separator">
+        <h2 id="f-retry">23. Retry with Exponential Backoff</h2>
+        <div class="feature-card">
+            <div class="feature-header">
+                <span class="badge badge-all">All Tiers</span>
+            </div>
+        </div>
+
+        <div class="phase">
+            <div class="phase-title">Workcycle</div>
+            <div class="phase-code">retry(fn) &rarr; Attempt N &rarr; fn() &rarr; Success? Return | Failure? &rarr; Check retryable + budget + max retries &rarr; Delay (exponential * jitter) &rarr; Attempt N+1</div>
+        </div>
+
+        <ul>
+            <li><strong>Exponential Delay:</strong> Base delay doubles with each attempt</li>
+            <li><strong>Jitter:</strong> Random jitter reduces thundering herd</li>
+            <li><strong>Global Retry Budget:</strong> <code>globalRetryBudget</code> limits concurrent retry attempts across all batches</li>
+        </ul>
+
+        <div class="impl-block">
+            <div class="impl-file">src/transport/retry.ts</div>
+        </div>
+
+        <hr class="separator">
+        <h2 id="f-circuit">24. Circuit Breaker</h2>
+        <div class="feature-card">
+            <div class="feature-header">
+                <span class="badge badge-all">All Tiers</span>
+            </div>
+        </div>
+
+        <div class="phase">
+            <div class="phase-title">Workcycle</div>
+            <div class="phase-code">CLOSED (normal) &rarr; Failure threshold hit? &rarr; OPEN (fail fast) &rarr; Wait timeout &rarr; HALF_OPEN (probe) &rarr; Probe succeeds? CLOSED | Probe fails? OPEN</div>
+        </div>
+
+        <div class="impl-block">
+            <div class="impl-file">src/transport/circuit-breaker.ts</div>
+        </div>
+
+        <hr class="separator">
+        <h2 id="f-rate">25. Rate Limiting</h2>
+        <div class="feature-card">
+            <div class="feature-header">
+                <span class="badge badge-all">All Tiers</span>
+            </div>
+        </div>
+
+        <ul>
+            <li><strong>Token Bucket:</strong> Tokens added at fixed rate; requests consume tokens; blocked if empty</li>
+            <li><strong>Sliding Window:</strong> Tracks request count in rolling time window; blocked if exceeded</li>
+            <li><strong>Batcher Integration:</strong> Checked before each batch send</li>
+        </ul>
+
+        <div class="impl-block">
+            <div class="impl-file">src/transport/rate-limit.ts</div>
+        </div>
+
+        <hr class="separator">
+        <h2 id="f-compression">26. Payload Compression</h2>
+        <div class="feature-card">
+            <div class="feature-header">
+                <span class="badge badge-plan">Plan-Dependent</span>
+            </div>
+        </div>
+
+        <table>
+            <thead><tr><th>Algorithm</th><th>Tier</th><th>Header</th></thead>
+            <tbody>
+                <tr><td>None</td><td>All</td><td>&mdash;</td></tr>
+                <tr><td>gzip</td><td>Pro+</td><td><code>Content-Encoding: gzip</code></td></tr>
+                <tr><td>brotli</td><td>Enterprise</td><td><code>Content-Encoding: br</code></td></tr>
+            </tbody>
+        </table>
+
+        <div class="impl-block">
+            <div class="impl-file">src/utils/compression.ts</div>
+        </div>
+
+        <hr class="separator">
+        <h2 id="f-persist">27. Persistent Storage (Crash Recovery)</h2>
+        <div class="feature-card">
+            <div class="feature-header">
+                <span class="badge badge-all">All Tiers</span>
+            </div>
+        </div>
+
+        <div class="phase">
+            <div class="phase-title">Workcycle</div>
+            <div class="phase-code">init() &rarr; persistentStorage.init() &rarr; Open NDJSON file &rarr; Read all events &rarr; Parse each line &rarr; Return events[] &rarr; SDK replays to queue &rarr; persist(event) &rarr; Atomic write (temp + rename) &rarr; Each event on new line</div>
+        </div>
+
+        <ul>
+            <li><strong>NDJSON Format:</strong> One JSON object per line; easy to append</li>
+            <li><strong>Atomic Writes:</strong> Write to temp file, then rename (atomic on POSIX)</li>
+            <li><strong>API Key Isolation:</strong> Storage file keyed by SHA-256 hash of API key</li>
+            <li><strong>Replay on Init:</strong> Persisted events read and re-added to queue on restart</li>
+        </ul>
+
+        <div class="impl-block">
+            <div class="impl-file">src/storage/persistent-storage.ts</div>
+        </div>
+
+        <hr class="separator">
+        <h2 id="f-scope">28. Scope Management</h2>
+        <div class="feature-card">
+            <div class="feature-header">
+                <span class="badge badge-free">Free Tier+</span>
+            </div>
+        </div>
+
+        <div class="phase">
+            <div class="phase-title">Workcycle</div>
+            <div class="phase-code">setUser()/setTag()/setExtra()/setContext() &rarr; scopeManager mutated &rarr; applyScopeToEvent() in pipeline Step 7 &rarr; User/tags/extra/contexts merged &rarr; AsyncLocalStorage context data takes precedence</div>
+        </div>
+
+        <h4>Scope Data Types:</h4>
+        <ul>
+            <li><strong>User:</strong> id, email, username, ipAddress, data</li>
+            <li><strong>Tags:</strong> String key-value pairs for filtering</li>
+            <li><strong>Extra:</strong> Arbitrary key-value data</li>
+            <li><strong>Contexts:</strong> Named structured data sections (device, os, app, culture)</li>
+        </ul>
+
+        <h4>Special Features:</h4>
+        <ul>
+            <li><strong>withScope():</strong> Run callback with isolated scope clone</li>
+            <li><strong>AsyncLocalStorage:</strong> If active, scope data is request-scoped; otherwise global</li>
+        </ul>
+
+        <div class="impl-block">
+            <div class="impl-file">src/core/scope.ts</div>
+        </div>
+
+        <hr class="separator">
+        <h2 id="f-plugin">29. Plugin System</h2>
+        <div class="feature-card">
+            <div class="feature-header">
+                <span class="badge badge-pro">Pro Tier+</span>
+            </div>
+        </div>
+
+        <div class="phase">
+            <div class="phase-title">Workcycle</div>
+            <div class="phase-code">init() &rarr; initializePlugins() &rarr; For each: setup() &rarr; Lifecycle hooks registered &rarr; processEvent() calls plugin.processEvent() &rarr; beforeSend() &rarr; shutdown &rarr; teardownPlugins() (reverse order)</div>
+        </div>
+
+        <table>
+            <thead><tr><th>Hook</th><th>Pipeline Step</th><th>Purpose</th></thead>
+            <tbody>
+                <tr><td>setup</td><td>Init</td><td>Initialize plugin state once</td></tr>
+                <tr><td>processEvent</td><td>Step 8</td><td>Mutate or drop event</td></tr>
+                <tr><td>beforeSend</td><td>Step 11</td><td>Final modification before queue</td></tr>
+                <tr><td>afterSend</td><td>Post-send</td><td>Handle success/failure after batch</td></tr>
+                <tr><td>teardown</td><td>Shutdown</td><td>Clean up resources</td></tr>
+            </tbody>
+        </table>
+
+        <div class="impl-block">
+            <div class="impl-file">src/plugins/index.ts + src/types/plugin.ts</div>
+        </div>
+
+        <hr class="separator">
+        <h2 id="f-context">30. Context Propagation (AsyncLocalStorage)</h2>
+        <div class="feature-card">
+            <div class="feature-header">
+                <span class="badge badge-all">All Tiers</span>
+            </div>
+        </div>
+
+        <div class="phase">
+            <div class="phase-title">Workcycle</div>
+            <div class="phase-code">withContext(store, fn) &rarr; AsyncLocalStorage run() &rarr; Store entered &rarr; fn() executes &rarr; Store exited &rarr; All async operations within share same context (traceId, spanId, requestId, breadcrumbs, user, tags, extra)</div>
+        </div>
+
+        <div class="impl-block">
+            <div class="impl-file">src/core/context.ts</div>
+        </div>
+
+        <hr class="separator">
+        <h2 id="f-instrument">31. Auto-Instrumentation</h2>
+        <div class="feature-card">
+            <div class="feature-header">
+                <span class="badge badge-all">All Tiers</span>
+            </div>
+        </div>
+
+        <h4>Express Middleware (<code>monitorMiddleware()</code>):</h4>
+        <ul>
+            <li>Creates per-request AsyncLocalStorage context with requestId</li>
+            <li>Adds HTTP breadcrumb on request entry</li>
+            <li>Monkey-patches <code>res.send()</code> for response capture</li>
+            <li>Listens for <code>finish</code>/<code>close</code> events</li>
+            <li>Runs <code>slowRequestDetector.check()</code></li>
+        </ul>
+
+        <h4>HTTP Client Instrumentation (<code>instrumentHttpClient()</code>):</h4>
+        <ul>
+            <li>Monkey-patches <code>http.request</code> and <code>https.request</code></li>
+            <li>Creates child span for each outbound request</li>
+            <li>Injects W3C trace context into headers</li>
+            <li>Adds HTTP breadcrumbs on response/error/timeout</li>
+            <li>Self-request guard prevents infinite recursion</li>
+            <li>Idempotent &mdash; safe to call multiple times</li>
+        </ul>
+
+        <div class="impl-block">
+            <div class="impl-file">src/instrumentation/express.ts + src/instrumentation/http.ts + src/instrumentation/global-errors.ts</div>
+        </div>
+
+        <hr class="separator">
+        <h2 id="f-graceful">32. Graceful Shutdown</h2>
+        <div class="feature-card">
+            <div class="feature-header">
+                <span class="badge badge-all">All Tiers</span>
+            </div>
+        </div>
+
+        <div class="phase">
+            <div class="phase-title">Workcycle</div>
+            <div class="phase-code">SIGTERM/SIGINT &rarr; shutdown() &rarr; stopBatcher() &rarr; flush() remaining events &rarr; teardownPlugins() (reverse) &rarr; flushTracer() &rarr; endSession() &rarr; resetGlobalErrorHandlers() &rarr; Clear queue + client state</div>
+        </div>
+
+        <ul>
+            <li><strong>Signal Handlers:</strong> SIGTERM (Docker, K8s) and SIGINT (Ctrl+C)</li>
+            <li><strong>Timeout:</strong> Completes within <code>shutdownTimeoutMs</code> (default: 10000ms)</li>
+            <li><strong>No Forced Exit:</strong> SDK never calls <code>process.exit()</code></li>
+        </ul>
+
+        <div class="impl-block">
+            <div class="impl-file">src/core/lifecycle.ts</div>
+        </div>
+
+        <hr class="separator">
+        <h2 id="f-global">33. Global Error Handlers</h2>
+        <div class="feature-card">
+            <div class="feature-header">
+                <span class="badge badge-free">Free Tier+</span>
+            </div>
+        </div>
+
+        <div class="phase">
+            <div class="phase-title">Workcycle</div>
+            <div class="phase-code">uncaughtException &rarr; captureError(err, {mechanism:"uncaughtException"}) &rarr; Best-effort flush | unhandledRejection &rarr; captureError(toError(reason), {mechanism:"unhandledRejection"}) &rarr; Continues</div>
+        </div>
+
+        <div class="impl-block">
+            <div class="impl-file">src/instrumentation/global-errors.ts</div>
+        </div>
+
+        <hr class="separator">
+        <h2 id="f-pressure">34. Backpressure &amp; Memory Monitoring</h2>
+        <div class="feature-card">
+            <div class="feature-header">
+                <span class="badge badge-all">All Tiers</span>
+            </div>
+        </div>
+
+        <div class="phase">
+            <div class="phase-title">Workcycle</div>
+            <div class="phase-code">MemoryPressureMonitor started &rarr; Polls process.memoryUsage() &rarr; heapUsed/heapTotal &gt; threshold? &rarr; isUnderPressure() = true &rarr; Batcher skips sending &rarr; Event loop lag monitor checks V8 polling</div>
+        </div>
+
+        <div class="impl-block">
+            <div class="impl-file">src/utils/backpressure.ts + src/utils/event-loop-lag.ts</div>
+        </div>
+
+        <hr class="separator">
+        <h2 id="f-diagnostics">35. SDK Diagnostics &amp; Health Checks</h2>
+        <div class="feature-card">
+            <div class="feature-header">
+                <span class="badge badge-all">All Tiers</span>
+            </div>
+        </div>
+
+        <table>
+            <thead><tr><th>Function</th><th>Returns</th></thead>
+            <tbody>
+                <tr><td><code>getSDKHealth()</code></td><td>SDK health status, initialized state, subsystem states</td></tr>
+                <tr><td><code>getConfig()</code></td><td>Resolved SDK configuration</td></tr>
+                <tr><td><code>errorDeduplicator</code> (export)</td><td>State, fingerprints tracked</td></tr>
+                <tr><td><code>globalRetryBudget</code> (export)</td><td>State, budget remaining</td></tr>
+                <tr><td><code>slowRequestDetector</code> (export)</td><td>Threshold info</td></tr>
+                <tr><td><code>metricsRegistry.getStats()</code></td><td>Initialized, cardinality stats</td></tr>
+                <tr><td><code>persistentStorage</code> (export)</td><td>Storage stats</td></tr>
+                <tr><td><code>getSessionManager().getSessionHealth()</code></td><td>Total/crashed sessions, crash-free rate</td></tr>
+                <tr><td><code>EventLoopLagMonitor</code> (export)</td><td>Event loop lag statistics</td></tr>
+                <tr><td><code>setLogger() / getLogger()</code></td><td>Custom logger injection</td></tr>
+                <tr><td><code>setDebugMode() / setLogLevel()</code></td><td>Debug logging control</td></tr>
+                <tr><td><code>setLogFormat()</code></td><td>Switch text/JSON log formats</td></tr>
+            </tbody>
+        </table>
+
+        <!-- ═══════════════════════════════════════════════════════════ -->
+        <!-- FEATURE SUMMARY                                           -->
+        <!-- ═══════════════════════════════════════════════════════════ -->
+        <hr class="separator">
+        <h2 id="feature-summary">36. Feature Summary Table</h2>
+
+        <table>
+            <thead><tr><th>#</th><th>Feature</th><th>Tier</th><th>Entry Function</th><th>Output Event</th></thead>
+            <tbody>
+                <tr><td>1</td><td>SDK Initialization</td><td><span class="badge badge-all" style="font-size:0.6em;">All</span></td><td><code>init()</code></td><td>&mdash;</td></tr>
+                <tr><td>2</td><td>Error Tracking</td><td><span class="badge badge-free" style="font-size:0.6em;">Free</span></td><td><code>captureError()</code></td><td>ErrorEvent</td></tr>
+                <tr><td>3</td><td>Request Monitoring</td><td><span class="badge badge-pro" style="font-size:0.6em;">Pro</span></td><td><code>monitorMiddleware()</code></td><td>RequestEvent</td></tr>
+                <tr><td>4</td><td>Message Capture</td><td><span class="badge badge-all" style="font-size:0.6em;">All</span></td><td><code>captureMessage()</code></td><td>MessageEvent</td></tr>
+                <tr><td>5</td><td>Metrics Collection</td><td><span class="badge badge-ent" style="font-size:0.6em;">Enterprise</span></td><td><code>captureMetric()</code>, <code>recordHistogram()</code></td><td>MetricEvent</td></tr>
+                <tr><td>6</td><td>Distributed Tracing</td><td><span class="badge badge-pro" style="font-size:0.6em;">Pro</span></td><td><code>startSpan()</code>, <code>withSpan()</code></td><td>SpanEvent</td></tr>
+                <tr><td>7</td><td>Breadcrumb Timeline</td><td><span class="badge badge-free" style="font-size:0.6em;">Free</span></td><td><code>addBreadcrumb()</code></td><td>Attached to Error/Message</td></tr>
+                <tr><td>8</td><td>Session Management</td><td><span class="badge badge-pro" style="font-size:0.6em;">Pro</span></td><td><code>getSessionManager()</code></td><td>&mdash;</td></tr>
+                <tr><td>9</td><td>PII Sanitization</td><td><span class="badge badge-all" style="font-size:0.6em;">All</span></td><td>Auto (pipeline Step 5)</td><td>&mdash;</td></tr>
+                <tr><td>10</td><td>Error Deduplication</td><td><span class="badge badge-all" style="font-size:0.6em;">All</span></td><td>Auto (pipeline Step 6.5)</td><td>&mdash;</td></tr>
+                <tr><td>11</td><td>Error Fingerprinting</td><td><span class="badge badge-free" style="font-size:0.6em;">Free</span></td><td>Auto (<code>captureError</code>)</td><td><code>fingerprint</code> field</td></tr>
+                <tr><td>12</td><td>Source Map Resolution</td><td><span class="badge badge-free" style="font-size:0.6em;">Free</span></td><td>Auto (<code>captureError</code>)</td><td>Resolved frames</td></tr>
+                <tr><td>13</td><td>Slow Request Detection</td><td><span class="badge badge-pro" style="font-size:0.6em;">Pro</span></td><td>Auto (middleware)</td><td>&mdash;</td></tr>
+                <tr><td>14</td><td>12-Step Event Pipeline</td><td><span class="badge badge-all" style="font-size:0.6em;">All</span></td><td><code>processEvent()</code></td><td>&mdash;</td></tr>
+                <tr><td>15</td><td>Bounded Event Queue</td><td><span class="badge badge-all" style="font-size:0.6em;">All</span></td><td><code>eventQueue.add()</code></td><td>&mdash;</td></tr>
+                <tr><td>16</td><td>Timer-Based Batching</td><td><span class="badge badge-all" style="font-size:0.6em;">All</span></td><td><code>startBatcher()</code></td><td>&mdash;</td></tr>
+                <tr><td>17</td><td>HTTP Transport</td><td><span class="badge badge-all" style="font-size:0.6em;">All</span></td><td><code>sendEvents()</code></td><td>&mdash;</td></tr>
+                <tr><td>18</td><td>Retry with Backoff</td><td><span class="badge badge-all" style="font-size:0.6em;">All</span></td><td><code>retry()</code></td><td>&mdash;</td></tr>
+                <tr><td>19</td><td>Circuit Breaker</td><td><span class="badge badge-all" style="font-size:0.6em;">All</span></td><td><code>CircuitBreaker</code></td><td>&mdash;</td></tr>
+                <tr><td>20</td><td>Rate Limiting</td><td><span class="badge badge-all" style="font-size:0.6em;">All</span></td><td><code>TokenBucketRateLimiter</code></td><td>&mdash;</td></tr>
+                <tr><td>21</td><td>Payload Compression</td><td><span class="badge badge-plan" style="font-size:0.6em;">Plan</span></td><td>Auto (sender)</td><td>&mdash;</td></tr>
+                <tr><td>22</td><td>Persistent Storage</td><td><span class="badge badge-all" style="font-size:0.6em;">All</span></td><td><code>persistentStorage</code></td><td>&mdash;</td></tr>
+                <tr><td>23</td><td>Scope Management</td><td><span class="badge badge-free" style="font-size:0.6em;">Free</span></td><td><code>setUser()</code>, <code>setTag()</code></td><td>&mdash;</td></tr>
+                <tr><td>24</td><td>Plugin System</td><td><span class="badge badge-pro" style="font-size:0.6em;">Pro</span></td><td><code>plugins[]</code> in init()</td><td>&mdash;</td></tr>
+                <tr><td>25</td><td>Context Propagation</td><td><span class="badge badge-all" style="font-size:0.6em;">All</span></td><td><code>withContext()</code></td><td>&mdash;</td></tr>
+                <tr><td>26</td><td>HTTP Client Auto-Tracing</td><td><span class="badge badge-pro" style="font-size:0.6em;">Pro</span></td><td><code>instrumentHttpClient()</code></td><td>SpanEvent + Breadcrumb</td></tr>
+                <tr><td>27</td><td>Graceful Shutdown</td><td><span class="badge badge-all" style="font-size:0.6em;">All</span></td><td><code>shutdown()</code></td><td>&mdash;</td></tr>
+                <tr><td>28</td><td>Global Error Handlers</td><td><span class="badge badge-free" style="font-size:0.6em;">Free</span></td><td><code>setupGlobalErrorHandlers()</code></td><td>ErrorEvent</td></tr>
+                <tr><td>29</td><td>Backpressure Monitoring</td><td><span class="badge badge-all" style="font-size:0.6em;">All</span></td><td><code>MemoryPressureMonitor</code></td><td>&mdash;</td></tr>
+                <tr><td>30</td><td>SDK Diagnostics</td><td><span class="badge badge-all" style="font-size:0.6em;">All</span></td><td><code>getSDKHealth()</code></td><td>&mdash;</td></tr>
+            </tbody>
+        </table>
+
+        <div class="callout callout-success" style="margin-top: 32px;">
+            <div class="callout-title">Total: 30 Features, 12 Module Groups, 5 Event Types</div>
+            <p style="font-size:0.87em;margin:0;">The Pulse SDK provides comprehensive server-side telemetry including error tracking, performance monitoring, distributed tracing, metrics, and session management &mdash; all with enterprise-grade resilience patterns including circuit breakers, exponential backoff, persistent crash recovery, and plan-based feature gating.</p>
+        </div>
+    </main>
+</div>
+</body>
+</html>

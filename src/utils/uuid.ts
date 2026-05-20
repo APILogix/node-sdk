@@ -5,7 +5,7 @@ import { randomUUID } from 'crypto'
  * Uses Node.js crypto.randomUUID() for secure entropy.
  */
 export function generateId(): string {
-  return randomUUID()
+    return randomUUID()
 }
 
 /**
@@ -14,12 +14,13 @@ export function generateId(): string {
  * Uses the first 16 hex chars of a UUID (64-bit entropy).
  */
 export function generateShortId(): string {
-  return randomUUID().replace(/-/g, '').slice(0, 16)
+    return randomUUID().replace(/-/g, '').slice(0, 16)
 }
 
 /**
  * Validates a UUID v4 string format.
  */
 export function isValidUUID(value: string): boolean {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
 }
+
