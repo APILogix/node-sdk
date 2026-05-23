@@ -1,46 +1,60 @@
 /**
  * Pulse SDK Tracer — enterprise-grade distributed tracing built on OpenTelemetry.
  *
- * Provides:
- * - Singleton tracer management with lazy initialization
- * - Resource detection (service name, version, environment, host, OS)
- * - Configurable sampling (parent-based, ratio-based)
- * - Span creation with automatic context propagation
- * - Integration with SDK breadcrumbs and context store
- * - Graceful shutdown with pending span flush
+ * Architecture (v3.0):
+ *   PulseTracer → OTel NodeTracerProvider → PipelineSpanExporter → SDK EventPipeline
  *
- * Architecture:
- *   PulseTracer → OTel NodeTracerProvider → SpanExporter → SDK EventPipeline
- *
- * The tracer sends spans through the SDK's event pipeline, so they benefit
- * from the same sanitization, plugin processing, and transport resilience
- * as all other SDK events.
+ * Design principles:
+ *   - OTel owns: span lifecycle, context propagation, sampling, instrumentation
+ *   - SDK owns: span export → event pipeline, transport, batching, enrichment
+ *   - PulseSpan is a THIN wrapper — zero duplicated state
+ *   - All enrichment (tenant, session, SDK metadata) happens in the exporter,
+ *     not in PulseSpan or at span creation time
+ *   - Centralized SDK name/version constants (no hardcoded strings)
  */
 import { trace, SpanKind, context as otelContext, } from '@opentelemetry/api';
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
-import { BatchSpanProcessor } from '@opentelemetry/sdk-trace-base';
+import { BatchSpanProcessor, ParentBasedSampler, TraceIdRatioBasedSampler, } from '@opentelemetry/sdk-trace-base';
 import { resourceFromAttributes } from '@opentelemetry/resources';
 import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION, ATTR_DEPLOYMENT_ENVIRONMENT_NAME, } from '@opentelemetry/semantic-conventions';
 import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks';
 import { PulseSpan } from './span.js';
 import { getLogger } from '../utils/logger.js';
 import { processEvent } from '../core/event-pipeline.js';
+import { getRequestContext } from '../core/context.js';
+import { costGovernor } from '../utils/cost-governor.js';
 import os from 'node:os';
+import { SDK_NAME, SDK_VERSION } from '../constants/version.js';
 // ─── State ──────────────────────────────────────────────────────────────────
 let provider = null;
 let tracer = null;
 let noopTracer = null;
 let initialized = false;
+let ownsProvider = false;
+let sdkConfig = null;
+const TRACER_PROVIDER_SYMBOL = Symbol.for('pulse-sdk.otel.tracer-provider');
 // ─── Span Exporter → SDK Event Pipeline ─────────────────────────────────────
 /**
  * Custom SpanExporter that routes finished spans through the SDK's
- * event processing pipeline instead of sending them directly.
- * This ensures spans get sanitized, plugin-processed, and batched.
+ * event processing pipeline.
+ *
+ * This is where ALL Pulse-specific enrichment happens:
+ * - SDK metadata (name, version, service, environment)
+ * - Tenant/session correlation from request context
+ * - Cost governance (span-per-trace limits)
+ * - Span → event transformation
+ *
+ * The OTel ReadableSpan is the SINGLE SOURCE OF TRUTH.
  */
 class PipelineSpanExporter {
     export(spans, resultCallback) {
         try {
             for (const span of spans) {
+                // Cost governance: check span-per-trace limits
+                const traceId = span.spanContext().traceId;
+                if (!costGovernor.canCreateSpan(traceId)) {
+                    continue; // Drop span — trace exceeded budget
+                }
                 const traceEvent = this.spanToEvent(span);
                 processEvent(traceEvent);
             }
@@ -57,13 +71,30 @@ class PipelineSpanExporter {
     forceFlush() {
         return Promise.resolve();
     }
+    /**
+     * Transform an OTel ReadableSpan into a Pulse SDK event.
+     *
+     * The ReadableSpan is the single source of truth — we read:
+     * - spanContext() → traceId, spanId, traceFlags
+     * - parentSpanId → from ReadableSpan directly (NOT from PulseSpan)
+     * - name, attributes, status, events, links, duration
+     * - resource → service metadata
+     *
+     * We ENRICH with:
+     * - SDK metadata (centralized constants)
+     * - Tenant/session from current request context
+     * - Service/environment from resolved SDK config
+     */
     spanToEvent(span) {
         const ctx = span.spanContext();
         const attrs = span.attributes;
         const status = span.status;
-        const parentSpanId = span.parentSpanId;
         const durationMs = hrTimeToMs(span.duration);
+        // parentSpanId is available at runtime on ReadableSpan but not typed on the interface
+        const parentSpanId = span.parentSpanId;
         const statusLabel = status.code === 0 ? 'unset' : status.code === 1 ? 'ok' : 'error';
+        // Read current request context for tenant/session enrichment
+        const requestCtx = getRequestContext();
         return {
             type: 'span',
             eventId: `span_${ctx.spanId}`,
@@ -75,6 +106,7 @@ class PipelineSpanExporter {
             endTime: hrTimeToMs(span.endTime),
             duration: durationMs,
             status: statusLabel,
+            statusMessage: status.message,
             attributes: Object.fromEntries(Object.entries(attrs).filter(([, v]) => v !== undefined)),
             events: span.events.map(e => ({
                 name: e.name,
@@ -84,13 +116,20 @@ class PipelineSpanExporter {
             links: span.links.map(l => ({
                 traceId: l.context.traceId,
                 spanId: l.context.spanId,
+                attributes: l.attributes,
             })),
+            // Pulse-specific enrichment — done HERE, not in PulseSpan
             metadata: {
-                sdkName: '@vikasbaplawat1/pulse-sdk',
-                sdkVersion: '2.0.0',
-                service: '',
-                environment: '',
+                sdkName: SDK_NAME,
+                sdkVersion: SDK_VERSION,
+                service: sdkConfig?.service ?? '',
+                environment: sdkConfig?.environment ?? '',
             },
+            // Tenant/session correlation from request context
+            requestId: requestCtx?.requestId,
+            sessionId: requestCtx?.sessionId,
+            userId: requestCtx?.userId,
+            tenantId: requestCtx?.extra?.['tenantId'],
         };
     }
 }
@@ -105,7 +144,24 @@ export function initTracer(config) {
     if (initialized)
         return;
     const logger = getLogger();
+    sdkConfig = config;
     try {
+        const globalState = globalThis;
+        if (globalState[TRACER_PROVIDER_SYMBOL]) {
+            tracer = trace.getTracer(SDK_NAME, SDK_VERSION);
+            initialized = true;
+            ownsProvider = false;
+            logger.info('OpenTelemetry tracer provider already registered by Pulse SDK; reusing global provider');
+            return;
+        }
+        const existingGlobal = getOtelGlobalApi();
+        if (existingGlobal?.trace || existingGlobal?.context) {
+            tracer = trace.getTracer(SDK_NAME, SDK_VERSION);
+            initialized = true;
+            ownsProvider = false;
+            logger.info('Existing OpenTelemetry provider/context manager detected; Pulse SDK will not register another provider');
+            return;
+        }
         // Build resource descriptor
         const resource = resourceFromAttributes({
             [ATTR_SERVICE_NAME]: config.service,
@@ -118,13 +174,16 @@ export function initTracer(config) {
             'process.pid': process.pid,
             'process.runtime.name': 'node',
             'process.runtime.version': process.version,
-            'telemetry.sdk.name': '@vikasbaplawat1/pulse-sdk',
-            'telemetry.sdk.version': '2.0.0',
+            'telemetry.sdk.name': SDK_NAME,
+            'telemetry.sdk.version': SDK_VERSION,
             'telemetry.sdk.language': 'nodejs',
         });
         // Create provider with resource
         provider = new NodeTracerProvider({
             resource,
+            sampler: new ParentBasedSampler({
+                root: new TraceIdRatioBasedSampler(config.samplingRate),
+            }),
             spanProcessors: [
                 new BatchSpanProcessor(new PipelineSpanExporter(), {
                     maxQueueSize: 2048,
@@ -138,8 +197,10 @@ export function initTracer(config) {
         const contextManager = new AsyncLocalStorageContextManager();
         contextManager.enable();
         provider.register({ contextManager });
+        globalState[TRACER_PROVIDER_SYMBOL] = true;
+        ownsProvider = true;
         // Get the tracer instance
-        tracer = trace.getTracer('@vikasbaplawat1/pulse-sdk', '2.0.0');
+        tracer = trace.getTracer(SDK_NAME, SDK_VERSION);
         initialized = true;
         logger.info('OpenTelemetry tracer initialized', {
             service: config.service,
@@ -165,7 +226,7 @@ export function startSpan(name, options) {
     if (!tracer) {
         logger.debug('startSpan called but tracer is not initialized — returning no-op span', { name });
         if (!noopTracer) {
-            noopTracer = trace.getTracer('@vikasbaplawat1/pulse-sdk/noop');
+            noopTracer = trace.getTracer(SDK_NAME + '/noop');
         }
         const noopSpan = noopTracer.startSpan(name);
         return new PulseSpan(noopSpan);
@@ -176,13 +237,16 @@ export function startSpan(name, options) {
             otelOptions.attributes = options.attributes;
         if (options?.startTime)
             otelOptions.startTime = options.startTime;
+        if (options?.links) {
+            otelOptions.links = PulseSpan.toOTelLinks(options.links);
+        }
         const span = tracer.startSpan(name, otelOptions);
         return new PulseSpan(span);
     }
     catch (err) {
         logger.warn('Failed to start span', { name, error: err });
         if (!noopTracer) {
-            noopTracer = trace.getTracer('@vikasbaplawat1/pulse-sdk/noop');
+            noopTracer = trace.getTracer(SDK_NAME + '/noop');
         }
         const noopSpan = noopTracer.startSpan(name);
         return new PulseSpan(noopSpan);
@@ -191,50 +255,87 @@ export function startSpan(name, options) {
 /**
  * Execute a function within a new span context.
  * The span is automatically ended when the function completes (or throws).
- *
- * @param name - Span name
- * @param fn - Function to execute within the span context
- * @param options - Optional span configuration
- * @returns The return value of the function
  */
 export async function withSpan(name, fn, options) {
-    const span = startSpan(name, options);
-    try {
-        const result = await fn(span);
-        span.setStatus('ok');
-        return result;
-    }
-    catch (err) {
-        if (err instanceof Error) {
-            span.recordError(err);
+    if (!tracer) {
+        const span = startSpan(name, options);
+        try {
+            const result = await fn(span);
+            span.setStatus('ok');
+            return result;
         }
-        span.setStatus('error', err instanceof Error ? err.message : String(err));
-        throw err;
+        catch (err) {
+            if (err instanceof Error) {
+                span.recordError(err);
+            }
+            span.setStatus('error', err instanceof Error ? err.message : String(err));
+            throw err;
+        }
+        finally {
+            span.end();
+        }
     }
-    finally {
-        span.end();
-    }
+    const otelOptions = toOtelSpanOptions(options);
+    return tracer.startActiveSpan(name, otelOptions, async (span) => {
+        const pulseSpan = new PulseSpan(span);
+        try {
+            const result = await fn(pulseSpan);
+            pulseSpan.setStatus('ok');
+            return result;
+        }
+        catch (err) {
+            if (err instanceof Error) {
+                pulseSpan.recordError(err);
+            }
+            pulseSpan.setStatus('error', err instanceof Error ? err.message : String(err));
+            throw err;
+        }
+        finally {
+            pulseSpan.end();
+        }
+    });
 }
 /**
  * Execute a synchronous function within a new span context.
  */
 export function withSpanSync(name, fn, options) {
-    const span = startSpan(name, options);
-    try {
-        const result = fn(span);
-        span.setStatus('ok');
-        return result;
-    }
-    catch (err) {
-        if (err instanceof Error) {
-            span.recordError(err);
+    if (!tracer) {
+        const span = startSpan(name, options);
+        try {
+            const result = fn(span);
+            span.setStatus('ok');
+            return result;
         }
-        span.setStatus('error', err instanceof Error ? err.message : String(err));
-        throw err;
+        catch (err) {
+            if (err instanceof Error) {
+                span.recordError(err);
+            }
+            span.setStatus('error', err instanceof Error ? err.message : String(err));
+            throw err;
+        }
+        finally {
+            span.end();
+        }
     }
-    finally {
-        span.end();
-    }
+    const otelOptions = toOtelSpanOptions(options);
+    return tracer.startActiveSpan(name, otelOptions, span => {
+        const pulseSpan = new PulseSpan(span);
+        try {
+            const result = fn(pulseSpan);
+            pulseSpan.setStatus('ok');
+            return result;
+        }
+        catch (err) {
+            if (err instanceof Error) {
+                pulseSpan.recordError(err);
+            }
+            pulseSpan.setStatus('error', err instanceof Error ? err.message : String(err));
+            throw err;
+        }
+        finally {
+            pulseSpan.end();
+        }
+    });
 }
 // ─── Active Span ────────────────────────────────────────────────────────────
 /**
@@ -245,6 +346,14 @@ export function getActiveSpan() {
     if (!span)
         return null;
     return new PulseSpan(span);
+}
+/**
+ * Get the internal tracer instance for advanced SDK use.
+ * Returns null if tracing is not initialized.
+ * @internal
+ */
+export function getTracer() {
+    return tracer;
 }
 /**
  * Execute a function within a specific OTel context.
@@ -265,10 +374,15 @@ export async function shutdownTracer() {
     }
     try {
         await provider.forceFlush();
-        await provider.shutdown();
+        if (ownsProvider) {
+            await provider.shutdown();
+            delete globalThis[TRACER_PROVIDER_SYMBOL];
+        }
         initialized = false;
         provider = null;
         tracer = null;
+        sdkConfig = null;
+        ownsProvider = false;
         logger.info('OpenTelemetry tracer shut down');
     }
     catch (err) {
@@ -291,5 +405,19 @@ export async function flushTracer() {
 // ─── Utilities ──────────────────────────────────────────────────────────────
 function hrTimeToMs(hrTime) {
     return hrTime[0] * 1000 + hrTime[1] / 1e6;
+}
+function toOtelSpanOptions(options) {
+    const otelOptions = {};
+    if (options?.attributes)
+        otelOptions.attributes = options.attributes;
+    if (options?.startTime)
+        otelOptions.startTime = options.startTime;
+    if (options?.links)
+        otelOptions.links = PulseSpan.toOTelLinks(options.links);
+    return otelOptions;
+}
+function getOtelGlobalApi() {
+    const key = Symbol.for('opentelemetry.js.api.1');
+    return globalThis[key];
 }
 //# sourceMappingURL=tracer.js.map

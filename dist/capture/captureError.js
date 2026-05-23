@@ -7,23 +7,28 @@
  * - Stack frame parsing and fingerprinting
  * - Severity classification
  * - Plugin processing via event pipeline
+ *
+ * Source map resolution is deferred to the event pipeline to avoid
+ * blocking the capture hot path with file I/O.
  */
 import { toError } from '../core/errors.js';
 import { getLogger } from '../utils/logger.js';
 import { parseStack } from '../processors/stack-parser.js';
 import { generateFingerprint } from '../processors/fingerprint.js';
-import { getRequestContext } from '../core/context.js';
+import { getRequestContext, getSpanId, getTraceId } from '../core/context.js';
 import { captureEvent } from './captureEvent.js';
 import { Severity } from '../types/severity.js';
 import { epochMs } from '../utils/time.js';
-import { sourceMapResolver } from '../processors/source-map-resolver.js';
 /**
  * Capture an error/exception.
+ *
+ * Error capture is synchronous for minimal latency. Source map resolution
+ * is deferred to the event pipeline's async processing stage.
  *
  * @param error - The error to capture (Error, string, or unknown)
  * @param options - Optional severity, context, and fingerprint overrides
  */
-export async function captureError(error, options = {}) {
+export function captureError(error, options = {}) {
     const logger = getLogger();
     try {
         const normalized = toError(error);
@@ -36,8 +41,11 @@ export async function captureError(error, options = {}) {
         const customFingerprint = isOptionsObject(options)
             ? options.fingerprint
             : undefined;
-        let stackFrames = parseStack(normalized.stack);
-        stackFrames = await sourceMapResolver.resolveStackFrames(stackFrames);
+        // Parse stack frames synchronously — uses V8 CallSite API when available,
+        // falls back to regex for pre-serialized stacks
+        const stackFrames = parseStack(normalized.stack, normalized);
+        // Generate fingerprint from raw frames (deferred symbolication
+        // will not change the grouping since it preserves frame identity)
         const fingerprint = generateFingerprint(normalized, stackFrames, customFingerprint);
         const ctx = getRequestContext();
         const breadcrumbs = ctx?.breadcrumbs.toArray() ?? [];
@@ -52,8 +60,8 @@ export async function captureError(error, options = {}) {
             context,
             breadcrumbs: breadcrumbs.length > 0 ? breadcrumbs : undefined,
             requestId: ctx?.requestId,
-            traceId: ctx?.traceId,
-            spanId: ctx?.spanId,
+            traceId: getTraceId(),
+            spanId: getSpanId(),
         };
         captureEvent(event);
     }

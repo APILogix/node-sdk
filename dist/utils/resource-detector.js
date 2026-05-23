@@ -14,7 +14,10 @@
  * with zero external dependencies.
  */
 import { hostname, platform, arch, type, release, cpus, totalmem } from 'os';
+import { resourceFromAttributes } from '@opentelemetry/resources';
+import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION, ATTR_DEPLOYMENT_ENVIRONMENT_NAME, } from '@opentelemetry/semantic-conventions';
 let cachedResource = null;
+let cachedOtelResource = null;
 /**
  * Detect resource attributes. Results are cached — detection happens once.
  */
@@ -54,6 +57,78 @@ export function detectResources(sdkVersion) {
  */
 export function resetResourceCache() {
     cachedResource = null;
+    cachedOtelResource = null;
+}
+/**
+ * Detect and create an OTel Resource with all available metadata.
+ * Merges host, process, service, container, cloud, and K8s attributes.
+ * Results are cached — detection happens once.
+ *
+ * @param service - Service name
+ * @param version - Service version (release)
+ * @param environment - Deployment environment
+ * @param sdkVersion - SDK version string
+ */
+export function detectOtelResource(service, version, environment, sdkVersion) {
+    if (cachedOtelResource)
+        return cachedOtelResource;
+    const detected = detectResources(sdkVersion);
+    const attributes = {
+        // Service identity (OTel semantic conventions)
+        [ATTR_SERVICE_NAME]: service,
+        [ATTR_SERVICE_VERSION]: version,
+        [ATTR_DEPLOYMENT_ENVIRONMENT_NAME]: environment,
+        // SDK identity
+        'telemetry.sdk.name': detected['telemetry.sdk.name'],
+        'telemetry.sdk.version': detected['telemetry.sdk.version'],
+        'telemetry.sdk.language': detected['telemetry.sdk.language'],
+        // Process runtime
+        'process.runtime.name': detected['process.runtime.name'],
+        'process.runtime.version': detected['process.runtime.version'],
+        'process.pid': detected['process.pid'],
+        // Host
+        'host.name': detected['host.name'],
+        'host.arch': detected['host.arch'],
+        'os.type': detected['os.type'],
+        'os.platform': detected['os.platform'],
+        'os.release': detected['os.release'],
+        'host.cpu_count': detected['host.cpu_count'],
+        'host.total_memory_mb': detected['host.total_memory_mb'],
+    };
+    // Optional attributes — only include if detected
+    if (detected['container.id']) {
+        attributes['container.id'] = detected['container.id'];
+    }
+    if (detected['k8s.pod.name']) {
+        attributes['k8s.pod.name'] = detected['k8s.pod.name'];
+    }
+    if (detected['k8s.namespace.name']) {
+        attributes['k8s.namespace.name'] = detected['k8s.namespace.name'];
+    }
+    if (detected['k8s.node.name']) {
+        attributes['k8s.node.name'] = detected['k8s.node.name'];
+    }
+    if (detected['k8s.deployment.name']) {
+        attributes['k8s.deployment.name'] = detected['k8s.deployment.name'];
+    }
+    if (detected['cloud.provider']) {
+        attributes['cloud.provider'] = detected['cloud.provider'];
+    }
+    if (detected['cloud.region']) {
+        attributes['cloud.region'] = detected['cloud.region'];
+    }
+    // Serverless detection
+    const serverlessEnv = detectServerlessEnvironment();
+    if (serverlessEnv) {
+        attributes['faas.name'] = serverlessEnv.name;
+        attributes['cloud.platform'] = serverlessEnv.platform;
+    }
+    // Docker detection
+    if (isRunningInDocker()) {
+        attributes['container.runtime'] = 'docker';
+    }
+    cachedOtelResource = resourceFromAttributes(attributes);
+    return cachedOtelResource;
 }
 // ─── Container Detection ────────────────────────────────────────────────────
 /**
@@ -126,5 +201,41 @@ function detectCloudMetadata() {
         meta['cloud.region'] = process.env.AZURE_REGION;
     }
     return meta;
+}
+// ─── Serverless Detection ───────────────────────────────────────────────────
+function detectServerlessEnvironment() {
+    // AWS Lambda
+    if (process.env.AWS_LAMBDA_FUNCTION_NAME) {
+        return {
+            name: process.env.AWS_LAMBDA_FUNCTION_NAME,
+            platform: 'aws_lambda',
+        };
+    }
+    // Google Cloud Functions / Cloud Run
+    if (process.env.K_SERVICE) {
+        return {
+            name: process.env.K_SERVICE,
+            platform: process.env.K_REVISION ? 'gcp_cloud_run' : 'gcp_cloud_functions',
+        };
+    }
+    // Azure Functions
+    if (process.env.FUNCTIONS_WORKER_RUNTIME) {
+        return {
+            name: process.env.WEBSITE_SITE_NAME ?? 'unknown',
+            platform: 'azure_functions',
+        };
+    }
+    return null;
+}
+// ─── Docker Detection ───────────────────────────────────────────────────────
+function isRunningInDocker() {
+    try {
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const fs = require('fs');
+        return fs.existsSync('/.dockerenv');
+    }
+    catch {
+        return false;
+    }
 }
 //# sourceMappingURL=resource-detector.js.map

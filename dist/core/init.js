@@ -208,6 +208,8 @@ async function initialize(options) {
                 registerAutoInstrumentations({
                     http: true,
                     express: true,
+                    fastify: true,
+                    undici: true,
                 });
             }
             // Initialize session manager if plan allows

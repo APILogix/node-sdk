@@ -20,11 +20,7 @@
 
 import {
   MeterProvider,
-  AggregationTemporality,
   AggregationType,
-  MetricReader,
-  DataPointType,
-  type MetricData,
   type MeterProviderOptions,
 } from '@opentelemetry/sdk-metrics'
 import { resourceFromAttributes } from '@opentelemetry/resources'
@@ -34,12 +30,12 @@ import {
   ATTR_DEPLOYMENT_ENVIRONMENT_NAME,
 } from '@opentelemetry/semantic-conventions'
 import { metrics, type Meter, type Histogram, type Counter, type UpDownCounter, type Gauge } from '@opentelemetry/api'
-import { processEvent } from '../core/event-pipeline.js'
 import { getLogger } from '../utils/logger.js'
-import { epochMs } from '../utils/time.js'
-import { generateId } from '../utils/uuid.js'
-import type { MetricEvent, MetricType } from '../types/event.js'
+import { PulseMetricReader } from './pulse-metric-reader.js'
+import type { ResourceAttributes } from '../utils/resource-detector.js'
 import os from 'node:os'
+
+const METER_PROVIDER_SYMBOL = Symbol.for('pulse-sdk.otel.meter-provider')
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -52,221 +48,6 @@ export interface OtelMetricsConfig {
   percentiles?: number[]
   /** Cardinality limit per instrument. Default: 2000 */
   cardinalityLimit?: number
-}
-
-interface AggregatedHistogramPoint {
-  name: string
-  labels: Record<string, string>
-  timestamp: number
-  count: number
-  sum: number
-  min: number
-  max: number
-  p50: number
-  p75: number
-  p90: number
-  p95: number
-  p99: number
-  avg: number
-}
-
-// ─── Pulse Metric Reader — exports through SDK event pipeline ───────────────
-
-/**
- * Custom MetricReader that collects metrics from the OTel MeterProvider
- * and routes them through the SDK's event processing pipeline.
- *
- * This ensures metrics get the same sanitization, plugin processing,
- * and transport resilience as all other SDK events.
- */
-class PulseMetricReader extends MetricReader {
-  private readonly percentiles: number[]
-  private totalCollected = 0
-  private totalDropped = 0
-
-  constructor(options: { percentiles?: number[] } = {}) {
-    super({
-      aggregationTemporalitySelector: () => AggregationTemporality.DELTA,
-    })
-    this.percentiles = options.percentiles ?? [50, 75, 90, 95, 99]
-  }
-
-  protected async onForceFlush(): Promise<void> {
-    await this.collectAndExport()
-  }
-
-  protected async onShutdown(): Promise<void> {
-    await this.collectAndExport()
-  }
-
-  /**
-   * Collect metrics from the SDK and export through the event pipeline.
-   */
-  async collectAndExport(): Promise<void> {
-    try {
-      const result = await this.collect()
-      if (!result) return
-
-      const logger = getLogger()
-      let exportedCount = 0
-
-      for (const scopeMetrics of result.resourceMetrics.scopeMetrics) {
-        for (const metric of scopeMetrics.metrics) {
-          const dataPoints = this.processMetricData(metric)
-          for (const dp of dataPoints) {
-            const event = this.dataPointToEvent(dp)
-            if (event) {
-              processEvent(event)
-              exportedCount++
-            }
-          }
-        }
-      }
-
-      this.totalCollected += exportedCount
-      logger.debug('OTel metrics exported', {
-        count: exportedCount,
-        totalCollected: this.totalCollected,
-      })
-    } catch (err) {
-      getLogger().error('OTel metric collection failed', { error: err })
-    }
-  }
-
-  private processMetricData(metricData: MetricData): AggregatedHistogramPoint[] {
-    const points: AggregatedHistogramPoint[] = []
-
-    if (metricData.dataPointType === DataPointType.EXPONENTIAL_HISTOGRAM) {
-      for (const dataPoint of metricData.dataPoints) {
-        const value = dataPoint.value
-        if (!value) continue
-
-        const labels: Record<string, string> = {}
-        for (const [key, val] of Object.entries(dataPoint.attributes ?? {})) {
-          if (typeof val === 'string') labels[key] = val
-          else if (typeof val === 'number') labels[key] = String(val)
-          else if (typeof val === 'boolean') labels[key] = String(val)
-        }
-
-        const percentiles = this.computePercentilesFromExponential(value)
-
-        points.push({
-          name: metricData.descriptor.name,
-          labels,
-          timestamp: epochMs(),
-          count: value.count ?? 0,
-          sum: value.sum ?? 0,
-          min: value.min ?? 0,
-          max: value.max ?? 0,
-          p50: percentiles.p50,
-          p75: percentiles.p75,
-          p90: percentiles.p90,
-          p95: percentiles.p95,
-          p99: percentiles.p99,
-          avg: value.count ? (value.sum ?? 0) / value.count : 0,
-        })
-      }
-    }
-
-    if (metricData.dataPointType === DataPointType.HISTOGRAM) {
-      for (const dataPoint of metricData.dataPoints) {
-        const value = dataPoint.value
-        if (!value) continue
-
-        const labels: Record<string, string> = {}
-        for (const [key, val] of Object.entries(dataPoint.attributes ?? {})) {
-          if (typeof val === 'string') labels[key] = val
-          else if (typeof val === 'number') labels[key] = String(val)
-        }
-
-        points.push({
-          name: metricData.descriptor.name,
-          labels,
-          timestamp: epochMs(),
-          count: value.count ?? 0,
-          sum: value.sum ?? 0,
-          min: value.min ?? 0,
-          max: value.max ?? 0,
-          p50: 0,
-          p75: 0,
-          p90: 0,
-          p95: 0,
-          p99: 0,
-          avg: value.count ? (value.sum ?? 0) / value.count : 0,
-        })
-      }
-    }
-
-    return points
-  }
-
-  /**
-   * Compute percentiles from exponential histogram bucket counts.
-   * Uses linear interpolation within buckets for higher precision.
-   */
-  private computePercentilesFromExponential(
-    value: {
-      count: number
-      sum?: number
-      min?: number
-      max?: number
-      positive?: { offset: number; bucketCounts: bigint[] | number[] }
-      negative?: { offset: number; bucketCounts: bigint[] | number[] }
-    }
-  ): { p50: number; p75: number; p90: number; p95: number; p99: number } {
-    const totalCount = value.count
-    if (totalCount === 0) {
-      return { p50: 0, p75: 0, p90: 0, p95: 0, p99: 0 }
-    }
-
-    const min = value.min ?? 0
-    const max = value.max ?? 0
-
-    if (min === max) {
-      return { p50: min, p75: min, p90: min, p95: min, p99: min }
-    }
-
-    const computePercentile = (p: number): number => {
-      const rank = (p / 100) * (totalCount - 1)
-      const fraction = rank / (totalCount - 1)
-      return min + fraction * (max - min)
-    }
-
-    return {
-      p50: Math.round(computePercentile(50) * 1000) / 1000,
-      p75: Math.round(computePercentile(75) * 1000) / 1000,
-      p90: Math.round(computePercentile(90) * 1000) / 1000,
-      p95: Math.round(computePercentile(95) * 1000) / 1000,
-      p99: Math.round(computePercentile(99) * 1000) / 1000,
-    }
-  }
-
-  private dataPointToEvent(point: AggregatedHistogramPoint): MetricEvent | null {
-    return {
-      type: 'metric',
-      eventId: generateId(),
-      metricName: point.name,
-      metricType: 'histogram' as MetricType,
-      value: point.avg,
-      timestamp: point.timestamp,
-      tags: point.labels,
-      count: point.count,
-      sum: point.sum,
-      min: point.min,
-      max: point.max,
-      p50: point.p50,
-      p75: point.p75,
-      p90: point.p90,
-      p95: point.p95,
-      p99: point.p99,
-      avg: point.avg,
-      rate: 0,
-    } as unknown as MetricEvent
-  }
-
-  getStats(): { totalCollected: number; totalDropped: number } {
-    return { totalCollected: this.totalCollected, totalDropped: this.totalDropped }
-  }
 }
 
 // ─── Otel Metrics Manager — singleton lifecycle ─────────────────────────────
@@ -282,6 +63,7 @@ class OtelMetricsManager {
   private counters = new Map<string, Counter>()
   private upDownCounters = new Map<string, UpDownCounter>()
   private gauges = new Map<string, Gauge>()
+  private ownsProvider = false
 
   constructor(options: OtelMetricsConfig = {}) {
     this.flushIntervalMs = options.flushIntervalMs ?? 10000
@@ -291,12 +73,30 @@ class OtelMetricsManager {
    * Initialize the OTel MeterProvider with exponential histogram aggregation.
    * Called during SDK init when `enableMetrics: true`.
    */
-  init(config: { service: string; environment: string; release: string }, options: OtelMetricsConfig = {}): void {
+  init(config: { service: string; environment: string; release: string }, options: OtelMetricsConfig = {}, customResources?: ResourceAttributes): void {
     if (this.initialized) return
 
     const logger = getLogger()
 
     try {
+      const globalState = globalThis as typeof globalThis & { [METER_PROVIDER_SYMBOL]?: true }
+      if (globalState[METER_PROVIDER_SYMBOL]) {
+        this.meter = metrics.getMeter('@vikasbaplawat1/pulse-sdk', '2.0.0')
+        this.initialized = true
+        this.ownsProvider = false
+        logger.info('OpenTelemetry meter provider already registered by Pulse SDK; reusing global provider')
+        return
+      }
+
+      const existingGlobal = getOtelGlobalApi()
+      if (existingGlobal?.metrics) {
+        this.meter = metrics.getMeter('@vikasbaplawat1/pulse-sdk', '2.0.0')
+        this.initialized = true
+        this.ownsProvider = false
+        logger.info('Existing OpenTelemetry meter provider detected; Pulse SDK will not register another meter provider')
+        return
+      }
+
       const maxBuckets = options.maxHistogramBuckets ?? 160
       const percentiles = options.percentiles ?? [50, 75, 90, 95, 99]
       const cardinalityLimit = options.cardinalityLimit ?? 2000
@@ -315,6 +115,7 @@ class OtelMetricsManager {
         'telemetry.sdk.name': '@vikasbaplawat1/pulse-sdk',
         'telemetry.sdk.version': '2.0.0',
         'telemetry.sdk.language': 'nodejs',
+        ...(customResources ?? {}),
       })
 
       this.reader = new PulseMetricReader({ percentiles })
@@ -351,6 +152,8 @@ class OtelMetricsManager {
       this.meter = this.provider.getMeter('@vikasbaplawat1/pulse-sdk', '2.0.0')
 
       metrics.setGlobalMeterProvider(this.provider)
+      globalState[METER_PROVIDER_SYMBOL] = true
+      this.ownsProvider = true
 
       this.flushTimer = setInterval(() => this.flush(), this.flushIntervalMs)
       this.flushTimer.unref()
@@ -483,7 +286,10 @@ class OtelMetricsManager {
     }
 
     try {
-      await this.provider.shutdown()
+      if (this.ownsProvider) {
+        await this.provider.shutdown()
+        delete (globalThis as typeof globalThis & { [METER_PROVIDER_SYMBOL]?: true })[METER_PROVIDER_SYMBOL]
+      }
       this.initialized = false
       this.provider = null
       this.meter = null
@@ -492,6 +298,7 @@ class OtelMetricsManager {
       this.counters.clear()
       this.upDownCounters.clear()
       this.gauges.clear()
+      this.ownsProvider = false
       logger.info('OpenTelemetry metrics shut down')
     } catch (err) {
       logger.error('Failed to shut down OpenTelemetry metrics', { error: err })
@@ -525,3 +332,9 @@ class OtelMetricsManager {
 
 export const otelMetrics = new OtelMetricsManager()
 export { OtelMetricsManager }
+
+
+function getOtelGlobalApi(): { metrics?: unknown } | undefined {
+  const key = Symbol.for('opentelemetry.js.api.1')
+  return (globalThis as typeof globalThis & { [key]?: { metrics?: unknown } })[key]
+}

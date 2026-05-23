@@ -65,6 +65,27 @@ export class MemoryPressureMonitor extends EventEmitter {
     isUnderPressure() {
         return this.getState().level !== 'normal';
     }
+    /**
+     * Check if an event should be accepted based on memory pressure and priority.
+     * - normal: accept all
+     * - elevated: reject 'normal' priority
+     * - critical: reject 'normal' and 'high', only 'critical' survives
+     */
+    shouldAcceptEvent(priority) {
+        const level = this.getState().level;
+        switch (level) {
+            case 'normal':
+                return true;
+            case 'elevated':
+                return priority !== 'normal';
+            case 'critical':
+                return priority === 'critical';
+        }
+    }
+    /** Convenience method to register a pressure change callback. */
+    onPressureChange(callback) {
+        this.on('pressure', callback);
+    }
     check() {
         const state = this.getState();
         if (state.level !== this.lastLevel) {
@@ -72,5 +93,21 @@ export class MemoryPressureMonitor extends EventEmitter {
             this.emit('pressure', state);
         }
     }
+}
+/**
+ * Get current memory pressure level without needing a monitor instance.
+ * Quick one-shot check for use in hot paths.
+ */
+export function getMemoryPressureLevel() {
+    const mem = process.memoryUsage();
+    const heapTotalMb = mem.heapTotal / (1024 * 1024);
+    if (heapTotalMb < 100)
+        return 'normal';
+    const utilization = mem.heapUsed / mem.heapTotal;
+    if (utilization >= 0.9)
+        return 'critical';
+    if (utilization >= 0.7)
+        return 'elevated';
+    return 'normal';
 }
 //# sourceMappingURL=backpressure.js.map

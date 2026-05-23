@@ -2,12 +2,9 @@
  * W3C Trace Context Propagation — extracts and injects trace context
  * from/into HTTP headers following the W3C specification.
  *
- * Supports:
- * - traceparent header (W3C Trace Context)
- * - tracestate header (vendor-specific baggage)
- * - Custom Pulse SDK headers (X-Pulse-Trace-Id, X-Pulse-Span-Id)
- *
- * This enables distributed tracing across service boundaries.
+ * Uses native OpenTelemetry propagation APIs (`propagation.extract`,
+ * `propagation.inject`) rather than manual traceparent parsing so that
+ * OTel samplers, propagators, and context managers remain in control.
  */
 
 import {
@@ -19,6 +16,7 @@ import {
   context as otelContext,
 } from '@opentelemetry/api'
 import { getLogger } from '../utils/logger.js'
+import { ConfigManager } from '../core/config-manager.js'
 
 // ─── W3C Header Constants ───────────────────────────────────────────────────
 
@@ -104,7 +102,19 @@ export function injectTraceContext(
 
   try {
     const activeCtx = ctx ?? otelContext.active()
-    propagation.inject(activeCtx, headers, headerSetter)
+
+    // Only inject headers for propagation formats enabled in remote config
+    let shouldInjectW3C = true
+    try {
+      const propagationConfig = ConfigManager.getInstance().getConfig().tracing.propagation
+      shouldInjectW3C = propagationConfig.w3c !== false
+    } catch {
+      // ConfigManager not initialized — default to W3C
+    }
+
+    if (shouldInjectW3C) {
+      propagation.inject(activeCtx, headers, headerSetter)
+    }
 
     // Also inject Pulse custom headers for non-OTel consumers
     const spanContext = trace.getSpanContext(activeCtx)
@@ -123,45 +133,7 @@ export function injectTraceContext(
   }
 }
 
-// ─── Utilities ──────────────────────────────────────────────────────────────
-
-/**
- * Parse a traceparent header string into its components.
- *
- * Format: {version}-{trace-id}-{parent-id}-{trace-flags}
- * Example: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01
- */
-export function parseTraceparent(
-  traceparent: string
-): { version: string; traceId: string; parentId: string; traceFlags: number } | null {
-  const logger = getLogger()
-
-  try {
-    const parts = traceparent.trim().split('-')
-    if (parts.length !== 4) return null
-
-    const [version, traceId, parentId, flagsHex] = parts
-
-    if (!version || !traceId || !parentId || !flagsHex) return null
-    if (traceId.length !== 32 || parentId.length !== 16) return null
-
-    const traceFlags = parseInt(flagsHex, 16)
-    if (Number.isNaN(traceFlags)) return null
-
-    return { version, traceId, parentId, traceFlags }
-  } catch (err) {
-    logger.warn('Failed to parse traceparent header', { traceparent, error: err })
-    return null
-  }
-}
-
-/**
- * Create a W3C traceparent header value.
- */
-export function createTraceparent(traceId: string, spanId: string, sampled = true): string {
-  const flags = sampled ? '01' : '00'
-  return `00-${traceId}-${spanId}-${flags}`
-}
+// ─── Header Constants ───────────────────────────────────────────────────────
 
 /**
  * Export header constants for use by instrumentation modules.

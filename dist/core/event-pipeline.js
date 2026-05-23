@@ -1,14 +1,41 @@
 /**
- * Central event processing pipeline.
+ * Central event processing pipeline — async, non-blocking, priority-governed.
  *
- * Every captured event flows through this pipeline:
- *   capture → normalize → sanitize → enrich → plugin processors → beforeSend → sample → queue
+ * Architecture:
+ *   Every captured event flows through a deferred async pipeline:
+ *     capture → accept → [setImmediate] → normalize → sanitize → enrich →
+ *     dedup → scope → plugin processors → beforeSend → enqueue → persist
  *
- * Each step is a pure function: (event) => event | null
+ * Lifecycle model:
+ *   1. `enqueueEvent()` synchronously validates and accepts the event,
+ *      returning an `EventReceipt` with `accepted` status and `eventId`.
+ *   2. Processing is deferred via `setImmediate()` to avoid blocking the
+ *      caller's request lifecycle (critical for low-latency capture).
+ *   3. The `receipt.processed` promise resolves when async processing completes.
+ *   4. `processEvent()` is a backward-compatible wrapper returning `boolean`.
+ *
+ * Persistence governance:
+ *   Events are persisted selectively via `PersistenceGovernor`:
+ *     - critical (errors, crashes): always persisted for crash recovery
+ *     - important (spans, requests): persisted unless high memory pressure
+ *     - transient (metrics, messages): persisted only under normal pressure
+ *   This prevents disk I/O from becoming a throughput bottleneck at scale.
+ *
+ * Load shedding:
+ *   The pipeline integrates with `LoadShedder` and `AdaptivePressureMonitor`
+ *   to drop low-priority telemetry under system pressure before any expensive
+ *   processing occurs.
+ *
+ * Replay safety:
+ *   Persisted events are replayed on SDK restart via `PersistentStorage`.
+ *   The `PersistenceGovernor` bounds replay pressure by limiting what gets
+ *   persisted in the first place.
+ *
+ * Each pipeline step is a pure function: (event) => event | null
  * Returning null drops the event from the pipeline.
  */
 import { client } from './client.js';
-import { getRequestContext } from './context.js';
+import { getRequestContext, getSpanId, getTraceId } from './context.js';
 import { eventQueue } from '../transport/queue.js';
 import { normalizeEvent } from '../processors/normalizer.js';
 import { sanitizeEvent } from '../processors/sanitizer.js';
@@ -18,24 +45,141 @@ import { epochMs } from '../utils/time.js';
 import { errorDeduplicator } from '../processors/deduplicator.js';
 import { applyScopeToEvent } from './scope.js';
 import { persistentStorage } from '../storage/persistent-storage.js';
+import { persistenceGovernor } from '../storage/persistence-governor.js';
+import { loadShedder } from '../transport/load-shedder.js';
+import { isSDKShuttingDown } from './lifecycle.js';
+import { acceptedReceipt, acceptedSyncReceipt, rejectedReceipt, } from './event-receipt.js';
+const PLUGIN_TIMEOUT_MS = 50;
+const EVENT_PROCESSOR_TIMEOUT_MS = 50;
+const BEFORE_SEND_TIMEOUT_MS = 100;
+const CRITICAL_HEAP_RATIO = 0.92;
+const pendingPipelines = new Set();
+// ─── Public API ─────────────────────────────────────────────────────────────
+/**
+ * Accept an event into the processing pipeline and return an EventReceipt.
+ *
+ * This is the preferred entry point for event capture. It provides clear
+ * async acceptance semantics:
+ *
+ * - `receipt.accepted` — event entered the pipeline (synchronous)
+ * - `receipt.eventId` — assigned event ID for correlation
+ * - `receipt.reason` — why the event was rejected (if `accepted === false`)
+ * - `receipt.processed` — promise resolving when processing completes
+ *
+ * The pipeline is intentionally non-blocking. Processing is deferred via
+ * `setImmediate()` to avoid blocking the caller's request lifecycle.
+ *
+ * @example
+ * ```ts
+ * const receipt = enqueueEvent(event)
+ * if (!receipt.accepted) {
+ *   logger.warn('Event dropped:', receipt.reason)
+ * }
+ * // Only await if you need confirmation (e.g., shutdown/flush):
+ * await receipt.processed
+ * ```
+ */
+export function enqueueEvent(rawEvent) {
+    const logger = getLogger();
+    const eventType = rawEvent.type;
+    const eventId = (rawEvent.eventId && typeof rawEvent.eventId === 'string')
+        ? rawEvent.eventId
+        : generateId();
+    // Gate 1: Reject events during shutdown
+    if (isSDKShuttingDown()) {
+        logger.debug('Event rejected — SDK is shutting down', { eventType });
+        return rejectedReceipt(eventId, 'sdk_shutting_down');
+    }
+    // Gate 2: Critical memory pressure — only high-priority events survive
+    if (isCriticalMemoryPressure() && !isHighPriority(rawEvent)) {
+        logger.warn('Event dropped under critical memory pressure', {
+            eventType,
+            heap: process.memoryUsage(),
+        });
+        return rejectedReceipt(eventId, 'critical_memory_pressure');
+    }
+    // Gate 3: Load shedding under adaptive pressure
+    if (loadShedder.shouldShed(rawEvent)) {
+        logger.debug('Event shed by load shedder', { eventType });
+        return rejectedReceipt(eventId, 'load_shed');
+    }
+    // Gate 4: Pre-init buffering — buffer without async processing
+    if (!client.initialized) {
+        const event = ensureBaseFields(rawEvent, eventId);
+        if (!eventQueue.add(event)) {
+            logger.warn('Pre-init event rejected by queue', {
+                eventType: event.type,
+                eventId: event.eventId,
+            });
+            return rejectedReceipt(eventId, 'pre_init_queue_full');
+        }
+        logger.debug('Event buffered pre-init', {
+            eventType: event.type,
+            eventId: event.eventId,
+        });
+        return acceptedSyncReceipt(eventId);
+    }
+    // Accept: defer processing via setImmediate
+    const pending = new Promise(resolve => {
+        setImmediate(() => {
+            processEventAsync(rawEvent, eventId).then(resolve, error => {
+                logger.error('Async event pipeline failed', { error });
+                resolve(false);
+            });
+        });
+    });
+    pendingPipelines.add(pending);
+    pending.finally(() => {
+        pendingPipelines.delete(pending);
+    }).catch(error => {
+        logger.error('Async event pipeline failed', { error });
+    });
+    return acceptedReceipt(eventId, pending);
+}
 /**
  * Process and enqueue an event through the full pipeline.
- * This is the single entry point for all event capture.
  *
- * Returns true if the event was queued, false if it was dropped.
+ * **Backward-compatible wrapper** — returns `true` if the event was accepted
+ * into the pipeline, `false` if it was synchronously rejected.
+ *
+ * For explicit lifecycle tracking, use `enqueueEvent()` which returns an
+ * `EventReceipt` with async processing status.
+ *
+ * @deprecated Prefer `enqueueEvent()` for new code — it provides clear
+ * async acceptance semantics via `EventReceipt`.
  */
 export function processEvent(rawEvent) {
+    return enqueueEvent(rawEvent).accepted;
+}
+export async function drainPendingEventProcessing() {
+    while (pendingPipelines.size > 0) {
+        await Promise.allSettled([...pendingPipelines]);
+    }
+}
+/**
+ * Async pipeline — processes a single event through all pipeline stages.
+ *
+ * Used internally by `enqueueEvent()` and by OTel exporters that need
+ * backpressure-aware event ingestion.
+ */
+export async function processEventAsync(rawEvent, assignedEventId) {
     const logger = getLogger();
     try {
         // Step 1: Coerce to SDKEvent shape + assign ID/timestamp
-        let event = ensureBaseFields(rawEvent);
+        let event = ensureBaseFields(rawEvent, assignedEventId);
         // Step 2: Pre-init buffering — if SDK isn't ready, buffer without processing
         if (!client.initialized) {
             logger.debug('Event buffered pre-init', {
                 eventType: event.type,
                 eventId: event.eventId,
             });
-            eventQueue.add(event);
+            if (!eventQueue.add(event)) {
+                logger.warn('Pre-init event rejected by queue', {
+                    eventType: event.type,
+                    eventId: event.eventId,
+                });
+                return false;
+            }
             return true;
         }
         const config = client.config;
@@ -68,13 +212,13 @@ export function processEvent(rawEvent) {
                 return false;
             }
         }
-        // Step 7: Apply global scope (user, tags, extra, contexts)
+        // Step 7: Apply scope (request-local or global fallback, user, tags, extra, contexts)
         event = applyScopeToEvent(event);
         // Step 8: Plugin event processors
         for (const plugin of client.plugins) {
             if (plugin.processEvent) {
                 try {
-                    const result = plugin.processEvent(event);
+                    const result = await withTimeout(Promise.resolve(plugin.processEvent(event)), PLUGIN_TIMEOUT_MS, `Plugin processEvent timed out: ${plugin.meta.name}`);
                     if (result === null) {
                         logger.debug('Event dropped by plugin', {
                             pluginName: plugin.meta.name,
@@ -97,7 +241,7 @@ export function processEvent(rawEvent) {
         // Step 9: User-registered event processors
         for (const processor of client.eventProcessors) {
             try {
-                const result = processor(event);
+                const result = await withTimeout(Promise.resolve(processor(event)), EVENT_PROCESSOR_TIMEOUT_MS, 'EventProcessor timed out');
                 if (result === null) {
                     logger.debug('Event dropped by event processor', {
                         eventType: event.type,
@@ -114,7 +258,7 @@ export function processEvent(rawEvent) {
         // Step 10: beforeSend hook (user-provided)
         if (client.options?.beforeSend && config.planFeatures.allowBeforeSend) {
             try {
-                const result = client.options.beforeSend(event);
+                const result = await withTimeout(Promise.resolve(client.options.beforeSend(event)), BEFORE_SEND_TIMEOUT_MS, 'beforeSend timed out');
                 if (result === null) {
                     logger.debug('Event dropped by beforeSend', {
                         eventType: event.type,
@@ -132,7 +276,7 @@ export function processEvent(rawEvent) {
         for (const plugin of client.plugins) {
             if (plugin.beforeSend && config.planFeatures.allowBeforeSend) {
                 try {
-                    const result = plugin.beforeSend(event);
+                    const result = await withTimeout(Promise.resolve(plugin.beforeSend(event)), BEFORE_SEND_TIMEOUT_MS, `Plugin beforeSend timed out: ${plugin.meta.name}`);
                     if (result === null) {
                         logger.debug('Event dropped by plugin beforeSend', {
                             pluginName: plugin.meta.name,
@@ -150,26 +294,23 @@ export function processEvent(rawEvent) {
                 }
             }
         }
-        // Step 12: Sampling (for request/performance events)
-        // Uses trace-consistent deterministic sampling: all events in the same
-        // trace are either ALL kept or ALL dropped, preventing broken traces.
-        // Span events are never sampled — they represent actual traced operations.
-        if (event.type === 'request') {
-            const traceId = 'traceId' in event && typeof event.traceId === 'string'
-                ? event.traceId
-                : undefined;
-            if (!shouldSample(config.samplingRate, traceId)) {
-                logger.debug('Request event dropped by sampling', {
-                    samplingRate: config.samplingRate,
-                    traceId,
-                });
-                return false;
-            }
-        }
+        // Step 12: Sampling is owned by OTel samplers at root span creation.
+        // Child spans inherit OTel's sampled flag. Non-span SDK events follow the
+        // active span context rather than making independent random decisions.
         // Step 13: Enqueue
-        eventQueue.add(event);
-        // Step 14: Persist to disk for crash recovery
-        persistentStorage.persist(event);
+        if (!eventQueue.add(event)) {
+            logger.warn('Event rejected by queue', {
+                eventType: event.type,
+                eventId: event.eventId,
+                queueSize: eventQueue.size(),
+            });
+            return false;
+        }
+        // Step 14: Priority-aware persistence for crash recovery
+        // Critical events always persist; transient telemetry skips under pressure
+        if (persistenceGovernor.shouldPersist(event)) {
+            persistentStorage.persist(event);
+        }
         logger.debug('Event queued', {
             eventType: event.type,
             eventId: event.eventId,
@@ -184,11 +325,10 @@ export function processEvent(rawEvent) {
     }
 }
 // ─── Internal Helpers ───────────────────────────────────────────────────────
-function ensureBaseFields(raw) {
+function ensureBaseFields(raw, assignedEventId) {
     // Defensive copy — never mutate the caller's object reference
-    const eventId = (raw.eventId && typeof raw.eventId === 'string')
-        ? raw.eventId
-        : generateId();
+    const eventId = assignedEventId
+        ?? ((raw.eventId && typeof raw.eventId === 'string') ? raw.eventId : generateId());
     const timestamp = ('timestamp' in raw && typeof raw.timestamp === 'number')
         ? raw.timestamp
         : epochMs();
@@ -212,21 +352,23 @@ function isFeatureEnabled(event, config) {
 }
 function enrichFromContext(event) {
     const ctx = getRequestContext();
-    if (!ctx)
+    const traceId = getTraceId();
+    const spanId = getSpanId();
+    if (!ctx && !traceId && !spanId)
         return event;
     const enrichment = {};
-    if (ctx.traceId && !('traceId' in event && event.traceId)) {
-        enrichment['traceId'] = ctx.traceId;
+    if (traceId && !('traceId' in event && event.traceId)) {
+        enrichment['traceId'] = traceId;
     }
-    if (ctx.spanId && !('spanId' in event && event.spanId)) {
-        enrichment['spanId'] = ctx.spanId;
+    if (spanId && !('spanId' in event && event.spanId)) {
+        enrichment['spanId'] = spanId;
     }
-    if (ctx.requestId && event.type !== 'request') {
+    if (ctx?.requestId && event.type !== 'request') {
         enrichment['requestId'] = ctx.requestId;
     }
     // Attach breadcrumbs to error and message events
     if ((event.type === 'error' || event.type === 'message') && !event.breadcrumbs) {
-        const crumbs = ctx.breadcrumbs.toArray();
+        const crumbs = ctx?.breadcrumbs.toArray() ?? [];
         if (crumbs.length > 0) {
             enrichment['breadcrumbs'] = crumbs;
         }
@@ -235,35 +377,30 @@ function enrichFromContext(event) {
         return event;
     return { ...event, ...enrichment };
 }
-/**
- * Trace-consistent sampling — produces a deterministic sample decision
- * for a given traceId so all events in the same trace are treated identically.
- *
- * When no traceId is available, falls back to random sampling.
- */
-function shouldSample(rate, traceId) {
-    if (rate >= 1)
-        return true;
-    if (rate <= 0)
+function isCriticalMemoryPressure() {
+    const usage = process.memoryUsage();
+    if (usage.heapTotal <= 0)
         return false;
-    if (traceId) {
-        // Deterministic hash of traceId → normalized float in [0, 1)
-        const hash = deterministicHash(traceId);
-        return hash < rate;
-    }
-    // Fallback: random sampling for events without trace context
-    return Math.random() < rate;
+    return usage.heapUsed / usage.heapTotal >= CRITICAL_HEAP_RATIO;
 }
-/**
- * FNV-1a 32-bit hash → normalized to [0, 1).
- * Fast, non-cryptographic, good distribution for sampling decisions.
- */
-function deterministicHash(input) {
-    let hash = 0x811c9dc5; // FNV offset basis
-    for (let i = 0; i < input.length; i++) {
-        hash ^= input.charCodeAt(i);
-        hash = (hash * 0x01000193) >>> 0; // FNV prime, keep as uint32
+function isHighPriority(event) {
+    const type = event.type;
+    return type === 'error' || type === 'span';
+}
+async function withTimeout(promise, timeoutMs, message) {
+    let timer;
+    try {
+        return await Promise.race([
+            promise,
+            new Promise((_, reject) => {
+                timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+                timer.unref?.();
+            }),
+        ]);
     }
-    return (hash >>> 0) / 0xffffffff;
+    finally {
+        if (timer)
+            clearTimeout(timer);
+    }
 }
 //# sourceMappingURL=event-pipeline.js.map

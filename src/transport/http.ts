@@ -6,6 +6,8 @@ import { SDKError, toError } from '../core/errors.js'
 import { getLogger } from '../utils/logger.js'
 import { compress, contentEncoding, type CompressionAlgorithm } from '../utils/compression.js'
 import { generateId } from '../utils/uuid.js'
+import { context } from '@opentelemetry/api'
+import { suppressTracing } from '@opentelemetry/core'
 
 export interface PostJsonOptions {
   /** Whether to log failures (disable for init to avoid noise). */
@@ -80,12 +82,17 @@ export async function postJson<T>(
       requestHeaders['Content-Encoding'] = encoding
     }
 
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: requestHeaders,
-      body: payload as BodyInit,
-      signal: controller.signal,
-    })
+    const response = await context.with(suppressTracing(context.active()), () =>
+      fetch(url, {
+        method: 'POST',
+        headers: {
+          ...requestHeaders,
+          'x-pulse-internal': '1',
+        },
+        body: payload as BodyInit,
+        signal: controller.signal,
+      })
+    )
 
     const text = await response.text()
     const parsed = text ? tryParseJson(text) : null

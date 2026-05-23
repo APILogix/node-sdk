@@ -7,6 +7,9 @@
  * - Stack frame parsing and fingerprinting
  * - Severity classification
  * - Plugin processing via event pipeline
+ *
+ * Source map resolution is deferred to the event pipeline to avoid
+ * blocking the capture hot path with file I/O.
  */
 import { type SeverityLevel } from '../types/severity.js';
 export interface CaptureErrorOptions {
@@ -20,8 +23,11 @@ export interface CaptureErrorOptions {
 /**
  * Capture an error/exception.
  *
+ * Error capture is synchronous for minimal latency. Source map resolution
+ * is deferred to the event pipeline's async processing stage.
+ *
  * @param error - The error to capture (Error, string, or unknown)
  * @param options - Optional severity, context, and fingerprint overrides
  */
-export declare function captureError(error: unknown, options?: CaptureErrorOptions | Record<string, unknown>): Promise<void>;
+export declare function captureError(error: unknown, options?: CaptureErrorOptions | Record<string, unknown>): void;
 //# sourceMappingURL=captureError.d.ts.map

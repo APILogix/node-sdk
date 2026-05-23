@@ -40,6 +40,7 @@ declare class PersistentStorage {
     private totalPersisted;
     private totalReplayed;
     private totalExpired;
+    private writeChain;
     configure(options?: PersistentStorageOptions): void;
     init(): Promise<Event[]>;
     /**
@@ -49,12 +50,12 @@ declare class PersistentStorage {
     /**
      * Force-flush all buffered events to disk immediately.
      */
-    flush(): void;
+    flush(): Promise<void>;
     /**
      * Replay persisted events from disk.
      * Returns events that are still valid (within TTL).
      */
-    replay(): Event[];
+    replay(): Promise<Event[]>;
     /**
      * Get storage statistics.
      */
@@ -75,12 +76,13 @@ declare class PersistentStorage {
     /**
      * Shut down persistent storage — flush remaining events.
      */
-    shutdown(): void;
+    shutdown(): Promise<void>;
     private scheduleFlush;
     private ensureDirectory;
     private checkAndRotate;
     private rotate;
     private rewriteFile;
+    private enqueueWrite;
     private resolveDefaultDirectory;
 }
 export declare const persistentStorage: PersistentStorage;

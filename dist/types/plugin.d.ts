@@ -5,7 +5,7 @@ import type { ResolvedSDKConfig } from './config.js';
  * An EventProcessor transforms or filters events in the processing pipeline.
  * Return the event to pass it through, or return null to drop it.
  */
-export type EventProcessor = (event: SDKEvent) => SDKEvent | null;
+export type EventProcessor = (event: SDKEvent) => SDKEvent | null | Promise<SDKEvent | null>;
 /**
  * A BreadcrumbProcessor transforms or filters breadcrumbs.
  * Return the breadcrumb to keep it, or return null to drop it.
@@ -56,7 +56,7 @@ export interface SDKPlugin {
      * Event processor — called for every event before it enters the queue.
      * Return the event to pass it through, or null to drop it.
      */
-    processEvent?(event: SDKEvent): SDKEvent | null;
+    processEvent?(event: SDKEvent): SDKEvent | null | Promise<SDKEvent | null>;
     /**
      * Called before a breadcrumb is added to the buffer.
      * Return the breadcrumb to keep it, or null to drop it.
@@ -66,7 +66,7 @@ export interface SDKPlugin {
      * Called just before a batch is sent to the ingestion API.
      * Can be used for last-minute enrichment or filtering.
      */
-    beforeSend?(event: SDKEvent): SDKEvent | null;
+    beforeSend?(event: SDKEvent): SDKEvent | null | Promise<SDKEvent | null>;
     /**
      * Called after a batch is successfully sent.
      * Useful for metrics/accounting plugins.

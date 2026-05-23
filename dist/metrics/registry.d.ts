@@ -1,22 +1,26 @@
 /**
- * Enterprise Metrics Registry — hybrid architecture:
- * - Histograms: Powered by OpenTelemetry exponential histograms (O(1) per record)
- * - Counters/Gauges: Custom windowed aggregation (lightweight, no OTel overhead)
+ * Enterprise Metrics Registry — OTel-native compatibility wrapper.
+ *
+ * ALL metric aggregation is delegated to the OTel MeterProvider:
+ * - Histograms: OTel ExponentialHistogram (O(1) per record)
+ * - Counters: OTel Counter
+ * - Gauges: OTel Gauge
+ * - UpDownCounters: OTel UpDownCounter
+ *
+ * NO custom percentile computation. Backend computes from raw histogram buckets.
+ * This eliminates the previous architecture's 95% p99 error caused by
+ * sort-based percentile calculation on small sample windows.
  *
  * Provides:
- * - ExponentialHistogram with OTel for high-precision latency percentiles
- * - Windowed Counter aggregation (sum over configurable intervals)
- * - Gauge (last-value, point-in-time)
- * - UpDownCounter (monotonic up/down tracking)
- * - Cardinality protection per metric
- * - Automatic flush on interval
- * - Memory-safe bounded storage
+ * - Same public API as v2 (backward compatible)
+ * - Cardinality protection via CardinalityGovernor
+ * - Memory-safe bounded instrument count
+ * - Auto-flush lifecycle management
  *
  * Architecture:
- *   Histogram → OTel MeterProvider → ExponentialHistogramAggregation → PulseMetricReader → EventPipeline
- *   Counter/Gauge → Custom Aggregator → EventPipeline
+ *   MetricsRegistry → OtelMetricsManager → MeterProvider → ExponentialHistogramAggregation → PulseMetricReader → EventPipeline
  */
-import type { MetricType } from '../types/event.js';
+import { cardinalityGovernor } from '../utils/cardinality-governor.js';
 export interface MetricLabels {
     [key: string]: string;
 }
@@ -25,7 +29,7 @@ export interface MetricOptions {
     timestamp?: number;
 }
 export interface HistogramOptions {
-    /** Bucket boundaries for histogram. Used as fallback if OTel not available. */
+    /** Bucket boundaries (ignored in OTel mode — exponential buckets used). */
     boundaries?: number[];
     /** Max unique label combinations per metric. Default: 1000 */
     maxCardinality?: number;
@@ -39,14 +43,14 @@ export interface MetricRegistryOptions {
     flushIntervalMs?: number;
     /** Max unique metrics in registry. Default: 500 */
     maxMetrics?: number;
-    /** Default histogram boundaries */
+    /** Default histogram boundaries (ignored in OTel mode). */
     defaultHistogramBoundaries?: number[];
     /** Default max cardinality per metric. Default: 1000 */
     defaultMaxCardinality?: number;
 }
-interface AggregatedMetric {
+export interface AggregatedMetric {
     name: string;
-    type: MetricType | 'updown_counter' | 'summary';
+    type: string;
     labels: MetricLabels;
     timestamp: number;
     value: number;
@@ -54,48 +58,38 @@ interface AggregatedMetric {
     sum: number;
     min: number;
     max: number;
-    p50: number;
-    p75: number;
-    p90: number;
-    p95: number;
-    p99: number;
     avg: number;
     rate: number;
 }
 declare class MetricsRegistry {
-    private fallbackHistograms;
-    private counters;
-    private upDownCounters;
-    private gauges;
-    private flushTimer;
-    private flushIntervalMs;
-    private maxMetrics;
-    private defaultBoundaries;
-    private defaultMaxCardinality;
+    private readonly maxMetrics;
+    private readonly defaultMaxCardinality;
     private initialized;
     private totalFlushed;
     private totalDropped;
+    private registeredMetrics;
     constructor(options?: MetricRegistryOptions);
     start(): void;
     stop(): void;
     /**
      * Record a histogram value.
-     * Uses OTel exponential histogram when available (O(1) per record).
-     * Falls back to custom aggregator if OTel not initialized.
+     * Delegates to OTel ExponentialHistogram — O(1) per record.
+     * Backend computes percentiles from raw bucket data.
      */
     recordHistogram(name: string, value: number, options?: MetricOptions & HistogramOptions): void;
     incrementCounter(name: string, value?: number, options?: MetricOptions & CounterOptions): void;
     addUpDownCounter(name: string, value: number, options?: MetricOptions & CounterOptions): void;
     setGauge(name: string, value: number, options?: MetricOptions & CounterOptions): void;
+    /**
+     * Flush pending metrics through the OTel reader → event pipeline.
+     */
     flush(): void;
     getStats(): {
         initialized: boolean;
-        histogramCount: number;
-        counterCount: number;
-        upDownCounterCount: number;
-        gaugeCount: number;
+        registeredMetrics: number;
         totalFlushed: number;
         totalDropped: number;
+        cardinalityStats: ReturnType<typeof cardinalityGovernor.getStats>;
         otelStats?: {
             histogramCount: number;
             counterCount: number;
@@ -104,8 +98,9 @@ declare class MetricsRegistry {
         } | undefined;
     };
     reset(): void;
+    private canRegisterMetric;
 }
 export declare const metricsRegistry: MetricsRegistry;
 export { MetricsRegistry };
-export type { AggregatedMetric };
+export type { AggregatedMetric as AggregatedMetricLegacy };
 //# sourceMappingURL=registry.d.ts.map

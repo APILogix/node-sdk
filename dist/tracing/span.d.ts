@@ -1,28 +1,29 @@
 /**
- * Pulse SDK Span — wraps OpenTelemetry spans with SDK-specific enrichment.
+ * PulseSpan — minimal ergonomic wrapper around OTel Span.
  *
- * Provides:
- * - Automatic error recording with stack traces
- * - Attribute and event helpers
- * - Duration measurement
- * - Status management
- * - Integration with SDK context (breadcrumbs, user, tags)
+ * Design principles (v3.0):
+ *   - ZERO duplicated state. Every getter reads LIVE from the OTel span.
+ *   - The OTel ReadableSpan is the single source of truth.
+ *   - PulseSpan only adds:
+ *     1. Idempotent end() — safe to call multiple times
+ *     2. Never-throw safety — all operations wrapped in try/catch
+ *     3. Fluent API — setAttribute/addEvent return `this`
+ *     4. parentSpanId — captured at construction from active context
+ *   - All enrichment (X-Pulse-Tenant, tenant tags, SDK metadata) happens
+ *     in PipelineSpanExporter.spanToEvent(), NOT here.
  */
-import { type Span as OTelSpan, type Attributes, type TimeInput, type Link } from '@opentelemetry/api';
+import { type Span as OTelSpan, type SpanContext, type Attributes, type TimeInput, type Link } from '@opentelemetry/api';
 export type SpanStatus = 'ok' | 'error' | 'unset';
 export interface SpanOptions {
     /** Custom attributes to attach to the span at creation. */
     attributes?: Attributes;
-    /** Link this span to a parent span ID (manual linking). */
-    parentSpanId?: string;
     /** ISO timestamp to use as span start time. */
     startTime?: TimeInput;
-    /** Span links — for modeling batch processing, fan-out, or queue consumer patterns. */
+    /** Span links — for batch processing, fan-out, or queue consumer patterns. */
     links?: SpanLink[];
 }
 /**
- * A link to another span — used to model causal relationships that aren't
- * parent-child (e.g., batch consumer linking to multiple producer spans).
+ * A link to another span — models non-parent-child causal relationships.
  */
 export interface SpanLink {
     /** Trace ID of the linked span. */
@@ -33,43 +34,55 @@ export interface SpanLink {
     attributes?: Attributes;
 }
 /**
- * PulseSpan wraps an OTel Span with ergonomic helpers.
- * Never throws — all operations are isolated.
+ * Thin ergonomic wrapper around OTel Span.
+ *
+ * - Never throws — all operations are isolated.
+ * - No duplicated state — reads everything from the underlying OTel span.
+ * - Fluent API for attribute/event chaining.
  */
 export declare class PulseSpan {
-    private readonly otelSpan;
-    private ended;
+    /** @internal The underlying OTel span — use getOTelSpan() for advanced access. */
+    private readonly _span;
+    /**
+     * Parent span ID captured at construction from the OTel context.
+     * Stored here because the OTel Span API doesn't expose parentSpanId
+     * on the public interface (only on ReadableSpan after export).
+     */
+    private readonly _parentSpanId;
+    /** Idempotent end guard — prevents double-end. */
+    private _ended;
     constructor(otelSpan: OTelSpan);
-    /** Get the span ID. */
+    /** Span ID — read live from OTel span context. */
     get spanId(): string;
-    /** Get the trace ID. */
+    /** Trace ID — read live from OTel span context. */
     get traceId(): string;
-    /** Whether this span is still recording. */
+    /** Parent span ID — captured at construction from active context. */
+    get parentSpanId(): string | undefined;
+    /** Whether this span is still recording (not ended). */
     get isRecording(): boolean;
-    /** Set a single attribute on the span. */
+    /** Whether this span has been ended via PulseSpan.end(). */
+    get isEnded(): boolean;
+    /** Full OTel span context (traceId, spanId, traceFlags, traceState). */
+    get spanContext(): SpanContext;
+    /** Set a single attribute. No-op after end. */
     setAttribute(key: string, value: string | number | boolean): this;
-    /** Set multiple attributes at once. */
+    /** Set multiple attributes at once. No-op after end. */
     setAttributes(attributes: Attributes): this;
-    /** Record an event (annotation) on the span. */
+    /** Record a span event (annotation). No-op after end. */
     addEvent(name: string, attributes?: Attributes): this;
-    /** Record an error on the span. Sets status to ERROR. */
+    /**
+     * Record an error on the span.
+     * Sets status to ERROR and records the exception as a span event.
+     */
     recordError(error: Error, attributes?: Attributes): this;
     /** Set the span status. */
     setStatus(status: SpanStatus, message?: string): this;
     /** End the span. Idempotent — calling multiple times is safe. */
     end(endTime?: TimeInput): void;
     /**
-     * Add a link to another span — models non-parent-child causal relationships.
-     *
-     * Use cases:
-     * - Batch consumer linking to multiple producer spans
-     * - Fan-out patterns where one request triggers multiple downstream traces
-     * - Queue consumer linking to the producer trace
-     *
-     * @param link - The span link with traceId, spanId, and optional attributes
+     * Get the underlying OTel Span for advanced use cases.
+     * Prefer the PulseSpan API — only use this for OTel interop.
      */
-    addLink(link: SpanLink): this;
-    /** Get the underlying OTel span (for advanced use cases). */
     getOTelSpan(): OTelSpan;
     /**
      * Convert SpanLink[] to OTel Link[] format for use at span creation time.

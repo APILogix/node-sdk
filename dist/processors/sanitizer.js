@@ -59,28 +59,69 @@ export function sanitizeHeaders(headers) {
     return sanitized;
 }
 // ─── Internal ───────────────────────────────────────────────────────────────
-function sanitizeValue(value, depth) {
+const MAX_OBJECT_KEYS = 200;
+function sanitizeValue(root, _depth) {
+    // Fast path for primitives
+    if (root === null || root === undefined)
+        return root;
+    if (typeof root === 'string')
+        return sanitizeString(root);
+    if (typeof root !== 'object')
+        return root;
+    const seen = new WeakSet();
+    return sanitizeObject(root, 0, seen);
+}
+function sanitizeObject(value, depth, seen) {
     if (depth >= MAX_SANITIZE_DEPTH)
         return value;
-    if (typeof value === 'string') {
+    if (value === null || value === undefined)
+        return value;
+    if (typeof value === 'string')
         return sanitizeString(value);
-    }
-    if (Array.isArray(value)) {
-        return value.map(item => sanitizeValue(item, depth + 1));
-    }
-    if (value && typeof value === 'object') {
+    if (typeof value !== 'object')
+        return value;
+    // Cyclic reference detection
+    const obj = value;
+    if (seen.has(obj))
+        return '[Circular]';
+    seen.add(obj);
+    try {
+        if (Array.isArray(value)) {
+            const result = [];
+            const limit = Math.min(value.length, MAX_OBJECT_KEYS);
+            for (let i = 0; i < limit; i++) {
+                result.push(sanitizeObject(value[i], depth + 1, seen));
+            }
+            if (value.length > MAX_OBJECT_KEYS) {
+                result.push(`[truncated: ${value.length - MAX_OBJECT_KEYS} more items]`);
+            }
+            return result;
+        }
         const result = {};
-        for (const [key, nested] of Object.entries(value)) {
+        const entries = Object.entries(value);
+        const limit = Math.min(entries.length, MAX_OBJECT_KEYS);
+        for (let i = 0; i < limit; i++) {
+            const entry = entries[i];
+            if (!entry)
+                continue;
+            const [key, nested] = entry;
             if (isSensitiveKey(key)) {
                 result[key] = REDACTED;
             }
             else {
-                result[key] = sanitizeValue(nested, depth + 1);
+                result[key] = sanitizeObject(nested, depth + 1, seen);
             }
+        }
+        if (entries.length > MAX_OBJECT_KEYS) {
+            result['__truncated'] = `${entries.length - MAX_OBJECT_KEYS} more keys`;
         }
         return result;
     }
-    return value;
+    finally {
+        // Allow the same object to appear in different branches
+        // (only true cycles should be blocked, not shared references)
+        seen.delete(obj);
+    }
 }
 function sanitizeString(value) {
     let sanitized = value;

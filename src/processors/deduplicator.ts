@@ -23,10 +23,13 @@ const CLEANUP_INTERVAL_MS = 300_000 // 5 minutes
 
 class ErrorDeduplicator {
   private entries = new Map<string, DedupEntry>()
+  private replaySeen = new Map<string, number>()
+  private readonly maxReplayEntries = 1000
   private suppressionWindowMs: number = DEFAULT_SUPPRESSION_WINDOW_MS
   private maxEntries: number = DEFAULT_MAX_ENTRIES
   private cleanupTimer: ReturnType<typeof setInterval> | null = null
   private suppressedCount = 0
+  private replayDuplicateCount = 0
   private initialized = false
 
   configure(options: { suppressionWindowMs?: number; maxEntries?: number } = {}): void {
@@ -80,6 +83,9 @@ class ErrorDeduplicator {
   getStats(): {
     trackedErrors: number
     suppressedCount: number
+    replayDuplicateCount: number
+    cacheSize: number
+    cacheCapacity: number
     oldestEntry: number | null
     newestEntry: number | null
   } {
@@ -94,9 +100,40 @@ class ErrorDeduplicator {
     return {
       trackedErrors: this.entries.size,
       suppressedCount: this.suppressedCount,
+      replayDuplicateCount: this.replayDuplicateCount,
+      cacheSize: this.entries.size,
+      cacheCapacity: this.maxEntries,
       oldestEntry: oldest,
       newestEntry: newest,
     }
+  }
+
+  /**
+   * Check if a replayed event is a duplicate.
+   * Uses a separate map keyed by replayId to avoid false suppression.
+   */
+  isReplayDuplicate(fingerprint: string, replayId: string): boolean {
+    const key = `${fingerprint}:${replayId}`
+
+    if (this.replaySeen.has(key)) {
+      this.replayDuplicateCount++
+      return true
+    }
+
+    // Bound the replay seen map
+    if (this.replaySeen.size >= this.maxReplayEntries) {
+      // Evict oldest 10%
+      const toRemove = Math.floor(this.maxReplayEntries * 0.1)
+      const keys = this.replaySeen.keys()
+      for (let i = 0; i < toRemove; i++) {
+        const result = keys.next()
+        if (result.done) break
+        this.replaySeen.delete(result.value)
+      }
+    }
+
+    this.replaySeen.set(key, epochMs())
+    return false
   }
 
   /**
@@ -104,7 +141,9 @@ class ErrorDeduplicator {
    */
   reset(): void {
     this.entries.clear()
+    this.replaySeen.clear()
     this.suppressedCount = 0
+    this.replayDuplicateCount = 0
   }
 
   private cleanup(): void {

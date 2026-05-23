@@ -37,6 +37,310 @@ export interface PlanFeatures {
   readonly allowedCompression: readonly ('gzip' | 'brotli' | 'none')[]
 }
 
+// ─── Remote Config Response (from POST /v1/sdk-config) ──────────────────────
+
+/**
+ * Full remote config response from the backend.
+ * This is the single source of truth for SDK behavior at runtime.
+ * Every feature, limit, sampling rule, transport route, security policy,
+ * and killswitch is driven by this config.
+ */
+export interface RemoteConfigResponse {
+  readonly sdk: SdkIdentityConfig
+  readonly features: FeaturesConfig
+  readonly sampling: SamplingConfig
+  readonly instrumentation: InstrumentationConfig
+  readonly tracing: TracingRemoteConfig
+  readonly errors: ErrorsConfig
+  readonly logging: LoggingConfig
+  readonly metrics: MetricsRemoteConfig
+  readonly profiling: ProfilingConfig
+  readonly security: SecurityConfig
+  readonly transport: TransportRemoteConfig
+  readonly limits: LimitsConfig
+  readonly killswitches: KillswitchesConfig
+  readonly versionPolicy: VersionPolicyConfig
+  readonly cache: CacheConfig
+  readonly meta: ConfigMeta
+}
+
+export interface SdkIdentityConfig {
+  readonly dsn: string
+  readonly projectId: string
+  readonly environment: string
+}
+
+/** Feature toggles — if false, the subsystem is NEVER instantiated. */
+export interface FeaturesConfig {
+  readonly tracing: boolean
+  readonly metrics: boolean
+  readonly logging: boolean
+  readonly errors: boolean
+  readonly profiling: boolean
+  readonly crons: boolean
+  readonly sessionReplay: boolean
+  readonly aiDetection: boolean
+  readonly dynamicSampling: boolean
+  readonly runtimeMetrics: boolean
+  readonly eventLoopMonitoring: boolean
+  readonly gcMonitoring: boolean
+  readonly sourceMaps: boolean
+  readonly releaseTracking: boolean
+}
+
+/** Sampling rates — all values in range [0.0, 1.0]. */
+export interface SamplingConfig {
+  readonly traces: number
+  readonly errors: number
+  readonly profiles: number
+  readonly replays: number
+  /** Per-URL-prefix overrides. Exact-match or prefix-match against req.url. */
+  readonly routes: Readonly<Record<string, number>>
+}
+
+// ─── Instrumentation Config ─────────────────────────────────────────────────
+
+export interface InstrumentationConfig {
+  readonly http: boolean
+  readonly https: boolean
+  readonly fastify: FastifyInstrumentationConfig | boolean
+  readonly express: ExpressInstrumentationConfig | boolean
+  readonly graphql: GraphQLInstrumentationConfig | boolean
+  readonly prisma: PrismaInstrumentationConfig | boolean
+  readonly mongodb: boolean
+  readonly redis: boolean
+  readonly bullmq: boolean
+  readonly fetch: boolean
+  readonly axios: boolean
+}
+
+export interface FastifyInstrumentationConfig {
+  readonly enabled: boolean
+  readonly captureHooks: boolean
+  readonly captureValidationErrors: boolean
+}
+
+export interface ExpressInstrumentationConfig {
+  readonly enabled: boolean
+}
+
+export interface GraphQLInstrumentationConfig {
+  readonly enabled: boolean
+  readonly captureResolvers: boolean
+}
+
+export interface PrismaInstrumentationConfig {
+  readonly enabled: boolean
+  readonly captureQueries: boolean
+  readonly captureParams: boolean
+}
+
+// ─── Tracing Config ─────────────────────────────────────────────────────────
+
+export interface TracingRemoteConfig {
+  readonly capture: TracingCaptureConfig
+  readonly maxSpansPerTrace: number
+  readonly maxSpanAttributes: number
+  readonly maxTraceDurationMs: number
+  readonly ignoredRoutes: readonly string[]
+  readonly ignoredMethods: readonly string[]
+  readonly propagation: TracingPropagationConfig
+}
+
+export interface TracingCaptureConfig {
+  readonly headers: boolean
+  readonly body: boolean
+  readonly response: boolean
+  readonly query: boolean
+  readonly cookies: boolean
+}
+
+export interface TracingPropagationConfig {
+  readonly w3c: boolean
+  readonly baggage: boolean
+  readonly b3: boolean
+}
+
+// ─── Errors Config ──────────────────────────────────────────────────────────
+
+export interface ErrorsConfig {
+  readonly captureUnhandledRejections: boolean
+  readonly captureUncaughtExceptions: boolean
+  readonly captureConsoleErrors: boolean
+  readonly stackTraceLimit: number
+  readonly attachSourceContext: boolean
+  readonly grouping: ErrorGroupingConfig
+}
+
+export interface ErrorGroupingConfig {
+  readonly enabled: boolean
+  readonly normalizePaths: boolean
+}
+
+// ─── Logging Config ─────────────────────────────────────────────────────────
+
+export interface LoggingConfig {
+  readonly enabled: boolean
+  readonly captureConsole: boolean
+  readonly levels: readonly string[]
+  readonly maxLogSize: number
+}
+
+// ─── Metrics Config ─────────────────────────────────────────────────────────
+
+export interface MetricsRemoteConfig {
+  readonly runtime: boolean
+  readonly eventLoop: boolean
+  readonly gc: boolean
+  readonly system: boolean
+  readonly intervalMs: number
+  readonly histograms: boolean
+  readonly percentiles: readonly number[]
+}
+
+// ─── Profiling Config ───────────────────────────────────────────────────────
+
+export interface ProfilingConfig {
+  readonly enabled: boolean
+  readonly cpu: boolean
+  readonly heap: boolean
+  readonly sampleRate: number
+  readonly maxDurationMs: number
+}
+
+// ─── Security Config ────────────────────────────────────────────────────────
+
+export interface SecurityConfig {
+  readonly scrubbing: ScrubbingConfig
+  readonly piiDetection: PiiDetectionConfig
+}
+
+export interface ScrubbingConfig {
+  readonly enabled: boolean
+  readonly headers: readonly string[]
+  readonly bodyFields: readonly string[]
+  readonly queryParams: readonly string[]
+}
+
+export interface PiiDetectionConfig {
+  readonly enabled: boolean
+  readonly maskEmails: boolean
+  readonly maskPhones: boolean
+  readonly maskIPs: boolean
+}
+
+// ─── Transport Config ───────────────────────────────────────────────────────
+
+export type TransportRouteName =
+  | 'traces'
+  | 'errors'
+  | 'logs'
+  | 'metrics'
+  | 'profiles'
+  | 'replays'
+  | 'crons'
+  | 'envelope'
+
+export interface TransportEndpointConfig {
+  readonly url: string
+  readonly priority: 'critical' | 'high' | 'normal' | 'low'
+  readonly batchSize: number
+  readonly flushIntervalMs: number
+  readonly compression: 'gzip' | 'none'
+  readonly timeoutMs: number
+}
+
+export interface TransportRemoteConfig {
+  readonly endpoints: Readonly<Record<TransportRouteName, TransportEndpointConfig>>
+  readonly shared: TransportSharedConfig
+}
+
+export interface TransportSharedConfig {
+  readonly queue: {
+    readonly maxSize: number
+    readonly overflowStrategy: 'drop_oldest'
+  }
+  readonly retry: {
+    readonly enabled: boolean
+    readonly maxRetries: number
+    readonly backoff: 'exponential'
+    readonly baseDelayMs: number
+  }
+  readonly keepAlive: boolean
+  readonly connectionPool: {
+    readonly maxConnectionsPerRoute: number
+    readonly maxTotalConnections: number
+  }
+}
+
+// ─── Limits Config ──────────────────────────────────────────────────────────
+
+export interface LimitsConfig {
+  readonly maxPayloadSize: number
+  readonly maxAttributesPerEvent: number
+  readonly maxAttributeLength: number
+  readonly maxBreadcrumbs: number
+  readonly maxEventsPerSecond: number
+  readonly maxMemoryUsageMb: number
+  readonly maxCpuOverheadPercent: number
+}
+
+// ─── Killswitches Config ────────────────────────────────────────────────────
+
+export interface KillswitchesConfig {
+  readonly disableSDK: boolean
+  readonly disableTracing: boolean
+  readonly disableMetrics: boolean
+  readonly disableTransport: boolean
+  readonly disableProfiling: boolean
+  readonly disableErrors: boolean
+  readonly disableLogs: boolean
+}
+
+// ─── Version Policy Config ──────────────────────────────────────────────────
+
+export interface VersionPolicyConfig {
+  readonly minimumVersion: string
+  readonly latestVersion: string
+  readonly blockedVersions: readonly string[]
+  readonly forceUpgrade: boolean
+  readonly upgradeMessage: string
+}
+
+// ─── Cache Config ───────────────────────────────────────────────────────────
+
+export interface CacheConfig {
+  readonly ttlSeconds: number
+  readonly staleWhileRevalidate: boolean
+}
+
+// ─── Config Meta ────────────────────────────────────────────────────────────
+
+export interface ConfigMeta {
+  readonly generatedAt: string
+  readonly generatedBy: string
+  readonly configHash: string
+}
+
+// ─── Config Diff ────────────────────────────────────────────────────────────
+
+/** Result of diffing two RemoteConfigResponse objects. */
+export interface ConfigDiff {
+  readonly featuresChanged: boolean
+  readonly killswitchesChanged: boolean
+  readonly samplingChanged: boolean
+  readonly transportChanged: boolean
+  readonly securityChanged: boolean
+  readonly tracingChanged: boolean
+  readonly errorsChanged: boolean
+  readonly loggingChanged: boolean
+  readonly metricsChanged: boolean
+  readonly profilingChanged: boolean
+  readonly limitsChanged: boolean
+  readonly instrumentationChanged: boolean
+  readonly changes: ReadonlyMap<string, { old: unknown; new: unknown }>
+}
+
 // ─── SDK Init Options (user-facing) ─────────────────────────────────────────
 
 /**
@@ -85,7 +389,7 @@ export interface SDKInitOptions {
   readonly beforeBreadcrumb?: BreadcrumbProcessor
 
   /** Called before every event is sent — return null to drop. Pro+ plans only. */
-  readonly beforeSend?: (event: Record<string, unknown>) => Record<string, unknown> | null
+  readonly beforeSend?: (event: Record<string, unknown>) => Record<string, unknown> | null | Promise<Record<string, unknown> | null>
 
   /** Transport configuration overrides. */
   readonly transport?: TransportOptions
@@ -99,6 +403,9 @@ export interface SDKInitOptions {
   /** Custom server base URL override. Uses SDK_BASE_URL env var or default. */
   readonly baseUrl?: string
 
+  /** Remote config endpoint URL override. Defaults to `${baseUrl}/v1/sdk-config`. */
+  readonly configUrl?: string
+
   /** Graceful shutdown timeout in milliseconds. Defaults to 10000. */
   readonly shutdownTimeoutMs?: number
 
@@ -110,6 +417,18 @@ export interface SDKInitOptions {
     readonly allowRemote?: boolean
     /** Embed original source content in resolved frames. Default: false. */
     readonly embedSourceContent?: boolean
+  }
+
+  /** Data scrubbing configuration for payload governance. */
+  readonly dataScrubbing?: {
+    /** Additional sensitive headers to redact. */
+    readonly sensitiveHeaders?: readonly string[]
+    /** Additional sensitive keys to redact from JSON objects. */
+    readonly sensitiveKeys?: readonly string[]
+    /** Redact the entire request body. Default: false. */
+    readonly redactRequestBody?: boolean
+    /** Redact the entire response body. Default: false. */
+    readonly redactResponseBody?: boolean
   }
 
   /** OpenTelemetry metrics configuration. */
@@ -143,7 +462,7 @@ export interface TransportOptions {
   readonly maxConcurrentSends?: number
 }
 
-// ─── Remote Config (server-provided) ────────────────────────────────────────
+// ─── Remote Config (legacy server-provided — kept for backward compat) ──────
 
 /**
  * Configuration returned by the /v1/init endpoint.
@@ -208,12 +527,23 @@ export interface ResolvedSDKConfig {
   readonly maxPayloadBytes: number
   readonly maxConcurrentSends: number
 
+  // Payload Governance
+  readonly dataScrubbing: {
+    sensitiveHeaders: string[]
+    sensitiveKeys: string[]
+    redactRequestBody: boolean
+    redactResponseBody: boolean
+  }
+
   // OTel Metrics
   readonly otelMetrics: {
     maxHistogramBuckets: number
     percentiles: number[]
     cardinalityLimit: number
   }
+
+  /** Remote config response, if available. */
+  readonly remoteConfig?: RemoteConfigResponse | undefined
 }
 
 // ─── Zod Schemas ────────────────────────────────────────────────────────────
@@ -233,19 +563,28 @@ export const sdkInitOptionsSchema = z.object({
   eventProcessors: z.array(z.custom<EventProcessor>()).readonly().optional(),
   beforeBreadcrumb: z.custom<BreadcrumbProcessor>(value => typeof value === 'function').optional(),
   beforeSend: z
-    .custom<(event: Record<string, unknown>) => Record<string, unknown> | null>(
+    .custom<(event: Record<string, unknown>) => Record<string, unknown> | null | Promise<Record<string, unknown> | null>>(
       value => typeof value === 'function'
     )
     .optional(),
   debug: z.boolean().optional(),
   logLevel: z.enum(['debug', 'info', 'warning', 'error', 'fatal']).optional(),
   baseUrl: z.string().url().optional(),
+  configUrl: z.string().url().optional(),
   shutdownTimeoutMs: z.number().int().min(1000).max(60000).optional(),
   sourceMaps: z
     .object({
       paths: z.array(z.string()).readonly().optional(),
       allowRemote: z.boolean().optional(),
       embedSourceContent: z.boolean().optional(),
+    })
+    .optional(),
+  dataScrubbing: z
+    .object({
+      sensitiveHeaders: z.array(z.string()).readonly().optional(),
+      sensitiveKeys: z.array(z.string()).readonly().optional(),
+      redactRequestBody: z.boolean().optional(),
+      redactResponseBody: z.boolean().optional(),
     })
     .optional(),
   transport: z

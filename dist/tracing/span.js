@@ -1,71 +1,115 @@
 /**
- * Pulse SDK Span — wraps OpenTelemetry spans with SDK-specific enrichment.
+ * PulseSpan — minimal ergonomic wrapper around OTel Span.
  *
- * Provides:
- * - Automatic error recording with stack traces
- * - Attribute and event helpers
- * - Duration measurement
- * - Status management
- * - Integration with SDK context (breadcrumbs, user, tags)
+ * Design principles (v3.0):
+ *   - ZERO duplicated state. Every getter reads LIVE from the OTel span.
+ *   - The OTel ReadableSpan is the single source of truth.
+ *   - PulseSpan only adds:
+ *     1. Idempotent end() — safe to call multiple times
+ *     2. Never-throw safety — all operations wrapped in try/catch
+ *     3. Fluent API — setAttribute/addEvent return `this`
+ *     4. parentSpanId — captured at construction from active context
+ *   - All enrichment (X-Pulse-Tenant, tenant tags, SDK metadata) happens
+ *     in PipelineSpanExporter.spanToEvent(), NOT here.
  */
-import { SpanStatusCode, trace, } from '@opentelemetry/api';
+import { SpanStatusCode, trace, context as otelContext, } from '@opentelemetry/api';
 import { getLogger } from '../utils/logger.js';
+// ─── PulseSpan ──────────────────────────────────────────────────────────────
 /**
- * PulseSpan wraps an OTel Span with ergonomic helpers.
- * Never throws — all operations are isolated.
+ * Thin ergonomic wrapper around OTel Span.
+ *
+ * - Never throws — all operations are isolated.
+ * - No duplicated state — reads everything from the underlying OTel span.
+ * - Fluent API for attribute/event chaining.
  */
 export class PulseSpan {
-    otelSpan;
-    ended = false;
+    /** @internal The underlying OTel span — use getOTelSpan() for advanced access. */
+    _span;
+    /**
+     * Parent span ID captured at construction from the OTel context.
+     * Stored here because the OTel Span API doesn't expose parentSpanId
+     * on the public interface (only on ReadableSpan after export).
+     */
+    _parentSpanId;
+    /** Idempotent end guard — prevents double-end. */
+    _ended = false;
     constructor(otelSpan) {
-        this.otelSpan = otelSpan;
+        this._span = otelSpan;
+        // Capture parent span ID from the context that was active BEFORE this
+        // span was created. The parent is the span that was active when
+        // startSpan/startActiveSpan was called.
+        try {
+            const parentContext = trace.getActiveSpan()?.spanContext();
+            // Only set parentSpanId if the parent is a DIFFERENT span
+            const thisSpanId = otelSpan.spanContext().spanId;
+            if (parentContext && parentContext.spanId !== thisSpanId) {
+                this._parentSpanId = parentContext.spanId;
+            }
+        }
+        catch {
+            // Context access failed — parentSpanId remains undefined
+        }
     }
-    /** Get the span ID. */
+    // ─── Read-Through Getters (no duplicated state) ─────────────────────
+    /** Span ID — read live from OTel span context. */
     get spanId() {
-        return this.otelSpan.spanContext().spanId;
+        return this._span.spanContext().spanId;
     }
-    /** Get the trace ID. */
+    /** Trace ID — read live from OTel span context. */
     get traceId() {
-        return this.otelSpan.spanContext().traceId;
+        return this._span.spanContext().traceId;
     }
-    /** Whether this span is still recording. */
+    /** Parent span ID — captured at construction from active context. */
+    get parentSpanId() {
+        return this._parentSpanId;
+    }
+    /** Whether this span is still recording (not ended). */
     get isRecording() {
-        return this.otelSpan.isRecording();
+        return this._span.isRecording();
     }
-    /** Set a single attribute on the span. */
+    /** Whether this span has been ended via PulseSpan.end(). */
+    get isEnded() {
+        return this._ended;
+    }
+    /** Full OTel span context (traceId, spanId, traceFlags, traceState). */
+    get spanContext() {
+        return this._span.spanContext();
+    }
+    // ─── Mutation Methods (all never-throw, fluent) ─────────────────────
+    /** Set a single attribute. No-op after end. */
     setAttribute(key, value) {
-        if (this.ended)
+        if (this._ended)
             return this;
         try {
-            this.otelSpan.setAttribute(key, value);
+            this._span.setAttribute(key, value);
         }
         catch (err) {
             getLogger().warn('Failed to set span attribute', { key, error: err });
         }
         return this;
     }
-    /** Set multiple attributes at once. */
+    /** Set multiple attributes at once. No-op after end. */
     setAttributes(attributes) {
-        if (this.ended)
+        if (this._ended)
             return this;
         try {
-            this.otelSpan.setAttributes(attributes);
+            this._span.setAttributes(attributes);
         }
         catch (err) {
             getLogger().warn('Failed to set span attributes', { error: err });
         }
         return this;
     }
-    /** Record an event (annotation) on the span. */
+    /** Record a span event (annotation). No-op after end. */
     addEvent(name, attributes) {
-        if (this.ended)
+        if (this._ended)
             return this;
         try {
             if (attributes) {
-                this.otelSpan.addEvent(name, attributes);
+                this._span.addEvent(name, attributes);
             }
             else {
-                this.otelSpan.addEvent(name);
+                this._span.addEvent(name);
             }
         }
         catch (err) {
@@ -73,16 +117,19 @@ export class PulseSpan {
         }
         return this;
     }
-    /** Record an error on the span. Sets status to ERROR. */
+    /**
+     * Record an error on the span.
+     * Sets status to ERROR and records the exception as a span event.
+     */
     recordError(error, attributes) {
-        if (this.ended)
+        if (this._ended)
             return this;
         try {
             if (attributes) {
-                this.otelSpan.setAttributes(attributes);
+                this._span.setAttributes(attributes);
             }
-            this.otelSpan.recordException(error);
-            this.otelSpan.setStatus({
+            this._span.recordException(error);
+            this._span.setStatus({
                 code: SpanStatusCode.ERROR,
                 message: error.message,
             });
@@ -94,7 +141,7 @@ export class PulseSpan {
     }
     /** Set the span status. */
     setStatus(status, message) {
-        if (this.ended)
+        if (this._ended)
             return this;
         try {
             const code = status === 'ok'
@@ -102,7 +149,7 @@ export class PulseSpan {
                 : status === 'error'
                     ? SpanStatusCode.ERROR
                     : SpanStatusCode.UNSET;
-            this.otelSpan.setStatus(message ? { code, message } : { code });
+            this._span.setStatus(message ? { code, message } : { code });
         }
         catch (err) {
             getLogger().warn('Failed to set span status', { error: err });
@@ -111,55 +158,24 @@ export class PulseSpan {
     }
     /** End the span. Idempotent — calling multiple times is safe. */
     end(endTime) {
-        if (this.ended)
+        if (this._ended)
             return;
-        this.ended = true;
+        this._ended = true;
         try {
-            this.otelSpan.end(endTime);
+            this._span.end(endTime);
         }
         catch (err) {
             getLogger().warn('Failed to end span', { error: err });
         }
     }
     /**
-     * Add a link to another span — models non-parent-child causal relationships.
-     *
-     * Use cases:
-     * - Batch consumer linking to multiple producer spans
-     * - Fan-out patterns where one request triggers multiple downstream traces
-     * - Queue consumer linking to the producer trace
-     *
-     * @param link - The span link with traceId, spanId, and optional attributes
+     * Get the underlying OTel Span for advanced use cases.
+     * Prefer the PulseSpan API — only use this for OTel interop.
      */
-    addLink(link) {
-        if (this.ended)
-            return this;
-        try {
-            // OTel SDK doesn't have a direct addLink method after creation,
-            // so we record the link as a span event with structured attributes
-            const linkAttributes = {
-                'link.traceId': link.traceId,
-                'link.spanId': link.spanId,
-                'link.type': 'causal',
-            };
-            if (link.attributes) {
-                for (const [key, value] of Object.entries(link.attributes)) {
-                    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
-                        linkAttributes[`link.${key}`] = value;
-                    }
-                }
-            }
-            this.otelSpan.addEvent('span.link', linkAttributes);
-        }
-        catch (err) {
-            getLogger().warn('Failed to add span link', { error: err });
-        }
-        return this;
-    }
-    /** Get the underlying OTel span (for advanced use cases). */
     getOTelSpan() {
-        return this.otelSpan;
+        return this._span;
     }
+    // ─── Static Utilities ───────────────────────────────────────────────
     /**
      * Convert SpanLink[] to OTel Link[] format for use at span creation time.
      * @internal

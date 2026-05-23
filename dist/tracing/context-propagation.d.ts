@@ -2,12 +2,9 @@
  * W3C Trace Context Propagation — extracts and injects trace context
  * from/into HTTP headers following the W3C specification.
  *
- * Supports:
- * - traceparent header (W3C Trace Context)
- * - tracestate header (vendor-specific baggage)
- * - Custom Pulse SDK headers (X-Pulse-Trace-Id, X-Pulse-Span-Id)
- *
- * This enables distributed tracing across service boundaries.
+ * Uses native OpenTelemetry propagation APIs (`propagation.extract`,
+ * `propagation.inject`) rather than manual traceparent parsing so that
+ * OTel samplers, propagators, and context managers remain in control.
  */
 import { type Context, type TextMapGetter, type TextMapSetter } from '@opentelemetry/api';
 /**
@@ -35,22 +32,6 @@ export declare function extractTraceContext(headers: Record<string, string | str
  * @param ctx - Optional OTel context (defaults to active context)
  */
 export declare function injectTraceContext(headers: Record<string, string>, ctx?: Context): void;
-/**
- * Parse a traceparent header string into its components.
- *
- * Format: {version}-{trace-id}-{parent-id}-{trace-flags}
- * Example: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01
- */
-export declare function parseTraceparent(traceparent: string): {
-    version: string;
-    traceId: string;
-    parentId: string;
-    traceFlags: number;
-} | null;
-/**
- * Create a W3C traceparent header value.
- */
-export declare function createTraceparent(traceId: string, spanId: string, sampled?: boolean): string;
 /**
  * Export header constants for use by instrumentation modules.
  */

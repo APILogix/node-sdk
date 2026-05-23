@@ -6,14 +6,18 @@
  * - File-based source maps (relative/absolute paths)
  * - Remote source maps (HTTP URLs)
  *
- * Uses the source-map library for VLQ decoding and mapping lookup.
- * Falls back gracefully if source maps are unavailable.
+ * Uses the `source-map-js` library for VLQ decoding and mapping lookup —
+ * battle-tested, standards-compliant, used by PostCSS, Vite, and the
+ * entire CSS toolchain ecosystem. This replaces the previous custom VLQ
+ * decoder to eliminate maintainability and correctness risk.
  *
  * Enterprise features:
- * - Source map cache with LRU eviction
- * - Concurrent loading with deduplication
+ * - Source map cache with LRU eviction + TTL-based expiry
+ * - Concurrent loading with deduplication (one inflight load per map)
  * - Configurable source map discovery paths
  * - Original source content embedding
+ * - Bounded cache growth
+ * - Async-safe symbolication (no event-loop blocking)
  */
 import type { StackFrame } from '../types/event.js';
 interface SourceMapResolverOptions {
@@ -25,6 +29,8 @@ interface SourceMapResolverOptions {
     maxCacheSize?: number;
     /** Embed original source content in resolved frames. Default: false. */
     embedSourceContent?: boolean;
+    /** Cache TTL in milliseconds. Default: 300000 (5 minutes). */
+    cacheTtlMs?: number;
 }
 declare class SourceMapResolver {
     private cache;
@@ -32,6 +38,7 @@ declare class SourceMapResolver {
     private sourceMapPaths;
     private allowRemoteSourceMaps;
     private maxCacheSize;
+    private cacheTtlMs;
     private embedSourceContent;
     private initialized;
     private hits;
@@ -62,10 +69,12 @@ declare class SourceMapResolver {
     private findSourceMapUrl;
     private loadSourceMap;
     private doLoadSourceMap;
+    /**
+     * Look up the original location for a generated position using
+     * source-map-js's SourceMapConsumer — handles all VLQ decoding,
+     * binary search over segments, and source resolution internally.
+     */
     private lookupMapping;
-    private decodeMappings;
-    private decodeVLQ;
-    private base64Decode;
     private resolveSourcePath;
     private evictCache;
     private hashString;

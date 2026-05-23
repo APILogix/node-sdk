@@ -6,23 +6,47 @@
  */
 
 import type { SDKEvent, Event } from '../types/event.js'
-import { processEvent } from '../core/event-pipeline.js'
+import { enqueueEvent } from '../core/event-pipeline.js'
+import type { EventReceipt } from '../core/event-receipt.js'
 import { getLogger } from '../utils/logger.js'
 
 /**
  * Capture an event and route it through the full processing pipeline.
  *
+ * Returns an `EventReceipt` with clear async acceptance semantics:
+ *   - `receipt.accepted` — event was admitted into the pipeline
+ *   - `receipt.eventId` — assigned event ID for correlation
+ *   - `receipt.reason` — why the event was rejected (if not accepted)
+ *   - `receipt.processed` — promise resolving when processing completes
+ *
  * @param event - Any SDK event (error, request, message, metric, or custom)
- * @returns true if the event was accepted into the queue, false if dropped
+ * @returns EventReceipt with pipeline acceptance status
+ *
+ * @example
+ * ```ts
+ * const receipt = captureEvent(event)
+ * if (!receipt.accepted) {
+ *   console.warn('Event dropped:', receipt.reason)
+ * }
+ * ```
  */
-export function captureEvent(event: SDKEvent | Event): boolean {
+export function captureEvent(event: SDKEvent | Event): EventReceipt {
   const logger = getLogger()
 
   try {
-    return processEvent(event)
+    return enqueueEvent(event)
   } catch (error) {
     // captureEvent must NEVER throw — it must be safe to call anywhere
     logger.error('captureEvent failed unexpectedly', { error })
-    return false
+    // Return a safe rejected receipt
+    const eventId = (event.eventId && typeof event.eventId === 'string')
+      ? event.eventId
+      : 'unknown'
+    return {
+      accepted: false,
+      eventId,
+      reason: 'internal_error',
+      processed: Promise.resolve(false),
+    }
   }
 }

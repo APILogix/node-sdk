@@ -54,6 +54,11 @@ export { captureMessage } from './capture/captureMessage.js'
 export { captureEvent } from './capture/captureEvent.js'
 export { captureMetric, incrementCounter, setGauge, recordHistogram, addUpDownCounter } from './capture/captureMetric.js'
 
+// ─── Pipeline Acknowledgment ────────────────────────────────────────────────
+
+export { enqueueEvent } from './core/event-pipeline.js'
+export type { EventReceipt } from './core/event-receipt.js'
+
 // ─── Context ────────────────────────────────────────────────────────────────
 
 export { addBreadcrumb, getRequestContext, getTraceId, getSpanId } from './core/context.js'
@@ -78,7 +83,7 @@ export type { User, ScopeData } from './core/scope.js'
 // ─── Tracing ────────────────────────────────────────────────────────────────
 
 export { startSpan, withSpan, withSpanSync, getActiveSpan, flushTracer } from './tracing/tracer.js'
-export { extractTraceContext, injectTraceContext, parseTraceparent, createTraceparent } from './tracing/context-propagation.js'
+export { extractTraceContext, injectTraceContext } from './tracing/context-propagation.js'
 export type { SpanStatus, SpanOptions, SpanLink } from './tracing/span.js'
 export { PulseSpan } from './tracing/span.js'
 
@@ -99,14 +104,44 @@ export { setLogger, getLogger, setDebugMode, setLogLevel, setLogFormat, getLogFo
 
 // ─── Types (for consumers and plugin authors) ──────────────────────────────
 
-export type { SDKInitOptions, RemoteConfig, ResolvedSDKConfig, TransportOptions, PlanTier, PlanFeatures } from './types/config.js'
-export type { SDKEvent, RequestEvent, ErrorEvent, MessageEvent, MetricEvent, EventMetadata, StackFrame } from './types/event.js'
+export type {
+  SDKInitOptions, RemoteConfig, ResolvedSDKConfig, TransportOptions, PlanTier, PlanFeatures,
+  // Remote config types
+  RemoteConfigResponse, FeaturesConfig, SamplingConfig, InstrumentationConfig,
+  TracingRemoteConfig, ErrorsConfig, LoggingConfig, MetricsRemoteConfig,
+  ProfilingConfig, SecurityConfig, TransportRemoteConfig, LimitsConfig,
+  KillswitchesConfig, VersionPolicyConfig, CacheConfig, ConfigMeta, ConfigDiff,
+  TransportRouteName, TransportEndpointConfig,
+} from './types/config.js'
+export type {
+  SDKEvent, RequestEvent, ErrorEvent, MessageEvent, MetricEvent, EventMetadata, StackFrame,
+  LogEvent, ProfileEvent, ReplayEvent, CronCheckInEvent, SpanEvent,
+} from './types/event.js'
 export type { Breadcrumb, BreadcrumbInput, BreadcrumbHint } from './types/breadcrumb.js'
 export type { SeverityLevel } from './types/severity.js'
 export { Severity, severityFromString } from './types/severity.js'
 export type { SDKPlugin, PluginMeta, PluginContext, EventProcessor, BreadcrumbProcessor } from './types/plugin.js'
 export type { CaptureErrorOptions, ParsedError, ErrorGrouping } from './types/error.js'
-export type { TransportResult, IngestPayload, TransportHealth, TransportAdapter } from './types/transport.js'
+export type { TransportResult, IngestPayload, TransportHealth, TransportAdapter, RouteTransportHealth, MultiRouteTransportHealth } from './types/transport.js'
+
+// ─── Remote Config Engine ───────────────────────────────────────────────────
+
+export { ConfigManager } from './core/config-manager.js'
+export { KillswitchEngine } from './core/killswitch-engine.js'
+export { FeatureController } from './core/feature-controller.js'
+export { SamplingEngine } from './core/sampling-engine.js'
+export { LimitsEngine } from './core/limits-engine.js'
+export { VersionPolicy } from './core/version-policy.js'
+export { diffConfigs } from './core/config-differ.js'
+export { SecurityScrubber } from './processors/security-scrubber.js'
+export { TransportRouter } from './transport/transport-router.js'
+export { RouteTransportManager } from './transport/route-transport-manager.js'
+
+// ─── Subsystems ─────────────────────────────────────────────────────────────
+
+export { LoggingSubsystem } from './subsystems/logging-subsystem.js'
+export { ProfilingSubsystem } from './subsystems/profiling-subsystem.js'
+export { CronSubsystem } from './subsystems/cron-subsystem.js'
 
 // ─── Plan Gating ────────────────────────────────────────────────────────────
 
@@ -119,7 +154,7 @@ export type { EventLoopLagStats, EventLoopLagOptions } from './utils/event-loop-
 
 // ─── Resource Detection ───────────────────────────────────────────────────────
 
-export { detectResources } from './utils/resource-detector.js'
+export { detectResources, detectOtelResource } from './utils/resource-detector.js'
 export type { ResourceAttributes } from './utils/resource-detector.js'
 
 // ─── Transport Internals (advanced) ──────────────────────────────────────────
@@ -143,7 +178,9 @@ export { persistentStorage } from './storage/persistent-storage.js'
 export { sourceMapResolver } from './processors/source-map-resolver.js'
 export { metricsRegistry } from './metrics/registry.js'
 export { slowRequestDetector } from './processors/slow-request-detector.js'
+export { persistenceGovernor } from './storage/persistence-governor.js'
 export type { PersistentStorageOptions } from './storage/persistent-storage.js'
+export type { DurabilityTier, PersistenceGovernorOptions, PersistenceStats } from './storage/persistence-governor.js'
 export type { SourceMapResolverOptions } from './processors/source-map-resolver.js'
 export type { MetricRegistryOptions, HistogramOptions, CounterOptions, MetricLabels } from './metrics/registry.js'
 export type { SlowRequestOptions } from './processors/slow-request-detector.js'
@@ -160,6 +197,16 @@ import { persistentStorage } from './storage/persistent-storage.js'
 import { sourceMapResolver } from './processors/source-map-resolver.js'
 import { metricsRegistry } from './metrics/registry.js'
 import { slowRequestDetector } from './processors/slow-request-detector.js'
+
+// ─── Shared Singleton ───────────────────────────────────────────────────────
+
+let sharedMemoryMonitor: MemoryPressureMonitor | null = null
+function getSharedMemoryMonitor(): MemoryPressureMonitor {
+  if (!sharedMemoryMonitor) {
+    sharedMemoryMonitor = new MemoryPressureMonitor()
+  }
+  return sharedMemoryMonitor
+}
 
 /**
  * Get a comprehensive SDK health snapshot for operational dashboards.
@@ -180,8 +227,7 @@ export function getSDKHealth(): {
   metrics: { histogramCount: number; counterCount: number; gaugeCount: number; totalFlushed: number }
   slowRequests: { totalChecked: number; totalSlow: number; slowRate: number; trackedRoutes: number }
 } {
-  const monitor = new MemoryPressureMonitor()
-  const memState = monitor.getState()
+  const memState = getSharedMemoryMonitor().getState()
   const sessionMgr = getSessionManager()
   const sessionHealth = sessionMgr.getSessionHealth()
   const dedupStats = errorDeduplicator.getStats()
@@ -221,9 +267,9 @@ export function getSDKHealth(): {
       hitRate: sourceMapStats.hitRate,
     },
     metrics: {
-      histogramCount: metricsStats.histogramCount,
-      counterCount: metricsStats.counterCount,
-      gaugeCount: metricsStats.gaugeCount,
+      histogramCount: metricsStats.otelStats?.histogramCount ?? 0,
+      counterCount: metricsStats.otelStats?.counterCount ?? 0,
+      gaugeCount: metricsStats.otelStats?.gaugeCount ?? 0,
       totalFlushed: metricsStats.totalFlushed,
     },
     slowRequests: {
@@ -234,3 +280,4 @@ export function getSDKHealth(): {
     },
   }
 }
+

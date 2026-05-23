@@ -45,13 +45,15 @@ export { captureRequest } from './capture/captureRequest.js';
 export { captureMessage } from './capture/captureMessage.js';
 export { captureEvent } from './capture/captureEvent.js';
 export { captureMetric, incrementCounter, setGauge, recordHistogram, addUpDownCounter } from './capture/captureMetric.js';
+// ─── Pipeline Acknowledgment ────────────────────────────────────────────────
+export { enqueueEvent } from './core/event-pipeline.js';
 // ─── Context ────────────────────────────────────────────────────────────────
 export { addBreadcrumb, getRequestContext, getTraceId, getSpanId } from './core/context.js';
 // ─── Scope Management ───────────────────────────────────────────────────────
 export { setUser, setTag, setTags, removeTag, setExtra, setExtras, removeExtra, setContext, getScopeData, clearScope, withScope, } from './core/scope.js';
 // ─── Tracing ────────────────────────────────────────────────────────────────
 export { startSpan, withSpan, withSpanSync, getActiveSpan, flushTracer } from './tracing/tracer.js';
-export { extractTraceContext, injectTraceContext, parseTraceparent, createTraceparent } from './tracing/context-propagation.js';
+export { extractTraceContext, injectTraceContext } from './tracing/context-propagation.js';
 export { PulseSpan } from './tracing/span.js';
 // ─── Session ────────────────────────────────────────────────────────────────
 export { getSessionManager } from './session/session-manager.js';
@@ -65,7 +67,7 @@ export { getPlanDefaults, isFeatureAllowed } from './core/plan-gate.js';
 // ─── Event Loop Monitoring ──────────────────────────────────────────────────────
 export { EventLoopLagMonitor } from './utils/event-loop-lag.js';
 // ─── Resource Detection ───────────────────────────────────────────────────────
-export { detectResources } from './utils/resource-detector.js';
+export { detectResources, detectOtelResource } from './utils/resource-detector.js';
 // ─── Transport Internals (advanced) ──────────────────────────────────────────
 export { RetryBudget, globalRetryBudget } from './transport/retry.js';
 // ─── Advanced Diagnostics ───────────────────────────────────────────────────
@@ -78,6 +80,7 @@ export { persistentStorage } from './storage/persistent-storage.js';
 export { sourceMapResolver } from './processors/source-map-resolver.js';
 export { metricsRegistry } from './metrics/registry.js';
 export { slowRequestDetector } from './processors/slow-request-detector.js';
+export { persistenceGovernor } from './storage/persistence-governor.js';
 // ─── Diagnostics ────────────────────────────────────────────────────────────
 import { getCircuitState } from './transport/batcher.js';
 import { eventQueue } from './transport/queue.js';
@@ -89,13 +92,20 @@ import { persistentStorage } from './storage/persistent-storage.js';
 import { sourceMapResolver } from './processors/source-map-resolver.js';
 import { metricsRegistry } from './metrics/registry.js';
 import { slowRequestDetector } from './processors/slow-request-detector.js';
+// ─── Shared Singleton ───────────────────────────────────────────────────────
+let sharedMemoryMonitor = null;
+function getSharedMemoryMonitor() {
+    if (!sharedMemoryMonitor) {
+        sharedMemoryMonitor = new MemoryPressureMonitor();
+    }
+    return sharedMemoryMonitor;
+}
 /**
  * Get a comprehensive SDK health snapshot for operational dashboards.
  * Safe to call at any time — returns degraded info if SDK isn't initialized.
  */
 export function getSDKHealth() {
-    const monitor = new MemoryPressureMonitor();
-    const memState = monitor.getState();
+    const memState = getSharedMemoryMonitor().getState();
     const sessionMgr = getSessionManager();
     const sessionHealth = sessionMgr.getSessionHealth();
     const dedupStats = errorDeduplicator.getStats();
@@ -134,9 +144,9 @@ export function getSDKHealth() {
             hitRate: sourceMapStats.hitRate,
         },
         metrics: {
-            histogramCount: metricsStats.histogramCount,
-            counterCount: metricsStats.counterCount,
-            gaugeCount: metricsStats.gaugeCount,
+            histogramCount: metricsStats.otelStats?.histogramCount ?? 0,
+            counterCount: metricsStats.otelStats?.counterCount ?? 0,
+            gaugeCount: metricsStats.otelStats?.gaugeCount ?? 0,
             totalFlushed: metricsStats.totalFlushed,
         },
         slowRequests: {

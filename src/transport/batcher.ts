@@ -17,6 +17,8 @@ import { CircuitBreaker } from './circuit-breaker.js'
 import { TokenBucketRateLimiter } from './rate-limit.js'
 import { MemoryPressureMonitor } from '../utils/backpressure.js'
 import { client } from '../core/client.js'
+import { persistentStorage } from '../storage/persistent-storage.js'
+import { drainPendingEventProcessing } from '../core/event-pipeline.js'
 
 // ─── State ──────────────────────────────────────────────────────────────────
 
@@ -82,6 +84,8 @@ export async function flush(): Promise<void> {
   const MAX_FLUSH_ATTEMPTS = 3
   let attempts = 0
 
+  await drainPendingEventProcessing()
+
   while (eventQueue.size() > 0) {
     if (attempts >= MAX_FLUSH_ATTEMPTS) {
       logger.warn('Flush max attempts reached — remaining events left in queue for next tick', {
@@ -100,7 +104,10 @@ export async function flush(): Promise<void> {
       logger.info('Flush sent successfully', { eventCount: events.length })
     } catch (err) {
       circuitBreaker.recordFailure()
-      // Re-queue events instead of permanently dropping them
+      for (const event of events) {
+        persistentStorage.persist(event)
+      }
+      // Re-queue events after persistence so retry pressure can spill safely.
       eventQueue.requeueFront(events)
       logger.error('Flush failed; events re-queued', {
         error: err instanceof Error ? err.message : String(err),
@@ -112,6 +119,8 @@ export async function flush(): Promise<void> {
       attempts += 1
     }
   }
+
+  await persistentStorage.flush()
 }
 
 export function stopBatcher(): void {
@@ -224,7 +233,10 @@ async function tick(): Promise<void> {
     })
   } catch (err) {
     circuitBreaker.recordFailure()
-    // Re-queue events instead of permanently dropping them
+    for (const event of events) {
+      persistentStorage.persist(event)
+    }
+    // Re-queue events after persistence so retry pressure can spill safely.
     eventQueue.requeueFront(events)
 
     const cbState = circuitBreaker.getState()

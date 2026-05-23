@@ -14,10 +14,13 @@ const DEFAULT_MAX_ENTRIES = 5000;
 const CLEANUP_INTERVAL_MS = 300_000; // 5 minutes
 class ErrorDeduplicator {
     entries = new Map();
+    replaySeen = new Map();
+    maxReplayEntries = 1000;
     suppressionWindowMs = DEFAULT_SUPPRESSION_WINDOW_MS;
     maxEntries = DEFAULT_MAX_ENTRIES;
     cleanupTimer = null;
     suppressedCount = 0;
+    replayDuplicateCount = 0;
     initialized = false;
     configure(options = {}) {
         this.suppressionWindowMs = options.suppressionWindowMs ?? DEFAULT_SUPPRESSION_WINDOW_MS;
@@ -73,16 +76,46 @@ class ErrorDeduplicator {
         return {
             trackedErrors: this.entries.size,
             suppressedCount: this.suppressedCount,
+            replayDuplicateCount: this.replayDuplicateCount,
+            cacheSize: this.entries.size,
+            cacheCapacity: this.maxEntries,
             oldestEntry: oldest,
             newestEntry: newest,
         };
+    }
+    /**
+     * Check if a replayed event is a duplicate.
+     * Uses a separate map keyed by replayId to avoid false suppression.
+     */
+    isReplayDuplicate(fingerprint, replayId) {
+        const key = `${fingerprint}:${replayId}`;
+        if (this.replaySeen.has(key)) {
+            this.replayDuplicateCount++;
+            return true;
+        }
+        // Bound the replay seen map
+        if (this.replaySeen.size >= this.maxReplayEntries) {
+            // Evict oldest 10%
+            const toRemove = Math.floor(this.maxReplayEntries * 0.1);
+            const keys = this.replaySeen.keys();
+            for (let i = 0; i < toRemove; i++) {
+                const result = keys.next();
+                if (result.done)
+                    break;
+                this.replaySeen.delete(result.value);
+            }
+        }
+        this.replaySeen.set(key, epochMs());
+        return false;
     }
     /**
      * Reset all deduplication state.
      */
     reset() {
         this.entries.clear();
+        this.replaySeen.clear();
         this.suppressedCount = 0;
+        this.replayDuplicateCount = 0;
     }
     cleanup() {
         const now = epochMs();

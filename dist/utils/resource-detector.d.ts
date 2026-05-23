@@ -13,6 +13,7 @@
  * This module is modeled after OpenTelemetry's Resource Detectors but
  * with zero external dependencies.
  */
+import { type Resource } from '@opentelemetry/resources';
 export interface ResourceAttributes {
     /** SDK telemetry source */
     readonly 'telemetry.sdk.name': string;
@@ -50,4 +51,15 @@ export declare function detectResources(sdkVersion: string): ResourceAttributes;
  * @internal
  */
 export declare function resetResourceCache(): void;
+/**
+ * Detect and create an OTel Resource with all available metadata.
+ * Merges host, process, service, container, cloud, and K8s attributes.
+ * Results are cached — detection happens once.
+ *
+ * @param service - Service name
+ * @param version - Service version (release)
+ * @param environment - Deployment environment
+ * @param sdkVersion - SDK version string
+ */
+export declare function detectOtelResource(service: string, version: string, environment: string, sdkVersion: string): Resource;
 //# sourceMappingURL=resource-detector.d.ts.map

@@ -5,7 +5,7 @@
 import { Severity } from '../types/severity.js';
 import { captureEvent } from './captureEvent.js';
 import { getLogger } from '../utils/logger.js';
-import { getRequestContext } from '../core/context.js';
+import { getRequestContext, getSpanId, getTraceId } from '../core/context.js';
 import { epochMs } from '../utils/time.js';
 /**
  * Capture a text message at the given severity level.
@@ -26,8 +26,8 @@ export function captureMessage(message, severity = Severity.Info, context) {
             timestamp: epochMs(),
             context,
             breadcrumbs: breadcrumbs.length > 0 ? breadcrumbs : undefined,
-            traceId: ctx?.traceId,
-            spanId: ctx?.spanId,
+            traceId: getTraceId(),
+            spanId: getSpanId(),
         };
         captureEvent(event);
     }

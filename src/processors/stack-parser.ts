@@ -1,20 +1,164 @@
 /**
- * Stack frame parser — extracts structured stack frames from Error.stack strings.
+ * Stack frame parser — extracts structured stack frames from errors.
  *
- * Supports:
- * - V8 stack format (Node.js, Chrome)
- * - Windows and Unix file paths
- * - ESM file:// URLs
- * - Anonymous functions
- * - eval contexts
+ * Architecture:
+ *   Uses V8's structured CallSite API via Error.prepareStackTrace for
+ *   primary parsing. Falls back to regex-based parsing for:
+ *     - Pre-captured Error.stack strings (already serialized)
+ *     - Non-V8 runtimes (edge cases)
+ *     - Third-party errors with custom .stack properties
+ *
+ * V8 CallSite API advantages over regex:
+ *   - Version-resilient: structured API doesn't change format
+ *   - Async stack support: CallSites from async stack traces are handled natively
+ *   - Worker-thread compatible: works identically in worker_threads
+ *   - Accurate: no regex ambiguity for complex filenames/function names
+ *   - eval context: getEvalOrigin() provides structured eval info
+ *
+ * Regex fallback is retained because:
+ *   - Error.stack may already be serialized (e.g., from JSON logs, RPC)
+ *   - Some errors have custom .stack properties (non-V8 format)
+ *   - prepareStackTrace is a global hook — we use it thread-locally
+ *     and restore immediately to avoid interfering with third-party code
  *
  * Classifies frames as in-app vs library (node_modules, node: internals).
+ * Compatible with OTel exception.stacktrace semantic conventions.
  */
 
 import type { StackFrame } from '../types/event.js'
 export type { StackFrame } from '../types/event.js'
 
-// ─── V8 Stack Frame Patterns ────────────────────────────────────────────────
+// ─── V8 CallSite Interface ──────────────────────────────────────────────────
+
+/**
+ * V8 CallSite — structured stack frame object provided by V8's
+ * Error.prepareStackTrace hook. This is the same interface used by
+ * Node.js core, VS Code, Sentry, and most enterprise error tooling.
+ *
+ * Aligned with @types/node's NodeJS.CallSite definition.
+ *
+ * @see https://v8.dev/docs/stack-trace-api
+ */
+interface V8CallSite {
+  getTypeName(): string | null
+  getFunctionName(): string | null
+  getMethodName(): string | null
+  getFileName(): string | null
+  getLineNumber(): number | null
+  getColumnNumber(): number | null
+  getEvalOrigin(): string | undefined
+  isToplevel(): boolean
+  isEval(): boolean
+  isNative(): boolean
+  isConstructor(): boolean
+  isAsync(): boolean
+  getThis(): unknown
+  toString(): string
+}
+
+// ─── V8 Structured Parsing ──────────────────────────────────────────────────
+
+/**
+ * Extract structured stack frames from a live Error object using V8's
+ * CallSite API via a temporary prepareStackTrace hook.
+ *
+ * This is the primary parsing path. It provides accurate, version-resilient
+ * stack frame extraction without regex.
+ *
+ * Safety:
+ *   - Saves/restores Error.prepareStackTrace immediately
+ *   - Never leaks the custom hook
+ *   - Isolated per-call (no global mutation beyond the hook swap)
+ *   - Accessing error.stack triggers V8 to call our hook exactly once
+ *   - After restoration, the original .stack string is available
+ */
+function extractCallSites(error: Error): V8CallSite[] | null {
+  // V8 environments expose prepareStackTrace on the Error constructor
+  if (typeof Error.prepareStackTrace !== 'function' && Error.prepareStackTrace !== undefined) {
+    // prepareStackTrace exists but isn't a function — unusual runtime, bail
+    return null
+  }
+
+  const originalPrepare = Error.prepareStackTrace
+  let callSites: V8CallSite[] | null = null
+
+  try {
+    Error.prepareStackTrace = (_err: Error, sites: V8CallSite[]): string => {
+      callSites = sites
+      // Return a dummy string — we don't need the formatted output
+      return ''
+    }
+
+    // Access .stack to trigger V8's prepareStackTrace
+    // This is the documented V8 API — it's not a hack
+    void error.stack
+  } finally {
+    // ALWAYS restore — even if prepareStackTrace throws
+    Error.prepareStackTrace = originalPrepare
+  }
+
+  return callSites
+}
+
+/**
+ * Convert a V8 CallSite into our StackFrame structure.
+ */
+function callSiteToFrame(site: V8CallSite): StackFrame {
+  const filename = resolveCallSiteFilename(site)
+  const fn = resolveCallSiteFunctionName(site)
+  const lineno = site.getLineNumber()
+  const colno = site.getColumnNumber()
+
+  return {
+    function: fn,
+    filename: normalizeFilename(filename),
+    lineno: lineno != null && lineno > 0 ? lineno : undefined,
+    colno: colno != null && colno > 0 ? colno : undefined,
+    inApp: isInAppFrame(filename),
+    module: extractModule(filename),
+  }
+}
+
+/**
+ * Resolve the filename from a CallSite, handling eval contexts.
+ */
+function resolveCallSiteFilename(site: V8CallSite): string {
+  if (site.isEval()) {
+    // Eval frames: getEvalOrigin() returns e.g. "eval at foo (file.js:1:1)"
+    const evalOrigin = site.getEvalOrigin()
+    if (evalOrigin) {
+      // Try to extract the actual file from the eval origin
+      const match = /\((.+?):\d+:\d+\)/.exec(evalOrigin)
+      if (match && match[1]) return match[1]
+      return evalOrigin
+    }
+  }
+
+  return site.getFileName() ?? '<unknown>'
+}
+
+/**
+ * Resolve a human-readable function name from a CallSite.
+ * Combines type name + method name for method calls.
+ */
+function resolveCallSiteFunctionName(site: V8CallSite): string {
+  const fnName = site.getFunctionName()
+  if (fnName) return fnName
+
+  const methodName = site.getMethodName()
+  const typeName = site.getTypeName()
+
+  if (typeName && methodName) {
+    return `${typeName}.${methodName}`
+  }
+
+  if (methodName) return methodName
+  if (typeName) return typeName
+
+  return '<anonymous>'
+}
+
+// ─── Regex Fallback ─────────────────────────────────────────────────────────
 
 // Matches: "    at FunctionName (file:line:col)"
 const V8_FRAME_WITH_PARENS = /^\s*at\s+(.+?)\s+\((.+?):(\d+):(\d+)\)$/
@@ -22,34 +166,14 @@ const V8_FRAME_WITH_PARENS = /^\s*at\s+(.+?)\s+\((.+?):(\d+):(\d+)\)$/
 const V8_FRAME_ANONYMOUS = /^\s*at\s+(.+?):(\d+):(\d+)$/
 // Matches: "    at eval (eval at ..., file:line:col)"
 const V8_EVAL_FRAME = /^\s*at\s+eval\s+\(eval\s+at\s+(.+?)\s+\((.+?):(\d+):(\d+)\)/
-
-// Frames to always exclude from parsed output
-const INTERNAL_FRAME_PATTERNS = [
-  /^node:/,
-  /^internal\//,
-  /\bbootstrap_node\b/,
-  /\bmodule\.js\b/,
-]
+// Matches: "    at async FunctionName (file:line:col)"
+const V8_ASYNC_FRAME = /^\s*at\s+async\s+(.+?)\s+\((.+?):(\d+):(\d+)\)$/
 
 /**
- * Parse an Error.stack string into structured stack frames.
- * Filters out internal Node.js frames.
- * Returns frames in call-order (most recent first).
+ * Parse a stack frame line using regex patterns.
+ * Used as fallback when CallSite API is unavailable.
  */
-export function parseStack(stack?: string): StackFrame[] {
-  if (!stack) return []
-
-  return stack
-    .split('\n')
-    .slice(1) // Skip the error message line
-    .map(line => line.trim())
-    .filter(line => line.startsWith('at '))
-    .map(parseLine)
-    .filter((frame): frame is StackFrame => frame !== null)
-    .filter(frame => !isInternalFrame(frame.filename))
-}
-
-function parseLine(line: string): StackFrame | null {
+function parseLineRegex(line: string): StackFrame | null {
   // Try eval frame first
   const evalMatch = V8_EVAL_FRAME.exec(line)
   if (evalMatch) {
@@ -58,6 +182,17 @@ function parseLine(line: string): StackFrame | null {
       evalMatch[2] ?? '<unknown>',
       parseInt(evalMatch[3] ?? '0', 10),
       parseInt(evalMatch[4] ?? '0', 10)
+    )
+  }
+
+  // Async frame (Node.js 12+ async stack traces)
+  const asyncMatch = V8_ASYNC_FRAME.exec(line)
+  if (asyncMatch) {
+    return createFrame(
+      `async ${asyncMatch[1] ?? '<anonymous>'}`,
+      asyncMatch[2] ?? '<unknown>',
+      parseInt(asyncMatch[3] ?? '0', 10),
+      parseInt(asyncMatch[4] ?? '0', 10)
     )
   }
 
@@ -86,6 +221,61 @@ function parseLine(line: string): StackFrame | null {
   return null
 }
 
+/**
+ * Parse an Error.stack string using regex fallback.
+ */
+function parseStackString(stack: string): StackFrame[] {
+  return stack
+    .split('\n')
+    .slice(1) // Skip the error message line
+    .map(line => line.trim())
+    .filter(line => line.startsWith('at '))
+    .map(parseLineRegex)
+    .filter((frame): frame is StackFrame => frame !== null)
+    .filter(frame => !isInternalFrame(frame.filename))
+}
+
+// ─── Public API ─────────────────────────────────────────────────────────────
+
+// Frames to always exclude from parsed output
+const INTERNAL_FRAME_PATTERNS = [
+  /^node:/,
+  /^internal\//,
+  /\bbootstrap_node\b/,
+  /\bmodule\.js\b/,
+]
+
+/**
+ * Parse an Error into structured stack frames.
+ *
+ * Primary path: V8 CallSite API (structured, version-resilient)
+ * Fallback path: regex parsing of Error.stack string
+ *
+ * Accepts either a live Error object or a pre-serialized stack string.
+ * When a live Error is provided, the CallSite API is preferred for accuracy.
+ *
+ * Returns frames in call-order (most recent first).
+ * Filters out internal Node.js frames.
+ */
+export function parseStack(stack?: string, error?: Error): StackFrame[] {
+  // Path 1: Live Error object — try V8 structured CallSite API first
+  if (error) {
+    const callSites = extractCallSites(error)
+    if (callSites && callSites.length > 0) {
+      return callSites
+        .filter(site => !site.isNative())
+        .map(callSiteToFrame)
+        .filter(frame => !isInternalFrame(frame.filename))
+    }
+  }
+
+  // Path 2: Pre-serialized stack string — regex fallback
+  if (!stack) return []
+  return parseStackString(stack)
+}
+
+// ─── Shared Helpers ─────────────────────────────────────────────────────────
+
 function createFrame(
   fn: string,
   filename: string,
@@ -110,6 +300,7 @@ function isInAppFrame(filename: string): boolean {
   if (filename.startsWith('node:')) return false
   if (filename.startsWith('internal/')) return false
   if (filename.includes('<anonymous>')) return false
+  if (filename.includes('<unknown>')) return false
   return true
 }
 

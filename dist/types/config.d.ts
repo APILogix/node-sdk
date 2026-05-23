@@ -61,7 +61,7 @@ export interface SDKInitOptions {
     /** Breadcrumb processor — return null to drop a breadcrumb. */
     readonly beforeBreadcrumb?: BreadcrumbProcessor;
     /** Called before every event is sent — return null to drop. Pro+ plans only. */
-    readonly beforeSend?: (event: Record<string, unknown>) => Record<string, unknown> | null;
+    readonly beforeSend?: (event: Record<string, unknown>) => Record<string, unknown> | null | Promise<Record<string, unknown> | null>;
     /** Transport configuration overrides. */
     readonly transport?: TransportOptions;
     /** Enable SDK debug mode — verbose console.log output. Defaults to false. */
@@ -178,7 +178,7 @@ export declare const sdkInitOptionsSchema: z.ZodObject<{
     plugins: z.ZodOptional<z.ZodReadonly<z.ZodArray<z.ZodCustom<SDKPlugin, SDKPlugin>>>>;
     eventProcessors: z.ZodOptional<z.ZodReadonly<z.ZodArray<z.ZodCustom<EventProcessor, EventProcessor>>>>;
     beforeBreadcrumb: z.ZodOptional<z.ZodCustom<BreadcrumbProcessor, BreadcrumbProcessor>>;
-    beforeSend: z.ZodOptional<z.ZodCustom<(event: Record<string, unknown>) => Record<string, unknown> | null, (event: Record<string, unknown>) => Record<string, unknown> | null>>;
+    beforeSend: z.ZodOptional<z.ZodCustom<(event: Record<string, unknown>) => Record<string, unknown> | null | Promise<Record<string, unknown> | null>, (event: Record<string, unknown>) => Record<string, unknown> | null | Promise<Record<string, unknown> | null>>>;
     debug: z.ZodOptional<z.ZodBoolean>;
     logLevel: z.ZodOptional<z.ZodEnum<{
         debug: "debug";

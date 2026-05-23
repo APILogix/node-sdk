@@ -46,6 +46,21 @@ export declare class MemoryPressureMonitor extends EventEmitter {
     getState(): MemoryPressureState;
     /** Returns true if the system is under elevated or critical memory pressure. */
     isUnderPressure(): boolean;
+    /**
+     * Check if an event should be accepted based on memory pressure and priority.
+     * - normal: accept all
+     * - elevated: reject 'normal' priority
+     * - critical: reject 'normal' and 'high', only 'critical' survives
+     */
+    shouldAcceptEvent(priority: EventPriority): boolean;
+    /** Convenience method to register a pressure change callback. */
+    onPressureChange(callback: (state: MemoryPressureState) => void): void;
     private check;
 }
+export type EventPriority = 'critical' | 'high' | 'normal';
+/**
+ * Get current memory pressure level without needing a monitor instance.
+ * Quick one-shot check for use in hot paths.
+ */
+export declare function getMemoryPressureLevel(): PressureLevel;
 //# sourceMappingURL=backpressure.d.ts.map

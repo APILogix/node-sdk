@@ -1,25 +1,16 @@
 /**
- * HTTP Client Instrumentation — automatically traces outbound HTTP/HTTPS requests.
+ * Compatibility shim.
  *
- * Wraps Node.js native http.request and https.request to:
- * - Create child spans for each outbound HTTP call
- * - Inject W3C trace context headers (traceparent/tracestate)
- * - Record request/response attributes per OTel semantic conventions
- * - Capture errors and timeouts
- * - Add breadcrumbs for each outbound call
- *
- * Usage:
- *   import { instrumentHttpClient } from '@vikasbaplawat1/pulse-sdk'
- *   instrumentHttpClient() // call once during app startup
+ * HTTP tracing is owned by OpenTelemetry HttpInstrumentation and
+ * UndiciInstrumentation. This function intentionally does not monkey-patch
+ * node:http or node:https, preventing duplicate spans and recursive SDK
+ * self-instrumentation.
  */
 /**
- * Patch Node.js http/https modules to automatically trace outbound requests.
- * Idempotent — safe to call multiple times.
+ * @deprecated HTTP tracing is fully owned by OpenTelemetry HttpInstrumentation.
+ * This function is a no-op retained for backward compatibility.
+ * Remove calls to this function — OpenTelemetry handles HTTP tracing automatically.
  */
 export declare function instrumentHttpClient(): void;
-/**
- * Reset instrumentation state — for testing.
- * @internal
- */
 export declare function resetHttpInstrumentation(): void;
 //# sourceMappingURL=http.d.ts.map

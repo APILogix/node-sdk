@@ -11,6 +11,7 @@ import { captureEvent } from './captureEvent.js'
 import { getLogger } from '../utils/logger.js'
 import { epochMs } from '../utils/time.js'
 import { metricsRegistry } from '../metrics/registry.js'
+import { KillswitchEngine } from '../core/killswitch-engine.js'
 
 /**
  * Capture a metric sample.
@@ -29,6 +30,12 @@ export function captureMetric(
   const logger = getLogger()
 
   try {
+    // ─── Killswitch Gate ──────────────────────────────────────────────
+    const killswitch = KillswitchEngine.getInstance()
+    if (killswitch?.isKilled('disableMetrics')) {
+      return // Silently no-op when metrics are killed
+    }
+
     const labels = options?.tags ?? {}
     if (type === 'histogram') {
       metricsRegistry.recordHistogram(name, value, { labels })

@@ -1,29 +1,28 @@
-import { AsyncLocalStorage } from 'async_hooks';
+import { context as otelContext, createContextKey, trace } from '@opentelemetry/api';
 import { Severity } from '../types/severity.js';
 import { isoNow } from '../utils/time.js';
 import { RingBuffer } from './ring-buffer.js';
 import { client } from './client.js';
 import { getLogger } from '../utils/logger.js';
-// ─── AsyncLocalStorage Instance ─────────────────────────────────────────────
-export const asyncLocalStorage = new AsyncLocalStorage();
+const CONTEXT_STORE_KEY = createContextKey('pulse-sdk-context-store');
 // ─── Context Accessors ──────────────────────────────────────────────────────
 /**
  * Get the current request context, or undefined if outside a context scope.
  */
 export function getRequestContext() {
-    return asyncLocalStorage.getStore();
+    return otelContext.active().getValue(CONTEXT_STORE_KEY);
 }
 /**
  * Get the current trace ID from context, or undefined.
  */
 export function getTraceId() {
-    return asyncLocalStorage.getStore()?.traceId;
+    return trace.getActiveSpan()?.spanContext().traceId;
 }
 /**
  * Get the current span ID from context, or undefined.
  */
 export function getSpanId() {
-    return asyncLocalStorage.getStore()?.spanId;
+    return trace.getActiveSpan()?.spanContext().spanId;
 }
 // ─── Context Mutation (within scope) ────────────────────────────────────────
 /**
@@ -31,7 +30,7 @@ export function getSpanId() {
  * No-op if called outside a context scope.
  */
 export function addBreadcrumb(input) {
-    const store = asyncLocalStorage.getStore();
+    const store = getRequestContext();
     if (!store)
         return;
     let breadcrumb = {
@@ -82,7 +81,7 @@ export function addBreadcrumb(input) {
  * Returns an empty array if outside a context scope.
  */
 export function getBreadcrumbs() {
-    const store = asyncLocalStorage.getStore();
+    const store = getRequestContext();
     if (!store)
         return [];
     return store.breadcrumbs.toArray();
@@ -93,10 +92,11 @@ export function getBreadcrumbs() {
  * Used by instrumentation middleware to establish per-request context.
  */
 export function createContextStore(requestId, maxBreadcrumbs, overrides) {
+    const activeSpanContext = trace.getActiveSpan()?.spanContext();
     return {
         requestId,
-        traceId: overrides?.traceId,
-        spanId: overrides?.spanId,
+        traceId: activeSpanContext?.traceId ?? overrides?.traceId,
+        spanId: activeSpanContext?.spanId ?? overrides?.spanId,
         userId: overrides?.userId,
         sessionId: overrides?.sessionId,
         baggage: overrides?.baggage,
@@ -110,6 +110,6 @@ export function createContextStore(requestId, maxBreadcrumbs, overrides) {
  * The context is automatically propagated through all async operations.
  */
 export function withContext(store, fn) {
-    return asyncLocalStorage.run(store, fn);
+    return otelContext.with(otelContext.active().setValue(CONTEXT_STORE_KEY, store), fn);
 }
 //# sourceMappingURL=context.js.map

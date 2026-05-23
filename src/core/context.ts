@@ -1,4 +1,4 @@
-import { AsyncLocalStorage } from 'async_hooks'
+import { context as otelContext, createContextKey, trace } from '@opentelemetry/api'
 import type { Breadcrumb, BreadcrumbInput } from '../types/breadcrumb.js'
 import type { BreadcrumbHint } from '../types/breadcrumb.js'
 import type { SeverityLevel } from '../types/severity.js'
@@ -11,15 +11,17 @@ import { getLogger } from '../utils/logger.js'
 // ─── Context Store ──────────────────────────────────────────────────────────
 
 /**
- * The async context store — propagated through promises, timers, callbacks.
- * Every request gets its own isolated store via AsyncLocalStorage.run().
+ * Metadata carried on the OpenTelemetry context.
+ *
+ * Trace/span ownership belongs exclusively to OTel. The SDK stores request
+ * metadata, breadcrumbs, user/session data, tags, and extra context here.
  */
 export interface ContextStore {
   /** Unique request identifier. */
   readonly requestId: string
-  /** OpenTelemetry trace ID (if tracing enabled). */
+  /** OpenTelemetry trace ID at context creation time. Prefer getTraceId(). */
   readonly traceId?: string | undefined
-  /** OpenTelemetry span ID (if tracing enabled). */
+  /** OpenTelemetry span ID at context creation time. Prefer getSpanId(). */
   readonly spanId?: string | undefined
   /** User identifier for user-scoped telemetry. */
   readonly userId?: string | undefined
@@ -35,9 +37,7 @@ export interface ContextStore {
   readonly extra?: Readonly<Record<string, unknown>> | undefined
 }
 
-// ─── AsyncLocalStorage Instance ─────────────────────────────────────────────
-
-export const asyncLocalStorage = new AsyncLocalStorage<ContextStore>()
+const CONTEXT_STORE_KEY = createContextKey('pulse-sdk-context-store')
 
 // ─── Context Accessors ──────────────────────────────────────────────────────
 
@@ -45,21 +45,21 @@ export const asyncLocalStorage = new AsyncLocalStorage<ContextStore>()
  * Get the current request context, or undefined if outside a context scope.
  */
 export function getRequestContext(): ContextStore | undefined {
-  return asyncLocalStorage.getStore()
+  return otelContext.active().getValue(CONTEXT_STORE_KEY) as ContextStore | undefined
 }
 
 /**
  * Get the current trace ID from context, or undefined.
  */
 export function getTraceId(): string | undefined {
-  return asyncLocalStorage.getStore()?.traceId
+  return trace.getActiveSpan()?.spanContext().traceId
 }
 
 /**
  * Get the current span ID from context, or undefined.
  */
 export function getSpanId(): string | undefined {
-  return asyncLocalStorage.getStore()?.spanId
+  return trace.getActiveSpan()?.spanContext().spanId
 }
 
 // ─── Context Mutation (within scope) ────────────────────────────────────────
@@ -69,7 +69,7 @@ export function getSpanId(): string | undefined {
  * No-op if called outside a context scope.
  */
 export function addBreadcrumb(input: BreadcrumbInput): void {
-  const store = asyncLocalStorage.getStore()
+  const store = getRequestContext()
   if (!store) return
 
   let breadcrumb: Breadcrumb = {
@@ -120,7 +120,7 @@ export function addBreadcrumb(input: BreadcrumbInput): void {
  * Returns an empty array if outside a context scope.
  */
 export function getBreadcrumbs(): readonly Breadcrumb[] {
-  const store = asyncLocalStorage.getStore()
+  const store = getRequestContext()
   if (!store) return []
   return store.breadcrumbs.toArray()
 }
@@ -136,10 +136,11 @@ export function createContextStore(
   maxBreadcrumbs: number,
   overrides?: Partial<Omit<ContextStore, 'requestId' | 'breadcrumbs'>>
 ): ContextStore {
+  const activeSpanContext = trace.getActiveSpan()?.spanContext()
   return {
     requestId,
-    traceId: overrides?.traceId,
-    spanId: overrides?.spanId,
+    traceId: activeSpanContext?.traceId ?? overrides?.traceId,
+    spanId: activeSpanContext?.spanId ?? overrides?.spanId,
     userId: overrides?.userId,
     sessionId: overrides?.sessionId,
     baggage: overrides?.baggage,
@@ -154,5 +155,5 @@ export function createContextStore(
  * The context is automatically propagated through all async operations.
  */
 export function withContext<T>(store: ContextStore, fn: () => T): T {
-  return asyncLocalStorage.run(store, fn)
+  return otelContext.with(otelContext.active().setValue(CONTEXT_STORE_KEY, store), fn)
 }

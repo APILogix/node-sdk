@@ -12,7 +12,8 @@
  * - Automatic cleanup of stale entries (TTL-based)
  * - Memory-mapped replay for fast startup
  */
-import { existsSync, mkdirSync, readFileSync, appendFileSync, writeFileSync, renameSync, unlinkSync, statSync } from 'fs';
+import { existsSync, unlinkSync, statSync } from 'fs';
+import { appendFile, mkdir, readFile, rename, unlink, writeFile } from 'fs/promises';
 import { join, dirname } from 'path';
 import { tmpdir } from 'os';
 import { createHash } from 'crypto';
@@ -37,6 +38,7 @@ class PersistentStorage {
     totalPersisted = 0;
     totalReplayed = 0;
     totalExpired = 0;
+    writeChain = Promise.resolve();
     configure(options = {}) {
         this.directory = options.directory ?? this.resolveDefaultDirectory();
         this.maxFileSizeBytes = options.maxFileSizeBytes ?? DEFAULT_MAX_FILE_SIZE_BYTES;
@@ -52,7 +54,7 @@ class PersistentStorage {
         this.initialized = true;
         const logger = getLogger();
         try {
-            this.ensureDirectory();
+            await this.ensureDirectory();
         }
         catch (error) {
             logger.warn('Persistent storage: failed to create directory, disabling persistence', {
@@ -61,7 +63,7 @@ class PersistentStorage {
             });
             return [];
         }
-        const replayed = this.replay();
+        const replayed = await this.replay();
         this.totalReplayed = replayed.length;
         logger.info('Persistent storage initialized', {
             directory: this.directory,
@@ -80,14 +82,14 @@ class PersistentStorage {
         this.buffer.push(event);
         this.eventCount++;
         if (this.eventCount >= this.maxEvents) {
-            this.rotate();
+            void this.rotate();
         }
         this.scheduleFlush();
     }
     /**
      * Force-flush all buffered events to disk immediately.
      */
-    flush() {
+    async flush() {
         if (this.flushTimer) {
             clearTimeout(this.flushTimer);
             this.flushTimer = null;
@@ -104,9 +106,9 @@ class PersistentStorage {
             entries.push(JSON.stringify(entry));
         }
         try {
-            this.checkAndRotate();
+            await this.checkAndRotate();
             const content = entries.join('\n') + '\n';
-            appendFileSync(this.dataFile, content, { encoding: 'utf8' });
+            await this.enqueueWrite(() => appendFile(this.dataFile, content, { encoding: 'utf8' }));
             this.totalPersisted += this.buffer.length;
             this.buffer = [];
         }
@@ -129,13 +131,13 @@ class PersistentStorage {
      * Replay persisted events from disk.
      * Returns events that are still valid (within TTL).
      */
-    replay() {
+    async replay() {
         const logger = getLogger();
         if (!existsSync(this.dataFile)) {
             return [];
         }
         try {
-            const content = readFileSync(this.dataFile, { encoding: 'utf8' });
+            const content = await readFile(this.dataFile, { encoding: 'utf8' });
             const lines = content.split('\n').filter(line => line.trim().length > 0);
             const now = epochMs();
             const validEvents = [];
@@ -155,7 +157,7 @@ class PersistentStorage {
             }
             // Rewrite file with only valid events (cleanup expired)
             if (this.totalExpired > 0) {
-                this.rewriteFile(validEvents);
+                await this.rewriteFile(validEvents);
             }
             logger.debug('Persistent storage: replay complete', {
                 totalLines: lines.length,
@@ -215,8 +217,8 @@ class PersistentStorage {
     /**
      * Shut down persistent storage — flush remaining events.
      */
-    shutdown() {
-        this.flush();
+    async shutdown() {
+        await this.flush();
         this.initialized = false;
     }
     // ─── Internal ─────────────────────────────────────────────────────────
@@ -224,37 +226,39 @@ class PersistentStorage {
         if (this.flushTimer)
             return;
         this.flushTimer = setTimeout(() => {
-            this.flush();
+            this.flush().catch(error => {
+                getLogger().warn('Persistent storage: scheduled flush failed', { error });
+            });
             this.flushTimer = null;
         }, FLUSH_DEBOUNCE_MS);
         if (this.flushTimer) {
             this.flushTimer.unref();
         }
     }
-    ensureDirectory() {
+    async ensureDirectory() {
         if (!existsSync(this.directory)) {
-            mkdirSync(this.directory, { recursive: true });
+            await mkdir(this.directory, { recursive: true });
         }
     }
-    checkAndRotate() {
+    async checkAndRotate() {
         try {
             if (!existsSync(this.dataFile))
                 return;
             const stats = statSync(this.dataFile);
             if (stats.size >= this.maxFileSizeBytes) {
-                this.rotate();
+                await this.rotate();
             }
         }
         catch {
             // ignore
         }
     }
-    rotate() {
+    async rotate() {
         const logger = getLogger();
         try {
             if (existsSync(this.dataFile)) {
                 const rotatedFile = `${this.dataFile}.${Date.now()}.bak`;
-                renameSync(this.dataFile, rotatedFile);
+                await rename(this.dataFile, rotatedFile);
                 logger.debug('Persistent storage: file rotated', { oldFile: rotatedFile });
             }
         }
@@ -263,22 +267,28 @@ class PersistentStorage {
         }
         this.eventCount = 0;
     }
-    rewriteFile(events) {
+    async rewriteFile(events) {
         try {
             const entries = events.map(event => JSON.stringify({ event, persistedAt: epochMs() })).join('\n') + '\n';
             // Atomic write: write to temp (overwrite, not append), then rename
-            writeFileSync(this.tempFile, entries, { encoding: 'utf8' });
-            renameSync(this.tempFile, this.dataFile);
+            await this.enqueueWrite(async () => {
+                await writeFile(this.tempFile, entries, { encoding: 'utf8' });
+                await rename(this.tempFile, this.dataFile);
+            });
         }
         catch (error) {
             getLogger().warn('Persistent storage: rewrite failed', { error });
             try {
-                unlinkSync(this.tempFile);
+                void unlink(this.tempFile);
             }
             catch {
                 // ignore
             }
         }
+    }
+    enqueueWrite(operation) {
+        this.writeChain = this.writeChain.then(operation, operation);
+        return this.writeChain;
     }
     resolveDefaultDirectory() {
         const appName = 'pulse-sdk';

@@ -38,6 +38,7 @@ declare class OtelMetricsManager {
     private counters;
     private upDownCounters;
     private gauges;
+    private ownsProvider;
     constructor(options?: OtelMetricsConfig);
     /**
      * Initialize the OTel MeterProvider with exponential histogram aggregation.

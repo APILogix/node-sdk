@@ -1,22 +1,18 @@
 /**
  * Pulse SDK Tracer — enterprise-grade distributed tracing built on OpenTelemetry.
  *
- * Provides:
- * - Singleton tracer management with lazy initialization
- * - Resource detection (service name, version, environment, host, OS)
- * - Configurable sampling (parent-based, ratio-based)
- * - Span creation with automatic context propagation
- * - Integration with SDK breadcrumbs and context store
- * - Graceful shutdown with pending span flush
+ * Architecture (v3.0):
+ *   PulseTracer → OTel NodeTracerProvider → PipelineSpanExporter → SDK EventPipeline
  *
- * Architecture:
- *   PulseTracer → OTel NodeTracerProvider → SpanExporter → SDK EventPipeline
- *
- * The tracer sends spans through the SDK's event pipeline, so they benefit
- * from the same sanitization, plugin processing, and transport resilience
- * as all other SDK events.
+ * Design principles:
+ *   - OTel owns: span lifecycle, context propagation, sampling, instrumentation
+ *   - SDK owns: span export → event pipeline, transport, batching, enrichment
+ *   - PulseSpan is a THIN wrapper — zero duplicated state
+ *   - All enrichment (tenant, session, SDK metadata) happens in the exporter,
+ *     not in PulseSpan or at span creation time
+ *   - Centralized SDK name/version constants (no hardcoded strings)
  */
-import { type Context } from '@opentelemetry/api';
+import { type Tracer, type Context } from '@opentelemetry/api';
 import { PulseSpan, type SpanOptions } from './span.js';
 import type { ResolvedSDKConfig } from '../types/config.js';
 /**
@@ -37,11 +33,6 @@ export declare function startSpan(name: string, options?: SpanOptions): PulseSpa
 /**
  * Execute a function within a new span context.
  * The span is automatically ended when the function completes (or throws).
- *
- * @param name - Span name
- * @param fn - Function to execute within the span context
- * @param options - Optional span configuration
- * @returns The return value of the function
  */
 export declare function withSpan<T>(name: string, fn: (span: PulseSpan) => T | Promise<T>, options?: SpanOptions): Promise<T>;
 /**
@@ -52,6 +43,12 @@ export declare function withSpanSync<T>(name: string, fn: (span: PulseSpan) => T
  * Get the currently active span (if any).
  */
 export declare function getActiveSpan(): PulseSpan | null;
+/**
+ * Get the internal tracer instance for advanced SDK use.
+ * Returns null if tracing is not initialized.
+ * @internal
+ */
+export declare function getTracer(): Tracer | null;
 /**
  * Execute a function within a specific OTel context.
  */

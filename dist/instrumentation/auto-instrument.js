@@ -16,18 +16,22 @@
 import { registerInstrumentations } from '@opentelemetry/instrumentation';
 import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
 import { ExpressInstrumentation } from '@opentelemetry/instrumentation-express';
+import { FastifyInstrumentation } from '@opentelemetry/instrumentation-fastify';
+import { UndiciInstrumentation } from '@opentelemetry/instrumentation-undici';
 import { client } from '../core/client.js';
 import { getLogger } from '../utils/logger.js';
 // ─── State ──────────────────────────────────────────────────────────────────
-let instrumented = false;
+const INSTRUMENTATION_GUARD = Symbol.for('pulse-sdk.auto-instrumentation.registered');
 /**
  * Register OpenTelemetry auto-instrumentations with Pulse SDK guards.
- * Idempotent — safe to call multiple times.
+ * Idempotent — safe to call multiple times, even across multiple SDK copies
+ * in the same V8 isolate (uses Symbol.for global guard).
  */
 export function registerAutoInstrumentations(options = {}) {
-    if (instrumented)
+    const g = globalThis;
+    if (g[INSTRUMENTATION_GUARD])
         return;
-    instrumented = true;
+    g[INSTRUMENTATION_GUARD] = true;
     const logger = getLogger();
     const instrumentations = [];
     if (options.http !== false) {
@@ -51,7 +55,7 @@ export function registerAutoInstrumentations(options = {}) {
                         return false;
                     const target = new URL(url);
                     const ingest = new URL(ingestUrl);
-                    return target.origin === ingest.origin && target.pathname === ingest.pathname;
+                    return isInternalSdkUrl(target, ingest);
                 }
                 catch {
                     return false;
@@ -62,7 +66,7 @@ export function registerAutoInstrumentations(options = {}) {
                     const req = request;
                     const url = String(req.url ?? '');
                     const path = url.split('?')[0] ?? '';
-                    return ['/health', '/ready', '/healthz', '/livez', '/metrics'].includes(path);
+                    return ['/health', '/ready', '/healthz', '/livez', '/metrics', '/v1/events', '/v1/init'].includes(path);
                 }
                 catch {
                     return false;
@@ -72,6 +76,30 @@ export function registerAutoInstrumentations(options = {}) {
     }
     if (options.express !== false) {
         instrumentations.push(new ExpressInstrumentation());
+    }
+    if (options.fastify !== false) {
+        instrumentations.push(new FastifyInstrumentation());
+    }
+    if (options.undici !== false) {
+        instrumentations.push(new UndiciInstrumentation({
+            ignoreRequestHook: (request) => {
+                if (!client.initialized)
+                    return false;
+                try {
+                    const ingest = new URL(client.config.ingestUrl);
+                    const req = request;
+                    const rawOrigin = req.origin ?? req['origin'];
+                    const rawPath = req.path ?? req['path'] ?? req.pathname;
+                    const url = rawOrigin
+                        ? new URL(String(rawPath ?? '/'), String(rawOrigin))
+                        : new URL(String(req.url ?? ''));
+                    return isInternalSdkUrl(url, ingest);
+                }
+                catch {
+                    return false;
+                }
+            },
+        }));
     }
     if (instrumentations.length === 0) {
         logger.debug('No auto-instrumentations registered');
@@ -83,6 +111,8 @@ export function registerAutoInstrumentations(options = {}) {
     logger.info('Auto-instrumentations registered', {
         http: options.http !== false,
         express: options.express !== false,
+        fastify: options.fastify !== false,
+        undici: options.undici !== false,
         count: instrumentations.length,
     });
 }
@@ -91,6 +121,13 @@ export function registerAutoInstrumentations(options = {}) {
  * @internal
  */
 export function resetAutoInstrumentations() {
-    instrumented = false;
+    delete globalThis[INSTRUMENTATION_GUARD];
+}
+function isInternalSdkUrl(target, ingest) {
+    if (target.origin !== ingest.origin)
+        return false;
+    return target.pathname === ingest.pathname
+        || target.pathname === '/v1/events'
+        || target.pathname === '/v1/init';
 }
 //# sourceMappingURL=auto-instrument.js.map

@@ -8,7 +8,7 @@ import type { SeverityLevel } from '../types/severity.js'
 import { Severity } from '../types/severity.js'
 import { captureEvent } from './captureEvent.js'
 import { getLogger } from '../utils/logger.js'
-import { getRequestContext } from '../core/context.js'
+import { getRequestContext, getSpanId, getTraceId } from '../core/context.js'
 import { epochMs } from '../utils/time.js'
 
 /**
@@ -36,8 +36,8 @@ export function captureMessage(
       timestamp: epochMs(),
       context,
       breadcrumbs: breadcrumbs.length > 0 ? breadcrumbs : undefined,
-      traceId: ctx?.traceId,
-      spanId: ctx?.spanId,
+      traceId: getTraceId(),
+      spanId: getSpanId(),
     }
 
     captureEvent(event)

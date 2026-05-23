@@ -5,6 +5,8 @@ import { SDKError, toError } from '../core/errors.js';
 import { getLogger } from '../utils/logger.js';
 import { compress, contentEncoding } from '../utils/compression.js';
 import { generateId } from '../utils/uuid.js';
+import { context } from '@opentelemetry/api';
+import { suppressTracing } from '@opentelemetry/core';
 export async function postJson(url, body, headers, timeoutMs, options = {}) {
     const logger = getLogger();
     const controller = new AbortController();
@@ -48,12 +50,15 @@ export async function postJson(url, body, headers, timeoutMs, options = {}) {
         if (encoding) {
             requestHeaders['Content-Encoding'] = encoding;
         }
-        const response = await fetch(url, {
+        const response = await context.with(suppressTracing(context.active()), () => fetch(url, {
             method: 'POST',
-            headers: requestHeaders,
+            headers: {
+                ...requestHeaders,
+                'x-pulse-internal': '1',
+            },
             body: payload,
             signal: controller.signal,
-        });
+        }));
         const text = await response.text();
         const parsed = text ? tryParseJson(text) : null;
         const durationMs = Date.now() - startedAt;

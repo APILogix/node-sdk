@@ -18,10 +18,15 @@ export interface AutoInstrumentOptions {
     http?: boolean;
     /** Enable Express auto-instrumentation. Default: true */
     express?: boolean;
+    /** Enable Fastify auto-instrumentation. Default: true */
+    fastify?: boolean;
+    /** Enable Undici/fetch auto-instrumentation. Default: true */
+    undici?: boolean;
 }
 /**
  * Register OpenTelemetry auto-instrumentations with Pulse SDK guards.
- * Idempotent — safe to call multiple times.
+ * Idempotent — safe to call multiple times, even across multiple SDK copies
+ * in the same V8 isolate (uses Symbol.for global guard).
  */
 export declare function registerAutoInstrumentations(options?: AutoInstrumentOptions): void;
 /**

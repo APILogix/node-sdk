@@ -9,10 +9,13 @@
  */
 declare class ErrorDeduplicator {
     private entries;
+    private replaySeen;
+    private readonly maxReplayEntries;
     private suppressionWindowMs;
     private maxEntries;
     private cleanupTimer;
     private suppressedCount;
+    private replayDuplicateCount;
     private initialized;
     configure(options?: {
         suppressionWindowMs?: number;
@@ -31,9 +34,17 @@ declare class ErrorDeduplicator {
     getStats(): {
         trackedErrors: number;
         suppressedCount: number;
+        replayDuplicateCount: number;
+        cacheSize: number;
+        cacheCapacity: number;
         oldestEntry: number | null;
         newestEntry: number | null;
     };
+    /**
+     * Check if a replayed event is a duplicate.
+     * Uses a separate map keyed by replayId to avoid false suppression.
+     */
+    isReplayDuplicate(fingerprint: string, replayId: string): boolean;
     /**
      * Reset all deduplication state.
      */

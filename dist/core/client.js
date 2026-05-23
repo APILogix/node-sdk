@@ -1,8 +1,7 @@
 import { createHash } from 'crypto';
 import { RingBuffer } from './ring-buffer.js';
 import { SDKError } from './errors.js';
-const SDK_NAME = '@vikasbaplawat1/pulse-sdk';
-const SDK_VERSION = '2.0.0';
+import { SDK_NAME, SDK_VERSION } from '../constants/version.js';
 class SDKClient {
     static instance;
     // ─── State ──────────────────────────────────────────────────────────────

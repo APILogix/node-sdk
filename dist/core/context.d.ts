@@ -1,16 +1,17 @@
-import { AsyncLocalStorage } from 'async_hooks';
 import type { Breadcrumb, BreadcrumbInput } from '../types/breadcrumb.js';
 import { RingBuffer } from './ring-buffer.js';
 /**
- * The async context store — propagated through promises, timers, callbacks.
- * Every request gets its own isolated store via AsyncLocalStorage.run().
+ * Metadata carried on the OpenTelemetry context.
+ *
+ * Trace/span ownership belongs exclusively to OTel. The SDK stores request
+ * metadata, breadcrumbs, user/session data, tags, and extra context here.
  */
 export interface ContextStore {
     /** Unique request identifier. */
     readonly requestId: string;
-    /** OpenTelemetry trace ID (if tracing enabled). */
+    /** OpenTelemetry trace ID at context creation time. Prefer getTraceId(). */
     readonly traceId?: string | undefined;
-    /** OpenTelemetry span ID (if tracing enabled). */
+    /** OpenTelemetry span ID at context creation time. Prefer getSpanId(). */
     readonly spanId?: string | undefined;
     /** User identifier for user-scoped telemetry. */
     readonly userId?: string | undefined;
@@ -25,7 +26,6 @@ export interface ContextStore {
     /** Arbitrary extra context data. */
     readonly extra?: Readonly<Record<string, unknown>> | undefined;
 }
-export declare const asyncLocalStorage: AsyncLocalStorage<ContextStore>;
 /**
  * Get the current request context, or undefined if outside a context scope.
  */
