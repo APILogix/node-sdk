@@ -166,6 +166,46 @@ class PersistentStorage {
   }
 
   /**
+   * Remove events that were successfully delivered.
+   */
+  async discard(events: readonly Event[]): Promise<void> {
+    if (events.length === 0) return
+
+    const deliveredIds = new Set(
+      events
+        .map(event => event.eventId)
+        .filter((eventId): eventId is string => typeof eventId === 'string' && eventId.length > 0)
+    )
+    if (deliveredIds.size === 0) return
+
+    this.buffer = this.buffer.filter(event => !deliveredIds.has(event.eventId ?? ''))
+
+    if (!existsSync(this.dataFile)) return
+
+    try {
+      const content = await readFile(this.dataFile, { encoding: 'utf8' })
+      const retainedEntries: PersistedEventEntry[] = []
+
+      for (const line of content.split('\n')) {
+        if (line.trim().length === 0) continue
+        try {
+          const entry: PersistedEventEntry = JSON.parse(line)
+          if (!deliveredIds.has(entry.event.eventId ?? '')) {
+            retainedEntries.push(entry)
+          }
+        } catch {
+          // Drop malformed lines while compacting acknowledged events.
+        }
+      }
+
+      await this.rewriteEntries(retainedEntries)
+      this.eventCount = retainedEntries.length + this.buffer.length
+    } catch (error) {
+      getLogger().warn('Persistent storage: discard failed', { error })
+    }
+  }
+
+  /**
    * Replay persisted events from disk.
    * Returns events that are still valid (within TTL).
    */
@@ -330,15 +370,7 @@ class PersistentStorage {
 
   private async rewriteFile(events: Event[]): Promise<void> {
     try {
-      const entries = events.map(event =>
-        JSON.stringify({ event, persistedAt: epochMs() })
-      ).join('\n') + '\n'
-
-      // Atomic write: write to temp (overwrite, not append), then rename
-      await this.enqueueWrite(async () => {
-        await writeFile(this.tempFile, entries, { encoding: 'utf8' })
-        await rename(this.tempFile, this.dataFile)
-      })
+      await this.rewriteEntries(events.map(event => ({ event, persistedAt: epochMs() })))
     } catch (error) {
       getLogger().warn('Persistent storage: rewrite failed', { error })
       try {
@@ -347,6 +379,24 @@ class PersistentStorage {
         // ignore
       }
     }
+  }
+
+  private async rewriteEntries(entriesToWrite: PersistedEventEntry[]): Promise<void> {
+    const content = entriesToWrite.length > 0
+      ? entriesToWrite.map(entry => JSON.stringify(entry)).join('\n') + '\n'
+      : ''
+
+    await this.enqueueWrite(async () => {
+      if (content.length === 0) {
+        await unlink(this.dataFile).catch(error => {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+        })
+        return
+      }
+
+      await writeFile(this.tempFile, content, { encoding: 'utf8' })
+      await rename(this.tempFile, this.dataFile)
+    })
   }
 
   private enqueueWrite(operation: () => Promise<void>): Promise<void> {

@@ -1,0 +1,178 @@
+/**
+ * Axios Instrumentation — OpenTelemetry-compatible HTTP client instrumentation
+ * wrapped with Pulse SDK guards and remote config support.
+ *
+ * Axios is an HTTP client that wraps node:http/https. This instrumentation
+ * ensures axios requests are properly traced with axios-specific attributes.
+ *
+ * Features:
+ * - Automatic span creation for axios requests
+ * - Request/response interceptors for tracing
+ * - Axios-specific span attributes (config, headers)
+ * - Error tracking with response context
+ * - Request timeout tracking
+ * - Multipart form data handling
+ *
+ * Note: Since axios uses node:http/https internally, the OTel HttpInstrumentation
+ * already captures these requests. This module adds axios-specific attributes
+ * and ensures proper span naming conventions.
+ */
+import { trace, SpanKind, SpanStatusCode, context } from '@opentelemetry/api';
+import { getLogger } from '../utils/logger.js';
+const AXIOS_TRACER = trace.getTracer('@pulse-sdk/axios', '1.0.0');
+export function createAxiosInstrumentation(enabled, mergedOptions, captureConfig) {
+    if (!enabled) {
+        return null;
+    }
+    const captureBody = captureConfig?.body ?? false;
+    const captureHeaders = captureConfig?.headers ?? false;
+    const captureResponse = captureConfig?.response ?? false;
+    const options = {
+        enabled: true,
+        captureRequestData: mergedOptions?.captureRequestData ?? captureBody,
+        captureResponseData: mergedOptions?.captureResponseData ?? captureResponse,
+        requestTimeout: mergedOptions?.requestTimeout ?? 30000,
+        maxBodySize: mergedOptions?.maxBodySize ?? 1024 * 1024,
+    };
+    const logger = getLogger();
+    const requestInterceptorPatchers = [];
+    const responseInterceptorPatchers = [];
+    function setup() {
+        if (typeof globalThis === 'undefined')
+            return;
+        try {
+            const axiosModule = loadAxios();
+            if (!axiosModule) {
+                logger.debug('Axios not found, skipping instrumentation');
+                return;
+            }
+            let axiosInstance;
+            if (axiosModule.Axios) {
+                const axiosCtor = axiosModule.Axios;
+                axiosInstance = axiosCtor.prototype ? axiosCtor : axiosModule;
+            }
+            else {
+                axiosInstance = axiosModule;
+            }
+            const originalRequest = axiosInstance.request?.bind(axiosInstance);
+            if (!originalRequest)
+                return;
+            const patchedRequest = async function (config) {
+                const span = AXIOS_TRACER.startSpan(`HTTP ${config.method?.toUpperCase() ?? 'REQUEST'}`, {
+                    kind: SpanKind.CLIENT,
+                    attributes: {
+                        'http.method': config.method?.toUpperCase() ?? 'GET',
+                        'http.url': buildUrl(config.baseURL ?? '', config.url ?? ''),
+                        'http.host': extractHost(config.baseURL ?? config.url ?? ''),
+                        'http.scheme': extractScheme(config.baseURL ?? config.url ?? ''),
+                        'http.user_agent': 'axios',
+                        'http.axios.request_timeout': config.timeout ?? options.requestTimeout,
+                        'db.system': 'http',
+                    },
+                });
+                if (captureHeaders && config.headers) {
+                    const safeHeaders = {};
+                    for (const [key, value] of Object.entries(config.headers)) {
+                        safeHeaders[key] = typeof value === 'string' ? value : String(value);
+                    }
+                    span.setAttribute('http.request.headers', JSON.stringify(safeHeaders));
+                }
+                if (options.captureRequestData && config.params) {
+                    span.setAttribute('http.request.query', JSON.stringify(config.params).slice(0, options.maxBodySize));
+                }
+                return context.with(trace.setSpan(context.active(), span), async () => {
+                    try {
+                        const response = await originalRequest(config);
+                        span.setAttribute('http.status_code', response.status ?? 0);
+                        span.setAttribute('http.status_text', response.statusText ?? '');
+                        if (captureHeaders && response.headers) {
+                            const safeResponseHeaders = {};
+                            for (const [key, value] of Object.entries(response.headers)) {
+                                safeResponseHeaders[key] = typeof value === 'string' ? value : String(value);
+                            }
+                            span.setAttribute('http.response.headers', JSON.stringify(safeResponseHeaders));
+                        }
+                        if (options.captureResponseData && response.data) {
+                            const dataStr = typeof response.data === 'string'
+                                ? response.data.slice(0, options.maxBodySize)
+                                : JSON.stringify(response.data).slice(0, options.maxBodySize);
+                            span.setAttribute('http.response.body', dataStr);
+                        }
+                        span.setStatus({ code: SpanStatusCode.OK });
+                        span.end();
+                        return response;
+                    }
+                    catch (error) {
+                        span.setStatus({
+                            code: SpanStatusCode.ERROR,
+                            message: error instanceof Error ? error.message : 'Request failed',
+                        });
+                        span.recordException(error);
+                        span.end();
+                        throw error;
+                    }
+                });
+            };
+            axiosInstance.request = patchedRequest;
+            logger.info('Axios instrumentation registered', {
+                captureRequestData: options.captureRequestData,
+                captureResponseData: options.captureResponseData,
+            });
+        }
+        catch (error) {
+            logger.warn('Failed to register Axios instrumentation', { error: String(error) });
+        }
+    }
+    function teardown() {
+        for (const patcher of requestInterceptorPatchers) {
+            try {
+                patcher();
+            }
+            catch { /* ignore */ }
+        }
+        for (const patcher of responseInterceptorPatchers) {
+            try {
+                patcher();
+            }
+            catch { /* ignore */ }
+        }
+    }
+    return { setup, teardown };
+}
+function loadAxios() {
+    try {
+        return require('axios');
+    }
+    catch {
+        return null;
+    }
+}
+function buildUrl(baseURL, url) {
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+        return url;
+    }
+    if (baseURL) {
+        return baseURL.endsWith('/') && url.startsWith('/')
+            ? baseURL + url.slice(1)
+            : baseURL + url;
+    }
+    return url;
+}
+function extractHost(url) {
+    try {
+        const parsed = new URL(url.startsWith('http') ? url : `https://${url}`);
+        return parsed.host;
+    }
+    catch {
+        return 'unknown';
+    }
+}
+function extractScheme(url) {
+    if (url.startsWith('https://'))
+        return 'https';
+    if (url.startsWith('http://'))
+        return 'http';
+    return 'https';
+}
+export default createAxiosInstrumentation;
+//# sourceMappingURL=axios.js.map

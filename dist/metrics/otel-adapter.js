@@ -45,7 +45,7 @@ class OtelMetricsManager {
      * Initialize the OTel MeterProvider with exponential histogram aggregation.
      * Called during SDK init when `enableMetrics: true`.
      */
-    init(config, options = {}) {
+    init(config, options = {}, customResources) {
         if (this.initialized)
             return;
         const logger = getLogger();
@@ -83,6 +83,7 @@ class OtelMetricsManager {
                 'telemetry.sdk.name': '@vikasbaplawat1/pulse-sdk',
                 'telemetry.sdk.version': '2.0.0',
                 'telemetry.sdk.language': 'nodejs',
+                ...(customResources ?? {}),
             });
             this.reader = new PulseMetricReader({ percentiles });
             const meterProviderOptions = {

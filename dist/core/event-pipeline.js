@@ -49,6 +49,12 @@ import { persistenceGovernor } from '../storage/persistence-governor.js';
 import { loadShedder } from '../transport/load-shedder.js';
 import { isSDKShuttingDown } from './lifecycle.js';
 import { acceptedReceipt, acceptedSyncReceipt, rejectedReceipt, } from './event-receipt.js';
+// ─── Remote Config Engine Imports ───────────────────────────────────────────
+import { KillswitchEngine } from './killswitch-engine.js';
+import { LimitsEngine } from './limits-engine.js';
+import { SecurityScrubber } from '../processors/security-scrubber.js';
+import { TransportRouter } from '../transport/transport-router.js';
+import { FeatureController } from './feature-controller.js';
 const PLUGIN_TIMEOUT_MS = 50;
 const EVENT_PROCESSOR_TIMEOUT_MS = 50;
 const BEFORE_SEND_TIMEOUT_MS = 100;
@@ -89,6 +95,16 @@ export function enqueueEvent(rawEvent) {
     if (isSDKShuttingDown()) {
         logger.debug('Event rejected — SDK is shutting down', { eventType });
         return rejectedReceipt(eventId, 'sdk_shutting_down');
+    }
+    // Gate 1.5: Global killswitch — SDK disabled via remote config
+    const killswitchEngine = KillswitchEngine.getInstance();
+    if (killswitchEngine?.isSDKDisabled()) {
+        return rejectedReceipt(eventId, 'sdk_disabled_by_killswitch');
+    }
+    // Gate 1.6: Token-bucket rate limiter from limits engine
+    const limitsEngine = LimitsEngine.getInstance();
+    if (limitsEngine && !limitsEngine.admitEvent()) {
+        return rejectedReceipt(eventId, 'rate_limited');
     }
     // Gate 2: Critical memory pressure — only high-priority events survive
     if (isCriticalMemoryPressure() && !isHighPriority(rawEvent)) {
@@ -183,27 +199,38 @@ export async function processEventAsync(rawEvent, assignedEventId) {
             return true;
         }
         const config = client.config;
-        // Step 3: Feature flag gate (plan-enforced via resolved config)
+        // Step 3: Feature flag gate (plan-enforced + remote config FeatureController)
         if (!isFeatureEnabled(event, config)) {
             logger.debug('Event dropped — feature disabled by config or plan', {
                 eventType: event.type,
                 plan: config.plan,
-                enableErrors: config.enableErrors,
-                enablePerformance: config.enablePerformance,
-                enableTracing: config.enableTracing,
-                enableMetrics: config.enableMetrics,
             });
             return false;
         }
+        // Step 3.5: Enforce attribute limits from remote config
+        const limitsEngineAsync = LimitsEngine.getInstance();
+        if (limitsEngineAsync) {
+            event = limitsEngineAsync.enforceAttributeLimits(event);
+        }
         // Step 4: Normalize — fill defaults, truncate oversized fields
         event = normalizeEvent(event, client.metadata);
-        // Step 5: Sanitize — PII scrubbing
-        event = sanitizeEvent(event);
+        // Step 5: Sanitize — PII scrubbing via remote-config-driven SecurityScrubber
+        const securityScrubber = SecurityScrubber.getInstance();
+        if (securityScrubber) {
+            event = securityScrubber.scrub(event);
+        }
+        else {
+            // Fallback to legacy sanitizer if SecurityScrubber not initialized
+            event = sanitizeEvent(event);
+        }
         // Step 6: Enrich with request context (trace/span IDs, breadcrumbs)
         event = enrichFromContext(event);
         // Step 6.5: Error deduplication — suppress duplicate errors within window
         if (event.type === 'error' && 'fingerprint' in event && typeof event.fingerprint === 'string') {
-            if (errorDeduplicator.isDuplicate(event.fingerprint)) {
+            const tenantId = getRequestContext()?.extra?.['tenantId'] || event.tags?.['tenantId'] || 'global';
+            const route = event.transaction || event.tags?.['route'] || 'unknown';
+            const compositeKey = `${event.fingerprint}:${tenantId}:${route}`;
+            if (errorDeduplicator.isDuplicate(compositeKey)) {
                 logger.debug('Event dropped — duplicate error within suppression window', {
                     fingerprint: event.fingerprint,
                     eventType: event.type,
@@ -335,17 +362,52 @@ function ensureBaseFields(raw, assignedEventId) {
     return { ...raw, eventId, timestamp };
 }
 function isFeatureEnabled(event, config) {
+    // Check FeatureController first (remote-config driven)
+    const featureCtrl = FeatureController.getInstance();
+    const killswitchEngine = KillswitchEngine.getInstance();
     switch (event.type) {
         case 'error':
+            if (killswitchEngine?.isKilled('disableErrors'))
+                return false;
+            if (featureCtrl && !featureCtrl.isEnabled('errors'))
+                return false;
             return config.enableErrors;
         case 'request':
             return config.enablePerformance;
         case 'message':
             return true; // messages are always enabled
         case 'metric':
+            if (killswitchEngine?.isKilled('disableMetrics'))
+                return false;
+            if (featureCtrl && !featureCtrl.isEnabled('metrics'))
+                return false;
             return config.enableMetrics;
         case 'span':
+            if (killswitchEngine?.isKilled('disableTracing'))
+                return false;
+            if (featureCtrl && !featureCtrl.isEnabled('tracing'))
+                return false;
             return config.enableTracing;
+        case 'log':
+            if (killswitchEngine?.isKilled('disableLogs'))
+                return false;
+            if (featureCtrl && !featureCtrl.isEnabled('logging'))
+                return false;
+            return true;
+        case 'profile':
+            if (killswitchEngine?.isKilled('disableProfiling'))
+                return false;
+            if (featureCtrl && !featureCtrl.isEnabled('profiling'))
+                return false;
+            return true;
+        case 'replay':
+            if (featureCtrl && !featureCtrl.isEnabled('sessionReplay'))
+                return false;
+            return true;
+        case 'cron_checkin':
+            if (featureCtrl && !featureCtrl.isEnabled('crons'))
+                return false;
+            return true;
         default:
             return true;
     }

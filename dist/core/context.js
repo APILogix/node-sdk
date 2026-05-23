@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'async_hooks';
 import { context as otelContext, createContextKey, trace } from '@opentelemetry/api';
 import { Severity } from '../types/severity.js';
 import { isoNow } from '../utils/time.js';
@@ -5,12 +6,14 @@ import { RingBuffer } from './ring-buffer.js';
 import { client } from './client.js';
 import { getLogger } from '../utils/logger.js';
 const CONTEXT_STORE_KEY = createContextKey('pulse-sdk-context-store');
+const contextStorage = new AsyncLocalStorage();
 // ─── Context Accessors ──────────────────────────────────────────────────────
 /**
  * Get the current request context, or undefined if outside a context scope.
  */
 export function getRequestContext() {
-    return otelContext.active().getValue(CONTEXT_STORE_KEY);
+    return contextStorage.getStore()
+        ?? otelContext.active().getValue(CONTEXT_STORE_KEY);
 }
 /**
  * Get the current trace ID from context, or undefined.
@@ -110,6 +113,7 @@ export function createContextStore(requestId, maxBreadcrumbs, overrides) {
  * The context is automatically propagated through all async operations.
  */
 export function withContext(store, fn) {
-    return otelContext.with(otelContext.active().setValue(CONTEXT_STORE_KEY, store), fn);
+    const ctx = otelContext.active().setValue(CONTEXT_STORE_KEY, store);
+    return contextStorage.run(store, () => otelContext.with(ctx, fn));
 }
 //# sourceMappingURL=context.js.map

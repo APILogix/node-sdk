@@ -15,13 +15,14 @@
 import { type Tracer, type Context } from '@opentelemetry/api';
 import { PulseSpan, type SpanOptions } from './span.js';
 import type { ResolvedSDKConfig } from '../types/config.js';
+import type { ResourceAttributes } from '../utils/resource-detector.js';
 /**
  * Initialize the OpenTelemetry tracer provider.
  * Called during SDK init when `enableTracing: true`.
  *
  * Idempotent — safe to call multiple times.
  */
-export declare function initTracer(config: ResolvedSDKConfig): void;
+export declare function initTracer(config: ResolvedSDKConfig, customResources?: ResourceAttributes): void;
 /**
  * Start a new span. Returns a PulseSpan wrapper.
  *

@@ -8,6 +8,7 @@
  */
 import { propagation, trace, context as otelContext, } from '@opentelemetry/api';
 import { getLogger } from '../utils/logger.js';
+import { ConfigManager } from '../core/config-manager.js';
 // ─── W3C Header Constants ───────────────────────────────────────────────────
 const TRACEPARENT_HEADER = 'traceparent';
 const TRACESTATE_HEADER = 'tracestate';
@@ -77,7 +78,18 @@ export function injectTraceContext(headers, ctx) {
     const logger = getLogger();
     try {
         const activeCtx = ctx ?? otelContext.active();
-        propagation.inject(activeCtx, headers, headerSetter);
+        // Only inject headers for propagation formats enabled in remote config
+        let shouldInjectW3C = true;
+        try {
+            const propagationConfig = ConfigManager.getInstance().getConfig().tracing.propagation;
+            shouldInjectW3C = propagationConfig.w3c !== false;
+        }
+        catch {
+            // ConfigManager not initialized — default to W3C
+        }
+        if (shouldInjectW3C) {
+            propagation.inject(activeCtx, headers, headerSetter);
+        }
         // Also inject Pulse custom headers for non-OTel consumers
         const spanContext = trace.getSpanContext(activeCtx);
         if (spanContext) {

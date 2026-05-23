@@ -96,6 +96,20 @@ export type { Session, SessionManagerOptions } from './session/session-manager.j
 
 export { monitorMiddleware } from './instrumentation/express.js'
 export { instrumentHttpClient } from './instrumentation/http.js'
+export { registerAutoInstrumentations } from './instrumentation/auto-instrument.js'
+export { createGraphQLInstrumentation } from './instrumentation/graphql.js'
+export { createPrismaInstrumentation } from './instrumentation/prisma.js'
+export { createMongoDBInstrumentation } from './instrumentation/mongodb.js'
+export { createRedisInstrumentation } from './instrumentation/redis.js'
+export { createBullMQInstrumentation } from './instrumentation/bullmq.js'
+export { createAxiosInstrumentation } from './instrumentation/axios.js'
+export type { AutoInstrumentOptions } from './instrumentation/auto-instrument.js'
+export type { GraphQLInstrumentationOptions } from './instrumentation/graphql.js'
+export type { PrismaInstrumentationOptions } from './instrumentation/prisma.js'
+export type { MongoDBInstrumentationOptions } from './instrumentation/mongodb.js'
+export type { RedisInstrumentationOptions } from './instrumentation/redis.js'
+export type { BullMQInstrumentationOptions } from './instrumentation/bullmq.js'
+export type { AxiosInstrumentationOptions } from './instrumentation/axios.js'
 
 // ─── Logger ─────────────────────────────────────────────────────────────────
 
@@ -167,9 +181,6 @@ export { otelMetrics } from './metrics/otel-adapter.js'
 export type { OtelMetricsConfig } from './metrics/otel-adapter.js'
 
 // ─── Auto Instrumentation ───────────────────────────────────────────────────
-
-export { registerAutoInstrumentations } from './instrumentation/auto-instrument.js'
-export type { AutoInstrumentOptions } from './instrumentation/auto-instrument.js'
 
 // ─── Advanced Diagnostics ───────────────────────────────────────────────────
 

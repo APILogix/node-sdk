@@ -731,6 +731,8 @@ function filterBufferedEvents(config: ResolvedSDKConfig): void {
     const e = event as Record<string, unknown>
     if (e['type'] === 'request') {
       if (!config.enablePerformance) return false
+      if (config.samplingRate >= 1) return true
+      if (config.samplingRate <= 0) return false
 
       // Use deterministic sampling if engine is available
       if (samplingEngineInstance) {

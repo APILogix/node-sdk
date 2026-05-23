@@ -1,20 +1,43 @@
 /**
- * Event sanitizer — deep PII scrubbing across all event fields.
+ * API Payload Scrubber — enterprise-grade PII and sensitive data redaction.
  *
- * Redacts:
- * - Sensitive header values (authorization, cookie, api-key, etc.)
- * - PII patterns in string values (emails, credit cards, SSNs, phone numbers)
- * - Sensitive key names at any depth (password, token, secret, etc.)
- *
- * Configurable via custom patterns.
+ * Provides configurable redaction for:
+ * - Specific API payload fields (headers, query parameters, request/response bodies)
+ * - Deep object scrubbing via recursive property traversal
+ * - String sanitization using PII detection patterns
  */
 import type { SDKEvent } from '../types/event.js';
-/**
- * Sanitize an entire event — deep-scrubs all PII and sensitive fields.
- */
+export interface ScrubberConfig {
+    sensitiveHeaders?: string[];
+    sensitiveKeys?: string[];
+    redactRequestBody?: boolean;
+    redactResponseBody?: boolean;
+}
+declare class ApiPayloadScrubber {
+    private customHeaders;
+    private customKeysPattern;
+    private redactRequestBody;
+    private redactResponseBody;
+    configure(config?: ScrubberConfig): void;
+    /**
+     * Main entry point for the event pipeline.
+     * Deep-scrubs PII and explicitly governs API payloads (headers, query, bodies).
+     */
+    sanitizeEvent(event: SDKEvent): SDKEvent;
+    private scrubRequestEvent;
+    private scrubSpanEvent;
+    /**
+     * Sanitize HTTP headers explicitly.
+     */
+    sanitizeHeaders(headers: Readonly<Record<string, unknown>>): Record<string, unknown>;
+    private isSensitiveHeader;
+    private isSensitiveKey;
+    private sanitizeValue;
+    private sanitizeObject;
+    private sanitizeString;
+}
+export declare const apiPayloadScrubber: ApiPayloadScrubber;
 export declare function sanitizeEvent(event: SDKEvent): SDKEvent;
-/**
- * Sanitize HTTP headers — redacts sensitive header values.
- */
 export declare function sanitizeHeaders(headers: Readonly<Record<string, unknown>>): Record<string, unknown>;
+export {};
 //# sourceMappingURL=sanitizer.d.ts.map

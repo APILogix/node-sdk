@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'async_hooks'
 import { context as otelContext, createContextKey, trace } from '@opentelemetry/api'
 import type { Breadcrumb, BreadcrumbInput } from '../types/breadcrumb.js'
 import type { BreadcrumbHint } from '../types/breadcrumb.js'
@@ -38,6 +39,7 @@ export interface ContextStore {
 }
 
 const CONTEXT_STORE_KEY = createContextKey('pulse-sdk-context-store')
+const contextStorage = new AsyncLocalStorage<ContextStore>()
 
 // ─── Context Accessors ──────────────────────────────────────────────────────
 
@@ -45,7 +47,8 @@ const CONTEXT_STORE_KEY = createContextKey('pulse-sdk-context-store')
  * Get the current request context, or undefined if outside a context scope.
  */
 export function getRequestContext(): ContextStore | undefined {
-  return otelContext.active().getValue(CONTEXT_STORE_KEY) as ContextStore | undefined
+  return contextStorage.getStore()
+    ?? otelContext.active().getValue(CONTEXT_STORE_KEY) as ContextStore | undefined
 }
 
 /**
@@ -155,5 +158,6 @@ export function createContextStore(
  * The context is automatically propagated through all async operations.
  */
 export function withContext<T>(store: ContextStore, fn: () => T): T {
-  return otelContext.with(otelContext.active().setValue(CONTEXT_STORE_KEY, store), fn)
+  const ctx = otelContext.active().setValue(CONTEXT_STORE_KEY, store)
+  return contextStorage.run(store, () => otelContext.with(ctx, fn))
 }

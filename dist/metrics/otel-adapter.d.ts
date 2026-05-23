@@ -17,6 +17,7 @@
  *   - OTel exponential histograms use O(1) bucket increments, mergeable, precise
  *   - Sub-microsecond recording overhead vs milliseconds for sort-based percentiles
  */
+import type { ResourceAttributes } from '../utils/resource-detector.js';
 export interface OtelMetricsConfig {
     /** Flush interval in milliseconds. Default: 10000 (10s) */
     flushIntervalMs?: number;
@@ -48,7 +49,7 @@ declare class OtelMetricsManager {
         service: string;
         environment: string;
         release: string;
-    }, options?: OtelMetricsConfig): void;
+    }, options?: OtelMetricsConfig, customResources?: ResourceAttributes): void;
     /**
      * Record a histogram value using OTel exponential histogram.
      * O(1) per record — no raw value storage, no sorting.

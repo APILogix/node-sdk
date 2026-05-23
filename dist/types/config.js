@@ -20,12 +20,21 @@ export const sdkInitOptionsSchema = z.object({
     debug: z.boolean().optional(),
     logLevel: z.enum(['debug', 'info', 'warning', 'error', 'fatal']).optional(),
     baseUrl: z.string().url().optional(),
+    configUrl: z.string().url().optional(),
     shutdownTimeoutMs: z.number().int().min(1000).max(60000).optional(),
     sourceMaps: z
         .object({
         paths: z.array(z.string()).readonly().optional(),
         allowRemote: z.boolean().optional(),
         embedSourceContent: z.boolean().optional(),
+    })
+        .optional(),
+    dataScrubbing: z
+        .object({
+        sensitiveHeaders: z.array(z.string()).readonly().optional(),
+        sensitiveKeys: z.array(z.string()).readonly().optional(),
+        redactRequestBody: z.boolean().optional(),
+        redactResponseBody: z.boolean().optional(),
     })
         .optional(),
     transport: z

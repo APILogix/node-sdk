@@ -1,136 +1,192 @@
 /**
- * Event sanitizer — deep PII scrubbing across all event fields.
+ * API Payload Scrubber — enterprise-grade PII and sensitive data redaction.
  *
- * Redacts:
- * - Sensitive header values (authorization, cookie, api-key, etc.)
- * - PII patterns in string values (emails, credit cards, SSNs, phone numbers)
- * - Sensitive key names at any depth (password, token, secret, etc.)
- *
- * Configurable via custom patterns.
+ * Provides configurable redaction for:
+ * - Specific API payload fields (headers, query parameters, request/response bodies)
+ * - Deep object scrubbing via recursive property traversal
+ * - String sanitization using PII detection patterns
  */
-// ─── Sensitive Key Detection ────────────────────────────────────────────────
-const DEFAULT_SENSITIVE_KEYS = /(?:password|passwd|secret|token|api[-_]?key|api[-_]?secret|authorization|cookie|session[-_]?id|credential|private[-_]?key|access[-_]?token|refresh[-_]?token|x-api-key|x-auth-token)/i;
-// ─── PII Pattern Detection ──────────────────────────────────────────────────
-/**
- * Factory for PII patterns — returns fresh regex instances to avoid
- * cross-call state leaks from global regex lastIndex.
- */
+const DEFAULT_SENSITIVE_KEYS_PATTERN = /(?:password|passwd|secret|token|api[-_]?key|api[-_]?secret|authorization|cookie|session[-_]?id|credential|private[-_]?key|access[-_]?token|refresh[-_]?token|x-api-key|x-auth-token)/i;
+const DEFAULT_SENSITIVE_HEADERS = ['authorization', 'cookie', 'set-cookie', 'x-api-key', 'proxy-authorization'];
 function createPiiPatterns() {
     return [
-        // Email addresses
         { pattern: /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, replacement: '[email]' },
-        // Credit card numbers (basic patterns)
         { pattern: /\b(?:\d{4}[-\s]?){3}\d{4}\b/g, replacement: '[card]' },
-        // SSN-like patterns
         { pattern: /\b\d{3}-\d{2}-\d{4}\b/g, replacement: '[ssn]' },
-        // Phone numbers (basic US pattern)
         { pattern: /\b(?:\+1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/g, replacement: '[phone]' },
-        // Bearer tokens in strings
         { pattern: /Bearer\s+[A-Za-z0-9._~+/=-]+/g, replacement: 'Bearer [REDACTED]' },
-        // Authorization params in URLs
         { pattern: /(api[-_]?key|token|authorization|password|secret)=([^&\s]+)/gi, replacement: '$1=[REDACTED]' },
     ];
 }
 const REDACTED = '[REDACTED]';
 const MAX_SANITIZE_DEPTH = 10;
-// ─── Public API ─────────────────────────────────────────────────────────────
-/**
- * Sanitize an entire event — deep-scrubs all PII and sensitive fields.
- */
-export function sanitizeEvent(event) {
-    return sanitizeValue(event, 0);
-}
-/**
- * Sanitize HTTP headers — redacts sensitive header values.
- */
-export function sanitizeHeaders(headers) {
-    const sanitized = {};
-    for (const [key, value] of Object.entries(headers)) {
-        if (isSensitiveKey(key)) {
-            sanitized[key] = REDACTED;
+const MAX_OBJECT_KEYS = 200;
+class ApiPayloadScrubber {
+    customHeaders = new Set();
+    customKeysPattern = null;
+    redactRequestBody = false;
+    redactResponseBody = false;
+    configure(config = {}) {
+        if (config.sensitiveHeaders) {
+            this.customHeaders = new Set(config.sensitiveHeaders.map(h => h.toLowerCase()));
         }
-        else if (typeof value === 'string') {
-            sanitized[key] = sanitizeString(value);
+        if (config.sensitiveKeys && config.sensitiveKeys.length > 0) {
+            const escapedKeys = config.sensitiveKeys.map(k => k.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&'));
+            this.customKeysPattern = new RegExp(`(?:${escapedKeys.join('|')})`, 'i');
         }
-        else {
-            sanitized[key] = value;
+        this.redactRequestBody = config.redactRequestBody ?? false;
+        this.redactResponseBody = config.redactResponseBody ?? false;
+    }
+    /**
+     * Main entry point for the event pipeline.
+     * Deep-scrubs PII and explicitly governs API payloads (headers, query, bodies).
+     */
+    sanitizeEvent(event) {
+        // 1. Explicit API Payload Governance
+        if (event.type === 'request') {
+            this.scrubRequestEvent(event);
+        }
+        else if (event.type === 'span') {
+            this.scrubSpanEvent(event);
+        }
+        // 2. Deep Object Scrubbing (fallback for context/extra data)
+        return this.sanitizeValue(event, 0);
+    }
+    scrubRequestEvent(event) {
+        if (event.headers) {
+            event.headers = this.sanitizeHeaders(event.headers);
+        }
+        if (this.redactRequestBody) {
+            if (event.body) {
+                event.body = REDACTED;
+            }
+            if (event.bodySize !== undefined) {
+                // Redacting body content, but preserving bodySize metric is usually okay.
+                // If compliance requires hiding the size of request payload, we would redact it too.
+            }
         }
     }
-    return sanitized;
-}
-// ─── Internal ───────────────────────────────────────────────────────────────
-const MAX_OBJECT_KEYS = 200;
-function sanitizeValue(root, _depth) {
-    // Fast path for primitives
-    if (root === null || root === undefined)
-        return root;
-    if (typeof root === 'string')
-        return sanitizeString(root);
-    if (typeof root !== 'object')
-        return root;
-    const seen = new WeakSet();
-    return sanitizeObject(root, 0, seen);
-}
-function sanitizeObject(value, depth, seen) {
-    if (depth >= MAX_SANITIZE_DEPTH)
-        return value;
-    if (value === null || value === undefined)
-        return value;
-    if (typeof value === 'string')
-        return sanitizeString(value);
-    if (typeof value !== 'object')
-        return value;
-    // Cyclic reference detection
-    const obj = value;
-    if (seen.has(obj))
-        return '[Circular]';
-    seen.add(obj);
-    try {
-        if (Array.isArray(value)) {
-            const result = [];
-            const limit = Math.min(value.length, MAX_OBJECT_KEYS);
-            for (let i = 0; i < limit; i++) {
-                result.push(sanitizeObject(value[i], depth + 1, seen));
+    scrubSpanEvent(event) {
+        if (!event.attributes)
+            return;
+        const attrs = event.attributes;
+        // OTel HTTP semantic conventions
+        if (this.redactRequestBody && attrs['http.request.body']) {
+            attrs['http.request.body'] = REDACTED;
+        }
+        if (this.redactResponseBody && attrs['http.response.body']) {
+            attrs['http.response.body'] = REDACTED;
+        }
+        // Scrub header attributes (e.g., http.request.header.authorization)
+        for (const key of Object.keys(attrs)) {
+            if (key.startsWith('http.request.header.') || key.startsWith('http.response.header.')) {
+                const headerName = key.split('.').pop() || '';
+                if (this.isSensitiveHeader(headerName)) {
+                    attrs[key] = REDACTED;
+                }
             }
-            if (value.length > MAX_OBJECT_KEYS) {
-                result.push(`[truncated: ${value.length - MAX_OBJECT_KEYS} more items]`);
+        }
+    }
+    /**
+     * Sanitize HTTP headers explicitly.
+     */
+    sanitizeHeaders(headers) {
+        const sanitized = {};
+        for (const [key, value] of Object.entries(headers)) {
+            if (this.isSensitiveHeader(key) || this.isSensitiveKey(key)) {
+                sanitized[key] = REDACTED;
+            }
+            else if (typeof value === 'string') {
+                sanitized[key] = this.sanitizeString(value);
+            }
+            else {
+                sanitized[key] = value;
+            }
+        }
+        return sanitized;
+    }
+    isSensitiveHeader(headerName) {
+        const normalized = headerName.toLowerCase();
+        return DEFAULT_SENSITIVE_HEADERS.includes(normalized) || this.customHeaders.has(normalized);
+    }
+    isSensitiveKey(key) {
+        if (this.customKeysPattern && this.customKeysPattern.test(key))
+            return true;
+        return DEFAULT_SENSITIVE_KEYS_PATTERN.test(key);
+    }
+    sanitizeValue(root, _depth) {
+        if (root === null || root === undefined)
+            return root;
+        if (typeof root === 'string')
+            return this.sanitizeString(root);
+        if (typeof root !== 'object')
+            return root;
+        const seen = new WeakSet();
+        return this.sanitizeObject(root, 0, seen);
+    }
+    sanitizeObject(value, depth, seen) {
+        if (depth >= MAX_SANITIZE_DEPTH)
+            return value;
+        if (value === null || value === undefined)
+            return value;
+        if (typeof value === 'string')
+            return this.sanitizeString(value);
+        if (typeof value !== 'object')
+            return value;
+        const obj = value;
+        if (seen.has(obj))
+            return '[Circular]';
+        seen.add(obj);
+        try {
+            if (Array.isArray(value)) {
+                const result = [];
+                const limit = Math.min(value.length, MAX_OBJECT_KEYS);
+                for (let i = 0; i < limit; i++) {
+                    result.push(this.sanitizeObject(value[i], depth + 1, seen));
+                }
+                if (value.length > MAX_OBJECT_KEYS) {
+                    result.push(`[truncated: ${value.length - MAX_OBJECT_KEYS} more items]`);
+                }
+                return result;
+            }
+            const result = {};
+            const entries = Object.entries(value);
+            const limit = Math.min(entries.length, MAX_OBJECT_KEYS);
+            for (let i = 0; i < limit; i++) {
+                const entry = entries[i];
+                if (!entry)
+                    continue;
+                const [key, nested] = entry;
+                if (this.isSensitiveKey(key)) {
+                    result[key] = REDACTED;
+                }
+                else {
+                    result[key] = this.sanitizeObject(nested, depth + 1, seen);
+                }
+            }
+            if (entries.length > MAX_OBJECT_KEYS) {
+                result['__truncated'] = `${entries.length - MAX_OBJECT_KEYS} more keys`;
             }
             return result;
         }
-        const result = {};
-        const entries = Object.entries(value);
-        const limit = Math.min(entries.length, MAX_OBJECT_KEYS);
-        for (let i = 0; i < limit; i++) {
-            const entry = entries[i];
-            if (!entry)
-                continue;
-            const [key, nested] = entry;
-            if (isSensitiveKey(key)) {
-                result[key] = REDACTED;
-            }
-            else {
-                result[key] = sanitizeObject(nested, depth + 1, seen);
-            }
+        finally {
+            seen.delete(obj);
         }
-        if (entries.length > MAX_OBJECT_KEYS) {
-            result['__truncated'] = `${entries.length - MAX_OBJECT_KEYS} more keys`;
-        }
-        return result;
     }
-    finally {
-        // Allow the same object to appear in different branches
-        // (only true cycles should be blocked, not shared references)
-        seen.delete(obj);
+    sanitizeString(value) {
+        let sanitized = value;
+        for (const { pattern, replacement } of createPiiPatterns()) {
+            sanitized = sanitized.replace(pattern, replacement);
+        }
+        return sanitized;
     }
 }
-function sanitizeString(value) {
-    let sanitized = value;
-    for (const { pattern, replacement } of createPiiPatterns()) {
-        sanitized = sanitized.replace(pattern, replacement);
-    }
-    return sanitized;
+export const apiPayloadScrubber = new ApiPayloadScrubber();
+// Backward compatibility exports
+export function sanitizeEvent(event) {
+    return apiPayloadScrubber.sanitizeEvent(event);
 }
-function isSensitiveKey(key) {
-    return DEFAULT_SENSITIVE_KEYS.test(key);
+export function sanitizeHeaders(headers) {
+    return apiPayloadScrubber.sanitizeHeaders(headers);
 }
 //# sourceMappingURL=sanitizer.js.map

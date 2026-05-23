@@ -70,7 +70,6 @@ export async function shutdown(timeoutMs) {
         return;
     }
     shuttingDown = true;
-    eventQueue.setShuttingDown(true);
     const logger = getLogger();
     const timeout = timeoutMs ?? client.options?.shutdownTimeoutMs ?? 10_000;
     logger.info('SDK shutdown started', {
@@ -126,6 +125,7 @@ export async function shutdown(timeoutMs) {
         catch (drainError) {
             logger.warn('Event pipeline drain failed during shutdown', { error: drainError });
         }
+        eventQueue.setShuttingDown(true);
         // Step 7: Flush transport queue
         try {
             await flush();

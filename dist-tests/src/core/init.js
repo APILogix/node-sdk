@@ -566,6 +566,10 @@ function filterBufferedEvents(config) {
         if (e['type'] === 'request') {
             if (!config.enablePerformance)
                 return false;
+            if (config.samplingRate >= 1)
+                return true;
+            if (config.samplingRate <= 0)
+                return false;
             // Use deterministic sampling if engine is available
             if (samplingEngineInstance) {
                 const traceId = e['traceId'] ?? e['requestId'] ?? String(e['timestamp']);

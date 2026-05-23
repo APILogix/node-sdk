@@ -100,6 +100,7 @@ export async function flush(): Promise<void> {
 
     try {
       await sendEvents(events)
+      await persistentStorage.discard(events)
       circuitBreaker.recordSuccess()
       logger.info('Flush sent successfully', { eventCount: events.length })
     } catch (err) {
@@ -224,6 +225,7 @@ async function tick(): Promise<void> {
 
   try {
     await sendEvents(events)
+    await persistentStorage.discard(events)
     circuitBreaker.recordSuccess()
 
     logger.info('Batch sent successfully', {

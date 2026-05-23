@@ -76,6 +76,7 @@ export async function flush() {
             break;
         try {
             await sendEvents(events);
+            await persistentStorage.discard(events);
             circuitBreaker.recordSuccess();
             logger.info('Flush sent successfully', { eventCount: events.length });
         }
@@ -188,6 +189,7 @@ async function tick() {
     inFlightCount += 1;
     try {
         await sendEvents(events);
+        await persistentStorage.discard(events);
         circuitBreaker.recordSuccess();
         logger.info('Batch sent successfully', {
             eventCount: events.length,

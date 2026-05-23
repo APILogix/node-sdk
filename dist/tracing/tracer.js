@@ -23,6 +23,8 @@ import { getLogger } from '../utils/logger.js';
 import { processEvent } from '../core/event-pipeline.js';
 import { getRequestContext } from '../core/context.js';
 import { costGovernor } from '../utils/cost-governor.js';
+import { RemoteConfigSampler } from './remote-config-sampler.js';
+import { ConfigManager } from '../core/config-manager.js';
 import os from 'node:os';
 import { SDK_NAME, SDK_VERSION } from '../constants/version.js';
 // ─── State ──────────────────────────────────────────────────────────────────
@@ -84,6 +86,12 @@ class PipelineSpanExporter {
      * - SDK metadata (centralized constants)
      * - Tenant/session from current request context
      * - Service/environment from resolved SDK config
+     *
+     * tracing.capture.* security gates:
+     * - headers: false → strip http.request.header.* and http.response.header.*
+     * - body: false → strip http.request.body and http.response.body
+     * - query: false → strip http.url query params
+     * - cookies: false → strip http.request.header.cookie
      */
     spanToEvent(span) {
         const ctx = span.spanContext();
@@ -95,6 +103,37 @@ class PipelineSpanExporter {
         const statusLabel = status.code === 0 ? 'unset' : status.code === 1 ? 'ok' : 'error';
         // Read current request context for tenant/session enrichment
         const requestCtx = getRequestContext();
+        // Apply tracing.capture.* security gates from remote config
+        let filteredAttrs = Object.fromEntries(Object.entries(attrs).filter(([, v]) => v !== undefined));
+        try {
+            const tracingConfig = ConfigManager.getInstance().getConfig().tracing;
+            const capture = tracingConfig.capture;
+            if (!capture.headers) {
+                filteredAttrs = Object.fromEntries(Object.entries(filteredAttrs).filter(([k]) => !k.startsWith('http.request.header.') && !k.startsWith('http.response.header.')));
+            }
+            if (!capture.body) {
+                delete filteredAttrs['http.request.body'];
+                delete filteredAttrs['http.response.body'];
+            }
+            if (!capture.cookies) {
+                delete filteredAttrs['http.request.header.cookie'];
+                delete filteredAttrs['http.request.header.set-cookie'];
+            }
+            if (!capture.response) {
+                filteredAttrs = Object.fromEntries(Object.entries(filteredAttrs).filter(([k]) => !k.startsWith('http.response.')));
+            }
+            // Enforce maxSpanAttributes from remote config
+            const maxAttrs = tracingConfig.maxSpanAttributes;
+            const attrEntries = Object.entries(filteredAttrs);
+            if (attrEntries.length > maxAttrs) {
+                filteredAttrs = Object.fromEntries(attrEntries.slice(0, maxAttrs));
+                filteredAttrs['pulse.attributes_truncated'] = true;
+                filteredAttrs['pulse.original_attribute_count'] = attrEntries.length;
+            }
+        }
+        catch {
+            // ConfigManager not initialized — use unfiltered attributes
+        }
         return {
             type: 'span',
             eventId: `span_${ctx.spanId}`,
@@ -107,7 +146,7 @@ class PipelineSpanExporter {
             duration: durationMs,
             status: statusLabel,
             statusMessage: status.message,
-            attributes: Object.fromEntries(Object.entries(attrs).filter(([, v]) => v !== undefined)),
+            attributes: filteredAttrs,
             events: span.events.map(e => ({
                 name: e.name,
                 timestamp: hrTimeToMs(e.time),
@@ -140,7 +179,7 @@ class PipelineSpanExporter {
  *
  * Idempotent — safe to call multiple times.
  */
-export function initTracer(config) {
+export function initTracer(config, customResources) {
     if (initialized)
         return;
     const logger = getLogger();
@@ -177,12 +216,15 @@ export function initTracer(config) {
             'telemetry.sdk.name': SDK_NAME,
             'telemetry.sdk.version': SDK_VERSION,
             'telemetry.sdk.language': 'nodejs',
+            ...(customResources ?? {}),
         });
         // Create provider with resource
+        // Use RemoteConfigSampler for deterministic FNV-1a sampling with route overrides
+        const remoteConfigSampler = new RemoteConfigSampler();
         provider = new NodeTracerProvider({
             resource,
             sampler: new ParentBasedSampler({
-                root: new TraceIdRatioBasedSampler(config.samplingRate),
+                root: remoteConfigSampler, // RemoteConfigSampler implements shouldSample
             }),
             spanProcessors: [
                 new BatchSpanProcessor(new PipelineSpanExporter(), {

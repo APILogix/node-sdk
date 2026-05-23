@@ -111,8 +111,55 @@ export interface SpanEvent {
     readonly links?: readonly SpanLink[] | undefined;
     readonly metadata?: EventMetadata | undefined;
 }
+/** Log event captured from console interception or explicit API. */
+export interface LogEvent {
+    readonly type: 'log';
+    eventId?: string;
+    readonly level: string;
+    readonly message: string;
+    readonly timestamp: number;
+    readonly args?: readonly unknown[] | undefined;
+    readonly traceId?: string | undefined;
+    readonly spanId?: string | undefined;
+    readonly metadata?: EventMetadata | undefined;
+}
+/** Profiling event containing CPU or heap profile data. */
+export interface ProfileEvent {
+    readonly type: 'profile';
+    eventId?: string;
+    readonly profileType: 'cpu' | 'heap';
+    readonly traceId?: string | undefined;
+    readonly spanId?: string | undefined;
+    readonly startTime: number;
+    readonly endTime: number;
+    readonly duration: number;
+    readonly profile: unknown;
+    readonly timestamp: number;
+    readonly metadata?: EventMetadata | undefined;
+}
+/** Session replay event containing recorded DOM mutations. */
+export interface ReplayEvent {
+    readonly type: 'replay';
+    eventId?: string;
+    readonly sessionId: string;
+    readonly segmentId: number;
+    readonly timestamp: number;
+    readonly events: readonly unknown[];
+    readonly metadata?: EventMetadata | undefined;
+}
+/** Cron check-in event for monitoring scheduled jobs. */
+export interface CronCheckInEvent {
+    readonly type: 'cron_checkin';
+    eventId?: string;
+    readonly monitorSlug: string;
+    readonly status: 'ok' | 'error' | 'in_progress';
+    readonly timestamp: number;
+    readonly duration?: number | undefined;
+    readonly environment?: string | undefined;
+    readonly metadata?: EventMetadata | undefined;
+}
 /** Discriminated union of all event types. */
-export type SDKEvent = RequestEvent | ErrorEvent | MessageEvent | MetricEvent | SpanEvent;
+export type SDKEvent = RequestEvent | ErrorEvent | MessageEvent | MetricEvent | SpanEvent | LogEvent | ProfileEvent | ReplayEvent | CronCheckInEvent;
 /**
  * Legacy compat — the old Event type. Use SDKEvent for new code.
  * @deprecated Use SDKEvent instead.

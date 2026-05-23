@@ -52,6 +52,10 @@ declare class PersistentStorage {
      */
     flush(): Promise<void>;
     /**
+     * Remove events that were successfully delivered.
+     */
+    discard(events: readonly Event[]): Promise<void>;
+    /**
      * Replay persisted events from disk.
      * Returns events that are still valid (within TTL).
      */
@@ -82,6 +86,7 @@ declare class PersistentStorage {
     private checkAndRotate;
     private rotate;
     private rewriteFile;
+    private rewriteEntries;
     private enqueueWrite;
     private resolveDefaultDirectory;
 }

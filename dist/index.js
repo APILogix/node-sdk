@@ -60,8 +60,30 @@ export { getSessionManager } from './session/session-manager.js';
 // ─── Instrumentation ────────────────────────────────────────────────────────
 export { monitorMiddleware } from './instrumentation/express.js';
 export { instrumentHttpClient } from './instrumentation/http.js';
+export { registerAutoInstrumentations } from './instrumentation/auto-instrument.js';
+export { createGraphQLInstrumentation } from './instrumentation/graphql.js';
+export { createPrismaInstrumentation } from './instrumentation/prisma.js';
+export { createMongoDBInstrumentation } from './instrumentation/mongodb.js';
+export { createRedisInstrumentation } from './instrumentation/redis.js';
+export { createBullMQInstrumentation } from './instrumentation/bullmq.js';
+export { createAxiosInstrumentation } from './instrumentation/axios.js';
 export { setLogger, getLogger, setDebugMode, setLogLevel, setLogFormat, getLogFormat, jsonLogger } from './utils/logger.js';
 export { Severity, severityFromString } from './types/severity.js';
+// ─── Remote Config Engine ───────────────────────────────────────────────────
+export { ConfigManager } from './core/config-manager.js';
+export { KillswitchEngine } from './core/killswitch-engine.js';
+export { FeatureController } from './core/feature-controller.js';
+export { SamplingEngine } from './core/sampling-engine.js';
+export { LimitsEngine } from './core/limits-engine.js';
+export { VersionPolicy } from './core/version-policy.js';
+export { diffConfigs } from './core/config-differ.js';
+export { SecurityScrubber } from './processors/security-scrubber.js';
+export { TransportRouter } from './transport/transport-router.js';
+export { RouteTransportManager } from './transport/route-transport-manager.js';
+// ─── Subsystems ─────────────────────────────────────────────────────────────
+export { LoggingSubsystem } from './subsystems/logging-subsystem.js';
+export { ProfilingSubsystem } from './subsystems/profiling-subsystem.js';
+export { CronSubsystem } from './subsystems/cron-subsystem.js';
 // ─── Plan Gating ────────────────────────────────────────────────────────────
 export { getPlanDefaults, isFeatureAllowed } from './core/plan-gate.js';
 // ─── Event Loop Monitoring ──────────────────────────────────────────────────────
@@ -73,7 +95,6 @@ export { RetryBudget, globalRetryBudget } from './transport/retry.js';
 // ─── Advanced Diagnostics ───────────────────────────────────────────────────
 export { otelMetrics } from './metrics/otel-adapter.js';
 // ─── Auto Instrumentation ───────────────────────────────────────────────────
-export { registerAutoInstrumentations } from './instrumentation/auto-instrument.js';
 // ─── Advanced Diagnostics ───────────────────────────────────────────────────
 export { errorDeduplicator } from './processors/deduplicator.js';
 export { persistentStorage } from './storage/persistent-storage.js';

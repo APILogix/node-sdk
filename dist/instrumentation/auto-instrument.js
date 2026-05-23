@@ -1,11 +1,21 @@
 /**
  * Auto Instrumentation — selective OpenTelemetry instrumentations
- * wrapped with Pulse SDK guards to prevent duplicate spans and
- * recursive SDK tracing.
+ * wrapped with Pulse SDK guards, now driven by remote config.
+ *
+ * Reads from ConfigManager.getConfig().instrumentation to decide
+ * which modules to patch. Never monkey-patches a module if its
+ * remote config flag is false.
  *
  * Provides:
  * - HTTP client instrumentation (http/https/fetch/undici)
  * - Express framework instrumentation
+ * - Fastify framework instrumentation (with captureHooks / captureValidationErrors)
+ * - GraphQL instrumentation (with captureResolvers)
+ * - Prisma instrumentation (with captureQueries / captureParams)
+ * - MongoDB instrumentation
+ * - Redis instrumentation
+ * - BullMQ instrumentation
+ * - Axios HTTP client instrumentation
  * - Self-request guard (prevents tracing SDK's own ingestion calls)
  * - No duplicate spans (OTel SDK handles deduplication)
  * - Low-overhead runtime performance
@@ -18,23 +28,79 @@ import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
 import { ExpressInstrumentation } from '@opentelemetry/instrumentation-express';
 import { FastifyInstrumentation } from '@opentelemetry/instrumentation-fastify';
 import { UndiciInstrumentation } from '@opentelemetry/instrumentation-undici';
+import { GraphQLInstrumentation } from '@opentelemetry/instrumentation-graphql';
+import { MongoDBInstrumentation } from '@opentelemetry/instrumentation-mongodb';
+import { RedisInstrumentation } from '@opentelemetry/instrumentation-redis-4';
+import { PrismaInstrumentation } from '@prisma/instrumentation';
+import { BullMQInstrumentation } from 'opentelemetry-instrumentation-bullmq';
 import { client } from '../core/client.js';
 import { getLogger } from '../utils/logger.js';
-// ─── State ──────────────────────────────────────────────────────────────────
+import { ConfigManager } from '../core/config-manager.js';
+import { createAxiosInstrumentation } from './axios.js';
 const INSTRUMENTATION_GUARD = Symbol.for('pulse-sdk.auto-instrumentation.registered');
-/**
- * Register OpenTelemetry auto-instrumentations with Pulse SDK guards.
- * Idempotent — safe to call multiple times, even across multiple SDK copies
- * in the same V8 isolate (uses Symbol.for global guard).
- */
+function resolveInstrumentationOptions(userOptions) {
+    const configManager = ConfigManager.getInstance();
+    const config = configManager.getConfig();
+    const instr = config.instrumentation;
+    const tracing = config.tracing;
+    const httpEnabled = instr.http ?? userOptions.http ?? true;
+    const httpsEnabled = instr.https ?? true;
+    const expressEnabled = typeof instr.express === 'object'
+        ? instr.express.enabled
+        : (instr.express ?? userOptions.express ?? true);
+    const fastifyConfig = typeof instr.fastify === 'object'
+        ? instr.fastify
+        : { enabled: instr.fastify ?? userOptions.fastify ?? true, captureHooks: true, captureValidationErrors: true };
+    const fetchEnabled = instr.fetch ?? userOptions.undici ?? true;
+    const graphqlEnabled = typeof instr.graphql === 'object'
+        ? instr.graphql.enabled
+        : (instr.graphql ?? userOptions.graphql ?? false);
+    const graphqlConfig = typeof instr.graphql === 'object'
+        ? { enabled: graphqlEnabled, captureResolvers: instr.graphql.captureResolvers ?? true }
+        : { enabled: graphqlEnabled, captureResolvers: true };
+    const prismaEnabled = typeof instr.prisma === 'object'
+        ? instr.prisma.enabled
+        : (instr.prisma ?? userOptions.prisma ?? false);
+    const prismaConfig = typeof instr.prisma === 'object'
+        ? { enabled: prismaEnabled, captureQueries: instr.prisma.captureQueries ?? true, captureParams: instr.prisma.captureParams ?? false }
+        : { enabled: prismaEnabled, captureQueries: true, captureParams: false };
+    const mongodbEnabled = instr.mongodb ?? userOptions.mongodb ?? false;
+    const redisEnabled = instr.redis ?? userOptions.redis ?? false;
+    const bullmqEnabled = instr.bullmq ?? userOptions.bullmq ?? false;
+    const axiosEnabled = instr.axios ?? userOptions.axios ?? false;
+    return {
+        http: httpEnabled && httpsEnabled,
+        https: httpsEnabled,
+        express: expressEnabled,
+        fastify: fastifyConfig.enabled,
+        undici: fetchEnabled,
+        graphql: graphqlConfig.enabled,
+        graphqlConfig,
+        prisma: prismaConfig.enabled,
+        prismaConfig,
+        mongodb: mongodbEnabled,
+        redis: redisEnabled,
+        bullmq: bullmqEnabled,
+        axios: axiosEnabled,
+        fastifyConfig: {
+            captureHooks: fastifyConfig.captureHooks ?? true,
+            captureValidationErrors: fastifyConfig.captureValidationErrors ?? true,
+        },
+        ignoredRoutes: [...(tracing.ignoredRoutes ?? [])],
+        ignoredMethods: [...(tracing.ignoredMethods ?? [])],
+        captureConfig: tracing.capture ?? { headers: false, body: false, response: false, query: true, cookies: false },
+    };
+}
 export function registerAutoInstrumentations(options = {}) {
     const g = globalThis;
     if (g[INSTRUMENTATION_GUARD])
         return;
     g[INSTRUMENTATION_GUARD] = true;
     const logger = getLogger();
+    const resolved = resolveInstrumentationOptions(options);
     const instrumentations = [];
-    if (options.http !== false) {
+    const axiosCleanup = [];
+    if (resolved.http) {
         instrumentations.push(new HttpInstrumentation({
             ignoreOutgoingRequestHook: (request) => {
                 if (!client.initialized)
@@ -66,7 +132,14 @@ export function registerAutoInstrumentations(options = {}) {
                     const req = request;
                     const url = String(req.url ?? '');
                     const path = url.split('?')[0] ?? '';
-                    return ['/health', '/ready', '/healthz', '/livez', '/metrics', '/v1/events', '/v1/init'].includes(path);
+                    if (resolved.ignoredRoutes.some(r => path === r || path.startsWith(r))) {
+                        return true;
+                    }
+                    const method = String(req.method ?? '').toUpperCase();
+                    if (resolved.ignoredMethods.includes(method)) {
+                        return true;
+                    }
+                    return ['/v1/events', '/v1/init', '/v1/sdk-config'].includes(path);
                 }
                 catch {
                     return false;
@@ -74,13 +147,13 @@ export function registerAutoInstrumentations(options = {}) {
             },
         }));
     }
-    if (options.express !== false) {
+    if (resolved.express) {
         instrumentations.push(new ExpressInstrumentation());
     }
-    if (options.fastify !== false) {
+    if (resolved.fastify) {
         instrumentations.push(new FastifyInstrumentation());
     }
-    if (options.undici !== false) {
+    if (resolved.undici) {
         instrumentations.push(new UndiciInstrumentation({
             ignoreRequestHook: (request) => {
                 if (!client.initialized)
@@ -101,25 +174,81 @@ export function registerAutoInstrumentations(options = {}) {
             },
         }));
     }
-    if (instrumentations.length === 0) {
-        logger.debug('No auto-instrumentations registered');
-        return;
+    if (resolved.graphql) {
+        instrumentations.push(new GraphQLInstrumentation({
+            enabled: true,
+            ignoreResolveSpans: !resolved.graphqlConfig.captureResolvers,
+        }));
     }
-    registerInstrumentations({
-        instrumentations: instrumentations,
-    });
-    logger.info('Auto-instrumentations registered', {
-        http: options.http !== false,
-        express: options.express !== false,
-        fastify: options.fastify !== false,
-        undici: options.undici !== false,
-        count: instrumentations.length,
+    if (resolved.prisma) {
+        instrumentations.push(new PrismaInstrumentation({
+            enabled: true,
+        }));
+    }
+    if (resolved.mongodb) {
+        instrumentations.push(new MongoDBInstrumentation({
+            enabled: true,
+            enhancedDatabaseReporting: resolved.captureConfig.body,
+        }));
+    }
+    if (resolved.redis) {
+        instrumentations.push(new RedisInstrumentation({
+            enabled: true,
+            dbStatementSerializer: (cmdName, cmdArgs) => {
+                const sensitiveCommands = ['AUTH', 'CONFIG SET', 'CONFIG GET', 'DEL', 'EXPIRE', 'EXPIREAT', 'GET', 'SET', 'HSET', 'HGET', 'HGETALL'];
+                if (sensitiveCommands.includes(cmdName.toUpperCase())) {
+                    return `${cmdName} [REDACTED]`;
+                }
+                if (!resolved.captureConfig.body) {
+                    return cmdName;
+                }
+                return `${cmdName} ${cmdArgs.join(' ')}`;
+            },
+        }));
+    }
+    if (resolved.bullmq) {
+        instrumentations.push(new BullMQInstrumentation({
+            enabled: true,
+        }));
+    }
+    if (resolved.axios) {
+        const axiosInstrumentation = createAxiosInstrumentation(true, {
+            captureRequestData: resolved.captureConfig.body,
+            captureResponseData: resolved.captureConfig.response,
+        }, resolved.captureConfig);
+        if (axiosInstrumentation) {
+            axiosCleanup.push(axiosInstrumentation.teardown);
+            axiosInstrumentation.setup();
+        }
+    }
+    const registeredInstrumentations = instrumentations.filter(Boolean);
+    if (registeredInstrumentations.length > 0) {
+        registerInstrumentations({
+            instrumentations: registeredInstrumentations,
+        });
+    }
+    logger.info('Auto-instrumentations registered (remote-config-driven)', {
+        http: resolved.http,
+        https: resolved.https,
+        express: resolved.express,
+        fastify: resolved.fastify,
+        undici: resolved.undici,
+        graphql: resolved.graphql,
+        prisma: resolved.prisma,
+        mongodb: resolved.mongodb,
+        redis: resolved.redis,
+        bullmq: resolved.bullmq,
+        axios: resolved.axios,
+        fastifyCaptureHooks: resolved.fastifyConfig.captureHooks,
+        fastifyCaptureValidationErrors: resolved.fastifyConfig.captureValidationErrors,
+        graphqlCaptureResolvers: resolved.graphqlConfig.captureResolvers,
+        prismaCaptureQueries: resolved.prismaConfig.captureQueries,
+        prismaCaptureParams: resolved.prismaConfig.captureParams,
+        ignoredRoutes: resolved.ignoredRoutes,
+        ignoredMethods: resolved.ignoredMethods,
+        count: registeredInstrumentations.length,
     });
 }
-/**
- * Reset auto-instrumentation state — for testing.
- * @internal
- */
 export function resetAutoInstrumentations() {
     delete globalThis[INSTRUMENTATION_GUARD];
 }
@@ -128,6 +257,8 @@ function isInternalSdkUrl(target, ingest) {
         return false;
     return target.pathname === ingest.pathname
         || target.pathname === '/v1/events'
-        || target.pathname === '/v1/init';
+        || target.pathname === '/v1/init'
+        || target.pathname === '/v1/sdk-config';
 }
+export { GraphQLInstrumentation, MongoDBInstrumentation, RedisInstrumentation, PrismaInstrumentation, BullMQInstrumentation };
 //# sourceMappingURL=auto-instrument.js.map

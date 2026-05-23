@@ -1,17 +1,22 @@
 /**
- * SDK Initialization — the entry point for configuring and starting the SDK.
+ * SDK Initialization — refactored for remote-config-driven architecture.
  *
  * Flow:
- * 1. Validate user options via zod schema
- * 2. Handshake with server (/v1/init) to get remote config + plan tier
- * 3. Resolve plan features (free / pro / enterprise)
- * 4. Merge user options + remote config into ResolvedSDKConfig
- * 5. Clamp resolved config to plan limits (features OFF if plan doesn't allow)
- * 6. Initialize breadcrumb buffer, plugins, event processors
- * 7. Start batcher, register global error handlers, signal handlers
- * 8. SDK is ready — events flow through the pipeline
+ * 1. Validate user options via Zod schema
+ * 2. Initialize ConfigManager (fetches POST /v1/sdk-config with 3s timeout)
+ * 3. Enforce VersionPolicy (blocked/force_upgrade/degraded/ok)
+ * 4. Initialize KillswitchEngine (reactive per-subsystem control)
+ * 5. Initialize SamplingEngine (FNV-1a deterministic)
+ * 6. Initialize FeatureController (skip class instantiation for disabled features)
+ * 7. Initialize SecurityScrubber (pre-transport PII/header scrubbing)
+ * 8. Initialize LimitsEngine (rate limiting, attribute trimming)
+ * 9. Initialize TransportRouter (8 independent route managers)
+ * 10. Register subsystems with FeatureController (tracing, metrics, errors, logging, profiling, crons)
+ * 11. Wire config change listeners for hot-swap
+ * 12. Start ConfigManager refresh loop
+ * 13. Backward-compatible legacy init flow preserved
  *
- * All features are ON by default — the plan tier caps what's allowed.
+ * Config merge priority: Baked-in SDK defaults → Remote Config → User init() options.
  */
 import { createHash } from 'crypto';
 import { sdkInitOptionsSchema } from '../types/config.js';
@@ -37,6 +42,18 @@ import { metricsRegistry } from '../metrics/registry.js';
 import { otelMetrics } from '../metrics/otel-adapter.js';
 import { slowRequestDetector } from '../processors/slow-request-detector.js';
 import { registerAutoInstrumentations } from '../instrumentation/auto-instrument.js';
+// ─── New Remote Config Modules ──────────────────────────────────────────────
+import { ConfigManager } from './config-manager.js';
+import { VersionPolicy } from './version-policy.js';
+import { KillswitchEngine } from './killswitch-engine.js';
+import { SamplingEngine } from './sampling-engine.js';
+import { FeatureController } from './feature-controller.js';
+import { LimitsEngine } from './limits-engine.js';
+import { SecurityScrubber } from '../processors/security-scrubber.js';
+import { TransportRouter } from '../transport/transport-router.js';
+import { LoggingSubsystem } from '../subsystems/logging-subsystem.js';
+import { ProfilingSubsystem } from '../subsystems/profiling-subsystem.js';
+import { CronSubsystem } from '../subsystems/cron-subsystem.js';
 const INIT_MAX_ATTEMPTS = 5;
 const INIT_BASE_RETRY_DELAY_MS = 500;
 const INIT_MAX_RETRY_DELAY_MS = 5000;
@@ -92,6 +109,58 @@ async function initialize(options) {
         release: options.release,
         debug: options.debug ?? false,
     });
+    // ─── Phase 1: Remote Config Fetch ───────────────────────────────────────
+    const configManager = ConfigManager.getInstance();
+    let remoteConfigResponse = null;
+    try {
+        remoteConfigResponse = await configManager.initialize(options);
+        logger.info('Remote config loaded', {
+            configHash: remoteConfigResponse.meta.configHash,
+            environment: remoteConfigResponse.sdk.environment,
+        });
+    }
+    catch (err) {
+        logger.warn(`Remote config initialization failed: ${err instanceof Error ? err.message : String(err)}`);
+        // ConfigManager falls back to BAKED_IN_REMOTE_CONFIG internally
+        remoteConfigResponse = configManager.getConfig();
+    }
+    // ─── Phase 2: Version Policy Enforcement ────────────────────────────────
+    const versionResult = VersionPolicy.enforce(remoteConfigResponse.versionPolicy);
+    if (versionResult.status === 'blocked' || versionResult.status === 'force_upgrade') {
+        logger.error(`[VersionPolicy] ${versionResult.status}: ${versionResult.message}`);
+        client.clear();
+        return undefined;
+    }
+    const isDegradedMode = versionResult.status === 'degraded';
+    if (isDegradedMode) {
+        logger.warn(`[VersionPolicy] Degraded mode: ${versionResult.message}`);
+    }
+    // ─── Phase 3: Control Plane Initialization ──────────────────────────────
+    const killswitchEngine = KillswitchEngine.initialize(remoteConfigResponse.killswitches);
+    // Global SDK killswitch — everything becomes no-op
+    if (killswitchEngine.isSDKDisabled()) {
+        logger.error('[KillswitchEngine] SDK is globally disabled. No telemetry will be captured.');
+        client.clear();
+        return undefined;
+    }
+    const samplingEngine = SamplingEngine.initialize(remoteConfigResponse.sampling);
+    const featureController = FeatureController.initialize(remoteConfigResponse.features);
+    const limitsEngine = LimitsEngine.initialize(remoteConfigResponse.limits);
+    const securityScrubber = SecurityScrubber.initialize(remoteConfigResponse.security);
+    if (isDegradedMode) {
+        featureController.setDegradedMode(true);
+    }
+    // ─── Phase 4: Transport Router ──────────────────────────────────────────
+    const transportRouter = TransportRouter.initialize(remoteConfigResponse.transport, options.apiKey);
+    if (killswitchEngine.isKilled('disableTransport')) {
+        transportRouter.disable();
+    }
+    // Register killswitch handler for transport
+    killswitchEngine.registerSubsystem('disableTransport', {
+        shutdown: () => transportRouter.disable(),
+        startup: () => transportRouter.enable(),
+    });
+    // ─── Phase 5: Legacy Init Flow (backward compat) ───────────────────────
     for (let attempt = 1; attempt <= INIT_MAX_ATTEMPTS; attempt += 1) {
         try {
             logger.debug('SDK init request sending', {
@@ -125,8 +194,10 @@ async function initialize(options) {
             });
             // Merge user options + remote config → raw resolved config (all features ON)
             const rawConfig = mergeConfig(options, remoteConfig, planFeatures);
+            // Attach the full remote config response to the resolved config
+            const rawConfigWithRemote = { ...rawConfig, remoteConfig: remoteConfigResponse ?? undefined };
             // Clamp to plan limits — features above plan are forced OFF with warnings
-            const resolvedConfig = clampToPlan(rawConfig, planFeatures);
+            const resolvedConfig = clampToPlan(rawConfigWithRemote, planFeatures);
             client.setResolvedConfig(resolvedConfig);
             // Configure queue
             eventQueue.configure(resolvedConfig.maxQueueSize);
@@ -182,7 +253,7 @@ async function initialize(options) {
             }
             // Configure slow request detector
             slowRequestDetector.configure({});
-            // Start subsystems
+            // Start legacy batcher (kept for backward compat alongside TransportRouter)
             startBatcher({
                 batchSize: resolvedConfig.batchSize,
                 flushIntervalMs: resolvedConfig.flushIntervalMs,
@@ -193,31 +264,162 @@ async function initialize(options) {
             registerSignalHandlers();
             errorDeduplicator.start();
             metricsRegistry.start();
-            // Initialize OpenTelemetry metrics if enabled (plan-gated)
-            if (resolvedConfig.enableMetrics) {
-                otelMetrics.init({
-                    service: resolvedConfig.service,
-                    environment: resolvedConfig.environment,
-                    release: resolvedConfig.release,
-                }, resolvedConfig.otelMetrics);
-            }
-            // Initialize OpenTelemetry tracing if enabled (plan-gated)
-            if (resolvedConfig.enableTracing) {
-                initTracer(resolvedConfig);
-                // Register auto-instrumentations after tracer is ready
-                registerAutoInstrumentations({
-                    http: true,
-                    express: true,
-                    fastify: true,
-                    undici: true,
-                });
-            }
-            // Initialize session manager if plan allows
-            if (planFeatures.allowSessions) {
-                getSessionManager();
-            }
+            const { apiPayloadScrubber } = await import('../processors/sanitizer.js');
+            apiPayloadScrubber.configure(resolvedConfig.dataScrubbing);
             // Detect runtime resources (host, container, cloud metadata)
             const resources = detectResources(client.metadata.sdkVersion);
+            // ─── Phase 6: Feature-Controlled Subsystem Registration ───────────
+            const eventMetadata = client.metadata;
+            // Register tracing subsystem
+            await featureController.register('tracing', () => {
+                if (!killswitchEngine.isKilled('disableTracing') && resolvedConfig.enableTracing) {
+                    initTracer(resolvedConfig, resources);
+                    registerAutoInstrumentations({}); // Reads from remote config internally
+                }
+            }, () => {
+                logger.info('[FeatureController] Tracing subsystem stopped');
+            });
+            killswitchEngine.registerSubsystem('disableTracing', {
+                shutdown: () => logger.warn('[KillswitchEngine] Tracing killed'),
+                startup: () => {
+                    if (featureController.isEnabled('tracing')) {
+                        initTracer(resolvedConfig, resources);
+                    }
+                },
+            });
+            // Register metrics subsystem
+            await featureController.register('metrics', () => {
+                if (!killswitchEngine.isKilled('disableMetrics') && resolvedConfig.enableMetrics) {
+                    otelMetrics.init({
+                        service: resolvedConfig.service,
+                        environment: resolvedConfig.environment,
+                        release: resolvedConfig.release,
+                    }, resolvedConfig.otelMetrics, resources);
+                }
+            }, () => {
+                logger.info('[FeatureController] Metrics subsystem stopped');
+            });
+            killswitchEngine.registerSubsystem('disableMetrics', {
+                shutdown: () => logger.warn('[KillswitchEngine] Metrics killed'),
+                startup: () => {
+                    if (featureController.isEnabled('metrics')) {
+                        otelMetrics.init({
+                            service: resolvedConfig.service,
+                            environment: resolvedConfig.environment,
+                            release: resolvedConfig.release,
+                        }, resolvedConfig.otelMetrics, resources);
+                    }
+                },
+            });
+            // Register errors subsystem
+            await featureController.register('errors', () => {
+                if (!killswitchEngine.isKilled('disableErrors')) {
+                    setupGlobalErrorHandlers();
+                }
+            }, () => {
+                logger.info('[FeatureController] Errors subsystem stopped');
+            });
+            killswitchEngine.registerSubsystem('disableErrors', {
+                shutdown: () => logger.warn('[KillswitchEngine] Errors killed'),
+                startup: () => {
+                    if (featureController.isEnabled('errors')) {
+                        setupGlobalErrorHandlers();
+                    }
+                },
+            });
+            // Register logging subsystem
+            await featureController.register('logging', () => {
+                if (!killswitchEngine.isKilled('disableLogs')) {
+                    const loggingSub = LoggingSubsystem.initialize(remoteConfigResponse.logging, (event) => transportRouter.send(event), eventMetadata);
+                    loggingSub.start();
+                }
+            }, () => {
+                LoggingSubsystem.reset();
+            });
+            killswitchEngine.registerSubsystem('disableLogs', {
+                shutdown: () => {
+                    const sub = LoggingSubsystem.getInstance();
+                    if (sub)
+                        sub.stop();
+                },
+                startup: () => {
+                    const sub = LoggingSubsystem.getInstance();
+                    if (sub)
+                        sub.start();
+                },
+            });
+            // Register profiling subsystem
+            await featureController.register('profiling', async () => {
+                if (!killswitchEngine.isKilled('disableProfiling')) {
+                    const profilingSub = ProfilingSubsystem.initialize(remoteConfigResponse.profiling, (event) => transportRouter.send(event), eventMetadata);
+                    await profilingSub.start();
+                }
+            }, async () => {
+                const sub = ProfilingSubsystem.getInstance();
+                if (sub)
+                    await sub.stop();
+            });
+            killswitchEngine.registerSubsystem('disableProfiling', {
+                shutdown: async () => {
+                    const sub = ProfilingSubsystem.getInstance();
+                    if (sub)
+                        await sub.stop();
+                },
+                startup: async () => {
+                    const sub = ProfilingSubsystem.getInstance();
+                    if (sub)
+                        await sub.start();
+                },
+            });
+            // Register crons subsystem
+            await featureController.register('crons', () => {
+                CronSubsystem.initialize((event) => transportRouter.send(event), eventMetadata);
+            }, () => {
+                CronSubsystem.reset();
+            });
+            // Register session replay subsystem
+            await featureController.register('sessionReplay', () => {
+                if (planFeatures.allowSessions) {
+                    getSessionManager();
+                }
+            }, () => {
+                logger.info('[FeatureController] Session replay subsystem stopped');
+            });
+            // ─── Phase 7: Wire Config Change Listeners ──────────────────────────
+            configManager.onConfigChange((diff, newConfig) => {
+                logger.info('[ConfigManager] Config changed, propagating to subsystems');
+                if (diff.killswitchesChanged) {
+                    void killswitchEngine.handleConfigChange(diff, newConfig);
+                }
+                if (diff.samplingChanged) {
+                    samplingEngine.handleConfigChange(diff, newConfig);
+                }
+                if (diff.featuresChanged) {
+                    void featureController.handleConfigChange(diff, newConfig);
+                }
+                if (diff.limitsChanged) {
+                    limitsEngine.handleConfigChange(diff, newConfig);
+                }
+                if (diff.securityChanged) {
+                    securityScrubber.handleConfigChange(diff, newConfig);
+                }
+                if (diff.transportChanged) {
+                    transportRouter.handleConfigChange(diff, newConfig);
+                }
+                if (diff.loggingChanged) {
+                    const loggingSub = LoggingSubsystem.getInstance();
+                    if (loggingSub)
+                        loggingSub.handleConfigChange(diff, newConfig);
+                }
+                if (diff.profilingChanged) {
+                    const profilingSub = ProfilingSubsystem.getInstance();
+                    if (profilingSub)
+                        profilingSub.handleConfigChange(diff, newConfig);
+                }
+            });
+            // ─── Phase 8: Start Config Refresh Loop ────────────────────────────
+            configManager.startRefreshLoop();
+            // ─── Done ─────────────────────────────────────────────────────────
             logger.info('SDK initialized successfully', {
                 plan: resolvedConfig.plan,
                 service: resolvedConfig.service,
@@ -230,6 +432,7 @@ async function initialize(options) {
                     tracing: resolvedConfig.enableTracing,
                     metrics: resolvedConfig.enableMetrics,
                 },
+                activeSubsystems: featureController.getActiveSubsystems(),
                 resources: {
                     hostname: resources['host.name'],
                     runtime: resources['process.runtime.version'],
@@ -304,6 +507,13 @@ function mergeConfig(options, remote, planFeatures) {
             percentiles: options.otelMetrics?.percentiles ?? [50, 75, 90, 95, 99],
             cardinalityLimit: options.otelMetrics?.cardinalityLimit ?? 2000,
         },
+        // Payload Governance
+        dataScrubbing: {
+            sensitiveHeaders: options.dataScrubbing?.sensitiveHeaders ? Array.from(options.dataScrubbing.sensitiveHeaders) : [],
+            sensitiveKeys: options.dataScrubbing?.sensitiveKeys ? Array.from(options.dataScrubbing.sensitiveKeys) : [],
+            redactRequestBody: options.dataScrubbing?.redactRequestBody ?? false,
+            redactResponseBody: options.dataScrubbing?.redactResponseBody ?? false,
+        },
     };
 }
 // ─── Validation ─────────────────────────────────────────────────────────────
@@ -350,10 +560,23 @@ function validateRemoteConfig(response) {
     };
 }
 function filterBufferedEvents(config) {
+    const samplingEngineInstance = SamplingEngine.getInstance();
     eventQueue.filter(event => {
         const e = event;
         if (e['type'] === 'request') {
-            return config.enablePerformance && Math.random() <= config.samplingRate;
+            if (!config.enablePerformance)
+                return false;
+            if (config.samplingRate >= 1)
+                return true;
+            if (config.samplingRate <= 0)
+                return false;
+            // Use deterministic sampling if engine is available
+            if (samplingEngineInstance) {
+                const traceId = e['traceId'] ?? e['requestId'] ?? String(e['timestamp']);
+                const decision = samplingEngineInstance.shouldSampleTrace(traceId);
+                return decision.sampled;
+            }
+            return Math.random() <= config.samplingRate;
         }
         if (e['type'] === 'error') {
             return config.enableErrors;
