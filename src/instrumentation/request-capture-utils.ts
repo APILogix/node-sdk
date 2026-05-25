@@ -22,6 +22,7 @@
 import { ConfigManager } from '../core/config-manager.js'
 import { FeatureController } from '../core/feature-controller.js'
 import { KillswitchEngine } from '../core/killswitch-engine.js'
+import { SamplingEngine } from '../core/sampling-engine.js'
 import { SecurityScrubber } from '../processors/security-scrubber.js'
 import { tenantGovernor } from '../core/tenant-isolation.js'
 import { getLogger } from '../utils/logger.js'
@@ -41,6 +42,13 @@ export interface CaptureGateInput {
   readonly path: string
   /** HTTP method (will be uppercased for comparison). */
   readonly method: string
+  /**
+   * Stable identifier for this request. Used by the sampling engine for
+   * deterministic decisions — the same id will always produce the same
+   * sampled/dropped outcome. Typically the request id resolved from
+   * headers or generated upstream.
+   */
+  readonly sampleKey?: string | undefined
   /** Tenant id resolved from headers / context, if any. */
   readonly tenantId?: string | undefined
   /** Framework-level ignore list (string prefix or regex). */
@@ -63,6 +71,12 @@ export interface CaptureGateDecision {
   readonly allowBody: boolean
   readonly allowResponse: boolean
   readonly allowCookies: boolean
+  /**
+   * The sampling rate that was applied (0..1). Useful for adapters that
+   * want to attach `pulse.sampling.rate` as a span attribute so the
+   * backend can re-weight aggregates.
+   */
+  readonly sampledRate: number
 }
 
 /**
@@ -103,15 +117,21 @@ export function evaluateCaptureGate(input: CaptureGateInput): CaptureGateDecisio
     return denied('tracing_disabled')
   }
 
-  // 3. Feature controller — remote-config-driven feature flag.
+  // 3. Feature controller — `requestCapture` is its own remote-config flag
+  // in v3. The `tracing` feature controls span emission, not request events.
+  // We keep the tracing check as well because requests carry trace context;
+  // disabling tracing while still emitting requests would produce orphan
+  // signals.
   const featureCtrl = FeatureController.getInstance()
-  if (featureCtrl && !featureCtrl.isEnabled('tracing')) {
-    return denied('tracing_feature_off')
+  if (featureCtrl) {
+    if (!featureCtrl.isEnabled('requestCapture')) return denied('request_capture_feature_off')
+    if (!featureCtrl.isEnabled('tracing')) return denied('tracing_feature_off')
   }
 
-  // 4. Remote-config ignored routes & methods. We treat both `tracing.ignored*`
-  //    arrays as authoritative for request capture so users only need to
-  //    configure ignores in one place.
+  // 4. Remote-config ignored routes & methods. The new schema expresses
+  //    these as per-route sampling rates of 0 (handled in step 6 below),
+  //    but we still honour any local lists provided by callers and any
+  //    legacy fields the gate's tracing-config helper exposes.
   const cfg = safeGetTracingConfig()
   if (cfg) {
     if (cfg.ignoredMethods.some(m => m.toUpperCase() === method)) {
@@ -127,6 +147,19 @@ export function evaluateCaptureGate(input: CaptureGateInput): CaptureGateDecisio
     return denied('tenant_quota')
   }
 
+  // 6. Sampling — `sampling.routes["/path"].requests` lets the backend
+  //    silence noisy paths or boost critical ones without a redeploy.
+  //    Falls back to the global `sampling.requests` rate. We use a stable
+  //    sample key (callers provide the request id) so the same request
+  //    always lands the same way on retries / idempotent replays.
+  const samplingEngine = SamplingEngine.getInstance()
+  let sampledRate = 1
+  if (samplingEngine && input.sampleKey) {
+    const decision = samplingEngine.shouldSampleRequest(input.sampleKey, input.path)
+    sampledRate = decision.rate
+    if (!decision.sampled) return denied(`sampling_${decision.reason}`)
+  }
+
   return {
     capture: true,
     allowHeaders: cfg?.capture.headers ?? true,
@@ -134,6 +167,7 @@ export function evaluateCaptureGate(input: CaptureGateInput): CaptureGateDecisio
     allowBody: cfg?.capture.body ?? false,
     allowResponse: cfg?.capture.response ?? false,
     allowCookies: cfg?.capture.cookies ?? false,
+    sampledRate,
   }
 }
 
@@ -281,6 +315,7 @@ function denied(reason: string): CaptureGateDecision {
     allowBody: false,
     allowResponse: false,
     allowCookies: false,
+    sampledRate: 0,
   }
 }
 

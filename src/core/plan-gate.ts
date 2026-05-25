@@ -1,263 +1,116 @@
 /**
- * Plan-Based Feature Gating — Enterprise Feature Access Control
+ * Plan-gate — neutralized.
  *
- * Controls which SDK features are available based on the project's plan tier.
- * The backend drives the plan; the SDK enforces limits client-side.
+ * The wire schema (post-v3) no longer carries a plan tier. The backend
+ * decides what each customer can do and ships a flat config to the SDK.
+ * This module used to clamp resolved configs to a "free / pro / enterprise"
+ * tier and warn users about features above their plan; that logic now
+ * lives entirely server-side.
  *
- * Design principles:
- * - ALL features default to ON — the plan caps what's allowed
- * - Users can turn OFF features but can't turn ON features above their plan
- * - Warnings are logged (not errors) when plan limits are hit — SDK never crashes
- * - Graceful fallback: if backend is unreachable, core features only (errors + breadcrumbs)
+ * The exports here are kept as compat shims so the (still-public)
+ * `ResolvedSDKConfig.planFeatures` type continues to compile and existing
+ * call sites don't need to change. Every function effectively returns
+ * "unrestricted":
+ *
+ *   - `resolvePlanFeatures()` returns an `enterprise` profile with no caps.
+ *   - `clampToPlan()` is a passthrough — no warnings, no clamping.
+ *   - `isFeatureAllowed()` always returns `true`.
+ *   - `validatePluginCount()` accepts every plugin.
+ *
+ * The whole module will be deleted in v5 along with the `plan` and
+ * `planFeatures` fields on `ResolvedSDKConfig`. Until then, this stub
+ * preserves the public API while making sure no client-side decision
+ * ever depends on the plan again.
  */
 
-import type { PlanTier, PlanFeatures, SDKInitOptions, ResolvedSDKConfig } from '../types/config.js'
-import { getLogger } from '../utils/logger.js'
+import type { PlanTier, PlanFeatures, ResolvedSDKConfig } from '../types/config.js'
 
-// ─── Plan Defaults ──────────────────────────────────────────────────────────
+// ─── Unrestricted profile ───────────────────────────────────────────────────
+//
+// The single profile returned by every public function. "Enterprise" is the
+// historical name for "no SDK-side restrictions"; it has nothing to do with
+// the customer's actual subscription tier (that's the backend's concern now).
 
-/**
- * Default feature sets per plan tier.
- * These are the baseline — the backend can override individual fields.
- */
-const PLAN_DEFAULTS: Record<PlanTier, PlanFeatures> = {
-  free: {
-    tier: 'free',
-    allowErrors: true,
-    allowPerformance: false,
-    allowTracing: false,
-    allowMetrics: false,
-    allowSessions: false,
-    allowCustomPlugins: false,
-    allowBeforeSend: false,
-    allowSamplingOverride: false,
-    maxBreadcrumbs: 50,
-    maxPlugins: 0,
-    maxBatchSize: 5,
-    maxQueueSize: 100,
-    allowedCompression: ['none'],
-  },
-  pro: {
-    tier: 'pro',
-    allowErrors: true,
-    allowPerformance: true,
-    allowTracing: true,
-    allowMetrics: false,
-    allowSessions: true,
-    allowCustomPlugins: true,
-    allowBeforeSend: true,
-    allowSamplingOverride: true,
-    maxBreadcrumbs: 200,
-    maxPlugins: 3,
-    maxBatchSize: 25,
-    maxQueueSize: 1000,
-    allowedCompression: ['gzip', 'none'],
-  },
-  enterprise: {
-    tier: 'enterprise',
-    allowErrors: true,
-    allowPerformance: true,
-    allowTracing: true,
-    allowMetrics: true,
-    allowSessions: true,
-    allowCustomPlugins: true,
-    allowBeforeSend: true,
-    allowSamplingOverride: true,
-    maxBreadcrumbs: 1000,
-    maxPlugins: Infinity,
-    maxBatchSize: 1000,
-    maxQueueSize: 100000,
-    allowedCompression: ['gzip', 'brotli', 'none'],
-  },
-}
+const UNRESTRICTED: PlanFeatures = Object.freeze({
+  tier: 'enterprise',
+  allowErrors: true,
+  allowPerformance: true,
+  allowTracing: true,
+  allowMetrics: true,
+  allowSessions: true,
+  allowCustomPlugins: true,
+  allowBeforeSend: true,
+  allowSamplingOverride: true,
+  maxBreadcrumbs: 1000,
+  maxPlugins: Number.MAX_SAFE_INTEGER,
+  maxBatchSize: Number.MAX_SAFE_INTEGER,
+  maxQueueSize: Number.MAX_SAFE_INTEGER,
+  allowedCompression: ['gzip', 'brotli', 'none'] as const,
+}) as unknown as PlanFeatures
+
+// ─── Public API (compat shims) ──────────────────────────────────────────────
 
 /**
- * Fallback plan when the backend is unreachable.
- * Only errors + breadcrumbs — safe minimum.
- */
-const OFFLINE_FALLBACK: PlanFeatures = {
-  ...PLAN_DEFAULTS.free,
-  tier: 'free',
-}
-
-// ─── Plan Resolution ────────────────────────────────────────────────────────
-
-/**
- * Resolve the PlanFeatures from the backend response.
- * Merges backend-provided overrides on top of plan defaults.
+ * Always returns the unrestricted profile. The `plan` and `backendOverrides`
+ * arguments are accepted but ignored — they came from the old wire format.
  */
 export function resolvePlanFeatures(
-  plan: PlanTier | undefined,
-  backendOverrides?: Partial<PlanFeatures>,
+  _plan?: PlanTier,
+  _backendOverrides?: Partial<PlanFeatures>,
 ): PlanFeatures {
-  const tier = plan ?? 'free'
-  const defaults = PLAN_DEFAULTS[tier] ?? PLAN_DEFAULTS.free
-
-  if (!backendOverrides) return { ...defaults }
-
-  // Backend can override individual fields on top of defaults
-  return {
-    tier,
-    allowErrors: backendOverrides.allowErrors ?? defaults.allowErrors,
-    allowPerformance: backendOverrides.allowPerformance ?? defaults.allowPerformance,
-    allowTracing: backendOverrides.allowTracing ?? defaults.allowTracing,
-    allowMetrics: backendOverrides.allowMetrics ?? defaults.allowMetrics,
-    allowSessions: backendOverrides.allowSessions ?? defaults.allowSessions,
-    allowCustomPlugins: backendOverrides.allowCustomPlugins ?? defaults.allowCustomPlugins,
-    allowBeforeSend: backendOverrides.allowBeforeSend ?? defaults.allowBeforeSend,
-    allowSamplingOverride: backendOverrides.allowSamplingOverride ?? defaults.allowSamplingOverride,
-    maxBreadcrumbs: backendOverrides.maxBreadcrumbs ?? defaults.maxBreadcrumbs,
-    maxPlugins: backendOverrides.maxPlugins ?? defaults.maxPlugins,
-    maxBatchSize: backendOverrides.maxBatchSize ?? defaults.maxBatchSize,
-    maxQueueSize: backendOverrides.maxQueueSize ?? defaults.maxQueueSize,
-    allowedCompression: backendOverrides.allowedCompression ?? defaults.allowedCompression,
-  }
+  return { ...UNRESTRICTED }
 }
 
 /**
- * Get the offline fallback plan (used when backend is unreachable).
+ * Offline-fallback alias. Same unrestricted profile — there is nothing to
+ * fall back to anymore. Real "no remote config" behaviour is governed by
+ * `BAKED_IN_REMOTE_CONFIG` (transport off, sampling 0).
  */
 export function getOfflineFallbackPlan(): PlanFeatures {
-  return { ...OFFLINE_FALLBACK }
+  return { ...UNRESTRICTED }
 }
 
-// ─── Plan Clamping ──────────────────────────────────────────────────────────
-
 /**
- * Clamp a resolved config to fit within plan limits.
- * - Features the plan doesn't allow are forced OFF (with warnings)
- * - Numeric limits are capped to plan maximums
- * - Compression is restricted to plan-allowed algorithms
- *
- * This is the core enforcement function — called after mergeConfig().
+ * Passthrough — no clamping, no warnings. The resolved config goes through
+ * unchanged. Behavioural caps now come from `LimitsEngine` reading
+ * `RemoteConfigResponse.limits` (clamped to `SAFETY_CEILINGS`).
  */
 export function clampToPlan(
   config: ResolvedSDKConfig,
   plan: PlanFeatures,
 ): ResolvedSDKConfig {
-  const logger = getLogger()
-  const warnings: string[] = []
-
-  // ── Feature flags: user can turn OFF but not turn ON above plan ──
-
-  const enableErrors = plan.allowErrors ? config.enableErrors : false
-  if (config.enableErrors && !plan.allowErrors) {
-    warnings.push('Error tracking is not available on the free plan')
-  }
-
-  const enablePerformance = plan.allowPerformance ? config.enablePerformance : false
-  if (config.enablePerformance && !plan.allowPerformance) {
-    warnings.push(`Request monitoring requires a Pro or Enterprise plan (current: ${plan.tier})`)
-  }
-
-  const enableTracing = plan.allowTracing ? config.enableTracing : false
-  if (config.enableTracing && !plan.allowTracing) {
-    warnings.push(`Distributed tracing requires a Pro or Enterprise plan (current: ${plan.tier})`)
-  }
-
-  const enableMetrics = plan.allowMetrics ? config.enableMetrics : false
-  if (config.enableMetrics && !plan.allowMetrics) {
-    warnings.push(`Metrics collection requires an Enterprise plan (current: ${plan.tier})`)
-  }
-
-  // ── Numeric limits: cap to plan maximum ──
-
-  const maxBreadcrumbs = Math.min(config.maxBreadcrumbs, plan.maxBreadcrumbs)
-  if (config.maxBreadcrumbs > plan.maxBreadcrumbs) {
-    warnings.push(`maxBreadcrumbs capped to ${plan.maxBreadcrumbs} (${plan.tier} plan limit)`)
-  }
-
-  const batchSize = Math.min(config.batchSize, plan.maxBatchSize)
-  if (config.batchSize > plan.maxBatchSize) {
-    warnings.push(`batchSize capped to ${plan.maxBatchSize} (${plan.tier} plan limit)`)
-  }
-
-  const maxQueueSize = Math.min(config.maxQueueSize, plan.maxQueueSize)
-  if (config.maxQueueSize > plan.maxQueueSize) {
-    warnings.push(`maxQueueSize capped to ${plan.maxQueueSize} (${plan.tier} plan limit)`)
-  }
-
-  // ── Sampling: only pro+ can override ──
-
-  const samplingRate = plan.allowSamplingOverride ? config.samplingRate : 1.0
-  if (config.samplingRate !== 1.0 && !plan.allowSamplingOverride) {
-    warnings.push(`Custom sampling rate requires a Pro or Enterprise plan; using 1.0 (send all)`)
-  }
-
-  // ── Compression: restrict to plan-allowed algorithms ──
-
-  let compression = config.compression
-  if (!plan.allowedCompression.includes(compression)) {
-    compression = 'none'
-    warnings.push(`Compression '${config.compression}' is not available on the ${plan.tier} plan; falling back to 'none'`)
-  }
-
-  // ── Log all warnings ──
-
-  for (const warning of warnings) {
-    logger.warn(`[Plan: ${plan.tier}] ${warning}`)
-  }
-
-  if (warnings.length > 0) {
-    logger.info(`[Plan: ${plan.tier}] ${warnings.length} feature(s) adjusted to match plan limits. Upgrade at https://pulse.dev/pricing`)
-  }
-
   return {
     ...config,
     plan: plan.tier,
     planFeatures: plan,
-    enableErrors,
-    enablePerformance,
-    enableTracing,
-    enableMetrics,
-    samplingRate,
-    maxBreadcrumbs,
-    batchSize,
-    maxQueueSize,
-    compression,
   }
 }
 
-// ─── Runtime Feature Checks ─────────────────────────────────────────────────
-
 /**
- * Check if a specific feature is allowed by the current plan.
- * Use this for runtime checks (e.g., before starting a span).
+ * Always allowed — feature gating moved to `FeatureController` which reads
+ * `features.*` from remote config.
  */
 export function isFeatureAllowed(
-  feature: 'errors' | 'performance' | 'tracing' | 'metrics' | 'sessions' | 'plugins' | 'beforeSend',
-  plan: PlanFeatures,
+  _feature: 'errors' | 'performance' | 'tracing' | 'metrics' | 'sessions' | 'plugins' | 'beforeSend',
+  _plan: PlanFeatures,
 ): boolean {
-  switch (feature) {
-    case 'errors':      return plan.allowErrors
-    case 'performance': return plan.allowPerformance
-    case 'tracing':     return plan.allowTracing
-    case 'metrics':     return plan.allowMetrics
-    case 'sessions':    return plan.allowSessions
-    case 'plugins':     return plan.allowCustomPlugins
-    case 'beforeSend':  return plan.allowBeforeSend
-    default:            return false
-  }
+  return true
 }
 
 /**
- * Validate plugin count against plan limits.
- * Returns the allowed plugins (truncated if over limit) + warning count.
+ * Accepts every plugin. Plugin loading rules (if any) belong to the
+ * `FeatureController` going forward.
  */
 export function validatePluginCount(
   plugins: readonly unknown[],
-  plan: PlanFeatures,
+  _plan: PlanFeatures,
 ): { allowed: number; dropped: number } {
-  if (!plan.allowCustomPlugins || plan.maxPlugins === 0) {
-    return { allowed: 0, dropped: plugins.length }
-  }
-  const allowed = Math.min(plugins.length, plan.maxPlugins)
-  return { allowed, dropped: plugins.length - allowed }
+  return { allowed: plugins.length, dropped: 0 }
 }
 
 /**
- * Get the plan defaults for a given tier (for testing/docs).
+ * Returns the unrestricted profile regardless of the requested tier.
  */
-export function getPlanDefaults(tier: PlanTier): PlanFeatures {
-  return { ...PLAN_DEFAULTS[tier] }
+export function getPlanDefaults(_tier: PlanTier): PlanFeatures {
+  return { ...UNRESTRICTED }
 }

@@ -59,6 +59,7 @@ export async function postJson(url, body, headers, timeoutMs, options = {}) {
             body: payload,
             signal: controller.signal,
         }));
+        console.log('HTTP response received', { response });
         const text = await response.text();
         const parsed = text ? tryParseJson(text) : null;
         const durationMs = Date.now() - startedAt;

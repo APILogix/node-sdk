@@ -93,6 +93,7 @@ export async function postJson<T>(
         signal: controller.signal,
       })
     )
+    console.log('HTTP response received', { response})
 
     const text = await response.text()
     const parsed = text ? tryParseJson(text) : null

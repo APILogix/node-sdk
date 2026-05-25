@@ -4,6 +4,8 @@ import { TransportEventQueue, type QueueDropInfo } from './transport-event-queue
 import { ConnectionManager } from './connection-manager.js'
 import { HealthMonitor } from './health-monitor.js'
 import type { EnterpriseRoute, RouteDefinition } from './route-registry.js'
+import { context as otelContext } from '@opentelemetry/api'
+import { suppressTracing } from '@opentelemetry/core'
 
 export interface BatchManagerOptions {
   readonly route: EnterpriseRoute
@@ -197,17 +199,26 @@ export class BatchManager {
       timeout.unref?.()
 
       try {
-        const response = await this.fetchImpl(this.options.definition.url, {
-          method: this.options.definition.method,
-          headers: {
-            'Content-Type': this.options.definition.contentType,
-            Authorization: `Bearer ${this.options.apiKey}`,
-            'X-Route': this.options.route,
-            'x-pulse-internal': '1',
-          },
-          body,
-          signal: controller.signal,
-        })
+        // suppressTracing prevents OTel HttpInstrumentation from creating a
+        // span for our own batch send. Without this, every export of N
+        // events produces N+1 spans, which themselves export, causing
+        // unbounded fan-out. The static URL ignore list in
+        // auto-instrument.ts is defense-in-depth for the same problem.
+        const response = await otelContext.with(
+          suppressTracing(otelContext.active()),
+          () =>
+            this.fetchImpl(this.options.definition.url, {
+              method: this.options.definition.method,
+              headers: {
+                'Content-Type': this.options.definition.contentType,
+                Authorization: `Bearer ${this.options.apiKey}`,
+                'X-Route': this.options.route,
+                'x-pulse-internal': '1',
+              },
+              body,
+              signal: controller.signal,
+            }),
+        )
 
         const latency = Date.now() - startedAt
         if (response.ok) {

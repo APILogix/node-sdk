@@ -1,20 +1,27 @@
 /**
- * Baked-in SDK defaults and safe fallbacks.
+ * Baked-in SDK defaults, safety ceilings, and bootstrap fallbacks.
  *
- * These constants serve two purposes:
- * 1. Backward-compatible legacy defaults (DEFAULT_*)
- * 2. Safe defaults for the remote config system (SAFE_DEFAULTS_*)
+ * Three categories of constants live in this file:
  *
- * Safe defaults are used when the config fetch fails and no cache exists.
- * In safe mode: all features OFF, sampling 0, transport disabled.
+ *   1. **Legacy defaults (`DEFAULT_*`)** — knobs the legacy `/v1/init`
+ *      response and `ResolvedSDKConfig` still rely on. Kept for backward
+ *      compatibility while the schema migrates.
  *
- * Config merge priority: Baked-in → Remote Config → User init() options.
+ *   2. **Safe defaults (`SAFE_DEFAULTS_*`, `BAKED_IN_REMOTE_CONFIG`)** —
+ *      what the SDK runs on when no remote config has arrived yet. Tuned
+ *      to be permissive enough to capture telemetry on a fresh install
+ *      but conservative enough to avoid surprises (transport off until
+ *      remote config provides URLs).
+ *
+ *   3. **Safety ceilings (`SAFETY_CEILINGS`)** — hard upper bounds the SDK
+ *      enforces on every numeric field that comes from remote config. The
+ *      backend can lower a value below the ceiling, never raise above it.
+ *      This is a defence against malformed or malicious config payloads —
+ *      e.g. `maxQueueSize: 1e9` would otherwise OOM the host process.
  */
-// ─── Legacy Defaults (preserved for backward compatibility) ─────────────────
-/**
- * Base URL must be provided via SDK_BASE_URL env var or `baseUrl` in SDK config.
- * Empty string signals "not configured" — init will throw a clear error.
- */
+import { REMOTE_CONFIG_SCHEMA_VERSION } from '../types/config.js';
+// ─── Legacy Defaults ────────────────────────────────────────────────────────
+/** Base URL must be provided via SDK_BASE_URL env var or `baseUrl` in SDK config. */
 export const DEFAULT_BASE_URL = process.env['SDK_BASE_URL'] || '';
 export const DEFAULT_TIMEOUT_MS = 5000;
 export const DEFAULT_BATCH_SIZE = 50;
@@ -29,25 +36,55 @@ export const CONFIG_FETCH_TIMEOUT_MS = 3000;
 export const CONFIG_RETRY_INTERVAL_MS = 30_000;
 /** Minimum interval between config refresh attempts (5 seconds). */
 export const CONFIG_REFRESH_MIN_INTERVAL_MS = 5_000;
+// ─── Safety Ceilings ────────────────────────────────────────────────────────
+//
+// Hard upper bounds applied to every numeric value the backend can send. The
+// SDK clamps to these ceilings during config merge so a config typo can never
+// blow out memory, disk, or per-event CPU budget.
+export const SAFETY_CEILINGS = Object.freeze({
+    // Limits
+    maxSpansPerTrace: 5_000,
+    maxSpanAttributes: 500,
+    maxAttributeLength: 16 * 1024, // 16 KiB
+    maxPayloadSize: 4 * 1024 * 1024, // 4 MiB
+    maxQueueSize: 100_000, // events
+    maxMemoryMb: 1024, // 1 GiB
+    maxCpuOverheadPercent: 25,
+    // Transport
+    batchSize: 5_000,
+    flushIntervalMs: 5 * 60 * 1000, // 5 min
+    timeoutMs: 60_000, // 60s
+    retryMaxRetries: 10,
+    retryBaseDelayMs: 30_000,
+    // Runtime
+    configTtlSeconds: 24 * 60 * 60, // 24h
+});
+/**
+ * Floor values applied alongside ceilings. Mostly used to keep flush
+ * intervals from being set so low they melt the event loop.
+ */
+export const SAFETY_FLOORS = Object.freeze({
+    flushIntervalMs: 100,
+    timeoutMs: 250,
+    configTtlSeconds: 30,
+});
 // ─── Safe Defaults — per-section frozen objects ─────────────────────────────
 export const SAFE_DEFAULTS_FEATURES = Object.freeze({
     tracing: false,
+    requestCapture: false,
+    errors: false,
     metrics: false,
     logging: false,
-    errors: false,
     profiling: false,
     crons: false,
     sessionReplay: false,
-    aiDetection: false,
-    dynamicSampling: false,
     runtimeMetrics: false,
     eventLoopMonitoring: false,
     gcMonitoring: false,
-    sourceMaps: false,
-    releaseTracking: false,
 });
 export const SAFE_DEFAULTS_SAMPLING = Object.freeze({
     traces: 0,
+    requests: 0,
     errors: 0,
     profiles: 0,
     replays: 0,
@@ -57,26 +94,32 @@ export const SAFE_DEFAULTS_KILLSWITCHES = Object.freeze({
     disableSDK: false,
     disableTracing: false,
     disableMetrics: false,
-    disableTransport: true, // Transport disabled in safe mode
+    disableTransport: true, // Transport off until remote config provides URLs.
     disableProfiling: false,
     disableErrors: false,
     disableLogs: false,
 });
 export const SAFE_DEFAULTS_LIMITS = Object.freeze({
-    maxPayloadSize: 262144,
-    maxAttributesPerEvent: 100,
+    maxSpansPerTrace: 500,
+    maxSpanAttributes: 100,
     maxAttributeLength: 2048,
-    maxBreadcrumbs: 200,
-    maxEventsPerSecond: 10000,
-    maxMemoryUsageMb: 256,
+    maxPayloadSize: 262_144,
+    maxQueueSize: 10_000,
+    maxMemoryMb: 256,
     maxCpuOverheadPercent: 5,
 });
-export const SAFE_DEFAULTS_SECURITY = Object.freeze({
+export const SAFE_DEFAULTS_PRIVACY = Object.freeze({
+    capture: Object.freeze({
+        headers: false,
+        body: false,
+        response: false,
+        query: false,
+        cookies: false,
+    }),
     scrubbing: Object.freeze({
         enabled: true,
         headers: Object.freeze(['authorization', 'cookie', 'x-api-key', 'x-auth-token']),
-        bodyFields: Object.freeze(['password', 'token', 'secret', 'creditCard', 'ssn', 'nationalId', 'apiKey']),
-        queryParams: Object.freeze(['token', 'apikey', 'password', 'secret']),
+        fields: Object.freeze(['password', 'token', 'secret', 'creditCard', 'ssn', 'nationalId', 'apiKey']),
     }),
     piiDetection: Object.freeze({
         enabled: true,
@@ -85,128 +128,70 @@ export const SAFE_DEFAULTS_SECURITY = Object.freeze({
         maskIPs: false,
     }),
 });
-export const SAFE_DEFAULTS_TRACING = Object.freeze({
-    capture: Object.freeze({
-        headers: false,
-        body: false,
-        response: false,
-        query: true,
-        cookies: false,
-    }),
-    maxSpansPerTrace: 2000,
-    maxSpanAttributes: 100,
-    maxTraceDurationMs: 300000,
-    ignoredRoutes: Object.freeze(['/health', '/metrics', '/favicon.ico']),
-    ignoredMethods: Object.freeze(['OPTIONS']),
-    propagation: Object.freeze({
-        w3c: true,
-        baggage: true,
-        b3: false,
-    }),
-});
-export const SAFE_DEFAULTS_ERRORS = Object.freeze({
-    captureUnhandledRejections: true,
-    captureUncaughtExceptions: true,
-    captureConsoleErrors: true,
-    stackTraceLimit: 50,
-    attachSourceContext: true,
-    grouping: Object.freeze({
-        enabled: true,
-        normalizePaths: true,
-    }),
-});
-export const SAFE_DEFAULTS_LOGGING = Object.freeze({
-    enabled: true,
-    captureConsole: true,
-    levels: Object.freeze(['error', 'warn', 'info']),
-    maxLogSize: 32768,
-});
-export const SAFE_DEFAULTS_METRICS = Object.freeze({
-    runtime: true,
-    eventLoop: true,
-    gc: true,
-    system: true,
-    intervalMs: 10000,
-    histograms: true,
-    percentiles: Object.freeze([50, 90, 95, 99]),
-});
-export const SAFE_DEFAULTS_PROFILING = Object.freeze({
-    enabled: false,
-    cpu: true,
-    heap: true,
-    sampleRate: 0.02,
-    maxDurationMs: 30000,
-});
 export const SAFE_DEFAULTS_INSTRUMENTATION = Object.freeze({
     http: true,
     https: true,
-    fastify: Object.freeze({ enabled: true, captureHooks: true, captureValidationErrors: true }),
-    express: Object.freeze({ enabled: false }),
-    graphql: Object.freeze({ enabled: true, captureResolvers: true }),
-    prisma: Object.freeze({ enabled: true, captureQueries: true, captureParams: false }),
-    mongodb: true,
-    redis: true,
-    bullmq: true,
     fetch: true,
     axios: true,
+    fastify: Object.freeze({ enabled: true, captureHooks: true, captureValidationErrors: true }),
+    express: Object.freeze({ enabled: true }),
+    graphql: Object.freeze({ enabled: false, captureResolvers: false }),
+    prisma: Object.freeze({ enabled: false, captureQueries: false, captureParams: false }),
+    mongodb: false,
+    redis: false,
+    bullmq: false,
 });
+/**
+ * Transport defaults intentionally use placeholder URLs — the SDK will not
+ * actually attempt to send to these because `SAFE_DEFAULTS_KILLSWITCHES`
+ * sets `disableTransport: true`. Real URLs arrive with the first remote
+ * config response.
+ */
 export const SAFE_DEFAULTS_TRANSPORT = Object.freeze({
-    endpoints: Object.freeze({
-        traces: Object.freeze({ url: 'https://traces.pulse.dev/v1/traces', priority: 'high', batchSize: 100, flushIntervalMs: 5000, compression: 'gzip', timeoutMs: 5000 }),
-        errors: Object.freeze({ url: 'https://errors.pulse.dev/v1/errors', priority: 'critical', batchSize: 10, flushIntervalMs: 1000, compression: 'gzip', timeoutMs: 3000 }),
-        logs: Object.freeze({ url: 'https://logs.pulse.dev/v1/logs', priority: 'normal', batchSize: 50, flushIntervalMs: 10000, compression: 'gzip', timeoutMs: 5000 }),
-        metrics: Object.freeze({ url: 'https://metrics.pulse.dev/v1/metrics', priority: 'normal', batchSize: 100, flushIntervalMs: 10000, compression: 'gzip', timeoutMs: 5000 }),
-        profiles: Object.freeze({ url: 'https://profiles.pulse.dev/v1/profiles', priority: 'low', batchSize: 5, flushIntervalMs: 30000, compression: 'gzip', timeoutMs: 15000 }),
-        replays: Object.freeze({ url: 'https://replays.pulse.dev/v1/replays', priority: 'low', batchSize: 1, flushIntervalMs: 5000, compression: 'gzip', timeoutMs: 30000 }),
-        crons: Object.freeze({ url: 'https://crons.pulse.dev/v1/checkins', priority: 'high', batchSize: 1, flushIntervalMs: 0, compression: 'none', timeoutMs: 5000 }),
-        envelope: Object.freeze({ url: 'https://ingest.pulse.dev/v1/envelope', priority: 'normal', batchSize: 50, flushIntervalMs: 5000, compression: 'gzip', timeoutMs: 5000 }),
+    retry: Object.freeze({
+        enabled: true,
+        maxRetries: 3,
+        backoff: 'exponential',
+        baseDelayMs: 500,
     }),
-    shared: Object.freeze({
-        queue: Object.freeze({ maxSize: 10000, overflowStrategy: 'drop_oldest' }),
-        retry: Object.freeze({ enabled: true, maxRetries: 5, backoff: 'exponential', baseDelayMs: 500 }),
-        keepAlive: true,
-        connectionPool: Object.freeze({ maxConnectionsPerRoute: 10, maxTotalConnections: 50 }),
+    queue: Object.freeze({
+        overflowStrategy: 'drop_oldest',
+    }),
+    keepAlive: true,
+    routes: Object.freeze({
+        traces: Object.freeze({ url: '', batchSize: 100, flushIntervalMs: 5000, timeoutMs: 5000, compression: 'gzip', priority: 'high' }),
+        requests: Object.freeze({ url: '', batchSize: 200, flushIntervalMs: 2000, timeoutMs: 3000, compression: 'gzip', priority: 'high' }),
+        errors: Object.freeze({ url: '', batchSize: 10, flushIntervalMs: 1000, timeoutMs: 3000, compression: 'gzip', priority: 'critical' }),
+        metrics: Object.freeze({ url: '', batchSize: 100, flushIntervalMs: 10000, timeoutMs: 5000, compression: 'gzip', priority: 'normal' }),
+        logs: Object.freeze({ url: '', batchSize: 50, flushIntervalMs: 10000, timeoutMs: 5000, compression: 'gzip', priority: 'normal' }),
+        profiles: Object.freeze({ url: '', batchSize: 5, flushIntervalMs: 30000, timeoutMs: 15000, compression: 'gzip', priority: 'low' }),
+        events: Object.freeze({ url: '', batchSize: 50, flushIntervalMs: 5000, timeoutMs: 5000, compression: 'gzip', priority: 'normal' }),
+        crons: Object.freeze({ url: '', batchSize: 1, flushIntervalMs: 0, timeoutMs: 5000, compression: 'none', priority: 'high' }),
+        replays: Object.freeze({ url: '', batchSize: 1, flushIntervalMs: 5000, timeoutMs: 30000, compression: 'gzip', priority: 'low' }),
     }),
 });
-export const SAFE_DEFAULTS_VERSION_POLICY = Object.freeze({
-    minimumVersion: '0.0.0',
-    latestVersion: '999.999.999',
-    blockedVersions: Object.freeze([]),
-    forceUpgrade: false,
-    upgradeMessage: '',
-});
-export const SAFE_DEFAULTS_CACHE = Object.freeze({
-    ttlSeconds: 300,
+export const SAFE_DEFAULTS_RUNTIME = Object.freeze({
+    configTtlSeconds: 300,
     staleWhileRevalidate: true,
 });
 // ─── Complete Baked-In Remote Config ────────────────────────────────────────
 /**
- * Complete baked-in remote config defaults.
- * Used as the base layer in config merge: Baked-in → Remote → User overrides.
+ * Complete baked-in remote config. Used as the base layer in config merge:
+ *
+ *     Baked-in → Remote → User overrides
+ *
+ * Also used as the fallback when remote config can't be fetched at all.
  */
 export const BAKED_IN_REMOTE_CONFIG = Object.freeze({
-    sdk: Object.freeze({ dsn: '', projectId: '', environment: 'production' }),
+    schemaVersion: REMOTE_CONFIG_SCHEMA_VERSION,
+    sdk: Object.freeze({ projectId: '', environment: 'production' }),
     features: SAFE_DEFAULTS_FEATURES,
     sampling: SAFE_DEFAULTS_SAMPLING,
     instrumentation: SAFE_DEFAULTS_INSTRUMENTATION,
-    tracing: SAFE_DEFAULTS_TRACING,
-    errors: SAFE_DEFAULTS_ERRORS,
-    logging: SAFE_DEFAULTS_LOGGING,
-    metrics: SAFE_DEFAULTS_METRICS,
-    profiling: SAFE_DEFAULTS_PROFILING,
-    security: SAFE_DEFAULTS_SECURITY,
-    transport: SAFE_DEFAULTS_TRANSPORT,
+    privacy: SAFE_DEFAULTS_PRIVACY,
     limits: SAFE_DEFAULTS_LIMITS,
-    killswitches: Object.freeze({
-        disableSDK: false,
-        disableTracing: false,
-        disableMetrics: false,
-        disableTransport: false,
-        disableProfiling: false,
-        disableErrors: false,
-        disableLogs: false,
-    }),
-    versionPolicy: SAFE_DEFAULTS_VERSION_POLICY,
-    cache: SAFE_DEFAULTS_CACHE,
-    meta: Object.freeze({ generatedAt: '', generatedBy: 'baked-in', configHash: '' }),
+    killswitches: SAFE_DEFAULTS_KILLSWITCHES,
+    transport: SAFE_DEFAULTS_TRANSPORT,
+    runtime: SAFE_DEFAULTS_RUNTIME,
+    meta: Object.freeze({ generatedAt: '', generatedBy: 'baked-in' }),
 });

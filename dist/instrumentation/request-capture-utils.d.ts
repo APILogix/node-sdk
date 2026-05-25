@@ -23,6 +23,13 @@ export interface CaptureGateInput {
     readonly path: string;
     /** HTTP method (will be uppercased for comparison). */
     readonly method: string;
+    /**
+     * Stable identifier for this request. Used by the sampling engine for
+     * deterministic decisions — the same id will always produce the same
+     * sampled/dropped outcome. Typically the request id resolved from
+     * headers or generated upstream.
+     */
+    readonly sampleKey?: string | undefined;
     /** Tenant id resolved from headers / context, if any. */
     readonly tenantId?: string | undefined;
     /** Framework-level ignore list (string prefix or regex). */
@@ -44,6 +51,12 @@ export interface CaptureGateDecision {
     readonly allowBody: boolean;
     readonly allowResponse: boolean;
     readonly allowCookies: boolean;
+    /**
+     * The sampling rate that was applied (0..1). Useful for adapters that
+     * want to attach `pulse.sampling.rate` as a span attribute so the
+     * backend can re-weight aggregates.
+     */
+    readonly sampledRate: number;
 }
 /**
  * Decide whether a request should be captured. Combines:

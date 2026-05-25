@@ -34,12 +34,18 @@ export function monitorMiddleware(options = {}) {
             next();
             return;
         }
+        // Resolve request identity *before* the gate so the sampling engine
+        // can use a stable id to make a deterministic decision.
+        const requestId = headerString(req.headers['x-request-id'])
+            ?? headerString(req.headers['x-correlation-id'])
+            ?? generateId();
         // Tenant id is needed by the gate; resolve it first so admission control
         // can reject before any allocation.
         const tenantId = headerString(req.headers['x-tenant-id']);
         const decision = evaluateCaptureGate({
             path,
             method: req.method,
+            sampleKey: requestId,
             tenantId,
             localIgnorePaths: options.ignorePaths,
             localIgnoreMethods: options.ignoreMethods,
@@ -51,9 +57,6 @@ export function monitorMiddleware(options = {}) {
         // Resolve the rest of the request identity. These values are cheap so
         // we resolve them after the gate to avoid wasting work on dropped
         // requests.
-        const requestId = headerString(req.headers['x-request-id'])
-            ?? headerString(req.headers['x-correlation-id'])
-            ?? generateId();
         const userId = readUserId(req);
         const sessionId = headerString(req.headers['x-session-id']);
         const userAgent = headerString(req.headers['user-agent']);

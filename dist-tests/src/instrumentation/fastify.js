@@ -27,10 +27,16 @@ export function fastifyPulsePlugin(fastify, opts, done) {
                 hookDone();
                 return;
             }
+            // Resolve identity up front so the sampling decision is deterministic.
+            const requestId = headerString(request.headers['x-request-id'])
+                ?? headerString(request.headers['x-correlation-id'])
+                ?? request.id
+                ?? generateId();
             const tenantId = headerString(request.headers['x-tenant-id']);
             const decision = evaluateCaptureGate({
                 path,
                 method: request.method,
+                sampleKey: requestId,
                 tenantId,
                 localIgnorePaths: options.ignorePaths,
                 localIgnoreMethods: options.ignoreMethods,
@@ -39,10 +45,6 @@ export function fastifyPulsePlugin(fastify, opts, done) {
                 hookDone();
                 return;
             }
-            const requestId = headerString(request.headers['x-request-id'])
-                ?? headerString(request.headers['x-correlation-id'])
-                ?? request.id
-                ?? generateId();
             const userId = readUserId(request);
             const sessionId = headerString(request.headers['x-session-id']);
             const userAgent = headerString(request.headers['user-agent']);

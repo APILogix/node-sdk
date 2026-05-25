@@ -148,6 +148,15 @@ function wrapConsoleError(): void {
       originalConsoleError.apply(console, args)
     }
 
+    // Re-entry guard. If captureError below logs anything via the SDK
+    // logger (which now writes directly to process.stderr, not
+    // console.error, so this is mostly defensive), or if a plugin in the
+    // pipeline calls console.error during processing, we'd recurse here.
+    // The flag is module-local so unrelated user console.error calls are
+    // unaffected.
+    if (consoleErrorReentry) return
+    consoleErrorReentry = true
+
     // Create an error event from the console.error call
     try {
       const message = args.map(a => {
@@ -163,11 +172,21 @@ function wrapConsoleError(): void {
       } as Record<string, unknown>)
     } catch {
       // Never crash the host from console.error wrapping
+    } finally {
+      consoleErrorReentry = false
     }
   }
   wrapped[CONSOLE_ERROR_MARKER] = true
   console.error = wrapped
 }
+
+/**
+ * Re-entry guard for the console.error wrapper. Set to true while we're
+ * inside `captureError` for a console.error call, prevents the SDK
+ * accidentally recursing if any code inside the capture path calls
+ * console.error itself.
+ */
+let consoleErrorReentry = false
 
 /**
  * Remove all SDK global error handlers and reset state.

@@ -1,15 +1,21 @@
 /**
  * SDK Logger — Sentry-style debug logging.
  *
- * When `debug: true` is set in SDK options:
- *   - All SDK internal messages are printed via console.log/console.warn/console.error
- *   - Structured context is JSON-stringified and printed alongside
+ * Output strategy (post v3 fix for the console-interception feedback loop):
+ *   The SDK never writes through `console.log/info/warn/error`. Those
+ *   slots are intercepted by `LoggingSubsystem.installInterceptors()` to
+ *   capture user logs as `log` events; if the SDK itself wrote there,
+ *   every internal `logger.debug/info/warn/error` call would create a
+ *   `log` event, which inside the pipeline produces more debug output,
+ *   producing more `log` events — a runaway storm we observed at
+ *   thousands of events per second under `setDebugMode(true)`.
  *
- * When `debug: false` (default):
- *   - Only warnings and errors are printed
- *   - Debug/info messages are silenced for zero noise in production
+ *   Both loggers below now write directly to `process.stdout` (info /
+ *   debug) or `process.stderr` (warn / error). The LoggingSubsystem's
+ *   wrapper never sees these writes, so the feedback loop is broken at
+ *   the source.
  *
- * PII redaction is always applied regardless of debug mode.
+ *   PII redaction is always applied regardless of debug mode.
  */
 
 import { SDKError } from '../core/errors.js'
@@ -132,29 +138,57 @@ function formatContext(context?: Record<string, unknown>): string {
   }
 }
 
+// ─── Direct stream writers ─────────────────────────────────────────────────
+//
+// We intentionally do NOT use console.log / console.error here. The
+// LoggingSubsystem patches those slots to capture user telemetry, and any
+// SDK-originated write would be re-captured as a `log` event, which would
+// itself trigger more debug logs, ad infinitum.
+//
+// `process.stdout.write` / `process.stderr.write` are unaffected by the
+// console interception because the wrapper only replaces `console.*`
+// methods, not the underlying streams.
+
+function writeStdout(line: string): void {
+  // Best-effort. If stdout is detached (e.g., daemonised process), swallow
+  // silently rather than throwing — the SDK should never crash the host
+  // because we couldn't print a log.
+  try {
+    process.stdout.write(line + '\n')
+  } catch {
+    /* stdout closed — nothing we can do */
+  }
+}
+
+function writeStderr(line: string): void {
+  try {
+    process.stderr.write(line + '\n')
+  } catch {
+    /* stderr closed — nothing we can do */
+  }
+}
+
 // ─── Console Logger (Sentry-style) ─────────────────────────────────────────
 
 export const consoleLogger: Logger = {
   debug(message: string, context?: Record<string, unknown>): void {
     if (!severityMeetsThreshold(Severity.Debug, minimumLogLevel)) return
-    console.log(`[${logPrefix}] DEBUG: ${message}${formatContext(context)}`)
+    writeStdout(`[${logPrefix}] DEBUG: ${message}${formatContext(context)}`)
   },
 
   info(message: string, context?: Record<string, unknown>): void {
     if (!severityMeetsThreshold(Severity.Info, minimumLogLevel)) return
-    console.log(`[${logPrefix}] INFO: ${message}${formatContext(context)}`)
+    writeStdout(`[${logPrefix}] INFO: ${message}${formatContext(context)}`)
   },
 
   warn(message: string, context?: Record<string, unknown>): void {
-    // Warnings always print — they indicate potential issues
     if (!severityMeetsThreshold(Severity.Warning, minimumLogLevel)) return
-    console.warn(`[${logPrefix}] WARN: ${message}${formatContext(context)}`)
+    writeStderr(`[${logPrefix}] WARN: ${message}${formatContext(context)}`)
   },
 
   error(message: string, context?: Record<string, unknown>): void {
-    // Errors always print — they indicate real failures
     if (!severityMeetsThreshold(Severity.Error, minimumLogLevel)) return
-    console.error(`[${logPrefix}] ERROR: ${message}${formatContext(context)}`)
+    writeStderr(`[${logPrefix}] ERROR: ${message}${formatContext(context)}`)
   },
 }
 
@@ -246,13 +280,13 @@ function emitJsonLog(
     }
   }
 
-  const output = level === 'error' || level === 'warn' ? console.error : console.log
+  const writer = level === 'error' || level === 'warn' ? writeStderr : writeStdout
 
   try {
-    output(JSON.stringify(entry))
+    writer(JSON.stringify(entry))
   } catch {
     // Fallback if JSON.stringify fails on the entry itself
-    output(`{"timestamp":"${entry.timestamp}","level":"${level}","message":"${message}","error":"log_serialization_failed"}`)
+    writer(`{"timestamp":"${entry.timestamp}","level":"${level}","message":"${message}","error":"log_serialization_failed"}`)
   }
 }
 

@@ -1,10 +1,10 @@
 /**
- * SecurityScrubber — enforces security.scrubbing and security.piiDetection config.
+ * SecurityScrubber — enforces privacy.scrubbing and privacy.piiDetection config.
  *
  * Pre-transport processor that:
  * 1. Scrubs sensitive headers (authorization, cookie, etc.)
  * 2. Scrubs sensitive body fields (password, token, secret, etc.)
- * 3. Scrubs sensitive query parameters
+ * 3. Scrubs sensitive query parameters (uses the same `fields` list as bodies)
  * 4. Detects and masks PII (emails, phones, IPs)
  *
  * All scrubbing is done on the event BEFORE it enters the transport queue.
@@ -17,10 +17,11 @@ export class SecurityScrubber {
     scrubbingConfig;
     piiConfig;
     destroyed = false;
-    // Pre-compiled sets for O(1) lookups
+    // Pre-compiled sets for O(1) lookups. Headers and the unified `fields`
+    // list each get their own lowercased Set so callers can avoid recomputing
+    // them on every event.
     sensitiveHeaders;
-    sensitiveBodyFields;
-    sensitiveQueryParams;
+    sensitiveFields;
     // PII patterns
     static EMAIL_PATTERN = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
     static PHONE_PATTERN = /(\+?1?\s*[-.\s]?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4})/g;
@@ -28,9 +29,8 @@ export class SecurityScrubber {
     constructor(config) {
         this.scrubbingConfig = { ...config.scrubbing };
         this.piiConfig = { ...config.piiDetection };
-        this.sensitiveHeaders = new Set(config.scrubbing.headers.map(h => h.toLowerCase()));
-        this.sensitiveBodyFields = new Set(config.scrubbing.bodyFields.map(f => f.toLowerCase()));
-        this.sensitiveQueryParams = new Set(config.scrubbing.queryParams.map(p => p.toLowerCase()));
+        this.sensitiveHeaders = new Set(config.scrubbing.headers.map((h) => h.toLowerCase()));
+        this.sensitiveFields = new Set(config.scrubbing.fields.map((f) => f.toLowerCase()));
     }
     static initialize(config) {
         if (SecurityScrubber.instance) {
@@ -63,12 +63,15 @@ export class SecurityScrubber {
             if ('url' in clone && typeof clone['url'] === 'string') {
                 clone['url'] = this.scrubUrlQueryString(clone['url']);
             }
-            // Scrub body fields in context/attributes
+            // Scrub body fields in context/attributes/body
             if ('context' in clone && typeof clone['context'] === 'object' && clone['context'] !== null) {
                 clone['context'] = this.scrubBodyFields(clone['context']);
             }
             if ('attributes' in clone && typeof clone['attributes'] === 'object' && clone['attributes'] !== null) {
                 clone['attributes'] = this.scrubBodyFields(clone['attributes']);
+            }
+            if ('body' in clone && typeof clone['body'] === 'object' && clone['body'] !== null && !Array.isArray(clone['body'])) {
+                clone['body'] = this.scrubBodyFields(clone['body']);
             }
             // PII detection on string fields
             if (this.piiConfig.enabled) {
@@ -81,16 +84,15 @@ export class SecurityScrubber {
             return event; // Return original on error
         }
     }
-    /** Handle config change — hot-swap security config. */
+    /** Handle config change — hot-swap privacy config. */
     handleConfigChange(_diff, newConfig) {
         if (this.destroyed)
             return;
-        const newSecurity = newConfig.security;
-        this.scrubbingConfig = { ...newSecurity.scrubbing };
-        this.piiConfig = { ...newSecurity.piiDetection };
-        this.sensitiveHeaders = new Set(newSecurity.scrubbing.headers.map(h => h.toLowerCase()));
-        this.sensitiveBodyFields = new Set(newSecurity.scrubbing.bodyFields.map(f => f.toLowerCase()));
-        this.sensitiveQueryParams = new Set(newSecurity.scrubbing.queryParams.map(p => p.toLowerCase()));
+        const newPrivacy = newConfig.privacy;
+        this.scrubbingConfig = { ...newPrivacy.scrubbing };
+        this.piiConfig = { ...newPrivacy.piiDetection };
+        this.sensitiveHeaders = new Set(newPrivacy.scrubbing.headers.map((h) => h.toLowerCase()));
+        this.sensitiveFields = new Set(newPrivacy.scrubbing.fields.map((f) => f.toLowerCase()));
         getLogger().info('[SecurityScrubber] Config updated');
     }
     // ─── Private Scrubbing Methods ────────────────────────────────────────────
@@ -117,7 +119,7 @@ export class SecurityScrubber {
         for (const [key, value] of Object.entries(query)) {
             if (SecurityScrubber.DANGEROUS_KEYS.has(key))
                 continue;
-            result[key] = this.sensitiveQueryParams.has(key.toLowerCase()) ? REDACTED : value;
+            result[key] = this.sensitiveFields.has(key.toLowerCase()) ? REDACTED : value;
         }
         return result;
     }
@@ -125,7 +127,7 @@ export class SecurityScrubber {
         try {
             const parsed = new URL(url, 'http://localhost');
             let changed = false;
-            for (const param of this.sensitiveQueryParams) {
+            for (const param of this.sensitiveFields) {
                 if (parsed.searchParams.has(param)) {
                     parsed.searchParams.set(param, REDACTED);
                     changed = true;
@@ -144,7 +146,7 @@ export class SecurityScrubber {
         for (const [key, value] of Object.entries(obj)) {
             if (SecurityScrubber.DANGEROUS_KEYS.has(key))
                 continue;
-            if (this.sensitiveBodyFields.has(key.toLowerCase())) {
+            if (this.sensitiveFields.has(key.toLowerCase())) {
                 result[key] = REDACTED;
             }
             else if (typeof value === 'object' && value !== null && !Array.isArray(value)) {

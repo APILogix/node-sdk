@@ -32,6 +32,14 @@ interface MarkedWrapper extends ConsoleMethod {
 export class LoggingSubsystem {
   private static instance: LoggingSubsystem | null = null
 
+  /**
+   * Module-local re-entry guard for the console wrapper. Set to true
+   * while we're inside `captureLog` (or its emitter), prevents the
+   * subsystem from recursing if any code in the capture path itself
+   * writes to a wrapped console method.
+   */
+  private static captureReentry: boolean = false
+
   private config: LoggingConfig
   private emitter: LogEmitter
   private metadata: EventMetadata
@@ -150,37 +158,49 @@ export class LoggingSubsystem {
       if (typeof current !== 'function') continue
 
       // If the slot already holds one of our markers, the previous SDK
-      // lifetime didn't fully restore. We can't recover the true original
-      // (it lives in a closure that's now unreachable), so we install a
-      // fresh wrapper that delegates to the existing one. This preserves
-      // log capture across reinit cycles where teardown was skipped.
-      let original: ConsoleMethod
+      // lifetime didn't fully restore. Refuse to chain a second wrapper
+      // — a previous version of this code chained, which on each reinit
+      // doubled the number of capture calls per console invocation. The
+      // safe behaviour is to refuse: the existing wrapper still works,
+      // and `removeInterceptors()` of *this* instance cannot recover
+      // the original anyway. Operators should fix the root cause (a
+      // missed shutdown) rather than have us silently multiply work.
       if (isMarkedWrapper(current)) {
         logger.warn(
           `[LoggingSubsystem] console.${level} is already wrapped by Pulse SDK; ` +
-            `chaining a new wrapper (previous teardown was incomplete)`
+            `skipping install (previous SDK instance did not tear down)`,
         )
-        original = current.bind(console)
-      } else {
-        original = current.bind(console)
+        continue
       }
+
+      const original: ConsoleMethod = current.bind(console)
       this.originals.set(level, original)
 
       const wrapper: MarkedWrapper = (...args: unknown[]) => {
-        // Always call the original first.
+        // Always call the original first so the user's console output is
+        // never delayed or lost by our work.
         original.apply(console, args)
 
-        // Capture if level is allowed.
-        const mappedLevel = level === 'log' ? 'info' : level
-        if (this.isLevelAllowed(mappedLevel) && !this.destroyed) {
-          try {
+        // Re-entry guard. Without this, any console.* call from inside
+        // `this.emitter(...)` (e.g., a plugin that logs during processing,
+        // or the SDK logger ever regressing back to console.* output)
+        // would recurse here, capturing infinitely.
+        if (LoggingSubsystem.captureReentry) return
+        LoggingSubsystem.captureReentry = true
+
+        try {
+          // Capture if level is allowed.
+          const mappedLevel = level === 'log' ? 'info' : level
+          if (this.isLevelAllowed(mappedLevel) && !this.destroyed) {
             const message = args
               .map(a => (typeof a === 'string' ? a : safeStringify(a)))
               .join(' ')
             this.captureLog(mappedLevel, message, args)
-          } catch {
-            // Never throw in console interceptor.
           }
+        } catch {
+          // Never throw in console interceptor.
+        } finally {
+          LoggingSubsystem.captureReentry = false
         }
       }
       wrapper[WRAPPER_MARKER] = true

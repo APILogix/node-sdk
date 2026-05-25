@@ -1,26 +1,32 @@
 /**
- * LimitsEngine Unit Tests
+ * LimitsEngine unit tests.
  *
  * Validates:
- * - Token-bucket rate limiter (maxEventsPerSecond)
- * - Attribute count enforcement (maxAttributesPerEvent)
- * - Attribute length truncation (maxAttributeLength)
- * - Breadcrumb FIFO eviction (maxBreadcrumbs)
- * - Payload size checking (maxPayloadSize)
- * - Config hot-swap
+ *   - Attribute count enforcement (`maxSpanAttributes`).
+ *   - Attribute length truncation (`maxAttributeLength`).
+ *   - Payload size checking (`maxPayloadSize`).
+ *   - Config hot-swap.
+ *
+ * v3 simplified `LimitsConfig` substantially — `maxEventsPerSecond`,
+ * `maxBreadcrumbs`, and `maxAttributesPerEvent` are gone (rate limiting
+ * moved to `loadShedder`/`tenantGovernor`; breadcrumbs is an init option;
+ * attribute count was renamed to `maxSpanAttributes`). `admitEvent()` is
+ * now a no-op shim retained only so the event pipeline doesn't have to
+ * fork by SDK version.
  */
 
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { LimitsEngine } from '../../src/core/limits-engine.js'
+import type { LimitsConfig } from '../../src/types/config.js'
 
-const baseLimitsConfig = {
-  maxPayloadSize: 262144,
-  maxAttributesPerEvent: 10,
+const baseLimitsConfig: LimitsConfig = {
+  maxSpansPerTrace: 500,
+  maxSpanAttributes: 10,
   maxAttributeLength: 100,
-  maxBreadcrumbs: 5,
-  maxEventsPerSecond: 100,
-  maxMemoryUsageMb: 256,
+  maxPayloadSize: 262144,
+  maxQueueSize: 10000,
+  maxMemoryMb: 256,
   maxCpuOverheadPercent: 5,
 }
 
@@ -35,114 +41,86 @@ describe('LimitsEngine', () => {
     LimitsEngine.reset()
   })
 
-  // ─── Token Bucket Rate Limiter ──────────────────────────────────────────
-
-  describe('Rate Limiter (admitEvent)', () => {
-    it('should admit events within rate limit', () => {
-      // With maxEventsPerSecond: 100, first 100 should be admitted
-      let admitted = 0
-      for (let i = 0; i < 100; i++) {
-        if (engine.admitEvent()) admitted++
+  describe('Admission (legacy shim)', () => {
+    it('admitEvent() always returns true post-v3', () => {
+      // Rate limiting moved out of LimitsEngine; the method is retained as
+      // a no-op so the pipeline doesn't need a version check.
+      for (let i = 0; i < 1_000; i++) {
+        assert.equal(engine.admitEvent(), true)
       }
-      assert.ok(admitted > 0, 'At least some events should be admitted')
-    })
-
-    it('should drop events exceeding rate limit', () => {
-      // Burn through the token bucket
-      let admitted = 0
-      let dropped = 0
-      for (let i = 0; i < 1000; i++) {
-        if (engine.admitEvent()) admitted++
-        else dropped++
-      }
-      assert.ok(dropped > 0, 'Some events should be dropped after exceeding rate')
     })
   })
 
-  // ─── Attribute Limits ──────────────────────────────────────────────────
-
   describe('Attribute Limits', () => {
     it('should truncate excess attributes', () => {
-      const event: any = {
-        type: 'span',
-        attributes: {},
-      }
-
-      // Add 20 attributes (limit is 10)
+      const event: any = { type: 'span', attributes: {} }
       for (let i = 0; i < 20; i++) {
         event.attributes[`key_${i}`] = `value_${i}`
       }
-
       const enforced = engine.enforceAttributeLimits(event)
       const attrCount = Object.keys((enforced as any).attributes || {}).length
-      assert.ok(attrCount <= 10, `Should have at most 10 attributes, got ${attrCount}`)
+      assert.ok(attrCount <= 10, `expected ≤10 attributes, got ${attrCount}`)
     })
 
-    it('should truncate long attribute values', () => {
-      const longValue = 'x'.repeat(200) // maxAttributeLength is 100
-      const event: any = {
-        type: 'span',
-        attributes: {
-          'key1': longValue,
-        },
-      }
-
+    it('should truncate long attribute values with ellipsis', () => {
+      const longValue = 'x'.repeat(200)
+      const event: any = { type: 'span', attributes: { key1: longValue } }
       const enforced = engine.enforceAttributeLimits(event)
       const value = (enforced as any).attributes?.['key1']
-      if (typeof value === 'string') {
-        // Implementation truncates to maxLength and adds '…' ellipsis
-        assert.ok(value.length <= 101, `Value should be truncated to ~100 chars + ellipsis, got ${value.length}`)
-        assert.ok(value.endsWith('…'), `Truncated value should end with ellipsis`)
-      }
+      assert.equal(typeof value, 'string')
+      assert.ok(value.length <= 101, `expected ≤101 chars, got ${value.length}`)
+      assert.ok(value.endsWith('…'), 'truncated value should end with ellipsis')
     })
 
     it('should pass through events within limits', () => {
       const event: any = {
         type: 'span',
-        attributes: {
-          'key1': 'short',
-          'key2': 'also short',
-        },
+        attributes: { key1: 'short', key2: 'also short' },
       }
-
       const enforced = engine.enforceAttributeLimits(event)
       assert.equal((enforced as any).attributes?.['key1'], 'short')
       assert.equal((enforced as any).attributes?.['key2'], 'also short')
     })
-  })
 
-  // ─── Breadcrumb Eviction ───────────────────────────────────────────────
-
-  describe('Breadcrumb Limits', () => {
-    it('should provide maxBreadcrumbs config value', () => {
-      // LimitsEngine exposes getMaxBreadcrumbs() — callers use it to evict
-      assert.equal(engine.getMaxBreadcrumbs(), 5)
+    it('should also enforce on context and tags fields', () => {
+      const errorEvent: any = { type: 'error', context: {} }
+      const metricEvent: any = { type: 'metric', tags: {} }
+      for (let i = 0; i < 20; i++) {
+        errorEvent.context[`k_${i}`] = `v_${i}`
+        metricEvent.tags[`k_${i}`] = `v_${i}`
+      }
+      assert.ok(Object.keys(engine.enforceAttributeLimits(errorEvent).context).length <= 10)
+      assert.ok(Object.keys(engine.enforceAttributeLimits(metricEvent).tags).length <= 10)
     })
   })
 
-  // ─── Config Hot-Swap ───────────────────────────────────────────────────
+  describe('Payload Size', () => {
+    it('accepts payloads within limit', () => {
+      assert.equal(engine.checkPayloadSize(1024), true)
+      assert.equal(engine.checkPayloadSize(baseLimitsConfig.maxPayloadSize), true)
+    })
+
+    it('rejects payloads above limit', () => {
+      assert.equal(engine.checkPayloadSize(baseLimitsConfig.maxPayloadSize + 1), false)
+    })
+  })
 
   describe('Config Change', () => {
     it('should update limits on config change', () => {
-      // Change maxAttributesPerEvent to 5
       engine.handleConfigChange({} as any, {
-        limits: {
-          ...baseLimitsConfig,
-          maxAttributesPerEvent: 5,
-        },
+        limits: { ...baseLimitsConfig, maxSpanAttributes: 5 },
       } as any)
 
-      const event: any = {
-        type: 'span',
-        attributes: {},
-      }
-      for (let i = 0; i < 10; i++) {
-        event.attributes[`key_${i}`] = `value_${i}`
-      }
+      const event: any = { type: 'span', attributes: {} }
+      for (let i = 0; i < 10; i++) event.attributes[`k_${i}`] = `v_${i}`
 
       const enforced = engine.enforceAttributeLimits(event)
-      const attrCount = Object.keys((enforced as any).attributes || {}).length
-      assert.ok(attrCount <= 5, `Should have at most 5 attributes after config change, got ${attrCount}`)
+      const count = Object.keys((enforced as any).attributes || {}).length
+      assert.ok(count <= 5, `expected ≤5 after config change, got ${count}`)
+    })
+
+    it('exposes maxSpansPerTrace via getter', () => {
+      assert.equal(engine.getMaxSpansPerTrace(), 500)
     })
   })
 })

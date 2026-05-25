@@ -58,7 +58,8 @@ function createDefinition(route, config) {
     const endpoint = ROUTE_ENDPOINTS[route];
     // Map EnterpriseRoute to TransportRouteName for config lookup
     const configRouteName = route;
-    const configured = config.endpoints[configRouteName]?.url;
+    // Wire schema renamed `endpoints` → `routes` in v3.
+    const configured = config.routes[configRouteName]?.url;
     if (!configured) {
         throw new TransportConfigurationError('Missing endpoint for route', { route });
     }

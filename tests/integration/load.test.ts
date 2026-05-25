@@ -78,40 +78,90 @@ async function startMockBackend(): Promise<MockServer> {
         return
       }
 
-      // Remote config — points all routes at this server
+      // Remote config — points all routes at this server. v3 schema.
       if (req.url === '/v1/sdk-config') {
-        const endpoint = (path: string) => ({
+        const route = (path: string) => ({
           url: `${localUrl}${path}`,
-          priority: 'normal',
           batchSize: 500,
           flushIntervalMs: 250,
-          compression: 'none',
+          compression: 'none' as const,
           timeoutMs: 3_000,
         })
         res.writeHead(200, { 'content-type': 'application/json' })
         res.end(
           JSON.stringify({
+            schemaVersion: 1,
+            sdk: { projectId: 'load-test', environment: 'test', release: '1.0.0' },
+            features: {
+              tracing: true,
+              requestCapture: true,
+              errors: true,
+              metrics: true,
+              logging: true,
+              profiling: false,
+              crons: false,
+              sessionReplay: false,
+              runtimeMetrics: false,
+              eventLoopMonitoring: false,
+              gcMonitoring: false,
+            },
+            sampling: {
+              traces: 1,
+              requests: 1,
+              errors: 1,
+              profiles: 0,
+              replays: 0,
+              routes: {},
+            },
+            instrumentation: {
+              http: true, https: true, fetch: true, axios: false,
+              fastify: { enabled: false, captureHooks: false, captureValidationErrors: false },
+              express: { enabled: false },
+              graphql: { enabled: false, captureResolvers: false },
+              prisma: { enabled: false, captureQueries: false, captureParams: false },
+              mongodb: false, redis: false, bullmq: false,
+            },
+            privacy: {
+              capture: { headers: false, body: false, response: false, query: false, cookies: false },
+              scrubbing: { enabled: true, headers: ['authorization'], fields: ['password', 'token'] },
+              piiDetection: { enabled: false, maskEmails: false, maskPhones: false, maskIPs: false },
+            },
             limits: {
-              // Bump rate limiter for load testing — production users get
-              // sane defaults from the SDK's BAKED_IN config.
-              maxEventsPerSecond: 1_000_000,
-              maxPayloadSize: 5_242_880,
-              maxAttributesPerEvent: 128,
+              maxSpansPerTrace: 5000,
+              maxSpanAttributes: 128,
               maxAttributeLength: 2048,
-              maxBreadcrumbs: 200,
-              maxMemoryUsageMb: 256,
+              maxPayloadSize: 5_242_880,
+              maxQueueSize: 100_000,
+              maxMemoryMb: 256,
               maxCpuOverheadPercent: 5,
             },
+            killswitches: {
+              disableSDK: false,
+              disableTracing: false,
+              disableMetrics: false,
+              disableTransport: false,
+              disableProfiling: false,
+              disableErrors: false,
+              disableLogs: false,
+            },
             transport: {
-              endpoints: {
-                errors: { ...endpoint('/v1/errors'), priority: 'critical' },
-                traces: { ...endpoint('/v1/traces'), priority: 'high' },
-                metrics: endpoint('/v1/metrics'),
-                logs: endpoint('/v1/logs'),
-                profiles: endpoint('/v1/profiles'),
-                crons: endpoint('/v1/checkins'),
+              retry: { enabled: true, maxRetries: 3, backoff: 'exponential', baseDelayMs: 200 },
+              queue: { overflowStrategy: 'drop_oldest' },
+              keepAlive: true,
+              routes: {
+                traces: route('/v1/traces'),
+                requests: route('/v1/requests'),
+                errors: route('/v1/errors'),
+                metrics: route('/v1/metrics'),
+                logs: route('/v1/logs'),
+                profiles: route('/v1/profiles'),
+                events: route('/v1/events'),
+                crons: route('/v1/checkins'),
+                replays: route('/v1/replays'),
               },
             },
+            runtime: { configTtlSeconds: 300, staleWhileRevalidate: true },
+            meta: { generatedAt: new Date().toISOString(), generatedBy: 'load-test-mock' },
           })
         )
         return

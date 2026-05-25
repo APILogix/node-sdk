@@ -162,11 +162,18 @@ export class ProfilingSubsystem {
             getLogger().warn(`[ProfilingSubsystem] Failed to stop CPU profile: ${err instanceof Error ? err.message : String(err)}`);
         }
     }
-    /** Handle config change. */
+    /**
+     * Handle config change. Same pattern as `LoggingSubsystem.handleConfigChange`:
+     * `init.ts` synthesizes a `profiling` block (SDK defaults + `features.profiling`)
+     * onto the config object. We pull it back out via a typed cast since the
+     * public schema no longer carries the field.
+     */
     handleConfigChange(_diff, newConfig) {
         if (this.destroyed)
             return;
-        this.config = { ...newConfig.profiling };
+        const synthesized = newConfig.profiling;
+        if (synthesized)
+            this.config = { ...synthesized };
     }
     /** Stop all active profiles and disconnect inspector. */
     async stop() {

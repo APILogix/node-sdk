@@ -18,6 +18,13 @@ import { getRequestContext, getSpanId, getTraceId } from '../core/context.js';
 const WRAPPER_MARKER = Symbol.for('pulse-sdk.logging-subsystem.wrapper');
 export class LoggingSubsystem {
     static instance = null;
+    /**
+     * Module-local re-entry guard for the console wrapper. Set to true
+     * while we're inside `captureLog` (or its emitter), prevents the
+     * subsystem from recursing if any code in the capture path itself
+     * writes to a wrapped console method.
+     */
+    static captureReentry = false;
     config;
     emitter;
     metadata;
@@ -77,14 +84,24 @@ export class LoggingSubsystem {
         };
         this.emitter(event);
     }
-    /** Handle config change — hot-swap logging config. */
+    /**
+     * Handle config change — hot-swap logging config.
+     *
+     * The wire schema no longer contains a `logging` block; init wires a
+     * synthesized config (SDK defaults + `features.logging` mirror) onto
+     * the config object passed here. We cast through `unknown` because the
+     * public `RemoteConfigResponse` type intentionally doesn't expose this
+     * legacy shape.
+     */
     handleConfigChange(_diff, newConfig) {
         if (this.destroyed)
             return;
-        const newLogging = newConfig.logging;
+        const synthesized = newConfig.logging;
+        if (!synthesized)
+            return;
         const oldEnabled = this.config.enabled && this.config.captureConsole;
-        const newEnabled = newLogging.enabled && newLogging.captureConsole;
-        this.config = { ...newLogging };
+        const newEnabled = synthesized.enabled && synthesized.captureConsole;
+        this.config = { ...synthesized };
         if (!oldEnabled && newEnabled) {
             this.installInterceptors();
         }
@@ -112,35 +129,46 @@ export class LoggingSubsystem {
             if (typeof current !== 'function')
                 continue;
             // If the slot already holds one of our markers, the previous SDK
-            // lifetime didn't fully restore. We can't recover the true original
-            // (it lives in a closure that's now unreachable), so we install a
-            // fresh wrapper that delegates to the existing one. This preserves
-            // log capture across reinit cycles where teardown was skipped.
-            let original;
+            // lifetime didn't fully restore. Refuse to chain a second wrapper
+            // — a previous version of this code chained, which on each reinit
+            // doubled the number of capture calls per console invocation. The
+            // safe behaviour is to refuse: the existing wrapper still works,
+            // and `removeInterceptors()` of *this* instance cannot recover
+            // the original anyway. Operators should fix the root cause (a
+            // missed shutdown) rather than have us silently multiply work.
             if (isMarkedWrapper(current)) {
                 logger.warn(`[LoggingSubsystem] console.${level} is already wrapped by Pulse SDK; ` +
-                    `chaining a new wrapper (previous teardown was incomplete)`);
-                original = current.bind(console);
+                    `skipping install (previous SDK instance did not tear down)`);
+                continue;
             }
-            else {
-                original = current.bind(console);
-            }
+            const original = current.bind(console);
             this.originals.set(level, original);
             const wrapper = (...args) => {
-                // Always call the original first.
+                // Always call the original first so the user's console output is
+                // never delayed or lost by our work.
                 original.apply(console, args);
-                // Capture if level is allowed.
-                const mappedLevel = level === 'log' ? 'info' : level;
-                if (this.isLevelAllowed(mappedLevel) && !this.destroyed) {
-                    try {
+                // Re-entry guard. Without this, any console.* call from inside
+                // `this.emitter(...)` (e.g., a plugin that logs during processing,
+                // or the SDK logger ever regressing back to console.* output)
+                // would recurse here, capturing infinitely.
+                if (LoggingSubsystem.captureReentry)
+                    return;
+                LoggingSubsystem.captureReentry = true;
+                try {
+                    // Capture if level is allowed.
+                    const mappedLevel = level === 'log' ? 'info' : level;
+                    if (this.isLevelAllowed(mappedLevel) && !this.destroyed) {
                         const message = args
                             .map(a => (typeof a === 'string' ? a : safeStringify(a)))
                             .join(' ');
                         this.captureLog(mappedLevel, message, args);
                     }
-                    catch {
-                        // Never throw in console interceptor.
-                    }
+                }
+                catch {
+                    // Never throw in console interceptor.
+                }
+                finally {
+                    LoggingSubsystem.captureReentry = false;
                 }
             };
             wrapper[WRAPPER_MARKER] = true;

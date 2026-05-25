@@ -225,7 +225,13 @@ export function registerAutoInstrumentations(options: AutoInstrumentOptions = {}
               return true
             }
 
-            return ['/v1/events', '/v1/init', '/v1/sdk-config'].includes(path)
+            const SDK_INGEST_PATHS = new Set([
+              '/v1/events', '/v1/init', '/v1/sdk-config',
+              '/v1/traces', '/v1/requests', '/v1/errors',
+              '/v1/metrics', '/v1/logs', '/v1/profiles',
+              '/v1/checkins', '/v1/replays',
+            ])
+            return SDK_INGEST_PATHS.has(path)
           } catch {
             return false
           }
@@ -416,10 +422,22 @@ export function resetAutoInstrumentations(): void {
 
 function isInternalSdkUrl(target: URL, ingest: URL): boolean {
   if (target.origin !== ingest.origin) return false
+  // Every per-event-type route the v3 transport ships to. Any path the
+  // SDK posts to must be listed here, otherwise the OTel HttpInstrumentation
+  // creates a span for our own batch send → that span exports → the export
+  // hits another route → that creates another span → infinite fan-out.
   return target.pathname === ingest.pathname
     || target.pathname === '/v1/events'
     || target.pathname === '/v1/init'
     || target.pathname === '/v1/sdk-config'
+    || target.pathname === '/v1/traces'
+    || target.pathname === '/v1/requests'
+    || target.pathname === '/v1/errors'
+    || target.pathname === '/v1/metrics'
+    || target.pathname === '/v1/logs'
+    || target.pathname === '/v1/profiles'
+    || target.pathname === '/v1/checkins'
+    || target.pathname === '/v1/replays'
 }
 
 export { GraphQLInstrumentation, MongoDBInstrumentation, RedisInstrumentation, PrismaInstrumentation, BullMQInstrumentation }

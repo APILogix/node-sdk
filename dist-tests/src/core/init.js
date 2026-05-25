@@ -22,18 +22,19 @@ import { createHash } from 'crypto';
 import { sdkInitOptionsSchema } from '../types/config.js';
 import { client } from './client.js';
 import { sendInitRequest } from '../transport/sender.js';
-import { setupGlobalErrorHandlers } from '../instrumentation/global-errors.js';
+import { setupGlobalErrorHandlers, resetGlobalErrorHandlers } from '../instrumentation/global-errors.js';
 import { eventQueue } from '../transport/queue.js';
 import { DEFAULT_BASE_URL, DEFAULT_MAX_PAYLOAD_BYTES, DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT_MS } from '../constants/defaults.js';
+import { LOGGING_DEFAULTS, PROFILING_DEFAULTS, TRACING_DEFAULTS } from '../constants/internal-defaults.js';
 import { SDKError } from './errors.js';
 import { getLogger, setDebugMode, setLogLevel } from '../utils/logger.js';
 import { initializePlugins } from '../plugins/index.js';
 import { registerSignalHandlers } from './lifecycle.js';
 import { processEvent } from './event-pipeline.js';
 import { sleep } from '../utils/time.js';
-import { initTracer } from '../tracing/tracer.js';
+import { initTracer, shutdownTracer } from '../tracing/tracer.js';
 import { getSessionManager } from '../session/session-manager.js';
-import { resolvePlanFeatures, clampToPlan, validatePluginCount, getOfflineFallbackPlan } from './plan-gate.js';
+import { resolvePlanFeatures, clampToPlan, getOfflineFallbackPlan } from './plan-gate.js';
 import { detectResources } from '../utils/resource-detector.js';
 import { errorDeduplicator } from '../processors/deduplicator.js';
 import { persistentStorage } from '../storage/persistent-storage.js';
@@ -41,7 +42,7 @@ import { sourceMapResolver } from '../processors/source-map-resolver.js';
 import { metricsRegistry } from '../metrics/registry.js';
 import { otelMetrics } from '../metrics/otel-adapter.js';
 import { slowRequestDetector } from '../processors/slow-request-detector.js';
-import { registerAutoInstrumentations } from '../instrumentation/auto-instrument.js';
+import { registerAutoInstrumentations, resetAutoInstrumentations } from '../instrumentation/auto-instrument.js';
 import { costGovernor } from '../utils/cost-governor.js';
 // ─── New Remote Config Modules ──────────────────────────────────────────────
 import { ConfigManager } from './config-manager.js';
@@ -126,7 +127,11 @@ async function initialize(options) {
         remoteConfigResponse = configManager.getConfig();
     }
     // ─── Phase 2: Version Policy Enforcement ────────────────────────────────
-    const versionResult = VersionPolicy.enforce(remoteConfigResponse.versionPolicy);
+    //
+    // The wire schema no longer carries a `versionPolicy` block — `enforce()`
+    // is now a stub that always returns `ok`. Kept as a phase so that if we
+    // bring version gating back later, the call site is unchanged.
+    const versionResult = VersionPolicy.enforce();
     if (versionResult.status === 'blocked' || versionResult.status === 'force_upgrade') {
         logger.error(`[VersionPolicy] ${versionResult.status}: ${versionResult.message}`);
         client.clear();
@@ -147,7 +152,7 @@ async function initialize(options) {
     const samplingEngine = SamplingEngine.initialize(remoteConfigResponse.sampling);
     const featureController = FeatureController.initialize(remoteConfigResponse.features);
     const limitsEngine = LimitsEngine.initialize(remoteConfigResponse.limits);
-    const securityScrubber = SecurityScrubber.initialize(remoteConfigResponse.security);
+    const securityScrubber = SecurityScrubber.initialize(remoteConfigResponse.privacy);
     if (isDegradedMode) {
         featureController.setDegradedMode(true);
     }
@@ -163,10 +168,12 @@ async function initialize(options) {
         shutdown: () => transportRouter.disable(),
         startup: () => transportRouter.enable(),
     });
-    // Wire cost governor from remote config
+    // Wire cost governor from SDK-internal tracing defaults. These knobs no
+    // longer come from the wire schema — they're SDK opinions about safe
+    // upper bounds for span fan-out and trace duration.
     costGovernor.updateFromConfig({
-        maxSpansPerTrace: remoteConfigResponse.tracing.maxSpansPerTrace,
-        maxTraceDurationMs: remoteConfigResponse.tracing.maxTraceDurationMs,
+        maxSpansPerTrace: TRACING_DEFAULTS.maxSpansPerTrace,
+        maxTraceDurationMs: TRACING_DEFAULTS.maxTraceDurationMs,
     });
     // ─── Phase 5: Legacy Init Flow (backward compat) ───────────────────────
     for (let attempt = 1; attempt <= INIT_MAX_ATTEMPTS; attempt += 1) {
@@ -222,17 +229,12 @@ async function initialize(options) {
                 enableTracing: resolvedConfig.enableTracing,
                 enableMetrics: resolvedConfig.enableMetrics,
             });
-            // Validate plugins against plan limits
+            // Validate plugins. Plan-based caps were removed in v3 — every plugin
+            // the user passes is now accepted unless the FeatureController later
+            // refuses it (still TBD; for now plugins always run).
             let pluginsToInit = options.plugins ?? [];
             if (pluginsToInit.length > 0) {
-                const { allowed, dropped } = validatePluginCount(pluginsToInit, planFeatures);
-                if (dropped > 0) {
-                    logger.warn(`[Plan: ${planFeatures.tier}] ${dropped} plugin(s) dropped — plan allows max ${planFeatures.maxPlugins}. Upgrade at https://pulse.dev/pricing`);
-                    pluginsToInit = pluginsToInit.slice(0, allowed);
-                }
-                if (pluginsToInit.length > 0) {
-                    await initializePlugins(pluginsToInit, resolvedConfig, client.metadata);
-                }
+                await initializePlugins(pluginsToInit, resolvedConfig, client.metadata);
             }
             // Register user-provided event processors
             if (options.eventProcessors) {
@@ -240,19 +242,27 @@ async function initialize(options) {
                     client.registerEventProcessor(processor);
                 }
             }
-            // Validate beforeSend against plan
-            if (options.beforeSend && !planFeatures.allowBeforeSend) {
-                logger.warn(`[Plan: ${planFeatures.tier}] beforeSend hook requires a Pro or Enterprise plan — ignored`);
-            }
-            // Initialize persistent storage and replay persisted events
+            // beforeSend used to be a paid-plan feature; v3 makes it always
+            // available. The hook still runs through the event pipeline's
+            // BEFORE_SEND_TIMEOUT_MS guard so a slow user hook can't stall the
+            // pipeline.
+            // Initialize persistent storage and replay persisted events.
             const apiKeyHash = createHash('sha256').update(options.apiKey).digest('hex');
             persistentStorage.configure({ apiKeyHash });
             const persistedEvents = await persistentStorage.init();
+            // CRITICAL: replay through `processEvent` (the full pipeline) rather
+            // than directly to the transport. Pre-init events were captured
+            // before SecurityScrubber, applyScopeToEvent, dedup, plugin processors,
+            // beforeSend, sampling, LimitsEngine, and loadShedder were configured.
+            // Sending them straight to the wire skipped every PII / governance
+            // filter — a request body containing an Authorization header captured
+            // pre-init reached the backend unredacted. Routing through processEvent
+            // ensures the same filter chain runs as for any post-init event.
             for (const event of persistedEvents) {
-                transportRouter.send(event);
+                processEvent(event);
             }
             for (const event of eventQueue.drainAll()) {
-                transportRouter.send(event);
+                processEvent(event);
             }
             // Configure source map resolver if options provided
             if (options.sourceMaps) {
@@ -284,10 +294,31 @@ async function initialize(options) {
                 logger.info('[FeatureController] Tracing subsystem stopped');
             });
             killswitchEngine.registerSubsystem('disableTracing', {
-                shutdown: () => logger.warn('[KillswitchEngine] Tracing killed'),
+                shutdown: async () => {
+                    // Real teardown: stop the OTel tracer provider AND uninstall the
+                    // auto-instrumentations so no new spans are produced. A bare log
+                    // here was a no-op — backend "kill tracing" had no effect.
+                    logger.warn('[KillswitchEngine] Tracing killed — shutting down tracer + auto-instrumentation');
+                    try {
+                        await shutdownTracer();
+                    }
+                    catch (err) {
+                        logger.error('[KillswitchEngine] shutdownTracer failed', { error: err });
+                    }
+                    try {
+                        resetAutoInstrumentations();
+                    }
+                    catch (err) {
+                        logger.error('[KillswitchEngine] resetAutoInstrumentations failed', { error: err });
+                    }
+                },
                 startup: () => {
+                    // Refuse to re-init if tracing is already alive — protects
+                    // against double-init of NodeTracerProvider when the killswitch
+                    // toggles rapidly.
                     if (featureController.isEnabled('tracing')) {
                         initTracer(resolvedConfig, resources);
+                        registerAutoInstrumentations({});
                     }
                 },
             });
@@ -304,7 +335,15 @@ async function initialize(options) {
                 logger.info('[FeatureController] Metrics subsystem stopped');
             });
             killswitchEngine.registerSubsystem('disableMetrics', {
-                shutdown: () => logger.warn('[KillswitchEngine] Metrics killed'),
+                shutdown: async () => {
+                    logger.warn('[KillswitchEngine] Metrics killed — shutting down OTel meter provider');
+                    try {
+                        await otelMetrics.shutdown();
+                    }
+                    catch (err) {
+                        logger.error('[KillswitchEngine] otelMetrics.shutdown failed', { error: err });
+                    }
+                },
                 startup: () => {
                     if (featureController.isEnabled('metrics')) {
                         otelMetrics.init({
@@ -324,17 +363,33 @@ async function initialize(options) {
                 logger.info('[FeatureController] Errors subsystem stopped');
             });
             killswitchEngine.registerSubsystem('disableErrors', {
-                shutdown: () => logger.warn('[KillswitchEngine] Errors killed'),
+                shutdown: () => {
+                    // Detach the SDK's process-level uncaughtException /
+                    // unhandledRejection listeners and unwrap console.error.
+                    logger.warn('[KillswitchEngine] Errors killed — detaching global error handlers');
+                    try {
+                        resetGlobalErrorHandlers();
+                    }
+                    catch (err) {
+                        logger.error('[KillswitchEngine] resetGlobalErrorHandlers failed', { error: err });
+                    }
+                },
                 startup: () => {
                     if (featureController.isEnabled('errors')) {
                         setupGlobalErrorHandlers();
                     }
                 },
             });
-            // Register logging subsystem
+            // Register logging subsystem. The wire schema no longer carries a
+            // `logging` block — we synthesize one from SDK-internal defaults and
+            // the `features.logging` toggle so the subsystem signature stays
+            // unchanged during the migration.
             await featureController.register('logging', () => {
                 if (!killswitchEngine.isKilled('disableLogs')) {
-                    const loggingSub = LoggingSubsystem.initialize(remoteConfigResponse.logging, (event) => { processEvent(event); }, eventMetadata);
+                    const loggingSub = LoggingSubsystem.initialize({
+                        ...LOGGING_DEFAULTS,
+                        enabled: remoteConfigResponse.features.logging,
+                    }, (event) => { processEvent(event); }, eventMetadata);
                     loggingSub.start();
                 }
             }, () => {
@@ -352,10 +407,15 @@ async function initialize(options) {
                         sub.start();
                 },
             });
-            // Register profiling subsystem
+            // Register profiling subsystem. Same pattern as logging: synthesize
+            // the legacy `ProfilingConfig` shape from SDK-internal defaults plus
+            // the remote `features.profiling` flag.
             await featureController.register('profiling', async () => {
                 if (!killswitchEngine.isKilled('disableProfiling')) {
-                    const profilingSub = ProfilingSubsystem.initialize(remoteConfigResponse.profiling, (event) => { processEvent(event); }, eventMetadata);
+                    const profilingSub = ProfilingSubsystem.initialize({
+                        ...PROFILING_DEFAULTS,
+                        enabled: remoteConfigResponse.features.profiling,
+                    }, (event) => { processEvent(event); }, eventMetadata);
                     await profilingSub.start();
                 }
             }, async () => {
@@ -400,31 +460,33 @@ async function initialize(options) {
                 }
                 if (diff.featuresChanged) {
                     void featureController.handleConfigChange(diff, newConfig);
+                    // The logging/profiling subsystems' config is synthesized from
+                    // `features.*` plus SDK defaults. When `features` flips, push a
+                    // refreshed shape to whichever subsystem is alive so its `enabled`
+                    // mirror matches the new feature flag.
+                    const loggingSub = LoggingSubsystem.getInstance();
+                    if (loggingSub) {
+                        loggingSub.handleConfigChange(diff, {
+                            ...newConfig,
+                            logging: { ...LOGGING_DEFAULTS, enabled: newConfig.features.logging },
+                        });
+                    }
+                    const profilingSub = ProfilingSubsystem.getInstance();
+                    if (profilingSub) {
+                        profilingSub.handleConfigChange(diff, {
+                            ...newConfig,
+                            profiling: { ...PROFILING_DEFAULTS, enabled: newConfig.features.profiling },
+                        });
+                    }
                 }
                 if (diff.limitsChanged) {
                     limitsEngine.handleConfigChange(diff, newConfig);
                 }
-                if (diff.securityChanged) {
+                if (diff.privacyChanged) {
                     securityScrubber.handleConfigChange(diff, newConfig);
                 }
                 if (diff.transportChanged) {
                     transportRouter.handleConfigChange(diff, newConfig);
-                }
-                if (diff.tracingChanged) {
-                    costGovernor.updateFromConfig({
-                        maxSpansPerTrace: newConfig.tracing.maxSpansPerTrace,
-                        maxTraceDurationMs: newConfig.tracing.maxTraceDurationMs,
-                    });
-                }
-                if (diff.loggingChanged) {
-                    const loggingSub = LoggingSubsystem.getInstance();
-                    if (loggingSub)
-                        loggingSub.handleConfigChange(diff, newConfig);
-                }
-                if (diff.profilingChanged) {
-                    const profilingSub = ProfilingSubsystem.getInstance();
-                    if (profilingSub)
-                        profilingSub.handleConfigChange(diff, newConfig);
                 }
             });
             // ─── Phase 8: Start Config Refresh Loop ────────────────────────────
@@ -580,13 +642,18 @@ function filterBufferedEvents(config) {
                 return true;
             if (config.samplingRate <= 0)
                 return false;
-            // Use deterministic sampling if engine is available
+            // Deterministic sampling. The engine is initialized in Phase 3 of
+            // init() so it's always present when filterBufferedEvents runs;
+            // the explicit check is defensive, and falling through means
+            // dropping the event rather than non-deterministic Math.random()
+            // (which would make sampling decisions inconsistent across nodes).
             if (samplingEngineInstance) {
                 const traceId = e['traceId'] ?? e['requestId'] ?? String(e['timestamp']);
                 const decision = samplingEngineInstance.shouldSampleTrace(traceId);
                 return decision.sampled;
             }
-            return Math.random() <= config.samplingRate;
+            // SamplingEngine not yet up — drop rather than sample non-deterministically.
+            return false;
         }
         if (e['type'] === 'error') {
             return config.enableErrors;

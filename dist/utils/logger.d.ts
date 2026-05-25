@@ -1,15 +1,21 @@
 /**
  * SDK Logger — Sentry-style debug logging.
  *
- * When `debug: true` is set in SDK options:
- *   - All SDK internal messages are printed via console.log/console.warn/console.error
- *   - Structured context is JSON-stringified and printed alongside
+ * Output strategy (post v3 fix for the console-interception feedback loop):
+ *   The SDK never writes through `console.log/info/warn/error`. Those
+ *   slots are intercepted by `LoggingSubsystem.installInterceptors()` to
+ *   capture user logs as `log` events; if the SDK itself wrote there,
+ *   every internal `logger.debug/info/warn/error` call would create a
+ *   `log` event, which inside the pipeline produces more debug output,
+ *   producing more `log` events — a runaway storm we observed at
+ *   thousands of events per second under `setDebugMode(true)`.
  *
- * When `debug: false` (default):
- *   - Only warnings and errors are printed
- *   - Debug/info messages are silenced for zero noise in production
+ *   Both loggers below now write directly to `process.stdout` (info /
+ *   debug) or `process.stderr` (warn / error). The LoggingSubsystem's
+ *   wrapper never sees these writes, so the feedback loop is broken at
+ *   the source.
  *
- * PII redaction is always applied regardless of debug mode.
+ *   PII redaction is always applied regardless of debug mode.
  */
 import { type SeverityLevel } from '../types/severity.js';
 export interface Logger {

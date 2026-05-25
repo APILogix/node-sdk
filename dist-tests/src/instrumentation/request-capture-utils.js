@@ -21,6 +21,7 @@
 import { ConfigManager } from '../core/config-manager.js';
 import { FeatureController } from '../core/feature-controller.js';
 import { KillswitchEngine } from '../core/killswitch-engine.js';
+import { SamplingEngine } from '../core/sampling-engine.js';
 import { SecurityScrubber } from '../processors/security-scrubber.js';
 import { tenantGovernor } from '../core/tenant-isolation.js';
 import { getLogger } from '../utils/logger.js';
@@ -65,14 +66,22 @@ export function evaluateCaptureGate(input) {
     if (killswitch?.isKilled('disableTracing')) {
         return denied('tracing_disabled');
     }
-    // 3. Feature controller — remote-config-driven feature flag.
+    // 3. Feature controller — `requestCapture` is its own remote-config flag
+    // in v3. The `tracing` feature controls span emission, not request events.
+    // We keep the tracing check as well because requests carry trace context;
+    // disabling tracing while still emitting requests would produce orphan
+    // signals.
     const featureCtrl = FeatureController.getInstance();
-    if (featureCtrl && !featureCtrl.isEnabled('tracing')) {
-        return denied('tracing_feature_off');
+    if (featureCtrl) {
+        if (!featureCtrl.isEnabled('requestCapture'))
+            return denied('request_capture_feature_off');
+        if (!featureCtrl.isEnabled('tracing'))
+            return denied('tracing_feature_off');
     }
-    // 4. Remote-config ignored routes & methods. We treat both `tracing.ignored*`
-    //    arrays as authoritative for request capture so users only need to
-    //    configure ignores in one place.
+    // 4. Remote-config ignored routes & methods. The new schema expresses
+    //    these as per-route sampling rates of 0 (handled in step 6 below),
+    //    but we still honour any local lists provided by callers and any
+    //    legacy fields the gate's tracing-config helper exposes.
     const cfg = safeGetTracingConfig();
     if (cfg) {
         if (cfg.ignoredMethods.some(m => m.toUpperCase() === method)) {
@@ -86,6 +95,19 @@ export function evaluateCaptureGate(input) {
     if (!tenantGovernor.canAcceptEvent(input.tenantId)) {
         return denied('tenant_quota');
     }
+    // 6. Sampling — `sampling.routes["/path"].requests` lets the backend
+    //    silence noisy paths or boost critical ones without a redeploy.
+    //    Falls back to the global `sampling.requests` rate. We use a stable
+    //    sample key (callers provide the request id) so the same request
+    //    always lands the same way on retries / idempotent replays.
+    const samplingEngine = SamplingEngine.getInstance();
+    let sampledRate = 1;
+    if (samplingEngine && input.sampleKey) {
+        const decision = samplingEngine.shouldSampleRequest(input.sampleKey, input.path);
+        sampledRate = decision.rate;
+        if (!decision.sampled)
+            return denied(`sampling_${decision.reason}`);
+    }
     return {
         capture: true,
         allowHeaders: cfg?.capture.headers ?? true,
@@ -93,6 +115,7 @@ export function evaluateCaptureGate(input) {
         allowBody: cfg?.capture.body ?? false,
         allowResponse: cfg?.capture.response ?? false,
         allowCookies: cfg?.capture.cookies ?? false,
+        sampledRate,
     };
 }
 /**
@@ -224,6 +247,7 @@ function denied(reason) {
         allowBody: false,
         allowResponse: false,
         allowCookies: false,
+        sampledRate: 0,
     };
 }
 function matchesPathList(path, list) {
@@ -234,15 +258,21 @@ function matchesPathList(path, list) {
 function safeGetTracingConfig() {
     try {
         const cfg = ConfigManager.getInstance().getConfig();
+        // Route- and method-level ignoring is now expressed via
+        // `sampling.routes["/path"] = { traces: 0, requests: 0, ... }` rather
+        // than a separate `tracing.ignoredRoutes` array. Capture flags moved
+        // to `privacy.capture`. Both are honoured here so the gate result is
+        // a single source of truth for adapters.
         return {
-            ignoredRoutes: cfg.tracing?.ignoredRoutes ?? [],
-            ignoredMethods: cfg.tracing?.ignoredMethods ?? [],
+            // Reserved for future use — sampling engine handles per-route drops.
+            ignoredRoutes: [],
+            ignoredMethods: [],
             capture: {
-                headers: cfg.tracing?.capture?.headers ?? false,
-                body: cfg.tracing?.capture?.body ?? false,
-                response: cfg.tracing?.capture?.response ?? false,
-                query: cfg.tracing?.capture?.query ?? true,
-                cookies: cfg.tracing?.capture?.cookies ?? false,
+                headers: cfg.privacy?.capture?.headers ?? false,
+                body: cfg.privacy?.capture?.body ?? false,
+                response: cfg.privacy?.capture?.response ?? false,
+                query: cfg.privacy?.capture?.query ?? true,
+                cookies: cfg.privacy?.capture?.cookies ?? false,
             },
         };
     }

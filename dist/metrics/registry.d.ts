@@ -82,8 +82,14 @@ declare class MetricsRegistry {
     setGauge(name: string, value: number, options?: MetricOptions & CounterOptions): void;
     /**
      * Flush pending metrics through the OTel reader → event pipeline.
+     *
+     * Returns a Promise so callers (especially shutdown) can `await`
+     * the actual completion. The previous void return + floated
+     * `.catch(() => {})` chain made shutdown-time metrics best-effort
+     * even on graceful exit, since the lifecycle moved on before the
+     * OTel reader had finished collecting and emitting.
      */
-    flush(): void;
+    flush(): Promise<void>;
     getStats(): {
         initialized: boolean;
         registeredMetrics: number;

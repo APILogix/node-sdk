@@ -1,48 +1,47 @@
 /**
- * FeatureController Unit Tests
+ * FeatureController unit tests.
  *
  * Validates:
- * - Feature registration with start/stop callbacks
- * - Feature enabled/disabled state management
- * - Config change: enabling new features triggers start
- * - Config change: disabling features triggers stop
- * - Degraded mode: only errors + logging allowed
- * - All 14 feature flags independently
+ *   - Feature registration with start/stop callbacks.
+ *   - Feature enabled/disabled state management.
+ *   - Config change: enabling new features triggers start.
+ *   - Config change: disabling features triggers stop.
+ *   - Degraded mode: only errors + logging allowed.
+ *   - Every flag in v3 `FeaturesConfig` independently controllable.
+ *
+ * The v3 schema dropped `aiDetection`, `dynamicSampling`, `sourceMaps`,
+ * and `releaseTracking` (they were either always-on capabilities or
+ * dead config knobs); it added `requestCapture`. The flag list below
+ * mirrors the current `FeaturesConfig` exactly.
  */
-import { describe, it, beforeEach, afterEach } from 'node:test';
+import { describe, it, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { FeatureController } from '../../src/core/feature-controller.js';
 const allFeaturesOff = {
     tracing: false,
+    requestCapture: false,
+    errors: false,
     metrics: false,
     logging: false,
-    errors: false,
     profiling: false,
     crons: false,
     sessionReplay: false,
-    aiDetection: false,
-    dynamicSampling: false,
     runtimeMetrics: false,
     eventLoopMonitoring: false,
     gcMonitoring: false,
-    sourceMaps: false,
-    releaseTracking: false,
 };
 const allFeaturesOn = {
     tracing: true,
+    requestCapture: true,
+    errors: true,
     metrics: true,
     logging: true,
-    errors: true,
     profiling: true,
     crons: true,
     sessionReplay: true,
-    aiDetection: true,
-    dynamicSampling: true,
     runtimeMetrics: true,
     eventLoopMonitoring: true,
     gcMonitoring: true,
-    sourceMaps: true,
-    releaseTracking: true,
 };
 describe('FeatureController', () => {
     afterEach(() => {
@@ -82,14 +81,13 @@ describe('FeatureController', () => {
             assert.equal(started, false);
         });
     });
-    describe('All 14 Feature Flags', () => {
+    describe('All Feature Flags', () => {
         const featureNames = Object.keys(allFeaturesOff);
         for (const featureName of featureNames) {
             it(`should independently control ${featureName}`, () => {
                 const config = { ...allFeaturesOff, [featureName]: true };
                 const ctrl = FeatureController.initialize(config);
                 assert.equal(ctrl.isEnabled(featureName), true, `${featureName} should be enabled`);
-                // All other features should be disabled
                 for (const other of featureNames) {
                     if (other !== featureName) {
                         assert.equal(ctrl.isEnabled(other), false, `${other} should be disabled`);
@@ -105,7 +103,6 @@ describe('FeatureController', () => {
             let started = false;
             await ctrl.register('metrics', () => { started = true; }, () => { });
             assert.equal(started, false);
-            // Enable metrics via config change
             await ctrl.handleConfigChange({}, {
                 features: { ...allFeaturesOff, metrics: true },
             });
@@ -115,7 +112,6 @@ describe('FeatureController', () => {
             const ctrl = FeatureController.initialize(allFeaturesOn);
             let stopped = false;
             await ctrl.register('profiling', () => { }, () => { stopped = true; });
-            // Disable profiling via config change
             await ctrl.handleConfigChange({}, {
                 features: { ...allFeaturesOn, profiling: false },
             });
@@ -132,13 +128,14 @@ describe('FeatureController', () => {
             assert.equal(ctrl.isEnabled('metrics'), false);
             assert.equal(ctrl.isEnabled('profiling'), false);
             assert.equal(ctrl.isEnabled('sessionReplay'), false);
+            assert.equal(ctrl.isEnabled('requestCapture'), false);
         });
         it('should restore full features when degraded mode is turned off', () => {
             const ctrl = FeatureController.initialize(allFeaturesOn);
             ctrl.setDegradedMode(true);
-            assert.equal(ctrl.isEnabled('tracing'), false); // degraded
+            assert.equal(ctrl.isEnabled('tracing'), false);
             ctrl.setDegradedMode(false);
-            assert.equal(ctrl.isEnabled('tracing'), true); // restored
+            assert.equal(ctrl.isEnabled('tracing'), true);
         });
     });
 });

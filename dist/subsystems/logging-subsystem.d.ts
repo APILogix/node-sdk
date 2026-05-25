@@ -14,6 +14,13 @@ import type { LogEvent, EventMetadata } from '../types/event.js';
 type LogEmitter = (event: LogEvent) => void;
 export declare class LoggingSubsystem {
     private static instance;
+    /**
+     * Module-local re-entry guard for the console wrapper. Set to true
+     * while we're inside `captureLog` (or its emitter), prevents the
+     * subsystem from recursing if any code in the capture path itself
+     * writes to a wrapped console method.
+     */
+    private static captureReentry;
     private config;
     private emitter;
     private metadata;

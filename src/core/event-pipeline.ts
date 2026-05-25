@@ -252,12 +252,14 @@ export async function drainPendingEventProcessing(): Promise<void> {
       await Promise.allSettled([...pendingPipelines])
     }
   } finally {
-    // Re-arm the pipeline once the SDK is no longer shutting down.
-    // While shuttingDown remains true, enqueueEvent's earlier gate keeps
-    // rejecting events, so leaving this false here is safe.
-    if (!isSDKShuttingDown()) {
-      pipelineDraining = false
-    }
+    // Always re-arm the pipeline. The previous version only cleared the
+    // flag when `!isSDKShuttingDown()`, which created a permanent
+    // "rejected: pipeline_draining" state if `flush()` was called
+    // outside a shutdown but a parallel path had set `shuttingDown`. The
+    // SDK's `shuttingDown` gate already covers shutdown rejection, so
+    // this flag's only job is to make drain converge — once the drain
+    // loop exits, the flag has done its job and must be cleared.
+    pipelineDraining = false
   }
 }
 
@@ -287,6 +289,19 @@ export async function processEventAsync(rawEvent: SDKEvent | Event, assignedEven
   const logger = getLogger()
 
   try {
+    // Step 0: Re-check the global killswitch.
+    //
+    // `enqueueEvent` checks `KillswitchEngine.isSDKDisabled()` before
+    // queueing, but spans exported from the tracer call `processEvent`
+    // (which → `enqueueEvent` → here) bypassing that check via the
+    // `__pulseInternal` flag for shutdown drains. The killswitch must
+    // win regardless of the bypass — otherwise toggling `disableSDK`
+    // remotely would still emit spans for in-flight traces.
+    const killswitch = KillswitchEngine.getInstance()
+    if (killswitch?.isSDKDisabled()) {
+      return false
+    }
+
     // Step 1: Coerce to SDKEvent shape + assign ID/timestamp
     let event = ensureBaseFields(rawEvent, assignedEventId)
 
@@ -541,6 +556,11 @@ function isFeatureEnabled(
       if (featureCtrl && !featureCtrl.isEnabled('errors')) return false
       return config.enableErrors
     case 'request':
+      // Request capture is now its own feature flag in v3 (separate from
+      // tracing). The tracing killswitch still kills request events too,
+      // since requests carry trace context.
+      if (killswitchEngine?.isKilled('disableTracing')) return false
+      if (featureCtrl && !featureCtrl.isEnabled('requestCapture')) return false
       return config.enablePerformance
     case 'message':
       return true // messages are always enabled

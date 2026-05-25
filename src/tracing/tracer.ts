@@ -83,6 +83,7 @@ class PipelineSpanExporter implements SpanExporter {
 
     export(spans: ReadableSpan[], resultCallback: (result: { code: number; error?: Error }) => void): void {
         try {
+            let allAccepted = true
             for (const span of spans) {
                 // Cost governance: check span-per-trace limits
                 const traceId = span.spanContext().traceId
@@ -96,9 +97,16 @@ class PipelineSpanExporter implements SpanExporter {
                 }
 
                 const traceEvent = this.spanToEvent(span)
-                processEvent(traceEvent)
+                // Track whether the transport actually accepted the event.
+                // Reporting success unconditionally would lie to the
+                // OTel BatchSpanProcessor, which discards the span on
+                // success — so spans rejected by transport (queue full,
+                // killswitch, etc.) would be silently lost.
+                if (!processEvent(traceEvent)) {
+                    allAccepted = false
+                }
             }
-            resultCallback({ code: 0 }) // SUCCESS
+            resultCallback({ code: allAccepted ? 0 : 1 })
         } catch (err) {
             getLogger().error('Span export failed', { error: err, spanCount: spans.length })
             resultCallback({ code: 1, error: err instanceof Error ? err : new Error(String(err)) })

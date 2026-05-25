@@ -7,20 +7,21 @@ import type { TransportRemoteConfig } from '../../src/types/config.js'
 
 function config(base = 'https://collector.example.test'): TransportRemoteConfig {
   const existing = BAKED_IN_REMOTE_CONFIG.transport
+  // v3 schema: top-level `routes` (was `endpoints`), retry/queue/keepAlive
+  // hoisted out of the old `shared` block.
   return {
     ...existing,
-    endpoints: {
-      ...existing.endpoints,
-      errors: { ...existing.endpoints.errors, url: `${base}/custom-errors` },
-      traces: { ...existing.endpoints.traces, url: `${base}/custom-traces` },
-      metrics: { ...existing.endpoints.metrics, url: `${base}/custom-metrics` },
-    },
-    shared: {
-      ...existing.shared,
-      connectionPool: {
-        maxConnectionsPerRoute: 999,
-        maxTotalConnections: 100,
-      },
+    routes: {
+      ...existing.routes,
+      errors:   { ...existing.routes.errors,   url: `${base}/custom-errors` },
+      traces:   { ...existing.routes.traces,   url: `${base}/custom-traces` },
+      requests: { ...existing.routes.requests, url: `${base}/custom-requests` },
+      metrics:  { ...existing.routes.metrics,  url: `${base}/custom-metrics` },
+      logs:     { ...existing.routes.logs,     url: `${base}/custom-logs` },
+      profiles: { ...existing.routes.profiles, url: `${base}/custom-profiles` },
+      events:   { ...existing.routes.events,   url: `${base}/custom-events` },
+      crons:    { ...existing.routes.crons,    url: `${base}/custom-crons` },
+      replays:  { ...existing.routes.replays,  url: `${base}/custom-replays` },
     },
   }
 }

@@ -1,4 +1,11 @@
 import { z } from 'zod';
+// ─── Remote Config Response (the wire shape) ────────────────────────────────
+//
+// Every behaviour-affecting knob is in this object. The SDK never invents
+// policy — it executes whatever the backend sends. Schema is versioned so
+// older SDKs can detect breaking changes and refuse to apply them.
+/** Bumped on incompatible schema changes. SDKs reject configs with a higher major. */
+export const REMOTE_CONFIG_SCHEMA_VERSION = 1;
 // ─── Zod Schemas ────────────────────────────────────────────────────────────
 export const sdkInitOptionsSchema = z.object({
     apiKey: z.string().trim().min(1, 'apiKey is required'),

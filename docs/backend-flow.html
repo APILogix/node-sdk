@@ -1,0 +1,726 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Pulse SDK v3 — Backend Control Flow</title>
+<style>
+  :root {
+    --bg: #0b1020;
+    --panel: #131a30;
+    --panel-2: #1a2342;
+    --line: #243056;
+    --ink: #e8ecf8;
+    --muted: #99a3c2;
+    --accent: #6aa9ff;
+    --accent-2: #9d7bff;
+    --good: #4ade80;
+    --warn: #fbbf24;
+    --bad: #f87171;
+    --code-bg: #0a0f1f;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    line-height: 1.6;
+  }
+  .wrap {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 48px 24px 96px;
+  }
+  h1 {
+    font-size: 36px;
+    margin: 0 0 8px;
+    background: linear-gradient(90deg, var(--accent) 0%, var(--accent-2) 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .lede {
+    color: var(--muted);
+    font-size: 17px;
+    margin-bottom: 40px;
+    max-width: 760px;
+  }
+  h2 {
+    font-size: 24px;
+    margin: 56px 0 16px;
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 8px;
+  }
+  h3 {
+    font-size: 18px;
+    color: var(--accent);
+    margin: 28px 0 8px;
+  }
+  p { color: #cdd4ee; }
+  code {
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    background: var(--code-bg);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 0.92em;
+    color: #c5d4ff;
+  }
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 16px 18px;
+    overflow-x: auto;
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-size: 13px;
+    line-height: 1.55;
+    color: #cdd4ee;
+  }
+  pre .k { color: #ff8fab; }
+  pre .s { color: #a5e887; }
+  pre .n { color: #ffd194; }
+  pre .c { color: #6c7a99; font-style: italic; }
+  pre .p { color: #99a3c2; }
+
+  /* The big visual flow */
+  .flow {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 24px;
+    margin: 24px 0;
+  }
+  .step {
+    display: grid;
+    grid-template-columns: 64px 1fr;
+    gap: 16px;
+    padding: 14px 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .step:last-child { border-bottom: 0; }
+  .step .num {
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    color: #0b1020;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+  }
+  .step .body strong { color: var(--ink); }
+  .step .body .meta {
+    color: var(--muted);
+    font-size: 13px;
+    margin-top: 4px;
+  }
+
+  .pipe {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .pipe-step {
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 10px 14px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .pipe-step .label {
+    background: var(--accent);
+    color: #0b1020;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .pipe-step.gate .label { background: var(--warn); }
+  .pipe-step.fail .label { background: var(--bad); color: #fff; }
+  .pipe-step.exit .label { background: var(--good); color: #0b1020; }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0;
+  }
+  th, td {
+    border: 1px solid var(--line);
+    padding: 10px 14px;
+    text-align: left;
+    font-size: 14px;
+  }
+  th {
+    background: var(--panel-2);
+    color: var(--accent);
+    font-weight: 600;
+  }
+  td code { font-size: 12.5px; }
+
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    margin-right: 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .badge.good { background: rgba(74, 222, 128, 0.15); color: var(--good); border: 1px solid rgba(74, 222, 128, 0.4); }
+  .badge.warn { background: rgba(251, 191, 36, 0.15); color: var(--warn); border: 1px solid rgba(251, 191, 36, 0.4); }
+  .badge.bad  { background: rgba(248, 113, 113, 0.15); color: var(--bad);  border: 1px solid rgba(248, 113, 113, 0.4); }
+
+  .callout {
+    border-left: 4px solid var(--accent);
+    background: rgba(106, 169, 255, 0.06);
+    padding: 14px 18px;
+    border-radius: 0 8px 8px 0;
+    margin: 18px 0;
+  }
+  .callout.warn {
+    border-left-color: var(--warn);
+    background: rgba(251, 191, 36, 0.06);
+  }
+  .callout strong { color: var(--ink); }
+
+  .timeline {
+    position: relative;
+    padding-left: 30px;
+  }
+  .timeline::before {
+    content: "";
+    position: absolute;
+    left: 8px;
+    top: 4px;
+    bottom: 4px;
+    width: 2px;
+    background: linear-gradient(180deg, var(--accent), var(--accent-2));
+  }
+  .tl-item {
+    position: relative;
+    margin-bottom: 18px;
+  }
+  .tl-item::before {
+    content: "";
+    position: absolute;
+    left: -27px;
+    top: 6px;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 0 4px rgba(106, 169, 255, 0.2);
+  }
+  .tl-item .tl-time {
+    font-size: 12px;
+    color: var(--muted);
+    font-family: "SF Mono", Menlo, monospace;
+    margin-bottom: 4px;
+  }
+
+  .legend {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    font-size: 13px;
+    color: var(--muted);
+    margin-top: 12px;
+  }
+  .legend-item { display: flex; align-items: center; gap: 6px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Pulse SDK v3 — Backend Control Flow</h1>
+<p class="lede">
+  How the SDK and the control plane cooperate. Every behaviour the SDK has
+  at runtime — what it captures, where it sends it, when to drop, when to
+  back off — is sourced from one remote-config response. The SDK itself
+  ships only safe defaults and hard ceilings.
+</p>
+
+<h2>1. The big picture</h2>
+<p>
+  The SDK and the backend talk over three logical endpoints. One ships
+  config, one ships events, and one is reserved for control-plane health
+  signals. Everything the customer's running app does observably is the
+  product of these three streams.
+</p>
+
+<div class="flow">
+  <div class="step">
+    <div class="num">1</div>
+    <div class="body">
+      <strong>App calls <code>init({ apiKey })</code></strong>
+      <div class="meta">SDK boots in safe-defaults mode (transport off, sampling 0). Non-blocking.</div>
+    </div>
+  </div>
+  <div class="step">
+    <div class="num">2</div>
+    <div class="body">
+      <strong><code>POST /v1/sdk-config</code></strong>
+      <div class="meta">SDK fetches its config. 3-second timeout. On failure: keep safe defaults, retry every 30s in the background.</div>
+    </div>
+  </div>
+  <div class="step">
+    <div class="num">3</div>
+    <div class="body">
+      <strong>Schema-version gate + safety clamping</strong>
+      <div class="meta">Reject configs newer than SDK understands. Clamp every numeric field to <code>SAFETY_CEILINGS</code>.</div>
+    </div>
+  </div>
+  <div class="step">
+    <div class="num">4</div>
+    <div class="body">
+      <strong>Engines wired up</strong>
+      <div class="meta">Sampling, killswitches, limits, scrubber, transport router, feature controller — all driven by the same config snapshot.</div>
+    </div>
+  </div>
+  <div class="step">
+    <div class="num">5</div>
+    <div class="body">
+      <strong>Background refresh loop</strong>
+      <div class="meta">Every <code>runtime.configTtlSeconds</code> the SDK refetches. Diff is computed. Subsystems hot-swap.</div>
+    </div>
+  </div>
+  <div class="step">
+    <div class="num">6</div>
+    <div class="body">
+      <strong>Events flow to per-event-type routes</strong>
+      <div class="meta"><code>traces → /v1/traces</code>, <code>errors → /v1/errors</code>, <code>requests → /v1/requests</code>, etc. Each with its own batch size, flush interval, retry policy.</div>
+    </div>
+  </div>
+</div>
+
+<h2>2. Bootstrap sequence</h2>
+<p>
+  This is what happens in the first 3 seconds after <code>init()</code>.
+  The SDK is non-blocking the entire time — your app keeps serving traffic
+  no matter what the control plane is doing.
+</p>
+
+<div class="timeline">
+  <div class="tl-item">
+    <div class="tl-time">t = 0ms</div>
+    <strong>App calls <code>init()</code> / <code>createSDK()</code>.</strong>
+    <p>SDK loads <code>BAKED_IN_REMOTE_CONFIG</code> — every feature off, transport disabled, sampling 0. The app's request handlers are now wrapped, but every captured event is dropped silently. <em>This is intentional</em>: it gives the SDK a window to talk to the backend without losing or sending bad data.</p>
+  </div>
+
+  <div class="tl-item">
+    <div class="tl-time">t = ~50ms</div>
+    <strong>Config fetch issued.</strong>
+    <p>SDK builds the request body — its identity (<code>sdkVersion</code>, <code>service</code>, <code>environment</code>, <code>runtime</code>) plus a list of capabilities the binary supports — and POSTs to <code>${baseUrl}/v1/sdk-config</code>.</p>
+    <pre>
+<span class="k">POST</span> /v1/sdk-config
+<span class="k">Authorization</span>: Bearer pk_live_...
+<span class="k">Content-Type</span>: application/json
+
+{
+  <span class="s">"sdkVersion"</span>: <span class="s">"3.0.0"</span>,
+  <span class="s">"sdkName"</span>: <span class="s">"@vikasbaplawat1/pulse-sdk"</span>,
+  <span class="s">"service"</span>: <span class="s">"payments-service"</span>,
+  <span class="s">"environment"</span>: <span class="s">"production"</span>,
+  <span class="s">"runtime"</span>: <span class="s">"node"</span>,
+  <span class="s">"runtimeVersion"</span>: <span class="s">"v20.11.0"</span>,
+  <span class="s">"capabilities"</span>: [
+    <span class="s">"tracing"</span>, <span class="s">"requestCapture"</span>, <span class="s">"errors"</span>, <span class="s">"metrics"</span>,
+    <span class="s">"logging"</span>, <span class="s">"profiling"</span>, <span class="s">"crons"</span>,
+    <span class="s">"runtimeMetrics"</span>, <span class="s">"eventLoopMonitoring"</span>, <span class="s">"gcMonitoring"</span>
+  ]
+}</pre>
+  </div>
+
+  <div class="tl-item">
+    <div class="tl-time">t = ~150ms</div>
+    <strong>Backend responds.</strong>
+    <p>The control plane looks up the project, applies billing / plan / org rules <em>backend-side</em>, and returns the resolved config. The SDK never sees plan tiers, billing flags, or any of the upstream business logic.</p>
+  </div>
+
+  <div class="tl-item">
+    <div class="tl-time">t = ~150ms</div>
+    <strong>Schema gate.</strong>
+    <p>If <code>schemaVersion &gt; 1</code>: reject. SDK keeps safe defaults and logs <em>"SDK upgrade required"</em>. This means your fleet can never break from a forward-incompatible backend release.</p>
+  </div>
+
+  <div class="tl-item">
+    <div class="tl-time">t = ~155ms</div>
+    <strong>Merge: baked-in → remote → user init opts.</strong>
+    <p>Remote config wins over baked-in. User <code>init()</code> options win over remote (only for the few client-side overrides like <code>sampleRate</code>).</p>
+  </div>
+
+  <div class="tl-item">
+    <div class="tl-time">t = ~156ms</div>
+    <strong>Safety clamping.</strong>
+    <p>Every numeric field is clamped to <code>SAFETY_CEILINGS</code>. A backend mistake like <code>"maxQueueSize": 1_000_000_000</code> is silently coerced to <code>100_000</code>. Floors apply too: <code>flushIntervalMs &lt; 100ms</code> is bumped up to prevent self-DoS.</p>
+  </div>
+
+  <div class="tl-item">
+    <div class="tl-time">t = ~160ms</div>
+    <strong>Engines initialise.</strong>
+    <p><code>KillswitchEngine</code> reads <code>killswitches.*</code>, <code>SamplingEngine</code> reads <code>sampling.*</code>, <code>LimitsEngine</code> reads <code>limits.*</code>, <code>SecurityScrubber</code> reads <code>privacy.*</code>, <code>TransportRouter</code> reads <code>transport.routes.*</code>, <code>FeatureController</code> reads <code>features.*</code>.</p>
+  </div>
+
+  <div class="tl-item">
+    <div class="tl-time">t = ~165ms</div>
+    <strong>Subsystems start.</strong>
+    <p><code>FeatureController</code> walks its registry; for every feature whose remote flag is <code>true</code>, the corresponding subsystem (logging interceptor, profiler, cron checker, ...) is instantiated. Features whose flag is <code>false</code> are <em>never instantiated</em> — zero CPU/memory overhead for unused features.</p>
+  </div>
+
+  <div class="tl-item">
+    <div class="tl-time">t = ~170ms</div>
+    <strong>Background refresh loop armed.</strong>
+    <p>A <code>setInterval</code> with <code>{ unref: true }</code> fires every <code>runtime.configTtlSeconds</code>. The SDK never pins the event loop alive on its own.</p>
+  </div>
+
+  <div class="tl-item">
+    <div class="tl-time">t = ~175ms</div>
+    <strong>Pre-init buffer drained.</strong>
+    <p>Any events captured during the bootstrap window were buffered. They're now flushed through the live pipeline.</p>
+  </div>
+</div>
+
+<div class="callout">
+  <strong>What if the backend is unreachable?</strong> The SDK keeps running on baked-in defaults (transport off, sampling 0, all features off). It retries the fetch every 30 seconds in the background. As soon as a real config arrives, every subsystem flips on at once. The host application is never blocked or impaired.
+</div>
+
+<h2>3. The remote config schema (v3)</h2>
+<p>
+  The full wire format. Every behaviour-affecting knob in the SDK is here.
+</p>
+
+<pre>
+{
+  <span class="s">"schemaVersion"</span>: <span class="n">1</span>,
+  <span class="s">"sdk"</span>: { <span class="s">"projectId"</span>: <span class="s">"proj_123"</span>, <span class="s">"environment"</span>: <span class="s">"production"</span>, <span class="s">"release"</span>: <span class="s">"1.4.2"</span> },
+
+  <span class="c">// Boolean toggles. False = subsystem never instantiated.</span>
+  <span class="s">"features"</span>: {
+    <span class="s">"tracing"</span>: <span class="n">true</span>,
+    <span class="s">"requestCapture"</span>: <span class="n">true</span>,
+    <span class="s">"errors"</span>: <span class="n">true</span>,
+    <span class="s">"metrics"</span>: <span class="n">true</span>,
+    <span class="s">"logging"</span>: <span class="n">true</span>,
+    <span class="s">"profiling"</span>: <span class="n">false</span>,
+    <span class="s">"crons"</span>: <span class="n">true</span>,
+    <span class="s">"sessionReplay"</span>: <span class="n">false</span>,
+    <span class="s">"runtimeMetrics"</span>: <span class="n">true</span>,
+    <span class="s">"eventLoopMonitoring"</span>: <span class="n">true</span>,
+    <span class="s">"gcMonitoring"</span>: <span class="n">true</span>
+  },
+
+  <span class="c">// Sampling. Per-route per-event-type rates override globals.</span>
+  <span class="s">"sampling"</span>: {
+    <span class="s">"traces"</span>: <span class="n">0.1</span>,
+    <span class="s">"requests"</span>: <span class="n">1.0</span>,
+    <span class="s">"errors"</span>: <span class="n">1.0</span>,
+    <span class="s">"profiles"</span>: <span class="n">0.01</span>,
+    <span class="s">"replays"</span>: <span class="n">0</span>,
+    <span class="s">"routes"</span>: {
+      <span class="s">"/payments"</span>: { <span class="s">"traces"</span>: <span class="n">1</span>, <span class="s">"requests"</span>: <span class="n">1</span> },
+      <span class="s">"/auth/login"</span>: { <span class="s">"traces"</span>: <span class="n">0.5</span>, <span class="s">"requests"</span>: <span class="n">1</span> },
+      <span class="s">"/health"</span>: { <span class="s">"traces"</span>: <span class="n">0</span>, <span class="s">"requests"</span>: <span class="n">0</span>, <span class="s">"metrics"</span>: <span class="n">0</span> },
+      <span class="s">"/favicon.ico"</span>: { <span class="s">"traces"</span>: <span class="n">0</span>, <span class="s">"requests"</span>: <span class="n">0</span> }
+    }
+  },
+
+  <span class="c">// Per-framework toggles. Fine-grained sub-options for the noisy ones.</span>
+  <span class="s">"instrumentation"</span>: {
+    <span class="s">"http"</span>: <span class="n">true</span>, <span class="s">"https"</span>: <span class="n">true</span>, <span class="s">"fetch"</span>: <span class="n">true</span>, <span class="s">"axios"</span>: <span class="n">true</span>,
+    <span class="s">"fastify"</span>: { <span class="s">"enabled"</span>: <span class="n">true</span>, <span class="s">"captureHooks"</span>: <span class="n">true</span>, <span class="s">"captureValidationErrors"</span>: <span class="n">true</span> },
+    <span class="s">"graphql"</span>: { <span class="s">"enabled"</span>: <span class="n">true</span>, <span class="s">"captureResolvers"</span>: <span class="n">true</span> },
+    <span class="s">"prisma"</span>: { <span class="s">"enabled"</span>: <span class="n">true</span>, <span class="s">"captureQueries"</span>: <span class="n">true</span>, <span class="s">"captureParams"</span>: <span class="n">false</span> },
+    <span class="s">"mongodb"</span>: <span class="n">true</span>, <span class="s">"redis"</span>: <span class="n">true</span>, <span class="s">"bullmq"</span>: <span class="n">true</span>
+  },
+
+  <span class="c">// PII scrubbing + capture flags. One unified `fields` list for body + query.</span>
+  <span class="s">"privacy"</span>: {
+    <span class="s">"capture"</span>: { <span class="s">"headers"</span>: <span class="n">false</span>, <span class="s">"body"</span>: <span class="n">false</span>, <span class="s">"response"</span>: <span class="n">false</span>, <span class="s">"query"</span>: <span class="n">false</span>, <span class="s">"cookies"</span>: <span class="n">false</span> },
+    <span class="s">"scrubbing"</span>: {
+      <span class="s">"enabled"</span>: <span class="n">true</span>,
+      <span class="s">"headers"</span>: [<span class="s">"authorization"</span>, <span class="s">"cookie"</span>, <span class="s">"x-api-key"</span>, <span class="s">"x-auth-token"</span>],
+      <span class="s">"fields"</span>:  [<span class="s">"password"</span>, <span class="s">"token"</span>, <span class="s">"secret"</span>, <span class="s">"creditCard"</span>, <span class="s">"ssn"</span>]
+    },
+    <span class="s">"piiDetection"</span>: { <span class="s">"enabled"</span>: <span class="n">true</span>, <span class="s">"maskEmails"</span>: <span class="n">true</span>, <span class="s">"maskPhones"</span>: <span class="n">true</span>, <span class="s">"maskIPs"</span>: <span class="n">false</span> }
+  },
+
+  <span class="c">// Numeric ceilings. SDK clamps each one to its safety ceiling on receipt.</span>
+  <span class="s">"limits"</span>: {
+    <span class="s">"maxSpansPerTrace"</span>: <span class="n">500</span>,
+    <span class="s">"maxSpanAttributes"</span>: <span class="n">100</span>,
+    <span class="s">"maxAttributeLength"</span>: <span class="n">2048</span>,
+    <span class="s">"maxPayloadSize"</span>: <span class="n">262144</span>,
+    <span class="s">"maxQueueSize"</span>: <span class="n">10000</span>,
+    <span class="s">"maxMemoryMb"</span>: <span class="n">256</span>,
+    <span class="s">"maxCpuOverheadPercent"</span>: <span class="n">5</span>
+  },
+
+  <span class="c">// Operational fire-extinguishers. Independent of features.*.</span>
+  <span class="s">"killswitches"</span>: {
+    <span class="s">"disableSDK"</span>: <span class="n">false</span>, <span class="s">"disableTracing"</span>: <span class="n">false</span>, <span class="s">"disableMetrics"</span>: <span class="n">false</span>,
+    <span class="s">"disableTransport"</span>: <span class="n">false</span>, <span class="s">"disableProfiling"</span>: <span class="n">false</span>,
+    <span class="s">"disableErrors"</span>: <span class="n">false</span>, <span class="s">"disableLogs"</span>: <span class="n">false</span>
+  },
+
+  <span class="c">// Per-event-type ingestion routes. Each with its own batching policy.</span>
+  <span class="s">"transport"</span>: {
+    <span class="s">"retry"</span>: { <span class="s">"enabled"</span>: <span class="n">true</span>, <span class="s">"maxRetries"</span>: <span class="n">3</span>, <span class="s">"backoff"</span>: <span class="s">"exponential"</span>, <span class="s">"baseDelayMs"</span>: <span class="n">500</span> },
+    <span class="s">"queue"</span>: { <span class="s">"overflowStrategy"</span>: <span class="s">"drop_oldest"</span> },
+    <span class="s">"keepAlive"</span>: <span class="n">true</span>,
+    <span class="s">"routes"</span>: {
+      <span class="s">"traces"</span>:   { <span class="s">"url"</span>: <span class="s">"https://traces.pulse.dev/v1/traces"</span>,    <span class="s">"batchSize"</span>: <span class="n">100</span>, <span class="s">"flushIntervalMs"</span>: <span class="n">5000</span>, ... },
+      <span class="s">"requests"</span>: { <span class="s">"url"</span>: <span class="s">"https://requests.pulse.dev/v1/requests"</span>, <span class="s">"batchSize"</span>: <span class="n">200</span>, <span class="s">"flushIntervalMs"</span>: <span class="n">2000</span>, ... },
+      <span class="s">"errors"</span>:   { <span class="s">"url"</span>: <span class="s">"https://errors.pulse.dev/v1/errors"</span>,    <span class="s">"batchSize"</span>: <span class="n">10</span>,  <span class="s">"flushIntervalMs"</span>: <span class="n">1000</span>, ... },
+      <span class="s">"metrics"</span>: { ... }, <span class="s">"logs"</span>: { ... }, <span class="s">"profiles"</span>: { ... },
+      <span class="s">"events"</span>:  { ... }, <span class="s">"crons"</span>: { ... }, <span class="s">"replays"</span>: { ... }
+    }
+  },
+
+  <span class="c">// How often the SDK refreshes this very config.</span>
+  <span class="s">"runtime"</span>: { <span class="s">"configTtlSeconds"</span>: <span class="n">300</span>, <span class="s">"staleWhileRevalidate"</span>: <span class="n">true</span> },
+
+  <span class="s">"meta"</span>: { <span class="s">"generatedAt"</span>: <span class="s">"2026-05-25T10:00:00Z"</span>, <span class="s">"generatedBy"</span>: <span class="s">"pulse-control-plane"</span> }
+}
+</pre>
+
+<h2>4. The capture pipeline</h2>
+<p>
+  Every event — error, request, span, metric, log — flows through the same
+  pipeline. Each gate either drops the event with a reason or hands it to
+  the next step. None of the gates can crash the host.
+</p>
+
+<div class="pipe">
+  <div class="pipe-step gate">
+    <span class="label">Gate</span>
+    <span><strong>Killswitch</strong>: <code>disableSDK</code> → drop everything. <code>disableTracing</code> → drop spans + requests. <code>disableErrors</code> → drop errors. Etc.</span>
+  </div>
+  <div class="pipe-step gate">
+    <span class="label">Gate</span>
+    <span><strong>FeatureController</strong>: <code>features.requestCapture = false</code> → request events dropped before any work.</span>
+  </div>
+  <div class="pipe-step gate">
+    <span class="label">Gate</span>
+    <span><strong>TenantGovernor</strong>: per-tenant sliding window. <em>Tenant X is over quota → drop until window resets.</em></span>
+  </div>
+  <div class="pipe-step gate">
+    <span class="label">Gate</span>
+    <span><strong>SamplingEngine</strong>: deterministic FNV-1a hash of <code>traceId</code>. Per-route override map: <code>routes["/health"] = { requests: 0 }</code> → drop.</span>
+  </div>
+  <div class="pipe-step gate">
+    <span class="label">Gate</span>
+    <span><strong>Memory pressure</strong>: heap &gt; 92% → drop low-priority telemetry. Errors and root spans still survive.</span>
+  </div>
+  <div class="pipe-step gate">
+    <span class="label">Gate</span>
+    <span><strong>LoadShedder</strong>: adaptive shedding under sustained pressure.</span>
+  </div>
+  <div class="pipe-step">
+    <span class="label">Step</span>
+    <span><strong>Normalize</strong>: fill defaults, truncate oversized fields per <code>limits.maxAttributeLength</code>.</span>
+  </div>
+  <div class="pipe-step">
+    <span class="label">Step</span>
+    <span><strong>SecurityScrubber</strong>: redact <code>privacy.scrubbing.headers</code> + <code>privacy.scrubbing.fields</code>. Mask emails / phones / IPs per <code>privacy.piiDetection</code>.</span>
+  </div>
+  <div class="pipe-step">
+    <span class="label">Step</span>
+    <span><strong>Enrich</strong>: attach <code>traceId</code>, <code>spanId</code>, breadcrumbs, scope (user, tags, extra, contexts).</span>
+  </div>
+  <div class="pipe-step">
+    <span class="label">Step</span>
+    <span><strong>LimitsEngine</strong>: trim attributes to <code>limits.maxSpanAttributes</code>. Truncate long strings.</span>
+  </div>
+  <div class="pipe-step">
+    <span class="label">Step</span>
+    <span><strong>Plugin / user processors</strong>: per-event-type hooks. <code>beforeSend</code> last; returns <code>null</code> → drop.</span>
+  </div>
+  <div class="pipe-step exit">
+    <span class="label">Exit</span>
+    <span><strong>TransportRouter</strong>: route by event type → batch in queue for the corresponding URL. Errors get their own queue, traces theirs, requests theirs.</span>
+  </div>
+</div>
+
+<h2>5. Per-event-type transport routes</h2>
+<p>
+  v3 fans events out to dedicated ingestion endpoints. Each route has its
+  own batch size, flush interval, retry budget, timeout, and compression.
+  This is how the backend keeps a 10× spike in errors from starving traces.
+</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Event type</th>
+      <th>Default route</th>
+      <th>Default batch</th>
+      <th>Default flush</th>
+      <th>Priority</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td><code>error</code> / <code>message</code></td><td><code>/v1/errors</code></td><td>10</td><td>1s</td><td><span class="badge bad">critical</span></td></tr>
+    <tr><td><code>request</code></td><td><code>/v1/requests</code></td><td>200</td><td>2s</td><td><span class="badge warn">high</span></td></tr>
+    <tr><td><code>span</code></td><td><code>/v1/traces</code></td><td>100</td><td>5s</td><td><span class="badge warn">high</span></td></tr>
+    <tr><td><code>metric</code></td><td><code>/v1/metrics</code></td><td>100</td><td>10s</td><td><span class="badge good">normal</span></td></tr>
+    <tr><td><code>log</code></td><td><code>/v1/logs</code></td><td>50</td><td>10s</td><td><span class="badge good">normal</span></td></tr>
+    <tr><td><code>profile</code></td><td><code>/v1/profiles</code></td><td>5</td><td>30s</td><td><span class="badge good">low</span></td></tr>
+    <tr><td><code>cron_checkin</code></td><td><code>/v1/checkins</code></td><td>1</td><td>0 (immediate)</td><td><span class="badge warn">high</span></td></tr>
+    <tr><td><code>replay</code></td><td><code>/v1/replays</code></td><td>1</td><td>5s</td><td><span class="badge good">low</span></td></tr>
+  </tbody>
+</table>
+
+<h2>6. Hot reload — config changes mid-flight</h2>
+<p>
+  The control plane can change anything at any time. The SDK reacts within
+  one refresh cycle (default 5 minutes; the backend can lower this for an
+  on-call).
+</p>
+
+<table>
+  <thead>
+    <tr><th>Backend changes</th><th>SDK reaction</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>sampling.routes["/health"] = { traces: 0, requests: 0 }</code></td>
+      <td><code>SamplingEngine</code> picks up the new route map. Next event from <code>/health</code> is dropped at the gate.</td>
+    </tr>
+    <tr>
+      <td><code>features.profiling: true → false</code></td>
+      <td><code>FeatureController</code> calls the profiling subsystem's teardown — inspector disconnects, in-flight profiles flushed.</td>
+    </tr>
+    <tr>
+      <td><code>killswitches.disableTransport: false → true</code></td>
+      <td><code>TransportRouter.disable()</code>. Events keep entering the queue but nothing leaves. When the killswitch flips back, queued events drain.</td>
+    </tr>
+    <tr>
+      <td><code>privacy.scrubbing.fields += ["correlation_id"]</code></td>
+      <td><code>SecurityScrubber</code> recompiles its lowercased Set. Next event's <code>correlation_id</code> is redacted.</td>
+    </tr>
+    <tr>
+      <td><code>limits.maxQueueSize: 10_000 → 50_000</code></td>
+      <td><code>LimitsEngine</code> updates. The queue itself doesn't shrink; new admissions can grow it up to the new ceiling.</td>
+    </tr>
+    <tr>
+      <td><code>transport.routes.errors.batchSize: 10 → 50</code></td>
+      <td>Next batch flushes with 50 errors instead of 10.</td>
+    </tr>
+    <tr>
+      <td>Backend rolls a new schemaVersion = 2 release</td>
+      <td>SDK rejects the config: <em>"schema version 2 is newer than SDK-supported version 1; SDK upgrade required"</em>. Falls back to the last known-good config (or baked-in defaults).</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>7. Failure modes — what protects you</h2>
+
+<table>
+  <thead><tr><th>Failure</th><th>SDK behaviour</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>Backend down at startup</td>
+      <td>Use <code>BAKED_IN_REMOTE_CONFIG</code> (transport off, sampling 0). Retry every 30s. App never blocks.</td>
+    </tr>
+    <tr>
+      <td>Backend slow (&gt; 3s)</td>
+      <td>Initial fetch times out. Same as "backend down".</td>
+    </tr>
+    <tr>
+      <td>Backend returns 500</td>
+      <td>Logged, swallowed. <code>staleWhileRevalidate</code>: keep using the last known-good config.</td>
+    </tr>
+    <tr>
+      <td>Backend returns malformed JSON</td>
+      <td>Same as 500.</td>
+    </tr>
+    <tr>
+      <td>Backend returns config with typo (<code>maxQueueSize: 1e9</code>)</td>
+      <td>Clamped to <code>SAFETY_CEILINGS.maxQueueSize = 100_000</code>. Host process safe.</td>
+    </tr>
+    <tr>
+      <td>Backend returns <code>schemaVersion: 2</code></td>
+      <td>Refused. SDK keeps current config. Logs upgrade-required message.</td>
+    </tr>
+    <tr>
+      <td>Ingest endpoint down</td>
+      <td><code>RetryBudget</code> + circuit breaker. Events queue until queue is full → <code>drop_oldest</code> per <code>transport.queue.overflowStrategy</code>.</td>
+    </tr>
+    <tr>
+      <td>SDK panicking / killswitch needed</td>
+      <td>Backend sets <code>killswitches.disableSDK: true</code>. Within one refresh cycle every public method becomes a no-op.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>8. Identity — who is the SDK talking about</h2>
+<p>
+  Every event is enriched with identity fields the backend uses to slice
+  reports per tenant, user, session. The SDK reads these from request
+  headers (in <code>monitorMiddleware</code> / Fastify plugin) or from
+  scope (set via <code>setUser</code>, <code>setTag</code>).
+</p>
+
+<table>
+  <thead><tr><th>Field</th><th>Source</th><th>Used for</th></tr></thead>
+  <tbody>
+    <tr><td><code>traceId</code></td><td>OTel context / W3C traceparent</td><td>Distributed correlation</td></tr>
+    <tr><td><code>spanId</code></td><td>OTel active span</td><td>Span correlation</td></tr>
+    <tr><td><code>requestId</code></td><td><code>x-request-id</code> / <code>x-correlation-id</code> / generated</td><td>Per-request correlation</td></tr>
+    <tr><td><code>tenantId</code></td><td><code>x-tenant-id</code></td><td>Tenant quota + billing</td></tr>
+    <tr><td><code>userId</code></td><td><code>req.user.id</code> / <code>setUser()</code></td><td>User-level analytics</td></tr>
+    <tr><td><code>sessionId</code></td><td><code>x-session-id</code></td><td>Session replay correlation</td></tr>
+    <tr><td><code>clientIp</code></td><td><code>x-forwarded-for</code> → <code>x-real-ip</code> → socket</td><td>Geo / abuse detection</td></tr>
+    <tr><td><code>userAgent</code></td><td><code>user-agent</code> header</td><td>Client-class breakdown</td></tr>
+    <tr><td><code>service</code></td><td>init option</td><td>Service-level grouping</td></tr>
+    <tr><td><code>environment</code></td><td>init option / config</td><td>Environment filter</td></tr>
+    <tr><td><code>release</code></td><td>init option / config</td><td>Release-comparison</td></tr>
+  </tbody>
+</table>
+
+<h2>9. Backend responsibilities</h2>
+<p>
+  The control plane is responsible for everything the SDK no longer is:
+</p>
+<ul>
+  <li><strong>Plan / billing logic</strong> — turn features off when a customer is on the free tier; raise rates when they upgrade.</li>
+  <li><strong>Per-org overrides</strong> — Acme Corp wants 100% sampling on <code>/payments</code> but the rest of the world stays at 10%.</li>
+  <li><strong>Incident response</strong> — flip <code>killswitches.disableSDK: true</code> for a misbehaving customer in seconds.</li>
+  <li><strong>Schema evolution</strong> — add fields freely; bump <code>schemaVersion</code> only on incompatible changes.</li>
+  <li><strong>Capability negotiation</strong> — read the SDK's <code>capabilities</code> array on every fetch; never send a flag the SDK doesn't claim to support.</li>
+  <li><strong>Anomaly thresholds</strong> — backend computes p99 latency from raw spans; SDK does not.</li>
+  <li><strong>Auth</strong> — verify the API key, look up the project, return a config tailored to that project. SDK trusts the response.</li>
+</ul>
+
+<h2>10. SDK responsibilities</h2>
+<ul>
+  <li><strong>Capture</strong> — instrument frameworks, capture errors / spans / requests / metrics / logs.</li>
+  <li><strong>Enforce remote config</strong> — every behaviour-affecting decision goes through the engines that read the live config snapshot.</li>
+  <li><strong>Apply safety bounds</strong> — clamp every numeric value the backend sends to a hard ceiling. Refuse incompatible schema versions.</li>
+  <li><strong>Buffer + ship</strong> — per-event-type queues, batching, retries, compression.</li>
+  <li><strong>Stay invisible</strong> — never crash the host. Never block. Always degrade gracefully.</li>
+</ul>
+
+<div class="callout warn">
+  <strong>What the SDK does NOT do:</strong>
+  decide who's on which plan, decide what counts as a slow request,
+  decide whether feature X is allowed for tenant Y, dedupe across nodes,
+  compute aggregate percentiles, alert on anomalies. All of that is the
+  backend's job.
+</div>
+
+<p style="margin-top: 64px; color: var(--muted); font-size: 13px; text-align: center;">
+  Pulse SDK v3 — Phase 1 (Schema Migration) shipped. Phase 2 (Engine wiring) and Phase 3 (Plan-logic removal) follow.
+</p>
+
+</div>
+</body>
+</html>

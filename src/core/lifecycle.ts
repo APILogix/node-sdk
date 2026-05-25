@@ -48,6 +48,7 @@ import { SecurityScrubber } from '../processors/security-scrubber.js'
 import { LoggingSubsystem } from '../subsystems/logging-subsystem.js'
 import { ProfilingSubsystem } from '../subsystems/profiling-subsystem.js'
 import { CronSubsystem } from '../subsystems/cron-subsystem.js'
+import { tenantGovernor } from './tenant-isolation.js'
 
 // ─── Module State ───────────────────────────────────────────────────────────
 
@@ -296,7 +297,11 @@ async function runOrchestratedShutdown(stepErrors: ShutdownStepError[]): Promise
 
   // 6. Flush metrics (snapshot + export) and stop the metric reader.
   await runStep('metrics.flush', async () => {
-    metricsRegistry.flush()
+    // metricsRegistry.flush() now returns a Promise — await it so any
+    // metrics still inside the OTel reader complete before we shutdown
+    // the meter provider. Previously the call was fire-and-forget which
+    // meant graceful shutdown could lose the last batch.
+    await metricsRegistry.flush()
     await withTimeout(otelMetrics.shutdown(), SUBSYSTEM_STEP_TIMEOUT_MS, 'metrics shutdown timed out')
     metricsRegistry.stop()
   }, stepErrors)
@@ -382,6 +387,10 @@ async function runUnconditionalCleanup(stepErrors: ShutdownStepError[]): Promise
   runSync('cron-subsystem.reset', () => CronSubsystem.reset(), stepErrors)
   runSync('signal-handlers.reset', () => resetSignalHandlers(), stepErrors)
   runSync('auto-instrumentations.reset', () => resetAutoInstrumentations(), stepErrors)
+  // tenantGovernor is a module-level singleton (see tenant-isolation.ts).
+  // Without an explicit reset here, a long-running process that re-inits
+  // the SDK accumulates per-tenant rate-limit state across init cycles.
+  runSync('tenant-governor.reset', () => tenantGovernor.reset(), stepErrors)
 
   // Reset the batcher (timer + circuit breaker + rate limiter + pressure monitor).
   // Imported lazily to avoid a circular dependency at module-load time.

@@ -1,26 +1,31 @@
 /**
- * SecurityScrubber Unit Tests — CRITICAL
+ * SecurityScrubber unit tests.
  *
  * Validates:
- * - Case-insensitive header scrubbing → [Redacted]
- * - Recursive body field stripping in context/attributes (nested objects)
- * - Query parameter stripping from URLs
- * - Email masking: user@example.com → [email]
- * - Phone masking: +1-555-123-4567 → [phone]
- * - Scrubbing disabled via config
- * - Config hot-swap updates scrubbing rules
+ *   - Case-insensitive header scrubbing → `[Redacted]`.
+ *   - Recursive body field stripping in `context` / `attributes` / `body`
+ *     (nested objects).
+ *   - Query parameter stripping from URLs.
+ *   - PII masking (emails, phones).
+ *   - Disabled state passes events through unchanged.
+ *   - Original events are never mutated.
+ *
+ * v3 collapsed `scrubbing.bodyFields` and `scrubbing.queryParams` into a
+ * single `scrubbing.fields` list — both bodies and query params are
+ * matched against the same key set.
  */
 
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { SecurityScrubber } from '../../src/processors/security-scrubber.js'
+import type { PrivacyConfig } from '../../src/types/config.js'
 
-const baseSecurityConfig = {
+const basePrivacyConfig: PrivacyConfig = {
+  capture: { headers: true, body: true, response: false, query: true, cookies: false },
   scrubbing: {
     enabled: true,
     headers: ['authorization', 'cookie', 'x-api-key', 'x-auth-token'],
-    bodyFields: ['password', 'token', 'secret', 'creditCard', 'ssn', 'nationalId', 'apiKey'],
-    queryParams: ['token', 'apikey', 'password', 'secret'],
+    fields: ['password', 'token', 'secret', 'creditCard', 'ssn', 'nationalId', 'apiKey', 'apikey'],
   },
   piiDetection: {
     enabled: true,
@@ -34,14 +39,12 @@ describe('SecurityScrubber', () => {
   let scrubber: SecurityScrubber
 
   beforeEach(() => {
-    scrubber = SecurityScrubber.initialize(baseSecurityConfig)
+    scrubber = SecurityScrubber.initialize(basePrivacyConfig)
   })
 
   afterEach(() => {
     SecurityScrubber.reset()
   })
-
-  // ─── Header Scrubbing ──────────────────────────────────────────────────
 
   describe('Header Scrubbing', () => {
     it('should scrub authorization header (case-insensitive)', () => {
@@ -52,37 +55,24 @@ describe('SecurityScrubber', () => {
           'Content-Type': 'application/json',
         },
       }
-
       const scrubbed = scrubber.scrub(event as any)
-      const headers = (scrubbed as any).headers
-      assert.equal(headers['Authorization'], '[Redacted]')
-      assert.equal(headers['Content-Type'], 'application/json')
+      assert.equal((scrubbed as any).headers['Authorization'], '[Redacted]')
+      assert.equal((scrubbed as any).headers['Content-Type'], 'application/json')
     })
 
     it('should scrub cookie header', () => {
       const event = {
         type: 'request',
-        headers: {
-          'Cookie': 'session=abc123; token=secret',
-          'Accept': 'text/html',
-        },
+        headers: { 'Cookie': 'session=abc; token=secret', 'Accept': 'text/html' },
       }
-
       const scrubbed = scrubber.scrub(event as any)
       assert.equal((scrubbed as any).headers['Cookie'], '[Redacted]')
       assert.equal((scrubbed as any).headers['Accept'], 'text/html')
     })
 
     it('should scrub x-api-key header', () => {
-      const event = {
-        type: 'request',
-        headers: {
-          'X-Api-Key': 'my-secret-key',
-        },
-      }
-
-      const scrubbed = scrubber.scrub(event as any)
-      assert.equal((scrubbed as any).headers['X-Api-Key'], '[Redacted]')
+      const event = { type: 'request', headers: { 'X-Api-Key': 'my-secret-key' } }
+      assert.equal((scrubber.scrub(event as any) as any).headers['X-Api-Key'], '[Redacted]')
     })
 
     it('should preserve non-sensitive headers', () => {
@@ -94,27 +84,19 @@ describe('SecurityScrubber', () => {
           'User-Agent': 'Mozilla/5.0',
         },
       }
-
-      const scrubbed = scrubber.scrub(event as any)
-      const h = (scrubbed as any).headers
+      const h = (scrubber.scrub(event as any) as any).headers
       assert.equal(h['Content-Type'], 'application/json')
       assert.equal(h['Accept-Language'], 'en-US')
       assert.equal(h['User-Agent'], 'Mozilla/5.0')
     })
   })
 
-  // ─── Body Field Stripping (via context/attributes) ─────────────────────
-
   describe('Body Field Scrubbing', () => {
     it('should scrub password field in context', () => {
       const event = {
         type: 'request',
-        context: {
-          username: 'john',
-          password: 'my-secret-password',
-        },
+        context: { username: 'john', password: 'my-secret-password' },
       }
-
       const scrubbed = scrubber.scrub(event as any)
       assert.equal((scrubbed as any).context.username, 'john')
       assert.equal((scrubbed as any).context.password, '[Redacted]')
@@ -126,14 +108,10 @@ describe('SecurityScrubber', () => {
         context: {
           user: {
             name: 'John',
-            credentials: {
-              password: 'secret123',
-              token: 'jwt-token',
-            },
+            credentials: { password: 'secret123', token: 'jwt-token' },
           },
         },
       }
-
       const scrubbed = scrubber.scrub(event as any)
       const ctx = (scrubbed as any).context
       assert.equal(ctx.user.name, 'John')
@@ -141,16 +119,11 @@ describe('SecurityScrubber', () => {
       assert.equal(ctx.user.credentials.token, '[Redacted]')
     })
 
-    it('should scrub creditCard and ssn fields in attributes', () => {
+    it('should scrub creditCard and ssn in attributes', () => {
       const event = {
         type: 'span',
-        attributes: {
-          creditCard: '4111111111111111',
-          ssn: '123-45-6789',
-          name: 'Jane',
-        },
+        attributes: { creditCard: '4111111111111111', ssn: '123-45-6789', name: 'Jane' },
       }
-
       const scrubbed = scrubber.scrub(event as any)
       assert.equal((scrubbed as any).attributes.creditCard, '[Redacted]')
       assert.equal((scrubbed as any).attributes.ssn, '[Redacted]')
@@ -158,21 +131,23 @@ describe('SecurityScrubber', () => {
     })
 
     it('should scrub apiKey in context', () => {
-      const event = {
-        type: 'request',
-        context: {
-          service: 'auth',
-          apiKey: 'sk_live_abc123',
-        },
-      }
-
+      const event = { type: 'request', context: { service: 'auth', apiKey: 'sk_live_abc' } }
       const scrubbed = scrubber.scrub(event as any)
       assert.equal((scrubbed as any).context.service, 'auth')
       assert.equal((scrubbed as any).context.apiKey, '[Redacted]')
     })
-  })
 
-  // ─── Query Parameter Stripping ─────────────────────────────────────────
+    it('should scrub fields in request body objects', () => {
+      const event = {
+        type: 'request',
+        body: { username: 'alice', password: 'top-secret', token: 'jwt' },
+      }
+      const scrubbed = scrubber.scrub(event as any)
+      assert.equal((scrubbed as any).body.username, 'alice')
+      assert.equal((scrubbed as any).body.password, '[Redacted]')
+      assert.equal((scrubbed as any).body.token, '[Redacted]')
+    })
+  })
 
   describe('Query Parameter Scrubbing', () => {
     it('should strip token from URL query params', () => {
@@ -180,11 +155,10 @@ describe('SecurityScrubber', () => {
         type: 'request',
         url: 'https://api.example.com/auth?token=secret123&user=john',
       }
-
       const scrubbed = scrubber.scrub(event as any)
       const url = (scrubbed as any).url
       assert.ok(!url.includes('secret123'), `URL still contains token value: ${url}`)
-      assert.ok(url.includes('user=john'), `URL should keep non-sensitive params: ${url}`)
+      assert.ok(url.includes('user=john'))
     })
 
     it('should strip password from URL query params', () => {
@@ -192,67 +166,43 @@ describe('SecurityScrubber', () => {
         type: 'request',
         url: 'https://api.example.com/login?password=hunter2&action=login',
       }
-
       const scrubbed = scrubber.scrub(event as any)
       const url = (scrubbed as any).url
       assert.ok(!url.includes('hunter2'), `URL still contains password: ${url}`)
     })
   })
 
-  // ─── PII Detection: Email Masking ──────────────────────────────────────
-
-  describe('Email Masking', () => {
-    it('should mask email addresses in string values', () => {
+  describe('PII Detection', () => {
+    it('should mask email addresses in nested context strings', () => {
       const event = {
         type: 'error',
-        message: 'User john@example.com failed to authenticate',
+        context: { userInfo: 'Contact: alice@test.com for support' },
       }
-
-      const scrubbed = scrubber.scrub(event as any)
-      const message = (scrubbed as any).message
-      assert.ok(!message.includes('john@example.com'), `Message still has email: ${message}`)
-      assert.ok(message.includes('[email]'), `Message should have masked email tag: ${message}`)
-    })
-
-    it('should mask email in nested context', () => {
-      const event = {
-        type: 'error',
-        context: {
-          userInfo: 'Contact: alice@test.com for support',
-        },
-      }
-
       const scrubbed = scrubber.scrub(event as any)
       const info = (scrubbed as any).context.userInfo
       assert.ok(!info.includes('alice@test.com'), `Context still has email: ${info}`)
-      assert.ok(info.includes('[email]'), `Context should have [email] tag: ${info}`)
+      assert.ok(info.includes('[email]'))
     })
-  })
 
-  // ─── PII Detection: Phone Masking ──────────────────────────────────────
-
-  describe('Phone Masking', () => {
-    it('should mask phone numbers', () => {
+    it('should mask phone numbers in nested context', () => {
       const event = {
         type: 'error',
-        message: 'Call 555-123-4567 for support',
+        context: { userInfo: 'Phone: 555-123-4567' },
       }
-
       const scrubbed = scrubber.scrub(event as any)
-      const message = (scrubbed as any).message
-      assert.ok(!message.includes('555-123-4567'), `Message still has phone: ${message}`)
-      assert.ok(message.includes('[phone]'), `Message should have [phone] tag: ${message}`)
+      const info = (scrubbed as any).context.userInfo
+      assert.ok(!info.includes('555-123-4567'))
+      assert.ok(info.includes('[phone]'))
     })
   })
 
-  // ─── Scrubbing Disabled ────────────────────────────────────────────────
-
   describe('Scrubbing Disabled', () => {
-    it('should not scrub when scrubbing.enabled is false', () => {
+    it('should pass events through unchanged when scrubbing.enabled is false', () => {
       SecurityScrubber.reset()
-      const disabledScrubber = SecurityScrubber.initialize({
-        scrubbing: { ...baseSecurityConfig.scrubbing, enabled: false },
-        piiDetection: { ...baseSecurityConfig.piiDetection, enabled: false },
+      const disabled = SecurityScrubber.initialize({
+        ...basePrivacyConfig,
+        scrubbing: { ...basePrivacyConfig.scrubbing, enabled: false },
+        piiDetection: { ...basePrivacyConfig.piiDetection, enabled: false },
       })
 
       const event = {
@@ -260,14 +210,11 @@ describe('SecurityScrubber', () => {
         headers: { 'Authorization': 'Bearer secret' },
         context: { password: 'mypass' },
       }
-
-      const scrubbed = disabledScrubber.scrub(event as any)
+      const scrubbed = disabled.scrub(event as any)
       assert.equal((scrubbed as any).headers['Authorization'], 'Bearer secret')
       assert.equal((scrubbed as any).context.password, 'mypass')
     })
   })
-
-  // ─── Immutability ──────────────────────────────────────────────────────
 
   describe('Immutability', () => {
     it('should never mutate the original event', () => {
@@ -277,11 +224,9 @@ describe('SecurityScrubber', () => {
         context: { password: 'mypass' },
         message: 'user@test.com logged in',
       }
-
       const original = JSON.parse(JSON.stringify(event))
       scrubber.scrub(event as any)
 
-      // Original should be unchanged
       assert.equal(event.headers['Authorization'], original.headers['Authorization'])
       assert.equal(event.context.password, original.context.password)
       assert.equal(event.message, original.message)

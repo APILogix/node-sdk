@@ -29,6 +29,7 @@ import { BullMQInstrumentation } from 'opentelemetry-instrumentation-bullmq';
 import { client } from '../core/client.js';
 import { getLogger } from '../utils/logger.js';
 import { ConfigManager } from '../core/config-manager.js';
+import { DEFAULT_TRACE_CAPTURE } from '../constants/internal-defaults.js';
 import { createAxiosInstrumentation } from './axios.js';
 // ─── Global Guard + Teardown Registry ───────────────────────────────────────
 // We attach to globalThis (via Symbol.for) so the guard survives multiple
@@ -45,7 +46,13 @@ function resolveInstrumentationOptions(userOptions) {
     const configManager = ConfigManager.getInstance();
     const config = configManager.getConfig();
     const instr = config.instrumentation;
-    const tracing = config.tracing;
+    // The wire schema dropped the `tracing.ignoredRoutes` / `tracing.ignoredMethods`
+    // arrays — those concerns are now expressed via `sampling.routes["/path"]`
+    // with all rates set to zero. Auto-instrumentation no longer applies its
+    // own filtering; the sampling engine is the single source of truth.
+    // `capture.*` flags come from `privacy.capture` (decision: capture pre-scrub),
+    // falling back to SDK-internal defaults when remote config hasn't loaded.
+    const captureConfig = config.privacy?.capture ?? DEFAULT_TRACE_CAPTURE;
     const httpEnabled = instr.http ?? userOptions.http ?? true;
     const httpsEnabled = instr.https ?? true;
     const expressEnabled = typeof instr.express === 'object'
@@ -89,9 +96,12 @@ function resolveInstrumentationOptions(userOptions) {
             captureHooks: fastifyConfig.captureHooks ?? true,
             captureValidationErrors: fastifyConfig.captureValidationErrors ?? true,
         },
-        ignoredRoutes: [...(tracing.ignoredRoutes ?? [])],
-        ignoredMethods: [...(tracing.ignoredMethods ?? [])],
-        captureConfig: tracing.capture ?? { headers: false, body: false, response: false, query: true, cookies: false },
+        // Empty arrays — route/method filtering is sampling-engine territory now.
+        // We still honour them in the OTel `ignoreIncomingRequestHook` below for
+        // any user-provided list, but they're not populated from remote config.
+        ignoredRoutes: [],
+        ignoredMethods: [],
+        captureConfig,
     };
 }
 /**
@@ -146,7 +156,13 @@ export function registerAutoInstrumentations(options = {}) {
                     if (resolved.ignoredMethods.includes(method)) {
                         return true;
                     }
-                    return ['/v1/events', '/v1/init', '/v1/sdk-config'].includes(path);
+                    const SDK_INGEST_PATHS = new Set([
+                        '/v1/events', '/v1/init', '/v1/sdk-config',
+                        '/v1/traces', '/v1/requests', '/v1/errors',
+                        '/v1/metrics', '/v1/logs', '/v1/profiles',
+                        '/v1/checkins', '/v1/replays',
+                    ]);
+                    return SDK_INGEST_PATHS.has(path);
                 }
                 catch {
                     return false;
@@ -314,9 +330,21 @@ export function resetAutoInstrumentations() {
 function isInternalSdkUrl(target, ingest) {
     if (target.origin !== ingest.origin)
         return false;
+    // Every per-event-type route the v3 transport ships to. Any path the
+    // SDK posts to must be listed here, otherwise the OTel HttpInstrumentation
+    // creates a span for our own batch send → that span exports → the export
+    // hits another route → that creates another span → infinite fan-out.
     return target.pathname === ingest.pathname
         || target.pathname === '/v1/events'
         || target.pathname === '/v1/init'
-        || target.pathname === '/v1/sdk-config';
+        || target.pathname === '/v1/sdk-config'
+        || target.pathname === '/v1/traces'
+        || target.pathname === '/v1/requests'
+        || target.pathname === '/v1/errors'
+        || target.pathname === '/v1/metrics'
+        || target.pathname === '/v1/logs'
+        || target.pathname === '/v1/profiles'
+        || target.pathname === '/v1/checkins'
+        || target.pathname === '/v1/replays';
 }
 export { GraphQLInstrumentation, MongoDBInstrumentation, RedisInstrumentation, PrismaInstrumentation, BullMQInstrumentation };

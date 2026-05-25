@@ -11,7 +11,7 @@
  * If you find yourself reaching for something here in production code, open
  * an issue so we can promote that capability into the public API instead.
  */
-export { ConfigManager } from './core/config-manager.js';
+export { ConfigManager, ConfigState } from './core/config-manager.js';
 export { KillswitchEngine } from './core/killswitch-engine.js';
 export { FeatureController } from './core/feature-controller.js';
 export { SamplingEngine } from './core/sampling-engine.js';

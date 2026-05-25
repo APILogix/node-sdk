@@ -51,6 +51,7 @@ const TRACER_PROVIDER_SYMBOL = Symbol.for('pulse-sdk.otel.tracer-provider');
 class PipelineSpanExporter {
     export(spans, resultCallback) {
         try {
+            let allAccepted = true;
             for (const span of spans) {
                 // Cost governance: check span-per-trace limits
                 const traceId = span.spanContext().traceId;
@@ -62,9 +63,16 @@ class PipelineSpanExporter {
                     continue; // Drop span — trace exceeded max duration
                 }
                 const traceEvent = this.spanToEvent(span);
-                processEvent(traceEvent);
+                // Track whether the transport actually accepted the event.
+                // Reporting success unconditionally would lie to the
+                // OTel BatchSpanProcessor, which discards the span on
+                // success — so spans rejected by transport (queue full,
+                // killswitch, etc.) would be silently lost.
+                if (!processEvent(traceEvent)) {
+                    allAccepted = false;
+                }
             }
-            resultCallback({ code: 0 }); // SUCCESS
+            resultCallback({ code: allAccepted ? 0 : 1 });
         }
         catch (err) {
             getLogger().error('Span export failed', { error: err, spanCount: spans.length });

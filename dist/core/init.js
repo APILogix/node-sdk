@@ -22,7 +22,7 @@ import { createHash } from 'crypto';
 import { sdkInitOptionsSchema } from '../types/config.js';
 import { client } from './client.js';
 import { sendInitRequest } from '../transport/sender.js';
-import { setupGlobalErrorHandlers } from '../instrumentation/global-errors.js';
+import { setupGlobalErrorHandlers, resetGlobalErrorHandlers } from '../instrumentation/global-errors.js';
 import { eventQueue } from '../transport/queue.js';
 import { DEFAULT_BASE_URL, DEFAULT_MAX_PAYLOAD_BYTES, DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT_MS } from '../constants/defaults.js';
 import { LOGGING_DEFAULTS, PROFILING_DEFAULTS, TRACING_DEFAULTS } from '../constants/internal-defaults.js';
@@ -32,9 +32,9 @@ import { initializePlugins } from '../plugins/index.js';
 import { registerSignalHandlers } from './lifecycle.js';
 import { processEvent } from './event-pipeline.js';
 import { sleep } from '../utils/time.js';
-import { initTracer } from '../tracing/tracer.js';
+import { initTracer, shutdownTracer } from '../tracing/tracer.js';
 import { getSessionManager } from '../session/session-manager.js';
-import { resolvePlanFeatures, clampToPlan, validatePluginCount, getOfflineFallbackPlan } from './plan-gate.js';
+import { resolvePlanFeatures, clampToPlan, getOfflineFallbackPlan } from './plan-gate.js';
 import { detectResources } from '../utils/resource-detector.js';
 import { errorDeduplicator } from '../processors/deduplicator.js';
 import { persistentStorage } from '../storage/persistent-storage.js';
@@ -42,7 +42,7 @@ import { sourceMapResolver } from '../processors/source-map-resolver.js';
 import { metricsRegistry } from '../metrics/registry.js';
 import { otelMetrics } from '../metrics/otel-adapter.js';
 import { slowRequestDetector } from '../processors/slow-request-detector.js';
-import { registerAutoInstrumentations } from '../instrumentation/auto-instrument.js';
+import { registerAutoInstrumentations, resetAutoInstrumentations } from '../instrumentation/auto-instrument.js';
 import { costGovernor } from '../utils/cost-governor.js';
 // ─── New Remote Config Modules ──────────────────────────────────────────────
 import { ConfigManager } from './config-manager.js';
@@ -229,17 +229,12 @@ async function initialize(options) {
                 enableTracing: resolvedConfig.enableTracing,
                 enableMetrics: resolvedConfig.enableMetrics,
             });
-            // Validate plugins against plan limits
+            // Validate plugins. Plan-based caps were removed in v3 — every plugin
+            // the user passes is now accepted unless the FeatureController later
+            // refuses it (still TBD; for now plugins always run).
             let pluginsToInit = options.plugins ?? [];
             if (pluginsToInit.length > 0) {
-                const { allowed, dropped } = validatePluginCount(pluginsToInit, planFeatures);
-                if (dropped > 0) {
-                    logger.warn(`[Plan: ${planFeatures.tier}] ${dropped} plugin(s) dropped — plan allows max ${planFeatures.maxPlugins}. Upgrade at https://pulse.dev/pricing`);
-                    pluginsToInit = pluginsToInit.slice(0, allowed);
-                }
-                if (pluginsToInit.length > 0) {
-                    await initializePlugins(pluginsToInit, resolvedConfig, client.metadata);
-                }
+                await initializePlugins(pluginsToInit, resolvedConfig, client.metadata);
             }
             // Register user-provided event processors
             if (options.eventProcessors) {
@@ -247,19 +242,27 @@ async function initialize(options) {
                     client.registerEventProcessor(processor);
                 }
             }
-            // Validate beforeSend against plan
-            if (options.beforeSend && !planFeatures.allowBeforeSend) {
-                logger.warn(`[Plan: ${planFeatures.tier}] beforeSend hook requires a Pro or Enterprise plan — ignored`);
-            }
-            // Initialize persistent storage and replay persisted events
+            // beforeSend used to be a paid-plan feature; v3 makes it always
+            // available. The hook still runs through the event pipeline's
+            // BEFORE_SEND_TIMEOUT_MS guard so a slow user hook can't stall the
+            // pipeline.
+            // Initialize persistent storage and replay persisted events.
             const apiKeyHash = createHash('sha256').update(options.apiKey).digest('hex');
             persistentStorage.configure({ apiKeyHash });
             const persistedEvents = await persistentStorage.init();
+            // CRITICAL: replay through `processEvent` (the full pipeline) rather
+            // than directly to the transport. Pre-init events were captured
+            // before SecurityScrubber, applyScopeToEvent, dedup, plugin processors,
+            // beforeSend, sampling, LimitsEngine, and loadShedder were configured.
+            // Sending them straight to the wire skipped every PII / governance
+            // filter — a request body containing an Authorization header captured
+            // pre-init reached the backend unredacted. Routing through processEvent
+            // ensures the same filter chain runs as for any post-init event.
             for (const event of persistedEvents) {
-                transportRouter.send(event);
+                processEvent(event);
             }
             for (const event of eventQueue.drainAll()) {
-                transportRouter.send(event);
+                processEvent(event);
             }
             // Configure source map resolver if options provided
             if (options.sourceMaps) {
@@ -291,10 +294,31 @@ async function initialize(options) {
                 logger.info('[FeatureController] Tracing subsystem stopped');
             });
             killswitchEngine.registerSubsystem('disableTracing', {
-                shutdown: () => logger.warn('[KillswitchEngine] Tracing killed'),
+                shutdown: async () => {
+                    // Real teardown: stop the OTel tracer provider AND uninstall the
+                    // auto-instrumentations so no new spans are produced. A bare log
+                    // here was a no-op — backend "kill tracing" had no effect.
+                    logger.warn('[KillswitchEngine] Tracing killed — shutting down tracer + auto-instrumentation');
+                    try {
+                        await shutdownTracer();
+                    }
+                    catch (err) {
+                        logger.error('[KillswitchEngine] shutdownTracer failed', { error: err });
+                    }
+                    try {
+                        resetAutoInstrumentations();
+                    }
+                    catch (err) {
+                        logger.error('[KillswitchEngine] resetAutoInstrumentations failed', { error: err });
+                    }
+                },
                 startup: () => {
+                    // Refuse to re-init if tracing is already alive — protects
+                    // against double-init of NodeTracerProvider when the killswitch
+                    // toggles rapidly.
                     if (featureController.isEnabled('tracing')) {
                         initTracer(resolvedConfig, resources);
+                        registerAutoInstrumentations({});
                     }
                 },
             });
@@ -311,7 +335,15 @@ async function initialize(options) {
                 logger.info('[FeatureController] Metrics subsystem stopped');
             });
             killswitchEngine.registerSubsystem('disableMetrics', {
-                shutdown: () => logger.warn('[KillswitchEngine] Metrics killed'),
+                shutdown: async () => {
+                    logger.warn('[KillswitchEngine] Metrics killed — shutting down OTel meter provider');
+                    try {
+                        await otelMetrics.shutdown();
+                    }
+                    catch (err) {
+                        logger.error('[KillswitchEngine] otelMetrics.shutdown failed', { error: err });
+                    }
+                },
                 startup: () => {
                     if (featureController.isEnabled('metrics')) {
                         otelMetrics.init({
@@ -331,7 +363,17 @@ async function initialize(options) {
                 logger.info('[FeatureController] Errors subsystem stopped');
             });
             killswitchEngine.registerSubsystem('disableErrors', {
-                shutdown: () => logger.warn('[KillswitchEngine] Errors killed'),
+                shutdown: () => {
+                    // Detach the SDK's process-level uncaughtException /
+                    // unhandledRejection listeners and unwrap console.error.
+                    logger.warn('[KillswitchEngine] Errors killed — detaching global error handlers');
+                    try {
+                        resetGlobalErrorHandlers();
+                    }
+                    catch (err) {
+                        logger.error('[KillswitchEngine] resetGlobalErrorHandlers failed', { error: err });
+                    }
+                },
                 startup: () => {
                     if (featureController.isEnabled('errors')) {
                         setupGlobalErrorHandlers();
@@ -600,13 +642,18 @@ function filterBufferedEvents(config) {
                 return true;
             if (config.samplingRate <= 0)
                 return false;
-            // Use deterministic sampling if engine is available
+            // Deterministic sampling. The engine is initialized in Phase 3 of
+            // init() so it's always present when filterBufferedEvents runs;
+            // the explicit check is defensive, and falling through means
+            // dropping the event rather than non-deterministic Math.random()
+            // (which would make sampling decisions inconsistent across nodes).
             if (samplingEngineInstance) {
                 const traceId = e['traceId'] ?? e['requestId'] ?? String(e['timestamp']);
                 const decision = samplingEngineInstance.shouldSampleTrace(traceId);
                 return decision.sampled;
             }
-            return Math.random() <= config.samplingRate;
+            // SamplingEngine not yet up — drop rather than sample non-deterministically.
+            return false;
         }
         if (e['type'] === 'error') {
             return config.enableErrors;

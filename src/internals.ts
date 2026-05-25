@@ -14,7 +14,7 @@
 
 // ─── Remote-config-driven engines ───────────────────────────────────────────
 
-export { ConfigManager } from './core/config-manager.js'
+export { ConfigManager, ConfigState } from './core/config-manager.js'
 export { KillswitchEngine } from './core/killswitch-engine.js'
 export { FeatureController } from './core/feature-controller.js'
 export { SamplingEngine } from './core/sampling-engine.js'
@@ -36,8 +36,11 @@ export { LoggingSubsystem } from './subsystems/logging-subsystem.js'
 export { ProfilingSubsystem } from './subsystems/profiling-subsystem.js'
 export { CronSubsystem } from './subsystems/cron-subsystem.js'
 
-// ─── Plan gating ─────────────────────────────────────────────────────────────
-
+// ─── Plan gating (legacy / deprecated) ──────────────────────────────────────
+//
+// Kept temporarily for v3 backward-compat only. Both functions are now stubs
+// that always return "unrestricted" — billing decisions live entirely on the
+// backend. Slated for deletion in v5.
 export { getPlanDefaults, isFeatureAllowed } from './core/plan-gate.js'
 
 // ─── Diagnostics & observability of the SDK itself ──────────────────────────

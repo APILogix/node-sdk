@@ -51,6 +51,7 @@ const TRACER_PROVIDER_SYMBOL = Symbol.for('pulse-sdk.otel.tracer-provider');
 class PipelineSpanExporter {
     export(spans, resultCallback) {
         try {
+            let allAccepted = true;
             for (const span of spans) {
                 // Cost governance: check span-per-trace limits
                 const traceId = span.spanContext().traceId;
@@ -62,9 +63,16 @@ class PipelineSpanExporter {
                     continue; // Drop span — trace exceeded max duration
                 }
                 const traceEvent = this.spanToEvent(span);
-                processEvent(traceEvent);
+                // Track whether the transport actually accepted the event.
+                // Reporting success unconditionally would lie to the
+                // OTel BatchSpanProcessor, which discards the span on
+                // success — so spans rejected by transport (queue full,
+                // killswitch, etc.) would be silently lost.
+                if (!processEvent(traceEvent)) {
+                    allAccepted = false;
+                }
             }
-            resultCallback({ code: 0 }); // SUCCESS
+            resultCallback({ code: allAccepted ? 0 : 1 });
         }
         catch (err) {
             getLogger().error('Span export failed', { error: err, spanCount: spans.length });
@@ -104,11 +112,13 @@ class PipelineSpanExporter {
         const durationMs = hrTimeToMs(span.duration);
         const parentSpanId = span.parentSpanContext?.spanId;
         const statusLabel = status.code === 0 ? 'unset' : status.code === 1 ? 'ok' : 'error';
-        // Apply tracing.capture.* security gates from remote config
+        // Apply privacy.capture.* gates from remote config — these decide
+        // which attribute classes survive into the exported span. Falls
+        // back to SDK defaults if ConfigManager isn't initialised yet.
         let filteredAttrs = Object.fromEntries(Object.entries(attrs).filter(([, v]) => v !== undefined));
         try {
-            const tracingConfig = ConfigManager.getInstance().getConfig().tracing;
-            const capture = tracingConfig.capture;
+            const capture = ConfigManager.getInstance().getConfig().privacy?.capture
+                ?? { headers: false, body: false, response: false, query: true, cookies: false };
             if (!capture.headers) {
                 filteredAttrs = Object.fromEntries(Object.entries(filteredAttrs).filter(([k]) => !k.startsWith('http.request.header.') && !k.startsWith('http.response.header.')));
             }
@@ -123,8 +133,12 @@ class PipelineSpanExporter {
             if (!capture.response) {
                 filteredAttrs = Object.fromEntries(Object.entries(filteredAttrs).filter(([k]) => !k.startsWith('http.response.')));
             }
-            // Enforce maxSpanAttributes from remote config
-            const maxAttrs = tracingConfig.maxSpanAttributes;
+            // Enforce maxSpanAttributes — sourced from remote `limits.maxSpanAttributes`
+            // (the previous `tracing.maxSpanAttributes` block was dropped from
+            // the wire schema in v3). Falls back to the SDK default if the
+            // engine isn't initialised yet.
+            const limitsCfg = ConfigManager.getInstance().getConfig().limits;
+            const maxAttrs = limitsCfg?.maxSpanAttributes ?? 100;
             const attrEntries = Object.entries(filteredAttrs);
             if (attrEntries.length > maxAttrs) {
                 filteredAttrs = Object.fromEntries(attrEntries.slice(0, maxAttrs));
