@@ -23,6 +23,7 @@ const DEFAULT_MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10MB
 const DEFAULT_MAX_EVENTS = 10000;
 const DEFAULT_EVENT_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const FLUSH_DEBOUNCE_MS = 1000;
+const DEFAULT_IO_TIMEOUT_MS = 5_000; // Per file-operation timeout — protects against frozen filesystems.
 class PersistentStorage {
     directory = '';
     dataFile = '';
@@ -30,6 +31,7 @@ class PersistentStorage {
     maxFileSizeBytes = DEFAULT_MAX_FILE_SIZE_BYTES;
     maxEvents = DEFAULT_MAX_EVENTS;
     eventTtlMs = DEFAULT_EVENT_TTL_MS;
+    ioTimeoutMs = DEFAULT_IO_TIMEOUT_MS;
     buffer = [];
     flushTimer = null;
     eventCount = 0;
@@ -44,6 +46,7 @@ class PersistentStorage {
         this.maxFileSizeBytes = options.maxFileSizeBytes ?? DEFAULT_MAX_FILE_SIZE_BYTES;
         this.maxEvents = options.maxEvents ?? DEFAULT_MAX_EVENTS;
         this.eventTtlMs = options.eventTtlMs ?? DEFAULT_EVENT_TTL_MS;
+        this.ioTimeoutMs = options.ioTimeoutMs ?? DEFAULT_IO_TIMEOUT_MS;
         const suffix = options.apiKeyHash ? `-${options.apiKeyHash.slice(0, 8)}` : '';
         this.dataFile = join(this.directory, `pulse-events${suffix}.ndjson`);
         this.tempFile = join(this.directory, `pulse-events${suffix}.ndjson.tmp`);
@@ -75,6 +78,9 @@ class PersistentStorage {
     }
     /**
      * Queue an event for persistence. Events are batched and flushed periodically.
+     *
+     * Callers can invoke this freely from any code path; it returns silently if
+     * storage was never initialized or has already been shut down.
      */
     persist(event) {
         if (!this.initialized)
@@ -142,7 +148,7 @@ class PersistentStorage {
         if (!existsSync(this.dataFile))
             return;
         try {
-            const content = await readFile(this.dataFile, { encoding: 'utf8' });
+            const content = await withIoTimeout(readFile(this.dataFile, { encoding: 'utf8' }), this.ioTimeoutMs, 'persistent-storage discard read');
             const retainedEntries = [];
             for (const line of content.split('\n')) {
                 if (line.trim().length === 0)
@@ -174,7 +180,7 @@ class PersistentStorage {
             return [];
         }
         try {
-            const content = await readFile(this.dataFile, { encoding: 'utf8' });
+            const content = await withIoTimeout(readFile(this.dataFile, { encoding: 'utf8' }), this.ioTimeoutMs, 'persistent-storage replay read');
             const lines = content.split('\n').filter(line => line.trim().length > 0);
             const now = epochMs();
             const validEvents = [];
@@ -252,11 +258,48 @@ class PersistentStorage {
         }
     }
     /**
-     * Shut down persistent storage — flush remaining events.
+     * Shut down persistent storage.
+     *
+     * Sequence:
+     *   1. Mark storage as not-initialized FIRST so concurrent persist()
+     *      calls bail out and don't push events into a buffer that's about
+     *      to be drained. This guarantees the final flush is monotonic.
+     *   2. Cancel any debounced flush timer (we perform a final flush below).
+     *   3. Flush the in-memory buffer.
+     *   4. Await the serial write chain so every file write that was started
+     *      before shutdown completes before the process exits. Without this
+     *      step, an in-flight rename() can be interrupted mid-write and the
+     *      data file is corrupted on the next replay.
+     *   5. Re-arm the write chain so a subsequent init() does not chain new
+     *      writes onto an old (possibly rejected) chain.
      */
     async shutdown() {
-        await this.flush();
+        // Reject new persist() calls immediately so concurrent producers can't
+        // push into a buffer that's about to be drained.
         this.initialized = false;
+        // Cancel any pending debounced flush — we'll perform a final flush below.
+        if (this.flushTimer) {
+            clearTimeout(this.flushTimer);
+            this.flushTimer = null;
+        }
+        try {
+            await this.flush();
+        }
+        catch (err) {
+            getLogger().warn('Persistent storage: final flush failed during shutdown', { error: err });
+        }
+        // Drain the serial write chain so any rename/append in flight completes.
+        // Catching here ensures shutdown never throws — the upstream lifecycle
+        // step error handler will record any failure for observability.
+        try {
+            await this.writeChain;
+        }
+        catch (err) {
+            getLogger().warn('Persistent storage: write chain drain failed during shutdown', { error: err });
+        }
+        // Re-arm the chain to a fresh resolved promise so a subsequent init()
+        // does not chain new writes onto an old (possibly rejected) chain.
+        this.writeChain = Promise.resolve();
     }
     // ─── Internal ─────────────────────────────────────────────────────────
     scheduleFlush() {
@@ -335,7 +378,10 @@ class PersistentStorage {
         });
     }
     enqueueWrite(operation) {
-        this.writeChain = this.writeChain.then(operation, operation);
+        // Wrap the operation with a per-op timeout so a hung filesystem (NFS,
+        // full disk, frozen volume) cannot stall the shutdown drain indefinitely.
+        const timed = () => withIoTimeout(operation(), this.ioTimeoutMs, 'persistent-storage write');
+        this.writeChain = this.writeChain.then(timed, timed);
         return this.writeChain;
     }
     resolveDefaultDirectory() {
@@ -369,4 +415,21 @@ class PersistentStorage {
 }
 export const persistentStorage = new PersistentStorage();
 export { PersistentStorage };
+/**
+ * Race a file-system operation against a timeout. Used to protect every
+ * write against frozen volumes (NFS, full disks, disconnected mounts).
+ * Rejects with a descriptive error so the caller can record the failure
+ * and continue without blocking the shutdown drain.
+ */
+function withIoTimeout(promise, timeoutMs, label) {
+    let timer;
+    const timeout = new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
+        timer.unref?.();
+    });
+    return Promise.race([promise, timeout]).finally(() => {
+        if (timer)
+            clearTimeout(timer);
+    });
+}
 //# sourceMappingURL=persistent-storage.js.map

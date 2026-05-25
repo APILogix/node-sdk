@@ -19,6 +19,7 @@ export declare class LoggingSubsystem {
     private metadata;
     /** Stashed original console methods — restored on teardown. */
     private originals;
+    private wrappers;
     private intercepted;
     private destroyed;
     private constructor();
@@ -30,7 +31,15 @@ export declare class LoggingSubsystem {
     stop(): void;
     /** Explicitly capture a log event. */
     captureLog(level: string, message: string, args?: readonly unknown[]): void;
-    /** Handle config change — hot-swap logging config. */
+    /**
+     * Handle config change — hot-swap logging config.
+     *
+     * The wire schema no longer contains a `logging` block; init wires a
+     * synthesized config (SDK defaults + `features.logging` mirror) onto
+     * the config object passed here. We cast through `unknown` because the
+     * public `RemoteConfigResponse` type intentionally doesn't expose this
+     * legacy shape.
+     */
     handleConfigChange(_diff: ConfigDiff, newConfig: Readonly<RemoteConfigResponse>): void;
     private isLevelAllowed;
     private truncateMessage;

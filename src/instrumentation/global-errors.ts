@@ -18,7 +18,7 @@
 import { captureError } from "../capture/captureError.js"
 import { toError } from "../core/errors.js"
 import { getLogger } from "../utils/logger.js"
-import { ConfigManager } from "../core/config-manager.js"
+import { ERROR_DEFAULTS } from "../constants/internal-defaults.js"
 import type { ErrorsConfig } from "../types/config.js"
 
 let registered = false
@@ -31,25 +31,36 @@ let consoleErrorWrapped = false
 let originalStackTraceLimit: number | undefined = undefined
 
 /**
- * Resolve errors config from remote config with safe defaults.
+ * Snapshot of the current error-handling defaults. Returns a fresh object on
+ * every call so callers can mutate the result without affecting the frozen
+ * source-of-truth in `ERROR_DEFAULTS`.
+ *
+ * Behaviour used to come from `config.errors`, but the wire schema dropped
+ * that block — these knobs are SDK opinions, not tenant-level controls.
  */
 function getErrorsConfig(): ErrorsConfig {
-  try {
-    const configManager = ConfigManager.getInstance()
-    return configManager.getConfig().errors
-  } catch {
-    // Fallback if ConfigManager not initialized
-    return {
-      captureUnhandledRejections: true,
-      captureUncaughtExceptions: true,
-      captureConsoleErrors: false,
-      stackTraceLimit: 50,
-      attachSourceContext: true,
-      grouping: { enabled: true, normalizePaths: true },
-    }
+  return {
+    captureUnhandledRejections: ERROR_DEFAULTS.captureUnhandledRejections,
+    captureUncaughtExceptions: ERROR_DEFAULTS.captureUncaughtExceptions,
+    captureConsoleErrors: ERROR_DEFAULTS.captureConsoleErrors,
+    stackTraceLimit: ERROR_DEFAULTS.stackTraceLimit,
+    attachSourceContext: ERROR_DEFAULTS.attachSourceContext,
+    grouping: { ...ERROR_DEFAULTS.grouping },
   }
 }
 
+/**
+ * Register process-level error handlers based on remote config.
+ *
+ * Idempotent: if already registered, this is a no-op so a second call from
+ * a re-init path before reset doesn't stack listeners.
+ *
+ * Safe-by-default semantics:
+ *   - Process listeners are tracked by reference for clean removal.
+ *   - console.error wrapper preserves the prior implementation so the
+ *     restore path returns the slot to whatever the host had before us.
+ *   - Error.stackTraceLimit is captured before override so we can restore.
+ */
 export function setupGlobalErrorHandlers() {
   if (registered) return
   registered = true
@@ -116,13 +127,22 @@ export function setupGlobalErrorHandlers() {
 
 /**
  * Wrap console.error to generate error events for every call.
+ * Marks the wrapper so we can detect it on restore and skip restoring if
+ * something else wrapped on top of us.
  */
+const CONSOLE_ERROR_MARKER = Symbol.for('pulse-sdk.global-errors.console-error-wrapper')
+
+interface MarkedConsoleError {
+  (...args: unknown[]): void
+  [CONSOLE_ERROR_MARKER]?: true
+}
+
 function wrapConsoleError(): void {
   if (consoleErrorWrapped) return
   consoleErrorWrapped = true
   originalConsoleError = console.error
 
-  console.error = (...args: unknown[]) => {
+  const wrapped: MarkedConsoleError = (...args: unknown[]) => {
     // Always call the original first
     if (originalConsoleError) {
       originalConsoleError.apply(console, args)
@@ -145,11 +165,16 @@ function wrapConsoleError(): void {
       // Never crash the host from console.error wrapping
     }
   }
+  wrapped[CONSOLE_ERROR_MARKER] = true
+  console.error = wrapped
 }
 
 /**
  * Remove all SDK global error handlers and reset state.
  * Called during SDK shutdown to prevent listener leaks across reinit cycles.
+ *
+ * Idempotent: safe to call multiple times. Safe to call before
+ * setupGlobalErrorHandlers (no-op).
  */
 export function resetGlobalErrorHandlers() {
   if (uncaughtHandler) {
@@ -161,9 +186,14 @@ export function resetGlobalErrorHandlers() {
     rejectionHandler = null
   }
 
-  // Restore console.error
+  // Restore console.error only if our wrapper is still the active method.
+  // If the host (or another monitoring SDK) wrapped on top of us, leave
+  // their wrapper in place — they own the restore path.
   if (consoleErrorWrapped && originalConsoleError) {
-    console.error = originalConsoleError
+    const current = console.error as MarkedConsoleError
+    if (current && current[CONSOLE_ERROR_MARKER] === true) {
+      console.error = originalConsoleError
+    }
     originalConsoleError = null
     consoleErrorWrapped = false
   }

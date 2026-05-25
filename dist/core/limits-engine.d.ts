@@ -1,15 +1,22 @@
 /**
  * LimitsEngine — enforces payload and resource limits from remote config.
  *
- * Responsibilities:
- * - maxPayloadSize: Reject payloads exceeding limit before serialization.
- * - maxAttributesPerEvent: Trim excess attributes.
- * - maxAttributeLength: Truncate long attribute values.
- * - maxBreadcrumbs: Cap breadcrumb ring buffer.
- * - maxEventsPerSecond: Token-bucket rate limiter.
- * - maxMemoryUsageMb / maxCpuOverheadPercent: Resource monitors (advisory, log warnings).
+ * Backed by `LimitsConfig`, which is itself clamped to `SAFETY_CEILINGS`
+ * before reaching this engine. The wire schema (post v3 migration) only
+ * carries the bounds the backend cares about; per-attribute counts and
+ * lengths are reused for both span attributes and event-level fields like
+ * `context`, `attributes`, and `tags`.
  *
- * All enforcement is pre-transport — events are shaped before entering the queue.
+ * Responsibilities:
+ *   - maxPayloadSize: reject oversized serialized payloads pre-transport.
+ *   - maxSpanAttributes: bound attribute count on spans/events.
+ *   - maxAttributeLength: truncate long attribute string values.
+ *
+ * The previous schema's `maxEventsPerSecond` rate limiter has been removed —
+ * load shedding is now done by `loadShedder` and `tenantGovernor`, which
+ * make smarter, pressure-aware decisions. `maxBreadcrumbs` is now an init
+ * option, not part of remote config (a per-process concern, not a tenant
+ * one).
  */
 import type { LimitsConfig, ConfigDiff, RemoteConfigResponse } from '../types/config.js';
 import type { SDKEvent } from '../types/event.js';
@@ -17,37 +24,28 @@ export declare class LimitsEngine {
     private static instance;
     private config;
     private destroyed;
-    private tokenBucket;
-    private lastRefillTime;
-    private eventsDropped;
     private constructor();
     static initialize(config: LimitsConfig): LimitsEngine;
     static getInstance(): LimitsEngine | null;
     /**
-     * Check if an event can be admitted (token bucket).
-     * Returns true if admitted, false if rate-limited.
+     * Backwards-compatible no-op admission gate.
+     *
+     * Rate limiting moved to `loadShedder` + `tenantGovernor`. We keep this
+     * method so the event pipeline doesn't have to fork by SDK version, but
+     * it always returns `true`. Removed entirely once the pipeline stops
+     * calling it.
      */
     admitEvent(): boolean;
     /**
-     * Enforce attribute limits on an event.
-     * Trims excess attributes and truncates long values.
-     * Returns a new event (does not mutate the input).
+     * Enforce attribute limits on an event. Returns a new event (never mutates).
      */
     enforceAttributeLimits<T extends SDKEvent>(event: T): T;
-    /**
-     * Check if a serialized payload exceeds the max payload size.
-     * Returns true if the payload is within limits.
-     */
+    /** Returns true if the payload is within the configured size limit. */
     checkPayloadSize(serializedBytes: number): boolean;
-    /** Get the maximum breadcrumbs allowed. */
-    getMaxBreadcrumbs(): number;
-    /** Handle config change — hot-swap limits. */
+    /** Maximum spans allowed in a single trace. */
+    getMaxSpansPerTrace(): number;
     handleConfigChange(_diff: ConfigDiff, newConfig: Readonly<RemoteConfigResponse>): void;
-    /** Get current config. */
     getConfig(): Readonly<LimitsConfig>;
-    /** Get drop stats. */
-    getDroppedCount(): number;
-    private refillTokens;
     private trimAttributes;
     private needsTruncation;
     private truncateValue;

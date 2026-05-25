@@ -16,13 +16,16 @@
 
 import type { ProfilingConfig, ConfigDiff, RemoteConfigResponse } from '../types/config.js'
 import type { ProfileEvent, EventMetadata } from '../types/event.js'
+import { getRequestContext } from '../core/context.js'
 import { getLogger } from '../utils/logger.js'
+import { trace } from '@opentelemetry/api'
 
 type ProfileEmitter = (event: ProfileEvent) => void
 
 interface ActiveProfile {
   readonly traceId: string
   readonly spanId: string | undefined
+  readonly requestId: string | undefined
   readonly profileType: 'cpu' | 'heap'
   readonly startTime: number
   timeoutHandle: ReturnType<typeof setTimeout> | null
@@ -88,13 +91,21 @@ export class ProfilingSubsystem {
    * Start a CPU profile for the given trace.
    * Call this at the beginning of a request if sampling decides to profile.
    */
-  async startCpuProfile(traceId: string, spanId?: string): Promise<boolean> {
+  async startCpuProfile(traceId?: string, spanId?: string): Promise<boolean> {
     if (!this.canProfile('cpu')) return false
 
     const session = this.inspectorSession as { post: (method: string) => Promise<void> } | null
     if (!session) return false
 
-    const key = `cpu:${traceId}`
+    const activeSpan = trace.getActiveSpan()
+    const activeSpanContext = activeSpan?.spanContext()
+    const resolvedTraceId = traceId ?? activeSpanContext?.traceId
+    if (!resolvedTraceId) return false
+    if (!this.shouldProfile(resolvedTraceId)) return false
+
+    const resolvedSpanId = spanId ?? activeSpanContext?.spanId
+    const requestId = getRequestContext()?.requestId
+    const key = `cpu:${resolvedTraceId}`
     if (this.activeProfiles.has(key)) return false
 
     try {
@@ -103,7 +114,7 @@ export class ProfilingSubsystem {
 
       const startTime = Date.now()
       const timeoutHandle = setTimeout(() => {
-        void this.stopCpuProfile(traceId)
+        void this.stopCpuProfile(resolvedTraceId)
       }, this.config.maxDurationMs)
 
       if (typeof timeoutHandle === 'object' && 'unref' in timeoutHandle) {
@@ -111,12 +122,19 @@ export class ProfilingSubsystem {
       }
 
       this.activeProfiles.set(key, {
-        traceId,
-        spanId,
+        traceId: resolvedTraceId,
+        spanId: resolvedSpanId,
+        requestId,
         profileType: 'cpu',
         startTime,
         timeoutHandle,
       })
+
+      activeSpan?.addEvent('pulse.profile.start', {
+        'profile.type': 'cpu',
+        'profile.id': key,
+      })
+      activeSpan?.setAttribute('pulse.profile.active', true)
 
       return true
     } catch (err) {
@@ -152,6 +170,7 @@ export class ProfilingSubsystem {
         profileType: 'cpu',
         traceId: active.traceId,
         spanId: active.spanId,
+        requestId: active.requestId,
         startTime: active.startTime,
         endTime,
         duration: endTime - active.startTime,
@@ -161,6 +180,14 @@ export class ProfilingSubsystem {
       }
 
       this.emitter(event)
+      const activeSpan = trace.getActiveSpan()
+      if (activeSpan?.spanContext().traceId === active.traceId) {
+        activeSpan.addEvent('pulse.profile.stop', {
+          'profile.type': 'cpu',
+          'profile.duration_ms': endTime - active.startTime,
+        })
+        activeSpan.setAttribute('pulse.profile.active', false)
+      }
     } catch (err) {
       getLogger().warn(
         `[ProfilingSubsystem] Failed to stop CPU profile: ${err instanceof Error ? err.message : String(err)}`
@@ -168,10 +195,16 @@ export class ProfilingSubsystem {
     }
   }
 
-  /** Handle config change. */
+  /**
+   * Handle config change. Same pattern as `LoggingSubsystem.handleConfigChange`:
+   * `init.ts` synthesizes a `profiling` block (SDK defaults + `features.profiling`)
+   * onto the config object. We pull it back out via a typed cast since the
+   * public schema no longer carries the field.
+   */
   handleConfigChange(_diff: ConfigDiff, newConfig: Readonly<RemoteConfigResponse>): void {
     if (this.destroyed) return
-    this.config = { ...newConfig.profiling }
+    const synthesized = (newConfig as unknown as { profiling?: import('../types/config.js').ProfilingConfig }).profiling
+    if (synthesized) this.config = { ...synthesized }
   }
 
   /** Stop all active profiles and disconnect inspector. */
@@ -202,6 +235,18 @@ export class ProfilingSubsystem {
     if (type === 'cpu' && !this.config.cpu) return false
     if (type === 'heap' && !this.config.heap) return false
     return true
+  }
+
+  private shouldProfile(traceId: string): boolean {
+    if (this.config.sampleRate >= 1) return true
+    if (this.config.sampleRate <= 0) return false
+
+    let hash = 2166136261
+    for (let i = 0; i < traceId.length; i += 1) {
+      hash ^= traceId.charCodeAt(i)
+      hash = Math.imul(hash, 16777619)
+    }
+    return (hash >>> 0) / 0xffffffff < this.config.sampleRate
   }
 
   destroy(): void {

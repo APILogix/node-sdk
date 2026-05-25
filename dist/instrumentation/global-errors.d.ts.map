@@ -1,1 +1,1 @@
-{"version":3,"file":"global-errors.d.ts","sourceRoot":"","sources":["../../src/instrumentation/global-errors.ts"],"names":[],"mappings":"AAAA;;;;;;;;;;;;;;;GAeG;AAqCH,wBAAgB,wBAAwB,SA8DvC;AAmCD;;;GAGG;AACH,wBAAgB,wBAAwB,SAwBvC"}
+{"version":3,"file":"global-errors.d.ts","sourceRoot":"","sources":["../../src/instrumentation/global-errors.ts"],"names":[],"mappings":"AAAA;;;;;;;;;;;;;;;GAeG;AAoCH;;;;;;;;;;;GAWG;AACH,wBAAgB,wBAAwB,SA8DvC;AA8CD;;;;;;GAMG;AACH,wBAAgB,wBAAwB,SA6BvC"}

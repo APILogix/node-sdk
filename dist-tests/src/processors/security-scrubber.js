@@ -94,16 +94,29 @@ export class SecurityScrubber {
         getLogger().info('[SecurityScrubber] Config updated');
     }
     // ─── Private Scrubbing Methods ────────────────────────────────────────────
+    /**
+     * Object keys we refuse to copy to scrubbed output. Even though the input
+     * arrives via structuredClone (which doesn't preserve the magic
+     * `__proto__` accessor), defense-in-depth: a future serialization
+     * format change or a hand-crafted payload could include these as plain
+     * own properties. Skipping them prevents prototype pollution from
+     * downstream consumers that re-merge our output via Object.assign.
+     */
+    static DANGEROUS_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
     scrubHeaders(headers) {
-        const result = {};
+        const result = Object.create(null);
         for (const [key, value] of Object.entries(headers)) {
+            if (SecurityScrubber.DANGEROUS_KEYS.has(key))
+                continue;
             result[key] = this.sensitiveHeaders.has(key.toLowerCase()) ? REDACTED : value;
         }
         return result;
     }
     scrubQueryParams(query) {
-        const result = {};
+        const result = Object.create(null);
         for (const [key, value] of Object.entries(query)) {
+            if (SecurityScrubber.DANGEROUS_KEYS.has(key))
+                continue;
             result[key] = this.sensitiveQueryParams.has(key.toLowerCase()) ? REDACTED : value;
         }
         return result;
@@ -127,8 +140,10 @@ export class SecurityScrubber {
     scrubBodyFields(obj, depth = 0) {
         if (depth > 10)
             return obj; // Prevent infinite recursion
-        const result = {};
+        const result = Object.create(null);
         for (const [key, value] of Object.entries(obj)) {
+            if (SecurityScrubber.DANGEROUS_KEYS.has(key))
+                continue;
             if (this.sensitiveBodyFields.has(key.toLowerCase())) {
                 result[key] = REDACTED;
             }
@@ -145,6 +160,8 @@ export class SecurityScrubber {
         if (depth > 10)
             return;
         for (const key of Object.keys(obj)) {
+            if (SecurityScrubber.DANGEROUS_KEYS.has(key))
+                continue;
             const value = obj[key];
             if (typeof value === 'string') {
                 obj[key] = this.scrubPiiInString(value);

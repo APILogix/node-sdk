@@ -10,6 +10,11 @@ export interface StackFrame {
   readonly colno?: number | undefined
   readonly inApp: boolean
   readonly module?: string | undefined
+  readonly sourceContext?: {
+    readonly pre: readonly string[]
+    readonly line: string
+    readonly post: readonly string[]
+  } | undefined
 }
 
 // ─── Event Types ────────────────────────────────────────────────────────────
@@ -35,8 +40,16 @@ export interface RequestEvent {
   readonly timestamp: number
   readonly headers?: Readonly<Record<string, unknown>> | undefined
   readonly query?: Readonly<Record<string, unknown>> | undefined
+  readonly body?: Readonly<Record<string, unknown>> | undefined
   readonly bodySize?: number | undefined
+  readonly responseSize?: number | undefined
   readonly userId?: string | null | undefined
+  readonly tenantId?: string | undefined
+  readonly sessionId?: string | undefined
+  readonly clientIp?: string | undefined
+  readonly userAgent?: string | undefined
+  readonly referer?: string | undefined
+  readonly route?: string | undefined
   readonly traceId?: string | undefined
   readonly spanId?: string | undefined
   readonly metadata?: EventMetadata | undefined
@@ -112,6 +125,10 @@ export interface SpanEvent {
   readonly type: 'span'
   eventId?: string
   readonly timestamp?: number
+  readonly requestId?: string | undefined
+  readonly sessionId?: string | undefined
+  readonly userId?: string | undefined
+  readonly tenantId?: string | undefined
   readonly spanId: string
   readonly traceId: string
   readonly parentSpanId?: string | undefined
@@ -120,6 +137,7 @@ export interface SpanEvent {
   readonly endTime: number
   readonly duration: number
   readonly status: 'ok' | 'error' | 'unset'
+  readonly statusMessage?: string | undefined
   readonly attributes?: Readonly<Record<string, unknown>> | undefined
   readonly events?: readonly SpanEventItem[] | undefined
   readonly links?: readonly SpanLink[] | undefined
@@ -136,6 +154,7 @@ export interface LogEvent {
   readonly message: string
   readonly timestamp: number
   readonly args?: readonly unknown[] | undefined
+  readonly requestId?: string | undefined
   readonly traceId?: string | undefined
   readonly spanId?: string | undefined
   readonly metadata?: EventMetadata | undefined
@@ -146,6 +165,7 @@ export interface ProfileEvent {
   readonly type: 'profile'
   eventId?: string
   readonly profileType: 'cpu' | 'heap'
+  readonly requestId?: string | undefined
   readonly traceId?: string | undefined
   readonly spanId?: string | undefined
   readonly startTime: number

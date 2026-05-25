@@ -12,7 +12,7 @@
 
 import { MongoDBInstrumentation as OTelMongoDBInstrumentation } from '@opentelemetry/instrumentation-mongodb'
 import type { MongoDBInstrumentationConfig as OTelMongoDBInstrumentationConfig } from '@opentelemetry/instrumentation-mongodb'
-import type { TracingCaptureConfig } from '../types/config.js'
+import type { PrivacyCaptureConfig } from '../types/config.js'
 
 export interface MongoDBInstrumentationOptions {
   enabled: boolean
@@ -25,7 +25,7 @@ export interface MongoDBInstrumentationOptions {
 export function createMongoDBInstrumentation(
   enabled: boolean,
   mergedOptions?: Partial<MongoDBInstrumentationOptions>,
-  captureConfig?: TracingCaptureConfig
+  captureConfig?: PrivacyCaptureConfig
 ): OTelMongoDBInstrumentation | null {
   if (!enabled) {
     return null

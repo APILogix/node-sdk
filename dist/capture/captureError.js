@@ -26,6 +26,8 @@ import { epochMs } from '../utils/time.js';
 import { KillswitchEngine } from '../core/killswitch-engine.js';
 import { SamplingEngine } from '../core/sampling-engine.js';
 import { ConfigManager } from '../core/config-manager.js';
+import { ERROR_DEFAULTS } from '../constants/internal-defaults.js';
+import { SpanStatusCode, trace } from '@opentelemetry/api';
 /**
  * Capture an error/exception.
  *
@@ -64,6 +66,16 @@ export function captureError(error, options = {}) {
             }
         }
         const normalized = toError(error);
+        const activeSpan = trace.getActiveSpan();
+        if (activeSpan) {
+            try {
+                activeSpan.recordException(normalized);
+                activeSpan.setStatus({ code: SpanStatusCode.ERROR, message: normalized.message });
+            }
+            catch {
+                // Error capture must remain best-effort and never alter host control flow.
+            }
+        }
         const context = isOptionsObject(options)
             ? (options.context ?? {})
             : options;
@@ -79,9 +91,9 @@ export function captureError(error, options = {}) {
         // ─── Path Normalization for Grouping ──────────────────────────────
         let normalizedFrames = stackFrames;
         try {
-            const configManager = ConfigManager.getInstance();
-            const errorsConfig = configManager.getConfig().errors;
-            if (errorsConfig.grouping?.enabled && errorsConfig.grouping?.normalizePaths) {
+            // Error grouping behaviour is now an SDK-internal default rather than
+            // a backend-controlled flag — see ERROR_DEFAULTS.grouping.
+            if (ERROR_DEFAULTS.grouping.enabled && ERROR_DEFAULTS.grouping.normalizePaths) {
                 normalizedFrames = stackFrames.map(frame => {
                     if (frame.filename) {
                         // Strip absolute paths to relative: /home/user/app/src/index.js → src/index.js
@@ -93,7 +105,7 @@ export function captureError(error, options = {}) {
             }
         }
         catch {
-            // ConfigManager may not be initialized — use raw frames
+            // Defensive — should never throw, but the capture path must never crash.
         }
         // Generate fingerprint from potentially normalized frames
         const fingerprint = generateFingerprint(normalized, normalizedFrames, customFingerprint);

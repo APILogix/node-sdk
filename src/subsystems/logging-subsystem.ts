@@ -13,8 +13,21 @@
 import type { LoggingConfig, ConfigDiff, RemoteConfigResponse } from '../types/config.js'
 import type { LogEvent, EventMetadata } from '../types/event.js'
 import { getLogger } from '../utils/logger.js'
+import { getRequestContext, getSpanId, getTraceId } from '../core/context.js'
 
 type LogEmitter = (event: LogEvent) => void
+
+type ConsoleMethod = (...args: unknown[]) => void
+
+/**
+ * Marker placed on every wrapper function we install. Used to detect
+ * already-wrapped console methods on reinit so we don't double-wrap.
+ */
+const WRAPPER_MARKER = Symbol.for('pulse-sdk.logging-subsystem.wrapper')
+
+interface MarkedWrapper extends ConsoleMethod {
+  [WRAPPER_MARKER]?: true
+}
 
 export class LoggingSubsystem {
   private static instance: LoggingSubsystem | null = null
@@ -24,7 +37,8 @@ export class LoggingSubsystem {
   private metadata: EventMetadata
 
   /** Stashed original console methods — restored on teardown. */
-  private originals: Map<string, (...args: unknown[]) => void> = new Map()
+  private originals: Map<string, ConsoleMethod> = new Map()
+  private wrappers: Map<string, ConsoleMethod> = new Map()
   private intercepted: boolean = false
   private destroyed: boolean = false
 
@@ -77,21 +91,34 @@ export class LoggingSubsystem {
       message: truncated,
       timestamp: Date.now(),
       args: args?.length ? args.slice(0, 10) : undefined,
+      requestId: getRequestContext()?.requestId,
+      traceId: getTraceId(),
+      spanId: getSpanId(),
       metadata: this.metadata,
     }
 
     this.emitter(event)
   }
 
-  /** Handle config change — hot-swap logging config. */
+  /**
+   * Handle config change — hot-swap logging config.
+   *
+   * The wire schema no longer contains a `logging` block; init wires a
+   * synthesized config (SDK defaults + `features.logging` mirror) onto
+   * the config object passed here. We cast through `unknown` because the
+   * public `RemoteConfigResponse` type intentionally doesn't expose this
+   * legacy shape.
+   */
   handleConfigChange(_diff: ConfigDiff, newConfig: Readonly<RemoteConfigResponse>): void {
     if (this.destroyed) return
 
-    const newLogging = newConfig.logging
-    const oldEnabled = this.config.enabled && this.config.captureConsole
-    const newEnabled = newLogging.enabled && newLogging.captureConsole
+    const synthesized = (newConfig as unknown as { logging?: import('../types/config.js').LoggingConfig }).logging
+    if (!synthesized) return
 
-    this.config = { ...newLogging }
+    const oldEnabled = this.config.enabled && this.config.captureConsole
+    const newEnabled = synthesized.enabled && synthesized.captureConsole
+
+    this.config = { ...synthesized }
 
     if (!oldEnabled && newEnabled) {
       this.installInterceptors()
@@ -115,30 +142,50 @@ export class LoggingSubsystem {
     if (this.intercepted) return
 
     const levels = ['log', 'info', 'warn', 'error', 'debug'] as const
+    const consoleAny = console as unknown as Record<string, ConsoleMethod>
+    const logger = getLogger()
 
     for (const level of levels) {
-      const original = console[level]
-      if (typeof original !== 'function') continue
+      const current = consoleAny[level]
+      if (typeof current !== 'function') continue
 
-      this.originals.set(level, original.bind(console))
+      // If the slot already holds one of our markers, the previous SDK
+      // lifetime didn't fully restore. We can't recover the true original
+      // (it lives in a closure that's now unreachable), so we install a
+      // fresh wrapper that delegates to the existing one. This preserves
+      // log capture across reinit cycles where teardown was skipped.
+      let original: ConsoleMethod
+      if (isMarkedWrapper(current)) {
+        logger.warn(
+          `[LoggingSubsystem] console.${level} is already wrapped by Pulse SDK; ` +
+            `chaining a new wrapper (previous teardown was incomplete)`
+        )
+        original = current.bind(console)
+      } else {
+        original = current.bind(console)
+      }
+      this.originals.set(level, original)
 
-      console[level] = (...args: unknown[]) => {
-        // Always call the original first
+      const wrapper: MarkedWrapper = (...args: unknown[]) => {
+        // Always call the original first.
         original.apply(console, args)
 
-        // Capture if level is allowed
+        // Capture if level is allowed.
         const mappedLevel = level === 'log' ? 'info' : level
         if (this.isLevelAllowed(mappedLevel) && !this.destroyed) {
           try {
             const message = args
-              .map(a => (typeof a === 'string' ? a : JSON.stringify(a)))
+              .map(a => (typeof a === 'string' ? a : safeStringify(a)))
               .join(' ')
             this.captureLog(mappedLevel, message, args)
           } catch {
-            // Never throw in console interceptor
+            // Never throw in console interceptor.
           }
         }
       }
+      wrapper[WRAPPER_MARKER] = true
+      this.wrappers.set(level, wrapper)
+      consoleAny[level] = wrapper
     }
 
     this.intercepted = true
@@ -147,10 +194,20 @@ export class LoggingSubsystem {
   private removeInterceptors(): void {
     if (!this.intercepted) return
 
+    const consoleAny = console as unknown as Record<string, ConsoleMethod>
     for (const [level, original] of this.originals) {
-      ;(console as unknown as Record<string, unknown>)[level] = original
+      const current = consoleAny[level]
+      const wrapper = this.wrappers.get(level)
+
+      // Only restore if the slot still holds OUR wrapper. If something else
+      // wrapped on top of us after install, leave that wrapper alone — its
+      // owner is responsible for calling through to ours.
+      if (current === wrapper) {
+        consoleAny[level] = original
+      }
     }
     this.originals.clear()
+    this.wrappers.clear()
     this.intercepted = false
   }
 
@@ -164,5 +221,25 @@ export class LoggingSubsystem {
     if (LoggingSubsystem.instance) {
       LoggingSubsystem.instance.destroy()
     }
+  }
+}
+
+function isMarkedWrapper(fn: ConsoleMethod): fn is MarkedWrapper {
+  return (fn as MarkedWrapper)[WRAPPER_MARKER] === true
+}
+
+/**
+ * Stringify an arbitrary value safely.
+ * Returns "[Circular]" for cycles and "[Unserializable]" for any other
+ * JSON.stringify failure. Never throws.
+ */
+function safeStringify(value: unknown): string {
+  try {
+    return JSON.stringify(value)
+  } catch (err) {
+    if (err instanceof TypeError && err.message.includes('circular')) {
+      return '[Circular]'
+    }
+    return '[Unserializable]'
   }
 }

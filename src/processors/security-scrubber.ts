@@ -1,17 +1,17 @@
 /**
- * SecurityScrubber — enforces security.scrubbing and security.piiDetection config.
+ * SecurityScrubber — enforces privacy.scrubbing and privacy.piiDetection config.
  *
  * Pre-transport processor that:
  * 1. Scrubs sensitive headers (authorization, cookie, etc.)
  * 2. Scrubs sensitive body fields (password, token, secret, etc.)
- * 3. Scrubs sensitive query parameters
+ * 3. Scrubs sensitive query parameters (uses the same `fields` list as bodies)
  * 4. Detects and masks PII (emails, phones, IPs)
  *
  * All scrubbing is done on the event BEFORE it enters the transport queue.
  * The scrubber returns a new event — it never mutates the original.
  */
 
-import type { SecurityConfig, ScrubbingConfig, PiiDetectionConfig, ConfigDiff, RemoteConfigResponse } from '../types/config.js'
+import type { PrivacyConfig, ScrubbingConfig, PiiDetectionConfig, ConfigDiff, RemoteConfigResponse } from '../types/config.js'
 import type { SDKEvent } from '../types/event.js'
 import { getLogger } from '../utils/logger.js'
 
@@ -24,26 +24,26 @@ export class SecurityScrubber {
   private piiConfig: PiiDetectionConfig
   private destroyed: boolean = false
 
-  // Pre-compiled sets for O(1) lookups
+  // Pre-compiled sets for O(1) lookups. Headers and the unified `fields`
+  // list each get their own lowercased Set so callers can avoid recomputing
+  // them on every event.
   private sensitiveHeaders: Set<string>
-  private sensitiveBodyFields: Set<string>
-  private sensitiveQueryParams: Set<string>
+  private sensitiveFields: Set<string>
 
   // PII patterns
   private static readonly EMAIL_PATTERN = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g
   private static readonly PHONE_PATTERN = /(\+?1?\s*[-.\s]?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4})/g
   private static readonly IPV4_PATTERN = /\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b/g
 
-  private constructor(config: SecurityConfig) {
+  private constructor(config: PrivacyConfig) {
     this.scrubbingConfig = { ...config.scrubbing }
     this.piiConfig = { ...config.piiDetection }
 
-    this.sensitiveHeaders = new Set(config.scrubbing.headers.map(h => h.toLowerCase()))
-    this.sensitiveBodyFields = new Set(config.scrubbing.bodyFields.map(f => f.toLowerCase()))
-    this.sensitiveQueryParams = new Set(config.scrubbing.queryParams.map(p => p.toLowerCase()))
+    this.sensitiveHeaders = new Set(config.scrubbing.headers.map((h: string) => h.toLowerCase()))
+    this.sensitiveFields = new Set(config.scrubbing.fields.map((f: string) => f.toLowerCase()))
   }
 
-  static initialize(config: SecurityConfig): SecurityScrubber {
+  static initialize(config: PrivacyConfig): SecurityScrubber {
     if (SecurityScrubber.instance) {
       SecurityScrubber.instance.destroy()
     }
@@ -80,13 +80,17 @@ export class SecurityScrubber {
         clone['url'] = this.scrubUrlQueryString(clone['url'] as string)
       }
 
-      // Scrub body fields in context/attributes
+      // Scrub body fields in context/attributes/body
       if ('context' in clone && typeof clone['context'] === 'object' && clone['context'] !== null) {
         clone['context'] = this.scrubBodyFields(clone['context'] as Record<string, unknown>)
       }
 
       if ('attributes' in clone && typeof clone['attributes'] === 'object' && clone['attributes'] !== null) {
         clone['attributes'] = this.scrubBodyFields(clone['attributes'] as Record<string, unknown>)
+      }
+
+      if ('body' in clone && typeof clone['body'] === 'object' && clone['body'] !== null && !Array.isArray(clone['body'])) {
+        clone['body'] = this.scrubBodyFields(clone['body'] as Record<string, unknown>)
       }
 
       // PII detection on string fields
@@ -103,35 +107,46 @@ export class SecurityScrubber {
     }
   }
 
-  /** Handle config change — hot-swap security config. */
+  /** Handle config change — hot-swap privacy config. */
   handleConfigChange(_diff: ConfigDiff, newConfig: Readonly<RemoteConfigResponse>): void {
     if (this.destroyed) return
 
-    const newSecurity = newConfig.security
-    this.scrubbingConfig = { ...newSecurity.scrubbing }
-    this.piiConfig = { ...newSecurity.piiDetection }
+    const newPrivacy = newConfig.privacy
+    this.scrubbingConfig = { ...newPrivacy.scrubbing }
+    this.piiConfig = { ...newPrivacy.piiDetection }
 
-    this.sensitiveHeaders = new Set(newSecurity.scrubbing.headers.map(h => h.toLowerCase()))
-    this.sensitiveBodyFields = new Set(newSecurity.scrubbing.bodyFields.map(f => f.toLowerCase()))
-    this.sensitiveQueryParams = new Set(newSecurity.scrubbing.queryParams.map(p => p.toLowerCase()))
+    this.sensitiveHeaders = new Set(newPrivacy.scrubbing.headers.map((h: string) => h.toLowerCase()))
+    this.sensitiveFields = new Set(newPrivacy.scrubbing.fields.map((f: string) => f.toLowerCase()))
 
     getLogger().info('[SecurityScrubber] Config updated')
   }
 
   // ─── Private Scrubbing Methods ────────────────────────────────────────────
 
+  /**
+   * Object keys we refuse to copy to scrubbed output. Even though the input
+   * arrives via structuredClone (which doesn't preserve the magic
+   * `__proto__` accessor), defense-in-depth: a future serialization
+   * format change or a hand-crafted payload could include these as plain
+   * own properties. Skipping them prevents prototype pollution from
+   * downstream consumers that re-merge our output via Object.assign.
+   */
+  private static readonly DANGEROUS_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
+
   private scrubHeaders(headers: Record<string, unknown>): Record<string, unknown> {
-    const result: Record<string, unknown> = {}
+    const result: Record<string, unknown> = Object.create(null)
     for (const [key, value] of Object.entries(headers)) {
+      if (SecurityScrubber.DANGEROUS_KEYS.has(key)) continue
       result[key] = this.sensitiveHeaders.has(key.toLowerCase()) ? REDACTED : value
     }
     return result
   }
 
   private scrubQueryParams(query: Record<string, unknown>): Record<string, unknown> {
-    const result: Record<string, unknown> = {}
+    const result: Record<string, unknown> = Object.create(null)
     for (const [key, value] of Object.entries(query)) {
-      result[key] = this.sensitiveQueryParams.has(key.toLowerCase()) ? REDACTED : value
+      if (SecurityScrubber.DANGEROUS_KEYS.has(key)) continue
+      result[key] = this.sensitiveFields.has(key.toLowerCase()) ? REDACTED : value
     }
     return result
   }
@@ -141,7 +156,7 @@ export class SecurityScrubber {
       const parsed = new URL(url, 'http://localhost')
       let changed = false
 
-      for (const param of this.sensitiveQueryParams) {
+      for (const param of this.sensitiveFields) {
         if (parsed.searchParams.has(param)) {
           parsed.searchParams.set(param, REDACTED)
           changed = true
@@ -157,9 +172,10 @@ export class SecurityScrubber {
   private scrubBodyFields(obj: Record<string, unknown>, depth: number = 0): Record<string, unknown> {
     if (depth > 10) return obj // Prevent infinite recursion
 
-    const result: Record<string, unknown> = {}
+    const result: Record<string, unknown> = Object.create(null)
     for (const [key, value] of Object.entries(obj)) {
-      if (this.sensitiveBodyFields.has(key.toLowerCase())) {
+      if (SecurityScrubber.DANGEROUS_KEYS.has(key)) continue
+      if (this.sensitiveFields.has(key.toLowerCase())) {
         result[key] = REDACTED
       } else if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
         result[key] = this.scrubBodyFields(value as Record<string, unknown>, depth + 1)
@@ -174,6 +190,7 @@ export class SecurityScrubber {
     if (depth > 10) return
 
     for (const key of Object.keys(obj)) {
+      if (SecurityScrubber.DANGEROUS_KEYS.has(key)) continue
       const value = obj[key]
       if (typeof value === 'string') {
         obj[key] = this.scrubPiiInString(value)

@@ -26,10 +26,17 @@ export interface ContextStore {
     /** Arbitrary extra context data. */
     readonly extra?: Readonly<Record<string, unknown>> | undefined;
 }
+export declare const PULSE_CONTEXT_ATTRIBUTES: {
+    readonly requestId: "pulse.request_id";
+    readonly sessionId: "pulse.session_id";
+    readonly userId: "pulse.user_id";
+    readonly tenantId: "pulse.tenant_id";
+};
 /**
  * Get the current request context, or undefined if outside a context scope.
  */
 export declare function getRequestContext(): ContextStore | undefined;
+export declare function getRequestContextFromOtelContext(ctx?: import("@opentelemetry/api").Context): ContextStore | undefined;
 /**
  * Get the current trace ID from context, or undefined.
  */
@@ -38,6 +45,7 @@ export declare function getTraceId(): string | undefined;
  * Get the current span ID from context, or undefined.
  */
 export declare function getSpanId(): string | undefined;
+export declare function attachRequestContextToActiveSpan(store?: ContextStore | undefined): void;
 /**
  * Add a breadcrumb to the current request context.
  * No-op if called outside a context scope.
@@ -58,4 +66,5 @@ export declare function createContextStore(requestId: string, maxBreadcrumbs: nu
  * The context is automatically propagated through all async operations.
  */
 export declare function withContext<T>(store: ContextStore, fn: () => T): T;
+export declare function bindContext<T extends (...args: never[]) => unknown>(fn: T, store?: ContextStore | undefined): T;
 //# sourceMappingURL=context.d.ts.map

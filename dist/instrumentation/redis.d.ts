@@ -11,13 +11,13 @@
  */
 import { RedisInstrumentation as OTelRedisInstrumentation } from '@opentelemetry/instrumentation-redis-4';
 import type { DbStatementSerializer, RedisResponseCustomAttributeFunction } from '@opentelemetry/instrumentation-redis-4';
-import type { TracingCaptureConfig } from '../types/config.js';
+import type { PrivacyCaptureConfig } from '../types/config.js';
 export interface RedisInstrumentationOptions {
     enabled: boolean;
     dbStatementSerializer?: DbStatementSerializer;
     addResponseHook?: RedisResponseCustomAttributeFunction;
 }
-export declare function createRedisInstrumentation(enabled: boolean, mergedOptions?: Partial<RedisInstrumentationOptions>, captureConfig?: TracingCaptureConfig): OTelRedisInstrumentation | null;
+export declare function createRedisInstrumentation(enabled: boolean, mergedOptions?: Partial<RedisInstrumentationOptions>, captureConfig?: PrivacyCaptureConfig): OTelRedisInstrumentation | null;
 export interface RedisSpanAttributes {
     'db.system': 'redis';
     'db.redis.command': string;

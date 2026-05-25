@@ -30,6 +30,11 @@ export declare class ConfigManager {
     private constructor();
     static getInstance(): ConfigManager;
     /**
+     * Whether this instance has been destroyed.
+     * Exposed for shutdown/reinit tests and for guard logic in long-running tasks.
+     */
+    isDestroyed(): boolean;
+    /**
      * Initialize the config manager.
      * Fetches remote config with a 3-second timeout. If fetch fails, uses safe defaults.
      * Returns the resolved config.
@@ -47,7 +52,7 @@ export declare class ConfigManager {
     onConfigChange(listener: ConfigChangeListener): () => void;
     /**
      * Start the background config refresh loop.
-     * Interval is determined by cache.ttlSeconds from the current config.
+     * Interval is determined by runtime.configTtlSeconds from the current config.
      */
     startRefreshLoop(): void;
     /**
@@ -61,11 +66,15 @@ export declare class ConfigManager {
      */
     refreshConfig(): Promise<void>;
     /**
-     * Destroy the config manager. Stops all timers and clears listeners.
+     * Destroy the config manager. Idempotent: stops timers, clears listeners,
+     * and detaches the singleton so the next getInstance() call yields a fresh
+     * instance with no carry-over state.
      */
     destroy(): void;
     /**
-     * Reset the singleton (for testing).
+     * Reset the singleton (for testing and reinit).
+     * Always returns synchronously — pending background fetches are abandoned
+     * via the destroyed flag rather than awaited.
      */
     static reset(): void;
     /**
@@ -75,12 +84,27 @@ export declare class ConfigManager {
     private fetchConfig;
     /**
      * Detect SDK capabilities (feature strings the binary supports).
+     * The backend uses this list to know what knobs to send in the response.
      */
     private detectCapabilities;
     /**
      * Deep merge configs: base → remote → user overrides (last wins).
+     * After merging, applies safety ceilings/floors so backend mistakes
+     * cannot exceed sane SDK-side limits.
      */
     private mergeConfigs;
+    /**
+     * Apply hard safety ceilings (and a couple of floors) to numeric fields
+     * the backend can set. The SDK never trusts a remote value above these
+     * bounds — a typo'd config that says `maxQueueSize: 1e9` would otherwise
+     * happily try to allocate enough memory to OOM the host.
+     *
+     * Also performs a no-op when `applyOverridesOnly` is true and the merged
+     * config is already a baked-in / safe-defaults snapshot. The clamps are
+     * idempotent so it's always safe to run them, but skipping the work
+     * during init when no remote config arrived saves a few ms.
+     */
+    private applySafetyClamps;
     /**
      * Build remote config overrides from user init() options.
      * Maps SDKInitOptions fields to RemoteConfigResponse structure.

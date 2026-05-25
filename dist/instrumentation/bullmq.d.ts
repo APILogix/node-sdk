@@ -11,7 +11,7 @@
  * - Flow parent/child tracking
  */
 import { BullMQInstrumentation as OTelBullMQInstrumentation } from 'opentelemetry-instrumentation-bullmq';
-import type { TracingCaptureConfig } from '../types/config.js';
+import type { PrivacyCaptureConfig } from '../types/config.js';
 export interface BullMQInstrumentationOptions {
     enabled: boolean;
     captureJobData?: boolean;
@@ -19,7 +19,7 @@ export interface BullMQInstrumentationOptions {
     captureQueueEvents?: boolean;
     maxJobDataSize?: number;
 }
-export declare function createBullMQInstrumentation(enabled: boolean, mergedOptions?: Partial<BullMQInstrumentationOptions>, captureConfig?: TracingCaptureConfig): OTelBullMQInstrumentation | null;
+export declare function createBullMQInstrumentation(enabled: boolean, mergedOptions?: Partial<BullMQInstrumentationOptions>, captureConfig?: PrivacyCaptureConfig): OTelBullMQInstrumentation | null;
 export interface BullMQSpanAttributes {
     'messaging.system': 'bullmq';
     'messaging.destination': string;

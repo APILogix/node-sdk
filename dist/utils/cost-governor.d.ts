@@ -19,6 +19,8 @@ export interface CostGovernorOptions {
     readonly bytesBudgetPerMinute?: number;
     /** Enable adaptive telemetry reduction when approaching budget. Default: true */
     readonly enableAdaptiveReduction?: boolean;
+    /** Max duration of a single trace in milliseconds. Default: 300000 (5 minutes) */
+    readonly maxTraceDurationMs?: number;
 }
 export interface CostUtilization {
     readonly bytesPerMinute: number;
@@ -34,10 +36,11 @@ export interface CostStats {
     readonly budgetUtilization: number;
 }
 export declare class CostGovernor {
-    private readonly maxSpansPerTrace;
+    private maxSpansPerTrace;
     private readonly maxActiveInstruments;
     private readonly bytesBudgetPerMinute;
     private readonly enableAdaptiveReduction;
+    private maxTraceDurationMs;
     private readonly traceSpanCounts;
     private readonly traceTimestamps;
     private readonly maxTrackedTraces;
@@ -49,10 +52,20 @@ export declare class CostGovernor {
     private cleanupTimer;
     constructor(options?: CostGovernorOptions);
     /**
+     * Update cost governor limits from remote config.
+     * Called when remote config is loaded or changes at runtime.
+     */
+    updateFromConfig(options: Pick<CostGovernorOptions, 'maxSpansPerTrace' | 'maxTraceDurationMs'>): void;
+    /**
      * Check if a new span can be created for the given trace.
      * Returns false if the trace has exceeded its span limit.
      */
     canCreateSpan(traceId: string): boolean;
+    /**
+     * Check if a trace can continue based on its duration.
+     * Returns false if the trace has exceeded maxTraceDurationMs.
+     */
+    canContinueTrace(traceId: string): boolean;
     /**
      * Record bytes sent for budget tracking.
      */

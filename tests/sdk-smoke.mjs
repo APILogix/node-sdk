@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 process.env.SDK_BASE_URL = "https://api.example.test"
+process.env.LOCALAPPDATA = `${process.cwd()}\\.tmp`
 
 const { captureMessage, captureRequest, init, shutdown } = await import("../dist/index.js")
 const { addBreadcrumb, createContextStore, withContext } = await import("../dist/core/context.js")
@@ -28,6 +29,16 @@ function initResponse(config = {}) {
       ...config.ingestion,
     },
   }), { status: 200, headers: { "content-type": "application/json" } })
+}
+
+function findRouteCall(calls, path) {
+  return calls.find(call => {
+    try {
+      return new URL(call.url).pathname === path
+    } catch {
+      return false
+    }
+  })
 }
 
 {
@@ -126,8 +137,8 @@ function initResponse(config = {}) {
   })
   await shutdown()
 
-  const ingestCall = calls.find(call => call.url === "https://ingest.example.test/v1/events")
-  const event = JSON.parse(ingestCall.body).events[0]
+  const errorCall = findRouteCall(calls, "/v1/errors")
+  const event = JSON.parse(errorCall.body).events[0]
 
   assert.equal(pluginSetupCount, 1)
   assert.equal(processorCount, 1)
@@ -168,8 +179,8 @@ function initResponse(config = {}) {
   captureMessage("free hook message")
   await shutdown()
 
-  const ingestCall = calls.find(call => call.url === "https://ingest.example.test/v1/events")
-  const event = JSON.parse(ingestCall.body).events[0]
+  const errorCall = findRouteCall(calls, "/v1/errors")
+  const event = JSON.parse(errorCall.body).events[0]
 
   assert.equal(beforeSendCount, 0)
   assert.equal(event.shouldNotAppear, undefined)
@@ -350,10 +361,9 @@ function initResponse(config = {}) {
   await init({ apiKey: "buffer-key" })
   await shutdown()
 
-  const ingestCalls = calls.filter(call => call.url === "https://ingest.example.test/v1/events")
-  assert.equal(ingestCalls.length, 1)
-  assert.equal(JSON.parse(ingestCalls[0].body).apiKey, "buffer-key")
-  assert.equal(JSON.parse(ingestCalls[0].body).events[0].requestId, "pre-init")
+  const traceCall = findRouteCall(calls, "/v1/traces")
+  assert.ok(traceCall)
+  assert.equal(JSON.parse(traceCall.body).events[0].requestId, "pre-init")
 }
 
 {

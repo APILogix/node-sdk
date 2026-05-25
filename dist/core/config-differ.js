@@ -1,12 +1,13 @@
 /**
  * ConfigDiffer — deep-diff utility for RemoteConfigResponse objects.
  *
- * Used by the config refresh loop to determine which sections changed
- * and what subsystems need dynamic reconfiguration.
+ * The refresh loop calls this on every successful fetch so subsystems can
+ * decide whether to react. Cheap by design: a structural equality check
+ * per top-level section, not a per-field traversal of the full tree.
  */
 /**
- * Deep-diff two remote config objects.
- * Returns a ConfigDiff describing which top-level sections changed.
+ * Diff two remote config snapshots. Returns which top-level sections
+ * changed and a flat map of field-level changes for diagnostic logging.
  */
 export function diffConfigs(oldConfig, newConfig) {
     const changes = new Map();
@@ -14,14 +15,10 @@ export function diffConfigs(oldConfig, newConfig) {
     const killswitchesChanged = !deepEqual(oldConfig.killswitches, newConfig.killswitches);
     const samplingChanged = !deepEqual(oldConfig.sampling, newConfig.sampling);
     const transportChanged = !deepEqual(oldConfig.transport, newConfig.transport);
-    const securityChanged = !deepEqual(oldConfig.security, newConfig.security);
-    const tracingChanged = !deepEqual(oldConfig.tracing, newConfig.tracing);
-    const errorsChanged = !deepEqual(oldConfig.errors, newConfig.errors);
-    const loggingChanged = !deepEqual(oldConfig.logging, newConfig.logging);
-    const metricsChanged = !deepEqual(oldConfig.metrics, newConfig.metrics);
-    const profilingChanged = !deepEqual(oldConfig.profiling, newConfig.profiling);
+    const privacyChanged = !deepEqual(oldConfig.privacy, newConfig.privacy);
     const limitsChanged = !deepEqual(oldConfig.limits, newConfig.limits);
     const instrumentationChanged = !deepEqual(oldConfig.instrumentation, newConfig.instrumentation);
+    const runtimeChanged = !deepEqual(oldConfig.runtime, newConfig.runtime);
     if (featuresChanged)
         collectChanges('features', oldConfig.features, newConfig.features, changes);
     if (killswitchesChanged)
@@ -30,41 +27,26 @@ export function diffConfigs(oldConfig, newConfig) {
         collectChanges('sampling', oldConfig.sampling, newConfig.sampling, changes);
     if (transportChanged)
         changes.set('transport', { old: '[complex]', new: '[complex]' });
-    if (securityChanged)
-        changes.set('security', { old: '[complex]', new: '[complex]' });
-    if (tracingChanged)
-        collectChanges('tracing', oldConfig.tracing, newConfig.tracing, changes);
-    if (errorsChanged)
-        collectChanges('errors', oldConfig.errors, newConfig.errors, changes);
-    if (loggingChanged)
-        collectChanges('logging', oldConfig.logging, newConfig.logging, changes);
-    if (metricsChanged)
-        collectChanges('metrics', oldConfig.metrics, newConfig.metrics, changes);
-    if (profilingChanged)
-        collectChanges('profiling', oldConfig.profiling, newConfig.profiling, changes);
+    if (privacyChanged)
+        changes.set('privacy', { old: '[complex]', new: '[complex]' });
     if (limitsChanged)
         collectChanges('limits', oldConfig.limits, newConfig.limits, changes);
     if (instrumentationChanged)
         changes.set('instrumentation', { old: '[complex]', new: '[complex]' });
+    if (runtimeChanged)
+        collectChanges('runtime', oldConfig.runtime, newConfig.runtime, changes);
     return {
         featuresChanged,
         killswitchesChanged,
         samplingChanged,
         transportChanged,
-        securityChanged,
-        tracingChanged,
-        errorsChanged,
-        loggingChanged,
-        metricsChanged,
-        profilingChanged,
+        privacyChanged,
         limitsChanged,
         instrumentationChanged,
+        runtimeChanged,
         changes,
     };
 }
-/**
- * Deep equality check for two values.
- */
 function deepEqual(a, b) {
     if (a === b)
         return true;
@@ -89,9 +71,6 @@ function deepEqual(a, b) {
         return false;
     return aKeys.every(key => deepEqual(aObj[key], bObj[key]));
 }
-/**
- * Collect per-field changes for diagnostics.
- */
 function collectChanges(prefix, oldVal, newVal, changes) {
     if (typeof oldVal !== 'object' || typeof newVal !== 'object' || oldVal === null || newVal === null) {
         changes.set(prefix, { old: oldVal, new: newVal });

@@ -157,6 +157,10 @@ export class SessionManager {
 let sessionManager = null;
 /**
  * Get the global session manager. Creates one if it doesn't exist.
+ *
+ * Note: `options` are honored only when the singleton is first created.
+ * Pass `null` to {@link resetSessionManager} between init cycles if you
+ * need to change options.
  */
 export function getSessionManager(options) {
     if (!sessionManager) {
@@ -165,11 +169,21 @@ export function getSessionManager(options) {
     return sessionManager;
 }
 /**
- * Reset the global session manager — for testing.
+ * Reset the global session manager. Idempotent.
+ * Ends any active session as 'shutdown' so the final activity timestamp is
+ * recorded, then clears the singleton so the next getSessionManager() yields
+ * a fresh instance.
  * @internal
  */
 export function resetSessionManager() {
-    sessionManager?.endSession('shutdown');
-    sessionManager = null;
+    if (sessionManager) {
+        try {
+            sessionManager.endSession('shutdown');
+        }
+        catch {
+            // Never throw on shutdown — the SDK must always reset cleanly.
+        }
+        sessionManager = null;
+    }
 }
 //# sourceMappingURL=session-manager.js.map

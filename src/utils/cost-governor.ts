@@ -25,6 +25,8 @@ export interface CostGovernorOptions {
     readonly bytesBudgetPerMinute?: number
     /** Enable adaptive telemetry reduction when approaching budget. Default: true */
     readonly enableAdaptiveReduction?: boolean
+    /** Max duration of a single trace in milliseconds. Default: 300000 (5 minutes) */
+    readonly maxTraceDurationMs?: number
 }
 
 export interface CostUtilization {
@@ -45,10 +47,11 @@ export interface CostStats {
 // ─── Implementation ─────────────────────────────────────────────────────────
 
 export class CostGovernor {
-    private readonly maxSpansPerTrace: number
+    private maxSpansPerTrace: number
     private readonly maxActiveInstruments: number
     private readonly bytesBudgetPerMinute: number
     private readonly enableAdaptiveReduction: boolean
+    private maxTraceDurationMs: number
 
     // Span tracking per trace: Map<traceId, spanCount>
     private readonly traceSpanCounts = new Map<string, number>()
@@ -72,9 +75,27 @@ export class CostGovernor {
         this.maxActiveInstruments = options.maxActiveInstruments ?? 200
         this.bytesBudgetPerMinute = options.bytesBudgetPerMinute ?? 10 * 1024 * 1024 // 10MB
         this.enableAdaptiveReduction = options.enableAdaptiveReduction ?? true
+        this.maxTraceDurationMs = options.maxTraceDurationMs ?? 300_000 // 5 minutes
 
         this.cleanupTimer = setInterval(() => this.cleanup(), 30_000)
         this.cleanupTimer.unref()
+    }
+
+    /**
+     * Update cost governor limits from remote config.
+     * Called when remote config is loaded or changes at runtime.
+     */
+    updateFromConfig(options: Pick<CostGovernorOptions, 'maxSpansPerTrace' | 'maxTraceDurationMs'>): void {
+        if (options.maxSpansPerTrace !== undefined) {
+            this.maxSpansPerTrace = options.maxSpansPerTrace
+        }
+        if (options.maxTraceDurationMs !== undefined) {
+            this.maxTraceDurationMs = options.maxTraceDurationMs
+        }
+        getLogger().debug('Cost governor updated from config', {
+            maxSpansPerTrace: this.maxSpansPerTrace,
+            maxTraceDurationMs: this.maxTraceDurationMs,
+        })
     }
 
     /**
@@ -103,6 +124,27 @@ export class CostGovernor {
         // LRU eviction when tracking too many traces
         if (this.traceSpanCounts.size > this.maxTrackedTraces) {
             this.evictOldestTraces()
+        }
+
+        return true
+    }
+
+    /**
+     * Check if a trace can continue based on its duration.
+     * Returns false if the trace has exceeded maxTraceDurationMs.
+     */
+    canContinueTrace(traceId: string): boolean {
+        const startTime = this.traceTimestamps.get(traceId)
+        if (startTime === undefined) return true // Unknown trace — allow
+
+        const elapsed = epochMs() - startTime
+        if (elapsed > this.maxTraceDurationMs) {
+            getLogger().warn('Trace exceeded max duration', {
+                traceId: traceId.slice(0, 8) + '...',
+                elapsed,
+                maxDurationMs: this.maxTraceDurationMs,
+            })
+            return false
         }
 
         return true

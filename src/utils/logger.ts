@@ -14,6 +14,7 @@
 
 import { SDKError } from '../core/errors.js'
 import { Severity, type SeverityLevel, severityMeetsThreshold } from '../types/severity.js'
+import { trace as otelTrace } from '@opentelemetry/api'
 
 export interface Logger {
   debug(message: string, context?: Record<string, unknown>): void
@@ -108,12 +109,24 @@ function redactString(value: string): string {
 
 // ─── Formatting ─────────────────────────────────────────────────────────────
 
+/**
+ * Maximum size for a single serialized log context. Larger payloads are
+ * truncated to prevent memory spikes from accidentally-large objects
+ * (e.g., a user logging a giant request body or response object).
+ */
+const MAX_LOG_CONTEXT_BYTES = 16 * 1024 // 16 KB
+
 function formatContext(context?: Record<string, unknown>): string {
   if (!context || Object.keys(context).length === 0) return ''
 
   try {
     const safe = redact(context) as Record<string, unknown>
-    return ' ' + JSON.stringify(safe)
+    const serialized = JSON.stringify(safe)
+    if (serialized.length > MAX_LOG_CONTEXT_BYTES) {
+      const truncated = serialized.slice(0, MAX_LOG_CONTEXT_BYTES)
+      return ` ${truncated}...[truncated:${serialized.length}b]`
+    }
+    return ' ' + serialized
   } catch {
     return ' [unserializable context]'
   }
@@ -153,9 +166,7 @@ export const consoleLogger: Logger = {
  */
 function getActiveTraceContext(): { traceId?: string; spanId?: string } {
   try {
-    // Lazy import to avoid circular dependency issues
-    const otelApi = require('@opentelemetry/api') as typeof import('@opentelemetry/api')
-    const activeSpan = otelApi.trace.getActiveSpan()
+    const activeSpan = otelTrace.getActiveSpan()
     if (activeSpan) {
       const ctx = activeSpan.spanContext()
       return { traceId: ctx.traceId, spanId: ctx.spanId }
@@ -218,10 +229,18 @@ function emitJsonLog(
   if (trace.traceId) entry['trace.id'] = trace.traceId
   if (trace.spanId) entry['span.id'] = trace.spanId
 
-  // Merge redacted context
+  // Merge redacted context — bounded so a single oversized log entry can't
+  // OOM the process.
   if (context && Object.keys(context).length > 0) {
     try {
-      entry['context'] = redact(context) as Record<string, unknown>
+      const safe = redact(context) as Record<string, unknown>
+      const serialized = JSON.stringify(safe)
+      if (serialized.length > MAX_LOG_CONTEXT_BYTES) {
+        entry['context'] = '[truncated]'
+        entry['contextSize'] = serialized.length
+      } else {
+        entry['context'] = safe
+      }
     } catch {
       entry['context'] = '[unserializable]'
     }

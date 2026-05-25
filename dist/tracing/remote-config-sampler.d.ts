@@ -2,10 +2,13 @@
  * RemoteConfigSampler — custom OpenTelemetry Sampler driven by SamplingEngine.
  *
  * Replaces the default TraceIdRatioBasedSampler with a sampler that:
- * 1. Uses FNV-1a hash of traceId for deterministic sampling decisions
- * 2. Checks per-route overrides from sampling.routes config
- * 3. Respects tracing.ignoredRoutes (always drop)
- * 4. Respects tracing.ignoredMethods (always drop)
+ *   1. Uses FNV-1a hash of traceId for deterministic sampling decisions.
+ *   2. Checks per-route per-event-type overrides from `sampling.routes`.
+ *
+ * The wire schema dropped the `tracing.ignoredRoutes` and
+ * `tracing.ignoredMethods` arrays — those concerns are now expressed as
+ * `sampling.routes["/health"] = { traces: 0, ... }`. The SamplingEngine
+ * already understands per-route rates, so this sampler is a thin shim.
  *
  * The sampling decision is made ONCE at the root span and propagated
  * to all child spans via the sampled bit in traceparent header.

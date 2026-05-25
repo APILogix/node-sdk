@@ -8,4 +8,3 @@ import { client } from "./client.js"
 export function getConfig(): Readonly<ResolvedSDKConfig> {
   return client.config
 }
-// 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

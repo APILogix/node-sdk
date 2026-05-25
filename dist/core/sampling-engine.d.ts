@@ -2,17 +2,22 @@
  * SamplingEngine — deterministic, FNV-1a hash-based sampling.
  *
  * Replaces random Math.random() sampling with deterministic decisions:
- * - Same traceId → same decision across all SDK instances (consistent sampling).
- * - Route overrides: sampling.routes["/api/health"] = 0 → always drop.
- * - Dynamic rate updates via config refresh (no restart needed).
+ *   - Same traceId → same decision across all SDK instances (consistent
+ *     sampling), so a downstream service either has the same span as its
+ *     caller or it has none.
+ *   - Per-route overrides are now per-event-type. The wire schema looks
+ *     like: `routes: { "/health": { traces: 0, requests: 0 }, ... }`. A
+ *     missing event-type key inside a route falls through to the global
+ *     rate. A rate of 0 effectively replaces the old `ignoredRoutes` list.
+ *   - Hot-swappable via config refresh — no SDK restart.
  *
  * Algorithm:
- * 1. Compute FNV-1a 32-bit hash of the traceId (or eventId).
- * 2. Normalize to [0.0, 1.0] via hash / 2^32.
- * 3. Compare against the sampling rate for the event type.
- * 4. If route override exists, use route rate instead.
+ *   1. FNV-1a 32-bit hash of the id.
+ *   2. Normalize to [0.0, 1.0) by dividing by 2^32.
+ *   3. Compare against the rate for the event type (route-overridden if any).
  */
 import type { SamplingConfig, ConfigDiff, RemoteConfigResponse } from '../types/config.js';
+export type SamplingEventType = 'traces' | 'requests' | 'errors' | 'profiles' | 'replays';
 export type SamplingDecision = {
     readonly sampled: boolean;
     readonly rate: number;
@@ -25,34 +30,22 @@ export declare class SamplingEngine {
     private constructor();
     static initialize(config: SamplingConfig): SamplingEngine;
     static getInstance(): SamplingEngine | null;
-    /**
-     * Decide whether to sample a trace.
-     * @param traceId The trace ID (or any deterministic identifier)
-     * @param route Optional URL path for route-specific overrides
-     */
     shouldSampleTrace(traceId: string, route?: string): SamplingDecision;
-    /** Decide whether to sample an error. */
-    shouldSampleError(eventId: string): SamplingDecision;
-    /** Decide whether to sample a profile. */
-    shouldSampleProfile(traceId: string): SamplingDecision;
-    /** Decide whether to sample a replay. */
+    shouldSampleRequest(requestId: string, route?: string): SamplingDecision;
+    shouldSampleError(eventId: string, route?: string): SamplingDecision;
+    shouldSampleProfile(traceId: string, route?: string): SamplingDecision;
     shouldSampleReplay(sessionId: string): SamplingDecision;
-    /** Handle config change — hot-swap sampling rates. */
     handleConfigChange(_diff: ConfigDiff, newConfig: Readonly<RemoteConfigResponse>): void;
-    /** Get current sampling config. */
     getConfig(): Readonly<SamplingConfig>;
-    /**
-     * Core sampling decision logic.
-     */
     private decide;
+    private evaluate;
     /**
-     * Find the route-specific sampling rate by prefix match.
-     * Longest prefix wins.
+     * Find the route-specific override map by longest-prefix match.
+     * Returns the matched RouteSamplingRates record, or null.
      */
-    private findRouteRate;
+    private findRouteRates;
     /**
-     * FNV-1a 32-bit hash.
-     * Deterministic, fast, and well-distributed for trace IDs.
+     * FNV-1a 32-bit hash. Deterministic and fast.
      */
     static fnv1a32(input: string): number;
     destroy(): void;

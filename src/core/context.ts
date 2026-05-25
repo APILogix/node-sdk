@@ -41,6 +41,13 @@ export interface ContextStore {
 const CONTEXT_STORE_KEY = createContextKey('pulse-sdk-context-store')
 const contextStorage = new AsyncLocalStorage<ContextStore>()
 
+export const PULSE_CONTEXT_ATTRIBUTES = {
+  requestId: 'pulse.request_id',
+  sessionId: 'pulse.session_id',
+  userId: 'pulse.user_id',
+  tenantId: 'pulse.tenant_id',
+} as const
+
 // ─── Context Accessors ──────────────────────────────────────────────────────
 
 /**
@@ -51,18 +58,44 @@ export function getRequestContext(): ContextStore | undefined {
     ?? otelContext.active().getValue(CONTEXT_STORE_KEY) as ContextStore | undefined
 }
 
+export function getRequestContextFromOtelContext(ctx = otelContext.active()): ContextStore | undefined {
+  return ctx.getValue(CONTEXT_STORE_KEY) as ContextStore | undefined
+}
+
 /**
  * Get the current trace ID from context, or undefined.
  */
 export function getTraceId(): string | undefined {
-  return trace.getActiveSpan()?.spanContext().traceId
+  return trace.getActiveSpan()?.spanContext().traceId ?? getRequestContext()?.traceId
 }
 
 /**
  * Get the current span ID from context, or undefined.
  */
 export function getSpanId(): string | undefined {
-  return trace.getActiveSpan()?.spanContext().spanId
+  return trace.getActiveSpan()?.spanContext().spanId ?? getRequestContext()?.spanId
+}
+
+export function attachRequestContextToActiveSpan(store = getRequestContext()): void {
+  if (!store) return
+
+  const activeSpan = trace.getActiveSpan()
+  if (!activeSpan) return
+
+  const tenantId = store.extra?.['tenantId']
+  const attributes: Record<string, string> = {
+    [PULSE_CONTEXT_ATTRIBUTES.requestId]: store.requestId,
+  }
+
+  if (store.sessionId) attributes[PULSE_CONTEXT_ATTRIBUTES.sessionId] = store.sessionId
+  if (store.userId) attributes[PULSE_CONTEXT_ATTRIBUTES.userId] = store.userId
+  if (typeof tenantId === 'string' && tenantId) attributes[PULSE_CONTEXT_ATTRIBUTES.tenantId] = tenantId
+
+  try {
+    activeSpan.setAttributes(attributes)
+  } catch {
+    // Span mutation must never affect application control flow.
+  }
 }
 
 // ─── Context Mutation (within scope) ────────────────────────────────────────
@@ -159,5 +192,19 @@ export function createContextStore(
  */
 export function withContext<T>(store: ContextStore, fn: () => T): T {
   const ctx = otelContext.active().setValue(CONTEXT_STORE_KEY, store)
-  return contextStorage.run(store, () => otelContext.with(ctx, fn))
+  return contextStorage.run(store, () => otelContext.with(ctx, () => {
+    attachRequestContextToActiveSpan(store)
+    return fn()
+  }))
+}
+
+export function bindContext<T extends (...args: never[]) => unknown>(
+  fn: T,
+  store = getRequestContext(),
+): T {
+  if (!store) return fn
+
+  return function boundContext(this: unknown, ...args: Parameters<T>): ReturnType<T> {
+    return withContext(store, () => fn.apply(this, args)) as ReturnType<T>
+  } as T
 }

@@ -1,166 +1,316 @@
 /**
- * TransportRouter — routes events to the correct transport based on event type.
+ * Unified TransportRouter.
  *
- * Architecture:
- * - 8 independent RouteTransportManager instances (traces, errors, logs, metrics,
- *   profiles, replays, crons, envelope).
- * - Each route has its own batching, queue, retry, and circuit breaker.
- * - Events are routed by type → route mapping.
- * - Killswitch: disableTransport → stops ALL routes immediately.
- * - Config change: Updates individual route configs without restarting others.
+ * One singleton owns outbound telemetry delivery for the SDK lifecycle:
+ * event classification, bounded queues, adaptive batchers, route health,
+ * and one shared connection manager with global and per-route limits.
  */
-import { RouteTransportManager } from './route-transport-manager.js';
 import { getLogger } from '../utils/logger.js';
-/** Maps event type to transport route. */
-const EVENT_TYPE_TO_ROUTE = {
-    span: 'traces',
-    request: 'traces',
-    error: 'errors',
-    message: 'errors',
-    log: 'logs',
-    metric: 'metrics',
-    profile: 'profiles',
-    replay: 'replays',
-    cron_checkin: 'crons',
-};
+import { BatchManager } from './batch-manager.js';
+import { ConnectionManager } from './connection-manager.js';
+import { HealthMonitor } from './health-monitor.js';
+import { RouteRegistry, TransportConfigurationError } from './route-registry.js';
+import { TransportEventQueue } from './transport-event-queue.js';
+const MAX_PAYLOAD_BYTES = 5 * 1024 * 1024;
+const QUEUE_CONFIG = Object.freeze({
+    errors: Object.freeze({ maxSize: 10_000, priority: 'high' }),
+    traces: Object.freeze({ maxSize: 50_000, priority: 'normal' }),
+    metrics: Object.freeze({ maxSize: 25_000, priority: 'low' }),
+    logs: Object.freeze({ maxSize: 25_000, priority: 'normal' }),
+    profiles: Object.freeze({ maxSize: 5_000, priority: 'low' }),
+    crons: Object.freeze({ maxSize: 1_000, priority: 'high' }),
+});
+const BATCH_CONFIG = Object.freeze({
+    errors: Object.freeze({ maxBatchSize: 100, maxWaitTimeMs: 1_000, minBatchSize: 1 }),
+    traces: Object.freeze({ maxBatchSize: 500, maxWaitTimeMs: 5_000, minBatchSize: 10 }),
+    metrics: Object.freeze({ maxBatchSize: 1_000, maxWaitTimeMs: 10_000, minBatchSize: 50 }),
+    logs: Object.freeze({ maxBatchSize: 200, maxWaitTimeMs: 10_000, minBatchSize: 10 }),
+    profiles: Object.freeze({ maxBatchSize: 5, maxWaitTimeMs: 30_000, minBatchSize: 1 }),
+    crons: Object.freeze({ maxBatchSize: 1, maxWaitTimeMs: 0, minBatchSize: 1 }),
+});
+const CONNECTION_LIMITS = Object.freeze({
+    errors: 30,
+    traces: 50,
+    metrics: 20,
+    logs: 20,
+    profiles: 5,
+    crons: 5,
+});
 export class TransportRouter {
-    static instance = null;
-    routes = new Map();
     transportConfig;
     apiKey;
+    fetchImpl;
+    static instance = null;
+    registry;
+    connectionManager;
+    healthMonitor;
+    batchManagers = new Map();
+    queues = new Map();
     disabled = false;
     destroyed = false;
-    constructor(config, apiKey) {
-        this.transportConfig = config;
+    dropped = [];
+    dropLogCount = 0;
+    constructor(transportConfig, apiKey, fetchImpl = fetch) {
+        this.transportConfig = transportConfig;
         this.apiKey = apiKey;
+        this.fetchImpl = fetchImpl;
+        this.registry = new RouteRegistry(transportConfig);
+        this.healthMonitor = new HealthMonitor(this.registry.routes());
+        this.connectionManager = this.createConnectionManager(transportConfig);
+        this.createQueuesAndBatchers();
     }
-    static initialize(config, apiKey) {
+    /**
+     * Initialize the singleton transport router.
+     *
+     * If a previous instance exists, this method awaits its shutdown before
+     * installing the new instance. This prevents a stale BatchManager from
+     * sending events through an out-of-date connection manager during a warm
+     * reinit.
+     *
+     * NOTE: This method is async because shutdown drains in-flight batches.
+     * Callers must await the returned promise before sending events.
+     */
+    static async initialize(config, apiKey, fetchImpl) {
         if (TransportRouter.instance) {
-            void TransportRouter.instance.shutdown();
+            // Await shutdown so in-flight batches drain before we replace the
+            // singleton. The previous version of this method only fired
+            // shutdown() and ignored the promise, which let stale managers race
+            // with the new instance.
+            try {
+                await TransportRouter.instance.shutdown();
+            }
+            catch (err) {
+                getLogger().warn('[TransportRouter] Previous instance shutdown failed during reinit', { error: err });
+            }
+            TransportRouter.instance = null;
         }
-        TransportRouter.instance = new TransportRouter(config, apiKey);
-        TransportRouter.instance.createRoutes();
-        return TransportRouter.instance;
+        const router = new TransportRouter(config, apiKey, fetchImpl);
+        TransportRouter.instance = router;
+        return router;
     }
     static getInstance() {
         return TransportRouter.instance;
     }
-    // ─── Event Routing ────────────────────────────────────────────────────────
-    /**
-     * Route an event to the appropriate transport.
-     * Never throws — drops silently if disabled or route not found.
-     */
     send(event) {
-        if (this.destroyed || this.disabled)
-            return;
-        const routeName = EVENT_TYPE_TO_ROUTE[event.type] ?? 'envelope';
-        const route = this.routes.get(routeName);
-        if (!route) {
-            // Fallback to envelope route
-            const envelope = this.routes.get('envelope');
-            if (envelope) {
-                envelope.enqueue(event);
-            }
-            return;
+        if (this.destroyed || this.disabled) {
+            this.recordDrop({
+                route: 'errors',
+                reason: 'transport_disabled',
+                count: 1,
+                eventType: event.type,
+            });
+            return false;
         }
-        route.enqueue(event);
+        try {
+            const definition = this.registry.resolve(event);
+            const manager = this.batchManagers.get(definition.route);
+            if (!manager) {
+                throw new TransportConfigurationError('Route has no batch manager', {
+                    route: definition.route,
+                    eventType: event.type,
+                });
+            }
+            return manager.enqueue(event);
+        }
+        catch (error) {
+            const logger = getLogger();
+            logger.error('[TransportRouter] Event dropped due to route configuration error', {
+                error,
+                eventType: event.type,
+            });
+            return false;
+        }
     }
-    /**
-     * Send multiple events at once.
-     */
     sendBatch(events) {
         for (const event of events) {
             this.send(event);
         }
     }
-    // ─── Control ──────────────────────────────────────────────────────────────
-    /** Disable all transport (killswitch). */
     disable() {
         this.disabled = true;
-        getLogger().warn('[TransportRouter] Transport DISABLED (killswitch)');
+        getLogger().warn('[TransportRouter] Transport disabled');
     }
-    /** Re-enable transport (killswitch deactivated). */
     enable() {
         this.disabled = false;
-        getLogger().info('[TransportRouter] Transport ENABLED');
+        getLogger().info('[TransportRouter] Transport enabled');
     }
-    /** Check if transport is disabled. */
     isDisabled() {
         return this.disabled;
     }
-    // ─── Config Change ────────────────────────────────────────────────────────
-    /** Handle config change — update individual route configs. */
     handleConfigChange(_diff, newConfig) {
         if (this.destroyed)
             return;
-        const logger = getLogger();
-        const newTransport = newConfig.transport;
-        for (const [routeName, endpoint] of Object.entries(newTransport.endpoints)) {
-            const route = this.routes.get(routeName);
-            if (route) {
-                route.updateConfig(endpoint, newTransport.shared);
-            }
-            else {
-                // New route added dynamically
-                logger.info(`[TransportRouter] Creating new route: ${routeName}`);
-                const newRoute = new RouteTransportManager(routeName, endpoint, newTransport.shared, this.apiKey);
-                newRoute.start();
-                this.routes.set(routeName, newRoute);
+        this.transportConfig = newConfig.transport;
+        this.registry = new RouteRegistry(newConfig.transport);
+        this.connectionManager = this.createConnectionManager(newConfig.transport);
+        const queued = new Map();
+        for (const [route, queue] of this.queues) {
+            queued.set(route, queue.drain(queue.size()));
+        }
+        this.batchManagers.clear();
+        this.queues.clear();
+        this.createQueuesAndBatchers();
+        for (const [route, events] of queued) {
+            const manager = this.batchManagers.get(route);
+            for (const event of events) {
+                manager?.enqueue(event);
             }
         }
-        this.transportConfig = newTransport;
     }
-    // ─── Health ───────────────────────────────────────────────────────────────
-    /** Get aggregate health across all routes. */
     getHealth() {
         const routes = {};
-        for (const [name, route] of this.routes) {
-            routes[name] = route.getHealth();
+        for (const route of this.registry.routes()) {
+            routes[route] = this.routeHealth(route);
         }
+        const pool = this.connectionManager.stats();
         return {
             routes,
-            globalConnectionCount: this.routes.size,
-            maxGlobalConnections: this.transportConfig.shared.connectionPool.maxTotalConnections,
+            globalConnectionCount: pool.totalInUse,
+            maxGlobalConnections: pool.maxTotalConnections,
             transportDisabled: this.disabled,
         };
     }
-    // ─── Lifecycle ────────────────────────────────────────────────────────────
-    /** Flush all routes. */
+    getDebugState() {
+        const inFlightSends = { errors: 0, traces: 0, metrics: 0, logs: 0, profiles: 0, crons: 0 };
+        const queuedEvents = { errors: 0, traces: 0, metrics: 0, logs: 0, profiles: 0, crons: 0 };
+        const batchedEvents = { errors: 0, traces: 0, metrics: 0, logs: 0, profiles: 0, crons: 0 };
+        for (const route of this.registry.routes()) {
+            const stats = this.batchManagers.get(route)?.stats();
+            inFlightSends[route] = stats?.inFlightSends ?? 0;
+            queuedEvents[route] = stats?.queuedEvents ?? 0;
+            batchedEvents[route] = stats?.batchedEvents ?? 0;
+        }
+        return {
+            inFlightSends,
+            queuedEvents,
+            batchedEvents,
+            droppedEvents: [...this.dropped],
+        };
+    }
     async flushAll() {
-        const promises = [];
-        for (const route of this.routes.values()) {
-            promises.push(route.flush());
-        }
-        await Promise.allSettled(promises);
+        await Promise.allSettled([...this.batchManagers.values()].map(manager => manager.flush()));
     }
-    /** Graceful shutdown — flush all routes and stop. */
     async shutdown() {
+        if (this.destroyed)
+            return;
         this.destroyed = true;
-        const logger = getLogger();
-        logger.info('[TransportRouter] Shutting down all routes...');
-        const promises = [];
-        for (const route of this.routes.values()) {
-            promises.push(route.shutdown());
+        // Phase 1: shut down each batch manager so in-flight HTTP sends complete.
+        // We use shutdown (not flush) so the manager rejects new enqueues during
+        // its own drain.
+        const shutdownResults = await Promise.allSettled([...this.batchManagers.values()].map(manager => manager.shutdown()));
+        for (const result of shutdownResults) {
+            if (result.status === 'rejected') {
+                getLogger().warn('[TransportRouter] BatchManager shutdown failed', { error: result.reason });
+            }
         }
-        await Promise.allSettled(promises);
-        this.routes.clear();
+        // Phase 2: release all queued/batched references so GC can reclaim them.
+        this.batchManagers.clear();
+        this.queues.clear();
+        this.dropped.length = 0;
+        this.dropLogCount = 0;
+        // Phase 3: detach the singleton pointer only if it still references this
+        // instance — concurrent reinit may have already swapped it out.
+        if (TransportRouter.instance === this) {
+            TransportRouter.instance = null;
+        }
+    }
+    static async reset() {
+        const inst = TransportRouter.instance;
+        if (inst) {
+            try {
+                await inst.shutdown();
+            }
+            catch (err) {
+                getLogger().warn('[TransportRouter] reset failed', { error: err });
+            }
+        }
         TransportRouter.instance = null;
-        logger.info('[TransportRouter] All routes shut down');
     }
-    // ─── Private ──────────────────────────────────────────────────────────────
-    createRoutes() {
-        const logger = getLogger();
-        for (const [routeName, endpointConfig] of Object.entries(this.transportConfig.endpoints)) {
-            const manager = new RouteTransportManager(routeName, endpointConfig, this.transportConfig.shared, this.apiKey);
-            manager.start();
-            this.routes.set(routeName, manager);
-            logger.info(`[TransportRouter] Route created: ${routeName} → ${endpointConfig.url}`);
+    createQueuesAndBatchers() {
+        for (const route of this.registry.routes()) {
+            const queueConfig = QUEUE_CONFIG[route];
+            const batchConfig = BATCH_CONFIG[route];
+            const queue = new TransportEventQueue({
+                route,
+                maxSize: queueConfig.maxSize,
+                priority: queueConfig.priority,
+                onDrop: info => this.recordDrop(info),
+            });
+            const manager = new BatchManager({
+                route,
+                definition: this.registry.get(route),
+                apiKey: this.apiKey,
+                queue,
+                connectionManager: this.connectionManager,
+                healthMonitor: this.healthMonitor,
+                maxBatchSize: batchConfig.maxBatchSize,
+                minBatchSize: batchConfig.minBatchSize,
+                maxWaitTimeMs: batchConfig.maxWaitTimeMs,
+                maxPayloadBytes: MAX_PAYLOAD_BYTES,
+                socketTimeoutMs: 30_000,
+                onDrop: info => this.recordDrop(info),
+                fetchImpl: this.fetchImpl,
+            });
+            this.queues.set(route, queue);
+            this.batchManagers.set(route, manager);
         }
     }
-    static reset() {
-        if (TransportRouter.instance) {
-            void TransportRouter.instance.shutdown();
+    createConnectionManager(config) {
+        return new ConnectionManager({
+            maxTotalConnections: 100,
+            maxConnectionsPerRoute: CONNECTION_LIMITS,
+            connectionTimeoutMs: 5_000,
+            socketTimeoutMs: 30_000,
+            connectionTTLMs: 60_000,
+            idleConnectionTimeoutMs: 30_000,
+        });
+    }
+    routeHealth(route) {
+        const definition = this.registry.get(route);
+        const stats = this.batchManagers.get(route)?.stats() ?? emptyStats(route);
+        const health = this.healthMonitor.snapshot(route);
+        return {
+            route,
+            url: definition.url,
+            priority: QUEUE_CONFIG[route].priority,
+            queueSize: stats.queuedEvents,
+            queueCapacity: QUEUE_CONFIG[route].maxSize,
+            inFlightCount: stats.inFlightSends,
+            totalSent: stats.totalSent,
+            totalFailed: stats.totalFailed,
+            totalDropped: stats.totalDropped,
+            totalRetries: 0,
+            circuitState: health.circuitState === 'OPEN'
+                ? 'OPEN'
+                : health.circuitState === 'HALF_OPEN'
+                    ? 'HALF_OPEN'
+                    : 'CLOSED',
+            lastSendAt: health.lastSuccessAt,
+            lastErrorAt: health.lastErrorAt,
+            avgLatencyMs: health.avgLatencyMs,
+        };
+    }
+    recordDrop(info) {
+        this.dropped.push(info);
+        if (this.dropped.length > 500)
+            this.dropped.shift();
+        this.dropLogCount++;
+        if (this.dropLogCount <= 10 || this.dropLogCount % 1000 === 0) {
+            getLogger().warn('[TransportRouter] Event dropped', { ...info, totalDropNotifications: this.dropLogCount });
         }
     }
+}
+function emptyStats(route) {
+    return {
+        route,
+        queuedEvents: 0,
+        batchedEvents: 0,
+        inFlightSends: 0,
+        totalSent: 0,
+        totalDropped: 0,
+        totalFailed: 0,
+        totalRequests: 0,
+        avgBatchSize: 0,
+    };
 }
 //# sourceMappingURL=transport-router.js.map

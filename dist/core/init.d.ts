@@ -10,7 +10,7 @@
  * 6. Initialize FeatureController (skip class instantiation for disabled features)
  * 7. Initialize SecurityScrubber (pre-transport PII/header scrubbing)
  * 8. Initialize LimitsEngine (rate limiting, attribute trimming)
- * 9. Initialize TransportRouter (8 independent route managers)
+ * 9. Initialize unified TransportRouter (shared connection manager, per-type queues)
  * 10. Register subsystems with FeatureController (tracing, metrics, errors, logging, profiling, crons)
  * 11. Wire config change listeners for hot-swap
  * 12. Start ConfigManager refresh loop

@@ -65,8 +65,8 @@ const PLAN_DEFAULTS: Record<PlanTier, PlanFeatures> = {
     allowSamplingOverride: true,
     maxBreadcrumbs: 1000,
     maxPlugins: Infinity,
-    maxBatchSize: 100,
-    maxQueueSize: 10000,
+    maxBatchSize: 1000,
+    maxQueueSize: 100000,
     allowedCompression: ['gzip', 'brotli', 'none'],
   },
 }

@@ -1,51 +1,62 @@
 /**
- * TransportRouter — routes events to the correct transport based on event type.
+ * Unified TransportRouter.
  *
- * Architecture:
- * - 8 independent RouteTransportManager instances (traces, errors, logs, metrics,
- *   profiles, replays, crons, envelope).
- * - Each route has its own batching, queue, retry, and circuit breaker.
- * - Events are routed by type → route mapping.
- * - Killswitch: disableTransport → stops ALL routes immediately.
- * - Config change: Updates individual route configs without restarting others.
+ * One singleton owns outbound telemetry delivery for the SDK lifecycle:
+ * event classification, bounded queues, adaptive batchers, route health,
+ * and one shared connection manager with global and per-route limits.
  */
-import type { TransportRemoteConfig, ConfigDiff, RemoteConfigResponse } from '../types/config.js';
-import type { MultiRouteTransportHealth } from '../types/transport.js';
+import type { ConfigDiff, RemoteConfigResponse, TransportRemoteConfig } from '../types/config.js';
 import type { SDKEvent } from '../types/event.js';
+import type { MultiRouteTransportHealth } from '../types/transport.js';
+import { type EnterpriseRoute } from './route-registry.js';
+import { type QueueDropInfo } from './transport-event-queue.js';
 export declare class TransportRouter {
-    private static instance;
-    private routes;
     private transportConfig;
-    private apiKey;
+    private readonly apiKey;
+    private readonly fetchImpl;
+    private static instance;
+    private registry;
+    private connectionManager;
+    private healthMonitor;
+    private batchManagers;
+    private queues;
     private disabled;
     private destroyed;
+    private readonly dropped;
+    private dropLogCount;
     private constructor();
-    static initialize(config: TransportRemoteConfig, apiKey: string): TransportRouter;
+    /**
+     * Initialize the singleton transport router.
+     *
+     * If a previous instance exists, this method awaits its shutdown before
+     * installing the new instance. This prevents a stale BatchManager from
+     * sending events through an out-of-date connection manager during a warm
+     * reinit.
+     *
+     * NOTE: This method is async because shutdown drains in-flight batches.
+     * Callers must await the returned promise before sending events.
+     */
+    static initialize(config: TransportRemoteConfig, apiKey: string, fetchImpl?: typeof fetch): Promise<TransportRouter>;
     static getInstance(): TransportRouter | null;
-    /**
-     * Route an event to the appropriate transport.
-     * Never throws — drops silently if disabled or route not found.
-     */
-    send(event: SDKEvent): void;
-    /**
-     * Send multiple events at once.
-     */
+    send(event: SDKEvent): boolean;
     sendBatch(events: readonly SDKEvent[]): void;
-    /** Disable all transport (killswitch). */
     disable(): void;
-    /** Re-enable transport (killswitch deactivated). */
     enable(): void;
-    /** Check if transport is disabled. */
     isDisabled(): boolean;
-    /** Handle config change — update individual route configs. */
     handleConfigChange(_diff: ConfigDiff, newConfig: Readonly<RemoteConfigResponse>): void;
-    /** Get aggregate health across all routes. */
     getHealth(): MultiRouteTransportHealth;
-    /** Flush all routes. */
+    getDebugState(): {
+        inFlightSends: Readonly<Record<EnterpriseRoute, number>>;
+        queuedEvents: Readonly<Record<EnterpriseRoute, number>>;
+        batchedEvents: Readonly<Record<EnterpriseRoute, number>>;
+        droppedEvents: readonly QueueDropInfo[];
+    };
     flushAll(): Promise<void>;
-    /** Graceful shutdown — flush all routes and stop. */
     shutdown(): Promise<void>;
-    private createRoutes;
-    static reset(): void;
+    static reset(): Promise<void>;
+    private createQueuesAndBatchers;
+    private createConnectionManager;
+    private routeHealth;
+    private recordDrop;
 }
 //# sourceMappingURL=transport-router.d.ts.map

@@ -55,8 +55,11 @@ export declare function getTracer(): Tracer | null;
  */
 export declare function withContext<T>(ctx: Context, fn: () => T): T;
 /**
- * Gracefully shut down the tracer — flushes pending spans.
- * Called during SDK shutdown.
+ * Gracefully shut down the tracer — flushes pending spans and releases the
+ * provider/context manager so the next initTracer() can register cleanly.
+ *
+ * Idempotent: safe to call multiple times. Safe to call before initTracer
+ * (no-op).
  */
 export declare function shutdownTracer(): Promise<void>;
 /**

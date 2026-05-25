@@ -76,8 +76,12 @@ function truncateString(value, maxLength) {
 }
 /**
  * Deep-truncate an object, limiting depth, string lengths, and array sizes.
+ *
+ * Cycle-safe: a WeakSet tracks seen objects so user-supplied circular refs
+ * (a real failure mode for context maps that include logger instances,
+ * Express req objects, etc.) cannot stack-overflow the SDK.
  */
-function truncateObject(value, maxDepth, currentDepth = 0) {
+function truncateObject(value, maxDepth, currentDepth = 0, seen) {
     if (currentDepth >= maxDepth)
         return '[max depth]';
     if (typeof value === 'string') {
@@ -86,8 +90,14 @@ function truncateObject(value, maxDepth, currentDepth = 0) {
     if (typeof value !== 'object' || value === null) {
         return value;
     }
+    // Cycle guard — skip already-visited objects so the recursion terminates.
+    const visited = seen ?? new WeakSet();
+    if (visited.has(value)) {
+        return '[circular]';
+    }
+    visited.add(value);
     if (Array.isArray(value)) {
-        const truncated = value.slice(0, MAX_ARRAY_LENGTH).map(item => truncateObject(item, maxDepth, currentDepth + 1));
+        const truncated = value.slice(0, MAX_ARRAY_LENGTH).map(item => truncateObject(item, maxDepth, currentDepth + 1, visited));
         if (value.length > MAX_ARRAY_LENGTH) {
             truncated.push(`[...${value.length - MAX_ARRAY_LENGTH} more items]`);
         }
@@ -95,7 +105,10 @@ function truncateObject(value, maxDepth, currentDepth = 0) {
     }
     const result = {};
     for (const [key, nested] of Object.entries(value)) {
-        result[key] = truncateObject(nested, maxDepth, currentDepth + 1);
+        // Defense-in-depth against prototype pollution from user-supplied keys.
+        if (key === '__proto__' || key === 'constructor' || key === 'prototype')
+            continue;
+        result[key] = truncateObject(nested, maxDepth, currentDepth + 1, visited);
     }
     return result;
 }

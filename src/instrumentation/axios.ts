@@ -19,7 +19,7 @@
  */
 
 import { trace, SpanKind, SpanStatusCode, context } from '@opentelemetry/api'
-import type { TracingCaptureConfig } from '../types/config.js'
+import type { PrivacyCaptureConfig } from '../types/config.js'
 import { getLogger } from '../utils/logger.js'
 
 export interface AxiosInstrumentationOptions {
@@ -46,8 +46,8 @@ const AXIOS_TRACER = trace.getTracer('@pulse-sdk/axios', '1.0.0')
 export function createAxiosInstrumentation(
   enabled: boolean,
   mergedOptions?: Partial<AxiosInstrumentationOptions>,
-  captureConfig?: TracingCaptureConfig
-): { setup: () => void; teardown: () => void } | null {
+  captureConfig?: PrivacyCaptureConfig
+): { setup: () => Promise<void>; teardown: () => void } | null {
   if (!enabled) {
     return null
   }
@@ -68,11 +68,11 @@ export function createAxiosInstrumentation(
   const requestInterceptorPatchers: Array<() => void> = []
   const responseInterceptorPatchers: Array<() => void> = []
 
-  function setup(): void {
+  async function setup(): Promise<void> {
     if (typeof globalThis === 'undefined') return
 
     try {
-      const axiosModule = loadAxios()
+      const axiosModule = await loadAxios()
       if (!axiosModule) {
         logger.debug('Axios not found, skipping instrumentation')
         return
@@ -177,11 +177,25 @@ export function createAxiosInstrumentation(
   return { setup, teardown }
 }
 
-function loadAxios(): Record<string, unknown> | null {
+/**
+ * ESM-safe Axios loader.
+ * Tries dynamic import first (ESM), then falls back to createRequire (CJS interop).
+ */
+async function loadAxios(): Promise<Record<string, unknown> | null> {
+  // ESM-first: try dynamic import
   try {
-    return require('axios')
+    // @ts-expect-error — axios is an optional peer dependency; types may not be installed
+    const mod = await import('axios')
+    return (mod.default ?? mod) as Record<string, unknown>
   } catch {
-    return null
+    // Fallback: createRequire for CJS interop in hybrid environments
+    try {
+      const { createRequire } = await import('node:module')
+      const req = createRequire(import.meta.url)
+      return req('axios') as Record<string, unknown>
+    } catch {
+      return null
+    }
   }
 }
 

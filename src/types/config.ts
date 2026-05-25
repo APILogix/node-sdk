@@ -2,24 +2,18 @@ import { z } from 'zod'
 import type { SDKPlugin, EventProcessor, BreadcrumbProcessor } from './plugin.js'
 import type { SeverityLevel } from './severity.js'
 
-// ─── Plan Tiers ─────────────────────────────────────────────────────────────
+// ─── Plan Tiers (legacy — slated for removal in v5) ─────────────────────────
+//
+// Plan tiers are still referenced by parts of the legacy init pipeline. The
+// remote-config schema below no longer contains plan information — the
+// backend decides everything on its side and ships a flat config to the SDK.
+// These types exist only so older internal code paths continue to compile
+// during the schema migration. They are not part of the wire format.
 
-/**
- * Plan tier determines which SDK features are available.
- * Controlled by the backend — the SDK cannot override plan limits.
- */
 export type PlanTier = 'free' | 'pro' | 'enterprise'
 
-/**
- * Feature gates and limits for a plan.
- * The backend sends these alongside the remote config.
- * The SDK uses these to cap/clamp user-provided overrides.
- */
 export interface PlanFeatures {
-  /** Plan tier name. */
   readonly tier: PlanTier
-
-  // Feature gates — which capabilities are available on this plan
   readonly allowErrors: boolean
   readonly allowPerformance: boolean
   readonly allowTracing: boolean
@@ -28,8 +22,6 @@ export interface PlanFeatures {
   readonly allowCustomPlugins: boolean
   readonly allowBeforeSend: boolean
   readonly allowSamplingOverride: boolean
-
-  // Limits — hard caps for this plan
   readonly maxBreadcrumbs: number
   readonly maxPlugins: number
   readonly maxBatchSize: number
@@ -37,72 +29,93 @@ export interface PlanFeatures {
   readonly allowedCompression: readonly ('gzip' | 'brotli' | 'none')[]
 }
 
-// ─── Remote Config Response (from POST /v1/sdk-config) ──────────────────────
+// ─── Remote Config Response (the wire shape) ────────────────────────────────
+//
+// Every behaviour-affecting knob is in this object. The SDK never invents
+// policy — it executes whatever the backend sends. Schema is versioned so
+// older SDKs can detect breaking changes and refuse to apply them.
 
-/**
- * Full remote config response from the backend.
- * This is the single source of truth for SDK behavior at runtime.
- * Every feature, limit, sampling rule, transport route, security policy,
- * and killswitch is driven by this config.
- */
+/** Bumped on incompatible schema changes. SDKs reject configs with a higher major. */
+export const REMOTE_CONFIG_SCHEMA_VERSION = 1
+
 export interface RemoteConfigResponse {
+  /** Schema version. Must equal REMOTE_CONFIG_SCHEMA_VERSION on the SDK. */
+  readonly schemaVersion: number
+
   readonly sdk: SdkIdentityConfig
   readonly features: FeaturesConfig
   readonly sampling: SamplingConfig
   readonly instrumentation: InstrumentationConfig
-  readonly tracing: TracingRemoteConfig
-  readonly errors: ErrorsConfig
-  readonly logging: LoggingConfig
-  readonly metrics: MetricsRemoteConfig
-  readonly profiling: ProfilingConfig
-  readonly security: SecurityConfig
-  readonly transport: TransportRemoteConfig
+  readonly privacy: PrivacyConfig
   readonly limits: LimitsConfig
   readonly killswitches: KillswitchesConfig
-  readonly versionPolicy: VersionPolicyConfig
-  readonly cache: CacheConfig
+  readonly transport: TransportRemoteConfig
+  readonly runtime: RuntimeConfig
   readonly meta: ConfigMeta
 }
 
 export interface SdkIdentityConfig {
-  readonly dsn: string
   readonly projectId: string
   readonly environment: string
+  readonly release?: string | undefined
 }
 
-/** Feature toggles — if false, the subsystem is NEVER instantiated. */
+// ─── Features ───────────────────────────────────────────────────────────────
+
+/**
+ * Top-level feature toggles. When false, the SDK never instantiates the
+ * subsystem nor processes events of that type.
+ */
 export interface FeaturesConfig {
   readonly tracing: boolean
+  readonly requestCapture: boolean
+  readonly errors: boolean
   readonly metrics: boolean
   readonly logging: boolean
-  readonly errors: boolean
   readonly profiling: boolean
   readonly crons: boolean
   readonly sessionReplay: boolean
-  readonly aiDetection: boolean
-  readonly dynamicSampling: boolean
   readonly runtimeMetrics: boolean
   readonly eventLoopMonitoring: boolean
   readonly gcMonitoring: boolean
-  readonly sourceMaps: boolean
-  readonly releaseTracking: boolean
 }
 
-/** Sampling rates — all values in range [0.0, 1.0]. */
+// ─── Sampling ───────────────────────────────────────────────────────────────
+
+/**
+ * Per-route override map. Each key is a route prefix; the value is a
+ * partial set of per-event-type rates that overlay the global defaults.
+ *
+ * A rate of 0 effectively disables capture for that event type on the
+ * matched route — which is how `/health` and similar are silenced (no more
+ * separate `ignoredRoutes` list).
+ */
+export interface RouteSamplingRates {
+  readonly traces?: number
+  readonly requests?: number
+  readonly errors?: number
+  readonly profiles?: number
+  readonly replays?: number
+  readonly metrics?: number
+}
+
 export interface SamplingConfig {
   readonly traces: number
+  readonly requests: number
   readonly errors: number
   readonly profiles: number
   readonly replays: number
-  /** Per-URL-prefix overrides. Exact-match or prefix-match against req.url. */
-  readonly routes: Readonly<Record<string, number>>
+  /** Per-route overrides keyed by URL prefix. Longest prefix wins. */
+  readonly routes: Readonly<Record<string, RouteSamplingRates>>
 }
 
-// ─── Instrumentation Config ─────────────────────────────────────────────────
+// ─── Instrumentation ────────────────────────────────────────────────────────
 
 export interface InstrumentationConfig {
   readonly http: boolean
   readonly https: boolean
+  readonly fetch: boolean
+  readonly axios: boolean
   readonly fastify: FastifyInstrumentationConfig | boolean
   readonly express: ExpressInstrumentationConfig | boolean
   readonly graphql: GraphQLInstrumentationConfig | boolean
@@ -110,8 +123,6 @@ export interface InstrumentationConfig {
   readonly mongodb: boolean
   readonly redis: boolean
   readonly bullmq: boolean
-  readonly fetch: boolean
-  readonly axios: boolean
 }
 
 export interface FastifyInstrumentationConfig {
@@ -135,19 +146,24 @@ export interface PrismaInstrumentationConfig {
   readonly captureParams: boolean
 }
 
-// ─── Tracing Config ─────────────────────────────────────────────────────────
+// ─── Privacy ────────────────────────────────────────────────────────────────
 
-export interface TracingRemoteConfig {
-  readonly capture: TracingCaptureConfig
-  readonly maxSpansPerTrace: number
-  readonly maxSpanAttributes: number
-  readonly maxTraceDurationMs: number
-  readonly ignoredRoutes: readonly string[]
-  readonly ignoredMethods: readonly string[]
-  readonly propagation: TracingPropagationConfig
+/**
+ * Combined PII / scrubbing config. Replaces the older `security` block.
+ *
+ *   - `capture.*` controls which payload sections are *attached* to events
+ *     (decision happens in middleware before security scrubbing runs).
+ *   - `scrubbing.*` decides what gets redacted when those sections are
+ *     attached.
+ *   - `piiDetection.*` runs heuristic detection on free-form text fields.
+ */
+export interface PrivacyConfig {
+  readonly capture: PrivacyCaptureConfig
+  readonly scrubbing: ScrubbingConfig
+  readonly piiDetection: PiiDetectionConfig
 }
 
-export interface TracingCaptureConfig {
+export interface PrivacyCaptureConfig {
   readonly headers: boolean
   readonly body: boolean
   readonly response: boolean
@@ -155,71 +171,11 @@ export interface TracingCaptureConfig {
   readonly cookies: boolean
 }
 
-export interface TracingPropagationConfig {
-  readonly w3c: boolean
-  readonly baggage: boolean
-  readonly b3: boolean
-}
-
-// ─── Errors Config ──────────────────────────────────────────────────────────
-
-export interface ErrorsConfig {
-  readonly captureUnhandledRejections: boolean
-  readonly captureUncaughtExceptions: boolean
-  readonly captureConsoleErrors: boolean
-  readonly stackTraceLimit: number
-  readonly attachSourceContext: boolean
-  readonly grouping: ErrorGroupingConfig
-}
-
-export interface ErrorGroupingConfig {
-  readonly enabled: boolean
-  readonly normalizePaths: boolean
-}
-
-// ─── Logging Config ─────────────────────────────────────────────────────────
-
-export interface LoggingConfig {
-  readonly enabled: boolean
-  readonly captureConsole: boolean
-  readonly levels: readonly string[]
-  readonly maxLogSize: number
-}
-
-// ─── Metrics Config ─────────────────────────────────────────────────────────
-
-export interface MetricsRemoteConfig {
-  readonly runtime: boolean
-  readonly eventLoop: boolean
-  readonly gc: boolean
-  readonly system: boolean
-  readonly intervalMs: number
-  readonly histograms: boolean
-  readonly percentiles: readonly number[]
-}
-
-// ─── Profiling Config ───────────────────────────────────────────────────────
-
-export interface ProfilingConfig {
-  readonly enabled: boolean
-  readonly cpu: boolean
-  readonly heap: boolean
-  readonly sampleRate: number
-  readonly maxDurationMs: number
-}
-
-// ─── Security Config ────────────────────────────────────────────────────────
-
-export interface SecurityConfig {
-  readonly scrubbing: ScrubbingConfig
-  readonly piiDetection: PiiDetectionConfig
-}
-
 export interface ScrubbingConfig {
   readonly enabled: boolean
   readonly headers: readonly string[]
-  readonly bodyFields: readonly string[]
-  readonly queryParams: readonly string[]
+  /** Body and query parameter keys that should be redacted. */
+  readonly fields: readonly string[]
 }
 
 export interface PiiDetectionConfig {
@@ -229,64 +185,30 @@ export interface PiiDetectionConfig {
   readonly maskIPs: boolean
 }
 
-// ─── Transport Config ───────────────────────────────────────────────────────
+// ─── Limits ─────────────────────────────────────────────────────────────────
 
-export type TransportRouteName =
-  | 'traces'
-  | 'errors'
-  | 'logs'
-  | 'metrics'
-  | 'profiles'
-  | 'replays'
-  | 'crons'
-  | 'envelope'
-
-export interface TransportEndpointConfig {
-  readonly url: string
-  readonly priority: 'critical' | 'high' | 'normal' | 'low'
-  readonly batchSize: number
-  readonly flushIntervalMs: number
-  readonly compression: 'gzip' | 'none'
-  readonly timeoutMs: number
-}
-
-export interface TransportRemoteConfig {
-  readonly endpoints: Readonly<Record<TransportRouteName, TransportEndpointConfig>>
-  readonly shared: TransportSharedConfig
-}
-
-export interface TransportSharedConfig {
-  readonly queue: {
-    readonly maxSize: number
-    readonly overflowStrategy: 'drop_oldest'
-  }
-  readonly retry: {
-    readonly enabled: boolean
-    readonly maxRetries: number
-    readonly backoff: 'exponential'
-    readonly baseDelayMs: number
-  }
-  readonly keepAlive: boolean
-  readonly connectionPool: {
-    readonly maxConnectionsPerRoute: number
-    readonly maxTotalConnections: number
-  }
-}
-
-// ─── Limits Config ──────────────────────────────────────────────────────────
-
+/**
+ * Hard caps that bound the SDK's resource use and per-event size. Backend
+ * sets the values; the SDK clamps each one to a built-in safety ceiling
+ * before applying it (see `SAFETY_CEILINGS` in constants/defaults).
+ */
 export interface LimitsConfig {
-  readonly maxPayloadSize: number
-  readonly maxAttributesPerEvent: number
+  readonly maxSpansPerTrace: number
+  readonly maxSpanAttributes: number
   readonly maxAttributeLength: number
-  readonly maxBreadcrumbs: number
-  readonly maxEventsPerSecond: number
-  readonly maxMemoryUsageMb: number
+  readonly maxPayloadSize: number
+  readonly maxQueueSize: number
+  readonly maxMemoryMb: number
   readonly maxCpuOverheadPercent: number
 }
 
-// ─── Killswitches Config ────────────────────────────────────────────────────
+// ─── Killswitches ───────────────────────────────────────────────────────────
 
+/**
+ * Operational fire-extinguishers. Independent of `features.*` — used to
+ * instantly silence the SDK (or a subsystem) without a redeploy when a
+ * customer needs to stop emission immediately.
+ */
 export interface KillswitchesConfig {
   readonly disableSDK: boolean
   readonly disableTracing: boolean
@@ -297,20 +219,55 @@ export interface KillswitchesConfig {
   readonly disableLogs: boolean
 }
 
-// ─── Version Policy Config ──────────────────────────────────────────────────
+// ─── Transport ──────────────────────────────────────────────────────────────
 
-export interface VersionPolicyConfig {
-  readonly minimumVersion: string
-  readonly latestVersion: string
-  readonly blockedVersions: readonly string[]
-  readonly forceUpgrade: boolean
-  readonly upgradeMessage: string
+/**
+ * Per-event-type ingestion routes. The set of route names is fixed by the
+ * SDK contract — adding a new event type requires an SDK release.
+ */
+export type TransportRouteName =
+  | 'traces'
+  | 'requests'
+  | 'errors'
+  | 'metrics'
+  | 'logs'
+  | 'profiles'
+  | 'events'
+  | 'crons'
+  | 'replays'
+
+export interface TransportRouteConfig {
+  readonly url: string
+  readonly batchSize: number
+  readonly flushIntervalMs: number
+  readonly timeoutMs: number
+  readonly compression: 'gzip' | 'none'
+  /** Internal scheduling priority. Optional in the wire format. */
+  readonly priority?: 'critical' | 'high' | 'normal' | 'low'
 }
 
-// ─── Cache Config ───────────────────────────────────────────────────────────
+export interface TransportRemoteConfig {
+  readonly retry: TransportRetryConfig
+  readonly queue: TransportQueueConfig
+  readonly keepAlive: boolean
+  readonly routes: Readonly<Record<TransportRouteName, TransportRouteConfig>>
+}
 
-export interface CacheConfig {
-  readonly ttlSeconds: number
+export interface TransportRetryConfig {
+  readonly enabled: boolean
+  readonly maxRetries: number
+  readonly backoff: 'exponential' | 'linear' | 'fixed'
+  readonly baseDelayMs: number
+}
+
+export interface TransportQueueConfig {
+  readonly overflowStrategy: 'drop_oldest' | 'drop_newest'
+}
+
+// ─── Runtime (config refresh behaviour) ─────────────────────────────────────
+
+export interface RuntimeConfig {
+  readonly configTtlSeconds: number
   readonly staleWhileRevalidate: boolean
 }
 
@@ -319,7 +276,7 @@ export interface CacheConfig {
 export interface ConfigMeta {
   readonly generatedAt: string
   readonly generatedBy: string
-  readonly configHash: string
+  readonly configHash?: string
 }
 
 // ─── Config Diff ────────────────────────────────────────────────────────────
@@ -330,145 +287,138 @@ export interface ConfigDiff {
   readonly killswitchesChanged: boolean
   readonly samplingChanged: boolean
   readonly transportChanged: boolean
-  readonly securityChanged: boolean
-  readonly tracingChanged: boolean
-  readonly errorsChanged: boolean
-  readonly loggingChanged: boolean
-  readonly metricsChanged: boolean
-  readonly profilingChanged: boolean
+  readonly privacyChanged: boolean
   readonly limitsChanged: boolean
   readonly instrumentationChanged: boolean
+  readonly runtimeChanged: boolean
   readonly changes: ReadonlyMap<string, { old: unknown; new: unknown }>
 }
+
+// ─── Legacy type aliases (compat shims) ─────────────────────────────────────
+//
+// These alias the new shapes to the old type names. They exist so internal
+// code that still imports `TracingCaptureConfig`, `ErrorsConfig`, etc. keeps
+// compiling during the migration. Treat them as deprecated — new code should
+// reach for the new names directly.
+
+/** @deprecated Use {@link PrivacyCaptureConfig}. */
+export type TracingCaptureConfig = PrivacyCaptureConfig
+
+/** @deprecated The `tracing` block is gone; SDK-internal defaults live in `constants/internal-defaults`. */
+export interface TracingRemoteConfig {
+  readonly capture: PrivacyCaptureConfig
+  readonly maxSpansPerTrace: number
+  readonly maxSpanAttributes: number
+  readonly maxTraceDurationMs: number
+  readonly ignoredRoutes: readonly string[]
+  readonly ignoredMethods: readonly string[]
+  readonly propagation: { readonly w3c: boolean; readonly baggage: boolean; readonly b3: boolean }
+}
+
+/** @deprecated The `errors` block is gone. SDK-internal defaults live in `constants/internal-defaults`. */
+export interface ErrorsConfig {
+  readonly captureUnhandledRejections: boolean
+  readonly captureUncaughtExceptions: boolean
+  readonly captureConsoleErrors: boolean
+  readonly stackTraceLimit: number
+  readonly attachSourceContext: boolean
+  readonly grouping: { readonly enabled: boolean; readonly normalizePaths: boolean }
+}
+
+/** @deprecated The `logging` block is gone. SDK-internal defaults live in `constants/internal-defaults`. */
+export interface LoggingConfig {
+  readonly enabled: boolean
+  readonly captureConsole: boolean
+  readonly levels: readonly string[]
+  readonly maxLogSize: number
+}
+
+/** @deprecated The `profiling` block is gone. SDK-internal defaults live in `constants/internal-defaults`. */
+export interface ProfilingConfig {
+  readonly enabled: boolean
+  readonly cpu: boolean
+  readonly heap: boolean
+  readonly sampleRate: number
+  readonly maxDurationMs: number
+}
+
+/** @deprecated Use {@link PrivacyConfig}. */
+export type SecurityConfig = PrivacyConfig
+
+/** @deprecated `versionPolicy` is no longer in the wire schema. */
+export interface VersionPolicyConfig {
+  readonly minimumVersion: string
+  readonly latestVersion: string
+  readonly blockedVersions: readonly string[]
+  readonly forceUpgrade: boolean
+  readonly upgradeMessage: string
+}
+
+/** @deprecated Use {@link RuntimeConfig}. */
+export type CacheConfig = RuntimeConfig
+
+/** @deprecated Use {@link TransportRouteConfig}. */
+export type TransportEndpointConfig = TransportRouteConfig
 
 // ─── SDK Init Options (user-facing) ─────────────────────────────────────────
 
 /**
  * Options passed to `createSDK()` or `init()`.
- * All fields except `apiKey` are optional — features are ON by default,
- * gated by the project's plan tier from the backend.
+ * All fields except `apiKey` are optional. Per-feature toggles and limits
+ * live in remote config — these init options are convenience overrides for
+ * common cases (sample rate, environment, debug flag).
  */
 export interface SDKInitOptions {
-  /** Required. Project API key for authentication. */
   readonly apiKey: string
-
-  /** Service/application name (e.g. "payments-service"). Defaults to "unknown-service". */
   readonly service?: string
-
-  /** Deployment environment (e.g. "production", "staging"). Defaults to "production". */
   readonly environment?: string
-
-  /** Release/version identifier (e.g. "1.4.2", git SHA). Defaults to "0.0.0-unknown". */
   readonly release?: string
-
-  /** Enable/disable error tracking. Default: ON if plan allows. */
   readonly enableErrors?: boolean
-
-  /** Enable/disable performance (request) tracking. Default: ON if plan allows. */
   readonly enablePerformance?: boolean
-
-  /** Enable/disable tracing via OpenTelemetry. Default: ON if plan allows. */
   readonly enableTracing?: boolean
-
-  /** Enable/disable metrics collection. Default: ON if plan allows. */
   readonly enableMetrics?: boolean
-
-  /** Client-side sampling rate override (0.0–1.0). Only available on pro+ plans. */
   readonly sampleRate?: number
-
-  /** Maximum breadcrumbs to retain in the ring buffer. Capped by plan limits. */
   readonly maxBreadcrumbs?: number
-
-  /** Plugins to register during initialization. Plugin count capped by plan. */
   readonly plugins?: readonly SDKPlugin[]
-
-  /** Event processors applied to every event before queuing. */
   readonly eventProcessors?: readonly EventProcessor[]
-
-  /** Breadcrumb processor — return null to drop a breadcrumb. */
   readonly beforeBreadcrumb?: BreadcrumbProcessor
-
-  /** Called before every event is sent — return null to drop. Pro+ plans only. */
   readonly beforeSend?: (event: Record<string, unknown>) => Record<string, unknown> | null | Promise<Record<string, unknown> | null>
-
-  /** Transport configuration overrides. */
   readonly transport?: TransportOptions
-
-  /** Enable SDK debug mode — verbose console.log output. Defaults to false. */
   readonly debug?: boolean
-
-  /** Minimum severity level for SDK internal logging. Defaults to 'warning'. */
   readonly logLevel?: SeverityLevel
-
-  /** Custom server base URL override. Uses SDK_BASE_URL env var or default. */
   readonly baseUrl?: string
-
-  /** Remote config endpoint URL override. Defaults to `${baseUrl}/v1/sdk-config`. */
   readonly configUrl?: string
-
-  /** Graceful shutdown timeout in milliseconds. Defaults to 10000. */
   readonly shutdownTimeoutMs?: number
-
-  /** Source map configuration for de-obfuscating stack frames. */
   readonly sourceMaps?: {
-    /** Additional directories to search for source maps. */
     readonly paths?: readonly string[]
-    /** Enable loading remote source maps via HTTP. Default: false. */
     readonly allowRemote?: boolean
-    /** Embed original source content in resolved frames. Default: false. */
     readonly embedSourceContent?: boolean
   }
-
-  /** Data scrubbing configuration for payload governance. */
   readonly dataScrubbing?: {
-    /** Additional sensitive headers to redact. */
     readonly sensitiveHeaders?: readonly string[]
-    /** Additional sensitive keys to redact from JSON objects. */
     readonly sensitiveKeys?: readonly string[]
-    /** Redact the entire request body. Default: false. */
     readonly redactRequestBody?: boolean
-    /** Redact the entire response body. Default: false. */
     readonly redactResponseBody?: boolean
   }
-
-  /** OpenTelemetry metrics configuration. */
   readonly otelMetrics?: {
-    /** Max bucket size for exponential histograms. Default: 160 */
     readonly maxHistogramBuckets?: number
-    /** Percentiles to compute. Default: [50, 75, 90, 95, 99] */
     readonly percentiles?: number[]
-    /** Cardinality limit per instrument. Default: 2000 */
     readonly cardinalityLimit?: number
   }
 }
 
-/**
- * Transport configuration — controls batching, retries, compression.
- */
 export interface TransportOptions {
-  /** Maximum events per batch. Capped by plan limit. */
   readonly batchSize?: number
-  /** Flush interval in milliseconds. */
   readonly flushIntervalMs?: number
-  /** Maximum retry attempts for failed sends. */
   readonly maxRetries?: number
-  /** Request timeout in milliseconds. */
   readonly timeoutMs?: number
-  /** Enable payload compression ('gzip' | 'brotli' | 'none'). Availability depends on plan. */
   readonly compression?: 'gzip' | 'brotli' | 'none'
-  /** Maximum payload size in bytes. */
   readonly maxPayloadBytes?: number
-  /** Maximum concurrent in-flight batch sends. */
   readonly maxConcurrentSends?: number
 }
 
-// ─── Remote Config (legacy server-provided — kept for backward compat) ──────
+// ─── Legacy /v1/init response (kept for backward compat) ────────────────────
 
-/**
- * Configuration returned by the /v1/init endpoint.
- * This is the server's view of how this project should behave.
- * Now includes plan tier and feature gates.
- */
 export interface RemoteConfig {
   readonly ingestUrl: string
   readonly samplingRate: number
@@ -479,19 +429,12 @@ export interface RemoteConfig {
   readonly flushIntervalMs: number
   readonly maxRetries: number
   readonly maxPayloadBytes: number
-
-  /** Plan tier for this project. Defaults to 'free' if not provided. */
   readonly plan?: PlanTier | undefined
-  /** Plan-specific feature gates. Built from defaults if not provided. */
   readonly planFeatures?: Partial<PlanFeatures> | undefined
 }
 
 // ─── Resolved Config (merged) ───────────────────────────────────────────────
 
-/**
- * Fully resolved configuration — merges user options with remote config,
- * then clamps to plan limits. This is the internal source of truth.
- */
 export interface ResolvedSDKConfig {
   readonly apiKey: string
   readonly service: string
@@ -499,25 +442,20 @@ export interface ResolvedSDKConfig {
   readonly release: string
   readonly debug: boolean
 
-  // Plan
   readonly plan: PlanTier
   readonly planFeatures: PlanFeatures
 
-  // Feature flags (already clamped to plan)
   readonly enableErrors: boolean
   readonly enablePerformance: boolean
   readonly enableTracing: boolean
   readonly enableMetrics: boolean
 
-  // Sampling
   readonly samplingRate: number
 
-  // Limits
   readonly maxBreadcrumbs: number
   readonly maxQueueSize: number
   readonly shutdownTimeoutMs: number
 
-  // Transport
   readonly ingestUrl: string
   readonly batchSize: number
   readonly flushIntervalMs: number
@@ -527,7 +465,6 @@ export interface ResolvedSDKConfig {
   readonly maxPayloadBytes: number
   readonly maxConcurrentSends: number
 
-  // Payload Governance
   readonly dataScrubbing: {
     sensitiveHeaders: string[]
     sensitiveKeys: string[]
@@ -535,14 +472,12 @@ export interface ResolvedSDKConfig {
     redactResponseBody: boolean
   }
 
-  // OTel Metrics
   readonly otelMetrics: {
     maxHistogramBuckets: number
     percentiles: number[]
     cardinalityLimit: number
   }
 
-  /** Remote config response, if available. */
   readonly remoteConfig?: RemoteConfigResponse | undefined
 }
 

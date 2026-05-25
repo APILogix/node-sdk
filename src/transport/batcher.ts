@@ -1,12 +1,19 @@
 /**
  * Batch processor — drains the event queue and sends events in batches.
  *
- * Features:
- * - Circuit breaker integration — skips sends when endpoint is down
- * - Rate limiter integration — prevents burst storms
- * - Concurrent flight limiting — max N in-flight batch sends
- * - Self-rescheduling timer — prevents overlapping ticks
- * - Memory pressure awareness via backpressure monitor
+ * Lifecycle guarantees:
+ * - startBatcher() is idempotent: a second call without an intervening stop
+ *   reconfigures parameters but does NOT stack timers.
+ * - stopBatcher() is idempotent: clearing an already-cleared timer is safe.
+ * - On stop, every stateful subsystem (circuit breaker, rate limiter,
+ *   memory pressure monitor) is reset so a subsequent start begins from a
+ *   clean baseline. This prevents stale OPEN circuits or empty token
+ *   buckets from blocking the next batcher cycle on warm restart.
+ *
+ * Concurrency guarantees:
+ * - flush() takes a single-flight lock — concurrent flush calls (e.g.,
+ *   shutdown + signal handler racing) share one in-flight drain.
+ * - tick() and flush() never run drain operations in parallel.
  */
 
 import { eventQueue } from './queue.js'
@@ -20,7 +27,7 @@ import { client } from '../core/client.js'
 import { persistentStorage } from '../storage/persistent-storage.js'
 import { drainPendingEventProcessing } from '../core/event-pipeline.js'
 
-// ─── State ──────────────────────────────────────────────────────────────────
+// ─── Module State ───────────────────────────────────────────────────────────
 
 let timer: NodeJS.Timeout | null = null
 let batchSize = DEFAULT_BATCH_SIZE
@@ -29,6 +36,7 @@ let logger: Logger = getLogger()
 let inFlightCount = 0
 let maxConcurrentSends = 3
 let isRunning = false
+let inFlightFlush: Promise<void> | null = null
 
 // ─── Subsystems ─────────────────────────────────────────────────────────────
 
@@ -58,19 +66,29 @@ export interface BatcherOptions {
   maxConcurrentSends?: number
 }
 
+/**
+ * Start the batcher. Idempotent: re-running with new options applies them
+ * without stacking timers.
+ */
 export function startBatcher(options?: BatcherOptions): void {
   batchSize = options?.batchSize ?? batchSize
   flushIntervalMs = options?.flushIntervalMs ?? flushIntervalMs
   logger = options?.logger ?? getLogger()
   maxConcurrentSends = options?.maxConcurrentSends ?? maxConcurrentSends
+
+  // Idempotent: an existing timer means the batcher is already running.
+  // We've already updated parameters above so the next tick uses them.
+  if (isRunning && timer) {
+    logger.debug('Batcher already running, parameters updated', {
+      batchSize,
+      flushIntervalMs,
+      maxConcurrentSends,
+    })
+    return
+  }
+
   isRunning = true
-
-  if (timer) return
-
-  // Start memory pressure monitoring
   memoryMonitor.start()
-
-  // Self-rescheduling timer — prevents overlapping ticks
   scheduleNextTick()
 
   logger.debug('Batcher started', {
@@ -80,62 +98,103 @@ export function startBatcher(options?: BatcherOptions): void {
   })
 }
 
+/**
+ * Force-flush the queue.
+ * Concurrent calls share a single in-flight flush — this prevents two
+ * shutdown paths (e.g., user-initiated + signal handler) from double-sending
+ * the same events.
+ *
+ * If retry attempts are exhausted with events still queued, the residual
+ * events are persisted to disk before returning so a subsequent crash
+ * cannot lose them.
+ */
 export async function flush(): Promise<void> {
-  const MAX_FLUSH_ATTEMPTS = 3
-  let attempts = 0
-
-  await drainPendingEventProcessing()
-
-  while (eventQueue.size() > 0) {
-    if (attempts >= MAX_FLUSH_ATTEMPTS) {
-      logger.warn('Flush max attempts reached — remaining events left in queue for next tick', {
-        remainingEvents: eventQueue.size(),
-        maxFlushAttempts: MAX_FLUSH_ATTEMPTS,
-      })
-      break
-    }
-
-    const events = eventQueue.drain(batchSize)
-    if (events.length === 0) break
-
-    try {
-      await sendEvents(events)
-      await persistentStorage.discard(events)
-      circuitBreaker.recordSuccess()
-      logger.info('Flush sent successfully', { eventCount: events.length })
-    } catch (err) {
-      circuitBreaker.recordFailure()
-      for (const event of events) {
-        persistentStorage.persist(event)
-      }
-      // Re-queue events after persistence so retry pressure can spill safely.
-      eventQueue.requeueFront(events)
-      logger.error('Flush failed; events re-queued', {
-        error: err instanceof Error ? err.message : String(err),
-        eventCount: events.length,
-        queueSize: eventQueue.size(),
-        circuitState: circuitBreaker.getState(),
-        flushAttempt: attempts + 1,
-      })
-      attempts += 1
-    }
+  if (inFlightFlush) {
+    return inFlightFlush
   }
 
-  await persistentStorage.flush()
+  inFlightFlush = (async () => {
+    const MAX_FLUSH_ATTEMPTS = 3
+    let attempts = 0
+
+    await drainPendingEventProcessing()
+
+    while (eventQueue.size() > 0) {
+      if (attempts >= MAX_FLUSH_ATTEMPTS) {
+        // Retry budget exhausted. Drain remaining events out of the in-memory
+        // queue and persist them to disk so they survive a process crash.
+        // The replay path on the next init will pick them up.
+        const remaining = eventQueue.drainAll()
+        for (const event of remaining) {
+          persistentStorage.persist(event)
+        }
+        logger.warn('Flush max attempts reached — persisted remaining events to disk', {
+          remainingEvents: remaining.length,
+          maxFlushAttempts: MAX_FLUSH_ATTEMPTS,
+        })
+        break
+      }
+
+      const events = eventQueue.drain(batchSize)
+      if (events.length === 0) break
+
+      try {
+        await sendEvents(events)
+        await persistentStorage.discard(events)
+        circuitBreaker.recordSuccess()
+        logger.info('Flush sent successfully', { eventCount: events.length })
+      } catch (err) {
+        circuitBreaker.recordFailure()
+        for (const event of events) {
+          persistentStorage.persist(event)
+        }
+        // Re-queue events after persistence so retry pressure can spill safely.
+        eventQueue.requeueFront(events)
+        logger.error('Flush failed; events re-queued', {
+          error: err instanceof Error ? err.message : String(err),
+          eventCount: events.length,
+          queueSize: eventQueue.size(),
+          circuitState: circuitBreaker.getState(),
+          flushAttempt: attempts + 1,
+        })
+        attempts += 1
+      }
+    }
+
+    await persistentStorage.flush()
+  })().finally(() => {
+    inFlightFlush = null
+  })
+
+  return inFlightFlush
 }
 
+/**
+ * Stop the batcher. Idempotent: safe to call multiple times.
+ *
+ * Resets all stateful subsystems (circuit breaker, rate limiter, memory
+ * monitor) so a subsequent startBatcher() begins from a clean baseline.
+ * This is critical for warm restarts: a stale OPEN circuit would otherwise
+ * block the very first batch after re-init.
+ */
 export function stopBatcher(): void {
+  if (!isRunning && !timer) return
+
   isRunning = false
+
   if (timer) {
     clearTimeout(timer)
     timer = null
   }
-  // Stop memory pressure monitoring
+
+  // Stop polling memory pressure (frees the 5s interval timer).
   memoryMonitor.stop()
-  // Reset all stateful subsystems to prevent stale state on reinit
+
+  // Reset stateful subsystems to prevent carry-over on reinit.
   inFlightCount = 0
   circuitBreaker.reset()
   rateLimiter.reset()
+
   logger.debug('Batcher stopped')
 }
 
@@ -155,16 +214,17 @@ function scheduleNextTick(): void {
   if (!isRunning) return
 
   timer = setTimeout(async () => {
+    timer = null
     try {
       await tick()
     } catch (err) {
-      // Prevent unhandled rejection from silently killing the batcher
+      // Prevent unhandled rejection from silently killing the batcher.
       logger.error('Batch tick failed unexpectedly', { error: err })
     }
-    scheduleNextTick()
+    if (isRunning) scheduleNextTick()
   }, flushIntervalMs)
 
-  // Don't hold the process open just for batch ticks
+  // Don't hold the process open just for batch ticks.
   timer.unref()
 }
 

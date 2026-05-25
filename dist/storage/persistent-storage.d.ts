@@ -24,6 +24,12 @@ interface PersistentStorageOptions {
     maxEvents?: number;
     /** Event TTL in milliseconds. Default: 24 hours. */
     eventTtlMs?: number;
+    /**
+     * Per file-operation timeout in milliseconds. Default: 5000.
+     * Protects against frozen filesystems (NFS hangs, full disks, etc.) that
+     * would otherwise block the shutdown drain indefinitely.
+     */
+    ioTimeoutMs?: number;
 }
 declare class PersistentStorage {
     private directory;
@@ -32,6 +38,7 @@ declare class PersistentStorage {
     private maxFileSizeBytes;
     private maxEvents;
     private eventTtlMs;
+    private ioTimeoutMs;
     private buffer;
     private flushTimer;
     private eventCount;
@@ -45,6 +52,9 @@ declare class PersistentStorage {
     init(): Promise<Event[]>;
     /**
      * Queue an event for persistence. Events are batched and flushed periodically.
+     *
+     * Callers can invoke this freely from any code path; it returns silently if
+     * storage was never initialized or has already been shut down.
      */
     persist(event: Event): void;
     /**
@@ -78,7 +88,20 @@ declare class PersistentStorage {
      */
     clear(): void;
     /**
-     * Shut down persistent storage — flush remaining events.
+     * Shut down persistent storage.
+     *
+     * Sequence:
+     *   1. Mark storage as not-initialized FIRST so concurrent persist()
+     *      calls bail out and don't push events into a buffer that's about
+     *      to be drained. This guarantees the final flush is monotonic.
+     *   2. Cancel any debounced flush timer (we perform a final flush below).
+     *   3. Flush the in-memory buffer.
+     *   4. Await the serial write chain so every file write that was started
+     *      before shutdown completes before the process exits. Without this
+     *      step, an in-flight rename() can be interrupted mid-write and the
+     *      data file is corrupted on the next replay.
+     *   5. Re-arm the write chain so a subsequent init() does not chain new
+     *      writes onto an old (possibly rejected) chain.
      */
     shutdown(): Promise<void>;
     private scheduleFlush;

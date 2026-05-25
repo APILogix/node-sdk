@@ -38,6 +38,13 @@ export class ConfigManager {
         }
         return ConfigManager.instance;
     }
+    /**
+     * Whether this instance has been destroyed.
+     * Exposed for shutdown/reinit tests and for guard logic in long-running tasks.
+     */
+    isDestroyed() {
+        return this.destroyed;
+    }
     // ─── Initialization ───────────────────────────────────────────────────────
     /**
      * Initialize the config manager.
@@ -138,7 +145,10 @@ export class ConfigManager {
         this.isRefreshing = true;
         try {
             const newRemoteConfig = await this.fetchConfig();
-            if (!newRemoteConfig)
+            // Re-check destroyed state after the network round-trip — the SDK may
+            // have shut down while the request was in flight. Applying the new
+            // config to a destroyed manager would race against re-init.
+            if (!newRemoteConfig || this.destroyed)
                 return;
             const oldConfig = this.currentConfig;
             const merged = this.mergeConfigs(BAKED_IN_REMOTE_CONFIG, newRemoteConfig, this.initOptions ?? {});
@@ -162,9 +172,15 @@ export class ConfigManager {
                 diff.profilingChanged ||
                 diff.limitsChanged ||
                 diff.instrumentationChanged;
-            if (hasChanges) {
-                logger.info(`ConfigManager: Config changed, notifying ${this.listeners.size} listener(s)`);
-                for (const listener of this.listeners) {
+            if (hasChanges && !this.destroyed) {
+                // Snapshot listeners to a stable array — destroy() during dispatch
+                // must not mutate the iterator, and unsubscribe() during a listener
+                // call must not skip subsequent listeners.
+                const snapshot = [...this.listeners];
+                logger.info(`ConfigManager: Config changed, notifying ${snapshot.length} listener(s)`);
+                for (const listener of snapshot) {
+                    if (this.destroyed)
+                        break;
                     try {
                         listener(diff, frozen);
                     }
@@ -187,16 +203,35 @@ export class ConfigManager {
     }
     // ─── Lifecycle ────────────────────────────────────────────────────────────
     /**
-     * Destroy the config manager. Stops all timers and clears listeners.
+     * Destroy the config manager. Idempotent: stops timers, clears listeners,
+     * and detaches the singleton so the next getInstance() call yields a fresh
+     * instance with no carry-over state.
      */
     destroy() {
+        // Idempotent: a second destroy() must be a no-op, but still ensure the
+        // singleton pointer is cleared in case it was rebuilt by accident.
+        if (this.destroyed) {
+            if (ConfigManager.instance === this) {
+                ConfigManager.instance = null;
+            }
+            return;
+        }
         this.destroyed = true;
         this.stopRefreshLoop();
         this.listeners.clear();
-        ConfigManager.instance = null;
+        this.initOptions = null;
+        this.configUrl = '';
+        // Only null the singleton pointer if it still points to this instance —
+        // otherwise we'd clobber a freshly-created instance from a concurrent
+        // init() call that already ran past getInstance().
+        if (ConfigManager.instance === this) {
+            ConfigManager.instance = null;
+        }
     }
     /**
-     * Reset the singleton (for testing).
+     * Reset the singleton (for testing and reinit).
+     * Always returns synchronously — pending background fetches are abandoned
+     * via the destroyed flag rather than awaited.
      */
     static reset() {
         if (ConfigManager.instance) {
@@ -379,9 +414,15 @@ export class ConfigManager {
             return;
         this.retryTimer = setTimeout(() => {
             this.retryTimer = null;
+            // The timer may have fired between scheduling and firing — bail if the
+            // manager was destroyed in the meantime.
+            if (this.destroyed)
+                return;
             void (async () => {
                 try {
                     await this.refreshConfig();
+                    if (this.destroyed)
+                        return;
                     if (this.lastFetchSuccess) {
                         getLogger().info('ConfigManager: Background retry succeeded, starting refresh loop');
                         this.startRefreshLoop();
@@ -391,7 +432,8 @@ export class ConfigManager {
                     }
                 }
                 catch {
-                    this.scheduleRetry();
+                    if (!this.destroyed)
+                        this.scheduleRetry();
                 }
             })();
         }, CONFIG_RETRY_INTERVAL_MS);

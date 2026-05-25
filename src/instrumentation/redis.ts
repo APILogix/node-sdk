@@ -16,7 +16,7 @@ import type {
   RedisInstrumentationConfig as OTelRedisInstrumentationConfig,
   RedisResponseCustomAttributeFunction,
 } from '@opentelemetry/instrumentation-redis-4'
-import type { TracingCaptureConfig } from '../types/config.js'
+import type { PrivacyCaptureConfig } from '../types/config.js'
 
 export interface RedisInstrumentationOptions {
   enabled: boolean
@@ -27,7 +27,7 @@ export interface RedisInstrumentationOptions {
 export function createRedisInstrumentation(
   enabled: boolean,
   mergedOptions?: Partial<RedisInstrumentationOptions>,
-  captureConfig?: TracingCaptureConfig
+  captureConfig?: PrivacyCaptureConfig
 ): OTelRedisInstrumentation | null {
   if (!enabled) {
     return null

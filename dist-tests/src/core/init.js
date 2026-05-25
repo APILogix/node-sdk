@@ -10,7 +10,7 @@
  * 6. Initialize FeatureController (skip class instantiation for disabled features)
  * 7. Initialize SecurityScrubber (pre-transport PII/header scrubbing)
  * 8. Initialize LimitsEngine (rate limiting, attribute trimming)
- * 9. Initialize TransportRouter (8 independent route managers)
+ * 9. Initialize unified TransportRouter (shared connection manager, per-type queues)
  * 10. Register subsystems with FeatureController (tracing, metrics, errors, logging, profiling, crons)
  * 11. Wire config change listeners for hot-swap
  * 12. Start ConfigManager refresh loop
@@ -22,7 +22,6 @@ import { createHash } from 'crypto';
 import { sdkInitOptionsSchema } from '../types/config.js';
 import { client } from './client.js';
 import { sendInitRequest } from '../transport/sender.js';
-import { startBatcher } from '../transport/batcher.js';
 import { setupGlobalErrorHandlers } from '../instrumentation/global-errors.js';
 import { eventQueue } from '../transport/queue.js';
 import { DEFAULT_BASE_URL, DEFAULT_MAX_PAYLOAD_BYTES, DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT_MS } from '../constants/defaults.js';
@@ -30,6 +29,7 @@ import { SDKError } from './errors.js';
 import { getLogger, setDebugMode, setLogLevel } from '../utils/logger.js';
 import { initializePlugins } from '../plugins/index.js';
 import { registerSignalHandlers } from './lifecycle.js';
+import { processEvent } from './event-pipeline.js';
 import { sleep } from '../utils/time.js';
 import { initTracer } from '../tracing/tracer.js';
 import { getSessionManager } from '../session/session-manager.js';
@@ -42,6 +42,7 @@ import { metricsRegistry } from '../metrics/registry.js';
 import { otelMetrics } from '../metrics/otel-adapter.js';
 import { slowRequestDetector } from '../processors/slow-request-detector.js';
 import { registerAutoInstrumentations } from '../instrumentation/auto-instrument.js';
+import { costGovernor } from '../utils/cost-governor.js';
 // ─── New Remote Config Modules ──────────────────────────────────────────────
 import { ConfigManager } from './config-manager.js';
 import { VersionPolicy } from './version-policy.js';
@@ -151,7 +152,9 @@ async function initialize(options) {
         featureController.setDegradedMode(true);
     }
     // ─── Phase 4: Transport Router ──────────────────────────────────────────
-    const transportRouter = TransportRouter.initialize(remoteConfigResponse.transport, options.apiKey);
+    // Awaited so a previous instance fully drains before we send any new event
+    // through the new router. Required for warm-start / hot-reload scenarios.
+    const transportRouter = await TransportRouter.initialize(remoteConfigResponse.transport, options.apiKey);
     if (killswitchEngine.isKilled('disableTransport')) {
         transportRouter.disable();
     }
@@ -159,6 +162,11 @@ async function initialize(options) {
     killswitchEngine.registerSubsystem('disableTransport', {
         shutdown: () => transportRouter.disable(),
         startup: () => transportRouter.enable(),
+    });
+    // Wire cost governor from remote config
+    costGovernor.updateFromConfig({
+        maxSpansPerTrace: remoteConfigResponse.tracing.maxSpansPerTrace,
+        maxTraceDurationMs: remoteConfigResponse.tracing.maxTraceDurationMs,
     });
     // ─── Phase 5: Legacy Init Flow (backward compat) ───────────────────────
     for (let attempt = 1; attempt <= INIT_MAX_ATTEMPTS; attempt += 1) {
@@ -199,7 +207,7 @@ async function initialize(options) {
             // Clamp to plan limits — features above plan are forced OFF with warnings
             const resolvedConfig = clampToPlan(rawConfigWithRemote, planFeatures);
             client.setResolvedConfig(resolvedConfig);
-            // Configure queue
+            // Configure pre-init buffer and apply feature gates before replaying it into transport.
             eventQueue.configure(resolvedConfig.maxQueueSize);
             filterBufferedEvents(resolvedConfig);
             logger.debug('SDK config resolved', {
@@ -241,7 +249,10 @@ async function initialize(options) {
             persistentStorage.configure({ apiKeyHash });
             const persistedEvents = await persistentStorage.init();
             for (const event of persistedEvents) {
-                eventQueue.add(event);
+                transportRouter.send(event);
+            }
+            for (const event of eventQueue.drainAll()) {
+                transportRouter.send(event);
             }
             // Configure source map resolver if options provided
             if (options.sourceMaps) {
@@ -253,13 +264,6 @@ async function initialize(options) {
             }
             // Configure slow request detector
             slowRequestDetector.configure({});
-            // Start legacy batcher (kept for backward compat alongside TransportRouter)
-            startBatcher({
-                batchSize: resolvedConfig.batchSize,
-                flushIntervalMs: resolvedConfig.flushIntervalMs,
-                logger,
-                maxConcurrentSends: resolvedConfig.maxConcurrentSends,
-            });
             setupGlobalErrorHandlers();
             registerSignalHandlers();
             errorDeduplicator.start();
@@ -330,7 +334,7 @@ async function initialize(options) {
             // Register logging subsystem
             await featureController.register('logging', () => {
                 if (!killswitchEngine.isKilled('disableLogs')) {
-                    const loggingSub = LoggingSubsystem.initialize(remoteConfigResponse.logging, (event) => transportRouter.send(event), eventMetadata);
+                    const loggingSub = LoggingSubsystem.initialize(remoteConfigResponse.logging, (event) => { processEvent(event); }, eventMetadata);
                     loggingSub.start();
                 }
             }, () => {
@@ -351,7 +355,7 @@ async function initialize(options) {
             // Register profiling subsystem
             await featureController.register('profiling', async () => {
                 if (!killswitchEngine.isKilled('disableProfiling')) {
-                    const profilingSub = ProfilingSubsystem.initialize(remoteConfigResponse.profiling, (event) => transportRouter.send(event), eventMetadata);
+                    const profilingSub = ProfilingSubsystem.initialize(remoteConfigResponse.profiling, (event) => { processEvent(event); }, eventMetadata);
                     await profilingSub.start();
                 }
             }, async () => {
@@ -405,6 +409,12 @@ async function initialize(options) {
                 }
                 if (diff.transportChanged) {
                     transportRouter.handleConfigChange(diff, newConfig);
+                }
+                if (diff.tracingChanged) {
+                    costGovernor.updateFromConfig({
+                        maxSpansPerTrace: newConfig.tracing.maxSpansPerTrace,
+                        maxTraceDurationMs: newConfig.tracing.maxTraceDurationMs,
+                    });
                 }
                 if (diff.loggingChanged) {
                     const loggingSub = LoggingSubsystem.getInstance();
@@ -674,12 +684,12 @@ function initializeOfflineFallback(options, baseUrl, logger) {
             client.registerEventProcessor(processor);
         }
     }
-    startBatcher({
-        batchSize: resolvedConfig.batchSize,
-        flushIntervalMs: resolvedConfig.flushIntervalMs,
-        logger,
-        maxConcurrentSends: resolvedConfig.maxConcurrentSends,
-    });
+    const transportRouter = TransportRouter.getInstance();
+    if (transportRouter) {
+        for (const event of eventQueue.drainAll()) {
+            transportRouter.send(event);
+        }
+    }
     setupGlobalErrorHandlers();
     registerSignalHandlers();
     errorDeduplicator.start();

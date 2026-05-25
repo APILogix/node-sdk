@@ -18,6 +18,7 @@ export class CostGovernor {
     maxActiveInstruments;
     bytesBudgetPerMinute;
     enableAdaptiveReduction;
+    maxTraceDurationMs;
     // Span tracking per trace: Map<traceId, spanCount>
     traceSpanCounts = new Map();
     traceTimestamps = new Map();
@@ -36,8 +37,25 @@ export class CostGovernor {
         this.maxActiveInstruments = options.maxActiveInstruments ?? 200;
         this.bytesBudgetPerMinute = options.bytesBudgetPerMinute ?? 10 * 1024 * 1024; // 10MB
         this.enableAdaptiveReduction = options.enableAdaptiveReduction ?? true;
+        this.maxTraceDurationMs = options.maxTraceDurationMs ?? 300_000; // 5 minutes
         this.cleanupTimer = setInterval(() => this.cleanup(), 30_000);
         this.cleanupTimer.unref();
+    }
+    /**
+     * Update cost governor limits from remote config.
+     * Called when remote config is loaded or changes at runtime.
+     */
+    updateFromConfig(options) {
+        if (options.maxSpansPerTrace !== undefined) {
+            this.maxSpansPerTrace = options.maxSpansPerTrace;
+        }
+        if (options.maxTraceDurationMs !== undefined) {
+            this.maxTraceDurationMs = options.maxTraceDurationMs;
+        }
+        getLogger().debug('Cost governor updated from config', {
+            maxSpansPerTrace: this.maxSpansPerTrace,
+            maxTraceDurationMs: this.maxTraceDurationMs,
+        });
     }
     /**
      * Check if a new span can be created for the given trace.
@@ -62,6 +80,25 @@ export class CostGovernor {
         // LRU eviction when tracking too many traces
         if (this.traceSpanCounts.size > this.maxTrackedTraces) {
             this.evictOldestTraces();
+        }
+        return true;
+    }
+    /**
+     * Check if a trace can continue based on its duration.
+     * Returns false if the trace has exceeded maxTraceDurationMs.
+     */
+    canContinueTrace(traceId) {
+        const startTime = this.traceTimestamps.get(traceId);
+        if (startTime === undefined)
+            return true; // Unknown trace — allow
+        const elapsed = epochMs() - startTime;
+        if (elapsed > this.maxTraceDurationMs) {
+            getLogger().warn('Trace exceeded max duration', {
+                traceId: traceId.slice(0, 8) + '...',
+                elapsed,
+                maxDurationMs: this.maxTraceDurationMs,
+            });
+            return false;
         }
         return true;
     }

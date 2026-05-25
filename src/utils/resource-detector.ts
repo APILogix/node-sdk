@@ -10,12 +10,22 @@
  * - Kubernetes metadata (via environment variables)
  * - Cloud provider hints (via well-known env vars)
  *
- * This module is modeled after OpenTelemetry's Resource Detectors but
- * with zero external dependencies.
+ * OpenTelemetry owns host/process/os/env detection. The SDK adds product
+ * identity plus fallback container, Kubernetes, and cloud hints.
  */
 
 import { hostname, platform, arch, type, release, cpus, totalmem } from 'os'
-import { resourceFromAttributes, type Resource } from '@opentelemetry/resources'
+import { existsSync, readFileSync } from 'node:fs'
+import {
+  detectResources as detectOtelResources,
+  envDetector,
+  hostDetector,
+  osDetector,
+  processDetector,
+  resourceFromAttributes,
+  serviceInstanceIdDetector,
+  type Resource,
+} from '@opentelemetry/resources'
 import {
   ATTR_SERVICE_NAME,
   ATTR_SERVICE_VERSION,
@@ -58,6 +68,7 @@ export interface ResourceAttributes {
 
 let cachedResource: ResourceAttributes | null = null
 let cachedOtelResource: Resource | null = null
+let cachedOtelResourceKey: string | null = null
 
 /**
  * Detect resource attributes. Results are cached — detection happens once.
@@ -65,6 +76,8 @@ let cachedOtelResource: Resource | null = null
 export function detectResources(sdkVersion: string): ResourceAttributes {
   if (cachedResource) return cachedResource
 
+  const otelAttributes = detectBaseOtelResource().attributes as Record<string, unknown>
+  const containerId = detectContainerId()
   const resource: ResourceAttributes = {
     // SDK identity
     'telemetry.sdk.name': 'pulse-sdk',
@@ -86,13 +99,15 @@ export function detectResources(sdkVersion: string): ResourceAttributes {
     'host.total_memory_mb': Math.round(totalmem() / (1024 * 1024)),
 
     // Container (best-effort)
-    ...(detectContainerId() ? { 'container.id': detectContainerId()! } : {}),
+    ...(containerId ? { 'container.id': containerId } : {}),
 
     // Kubernetes (from standard env vars)
     ...detectKubernetesMetadata(),
 
     // Cloud (from standard env vars)
     ...detectCloudMetadata(),
+
+    ...pickOtelResourceOverrides(otelAttributes),
   }
 
   cachedResource = resource
@@ -106,6 +121,7 @@ export function detectResources(sdkVersion: string): ResourceAttributes {
 export function resetResourceCache(): void {
   cachedResource = null
   cachedOtelResource = null
+  cachedOtelResourceKey = null
 }
 
 /**
@@ -124,9 +140,11 @@ export function detectOtelResource(
   environment: string,
   sdkVersion: string,
 ): Resource {
-  if (cachedOtelResource) return cachedOtelResource
+  const cacheKey = `${service}\0${version}\0${environment}\0${sdkVersion}`
+  if (cachedOtelResource && cachedOtelResourceKey === cacheKey) return cachedOtelResource
 
   const detected = detectResources(sdkVersion)
+  const otelDetected = detectBaseOtelResource()
 
   const attributes: Record<string, string | number | boolean> = {
     // Service identity (OTel semantic conventions)
@@ -189,8 +207,60 @@ export function detectOtelResource(
     attributes['container.runtime'] = 'docker'
   }
 
-  cachedOtelResource = resourceFromAttributes(attributes)
+  cachedOtelResource = otelDetected.merge(resourceFromAttributes(attributes))
+  cachedOtelResourceKey = cacheKey
   return cachedOtelResource
+}
+
+function detectBaseOtelResource(): Resource {
+  try {
+    return detectOtelResources({
+      detectors: [
+        envDetector,
+        processDetector,
+        osDetector,
+        hostDetector,
+        serviceInstanceIdDetector,
+      ],
+    })
+  } catch {
+    return resourceFromAttributes({})
+  }
+}
+
+function pickOtelResourceOverrides(attributes: Record<string, unknown>): Partial<ResourceAttributes> {
+  const picked: Partial<ResourceAttributes> = {}
+  copyString(attributes, picked, 'host.name')
+  copyString(attributes, picked, 'host.arch')
+  copyString(attributes, picked, 'os.type')
+  copyString(attributes, picked, 'os.platform')
+  copyString(attributes, picked, 'os.release')
+  copyString(attributes, picked, 'process.runtime.name')
+  copyString(attributes, picked, 'process.runtime.version')
+  copyNumber(attributes, picked, 'process.pid')
+  return picked
+}
+
+function copyString<K extends keyof ResourceAttributes>(
+  source: Record<string, unknown>,
+  target: Partial<ResourceAttributes>,
+  key: K,
+): void {
+  const value = source[key]
+  if (typeof value === 'string' && value) {
+    ;(target as Record<string, unknown>)[key] = value
+  }
+}
+
+function copyNumber<K extends keyof ResourceAttributes>(
+  source: Record<string, unknown>,
+  target: Partial<ResourceAttributes>,
+  key: K,
+): void {
+  const value = source[key]
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    ;(target as Record<string, unknown>)[key] = value
+  }
 }
 
 // ─── Container Detection ────────────────────────────────────────────────────
@@ -208,9 +278,7 @@ function detectContainerId(): string | undefined {
 
   // Try reading /proc/self/cgroup (Linux-only)
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const fs = require('fs') as typeof import('fs')
-    const cgroup = fs.readFileSync('/proc/self/cgroup', 'utf8')
+    const cgroup = readFileSync('/proc/self/cgroup', 'utf8')
     const match = cgroup.match(/[0-9a-f]{64}/)
     if (match) return match[0]
 
@@ -306,9 +374,7 @@ function detectServerlessEnvironment(): { name: string; platform: string } | nul
 
 function isRunningInDocker(): boolean {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const fs = require('fs') as typeof import('fs')
-    return fs.existsSync('/.dockerenv')
+    return existsSync('/.dockerenv')
   } catch {
     return false
   }

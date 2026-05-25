@@ -13,7 +13,9 @@
  * Note: The inspector API requires --inspect flag or explicit Session creation.
  * The subsystem gracefully degrades if inspector is not available.
  */
+import { getRequestContext } from '../core/context.js';
 import { getLogger } from '../utils/logger.js';
+import { trace } from '@opentelemetry/api';
 export class ProfilingSubsystem {
     static instance = null;
     config;
@@ -73,7 +75,16 @@ export class ProfilingSubsystem {
         const session = this.inspectorSession;
         if (!session)
             return false;
-        const key = `cpu:${traceId}`;
+        const activeSpan = trace.getActiveSpan();
+        const activeSpanContext = activeSpan?.spanContext();
+        const resolvedTraceId = traceId ?? activeSpanContext?.traceId;
+        if (!resolvedTraceId)
+            return false;
+        if (!this.shouldProfile(resolvedTraceId))
+            return false;
+        const resolvedSpanId = spanId ?? activeSpanContext?.spanId;
+        const requestId = getRequestContext()?.requestId;
+        const key = `cpu:${resolvedTraceId}`;
         if (this.activeProfiles.has(key))
             return false;
         try {
@@ -81,19 +92,25 @@ export class ProfilingSubsystem {
             await session.post('Profiler.start');
             const startTime = Date.now();
             const timeoutHandle = setTimeout(() => {
-                void this.stopCpuProfile(traceId);
+                void this.stopCpuProfile(resolvedTraceId);
             }, this.config.maxDurationMs);
             if (typeof timeoutHandle === 'object' && 'unref' in timeoutHandle) {
                 ;
                 timeoutHandle.unref();
             }
             this.activeProfiles.set(key, {
-                traceId,
-                spanId,
+                traceId: resolvedTraceId,
+                spanId: resolvedSpanId,
+                requestId,
                 profileType: 'cpu',
                 startTime,
                 timeoutHandle,
             });
+            activeSpan?.addEvent('pulse.profile.start', {
+                'profile.type': 'cpu',
+                'profile.id': key,
+            });
+            activeSpan?.setAttribute('pulse.profile.active', true);
             return true;
         }
         catch (err) {
@@ -123,6 +140,7 @@ export class ProfilingSubsystem {
                 profileType: 'cpu',
                 traceId: active.traceId,
                 spanId: active.spanId,
+                requestId: active.requestId,
                 startTime: active.startTime,
                 endTime,
                 duration: endTime - active.startTime,
@@ -131,6 +149,14 @@ export class ProfilingSubsystem {
                 metadata: this.metadata,
             };
             this.emitter(event);
+            const activeSpan = trace.getActiveSpan();
+            if (activeSpan?.spanContext().traceId === active.traceId) {
+                activeSpan.addEvent('pulse.profile.stop', {
+                    'profile.type': 'cpu',
+                    'profile.duration_ms': endTime - active.startTime,
+                });
+                activeSpan.setAttribute('pulse.profile.active', false);
+            }
         }
         catch (err) {
             getLogger().warn(`[ProfilingSubsystem] Failed to stop CPU profile: ${err instanceof Error ? err.message : String(err)}`);
@@ -172,6 +198,18 @@ export class ProfilingSubsystem {
         if (type === 'heap' && !this.config.heap)
             return false;
         return true;
+    }
+    shouldProfile(traceId) {
+        if (this.config.sampleRate >= 1)
+            return true;
+        if (this.config.sampleRate <= 0)
+            return false;
+        let hash = 2166136261;
+        for (let i = 0; i < traceId.length; i += 1) {
+            hash ^= traceId.charCodeAt(i);
+            hash = Math.imul(hash, 16777619);
+        }
+        return (hash >>> 0) / 0xffffffff < this.config.sampleRate;
     }
     destroy() {
         void this.stop();

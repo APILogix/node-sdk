@@ -37,11 +37,11 @@ export function createAxiosInstrumentation(enabled, mergedOptions, captureConfig
     const logger = getLogger();
     const requestInterceptorPatchers = [];
     const responseInterceptorPatchers = [];
-    function setup() {
+    async function setup() {
         if (typeof globalThis === 'undefined')
             return;
         try {
-            const axiosModule = loadAxios();
+            const axiosModule = await loadAxios();
             if (!axiosModule) {
                 logger.debug('Axios not found, skipping instrumentation');
                 return;
@@ -139,12 +139,27 @@ export function createAxiosInstrumentation(enabled, mergedOptions, captureConfig
     }
     return { setup, teardown };
 }
-function loadAxios() {
+/**
+ * ESM-safe Axios loader.
+ * Tries dynamic import first (ESM), then falls back to createRequire (CJS interop).
+ */
+async function loadAxios() {
+    // ESM-first: try dynamic import
     try {
-        return require('axios');
+        // @ts-expect-error — axios is an optional peer dependency; types may not be installed
+        const mod = await import('axios');
+        return (mod.default ?? mod);
     }
     catch {
-        return null;
+        // Fallback: createRequire for CJS interop in hybrid environments
+        try {
+            const { createRequire } = await import('node:module');
+            const req = createRequire(import.meta.url);
+            return req('axios');
+        }
+        catch {
+            return null;
+        }
     }
 }
 function buildUrl(baseURL, url) {

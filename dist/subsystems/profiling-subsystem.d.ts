@@ -34,16 +34,22 @@ export declare class ProfilingSubsystem {
      * Start a CPU profile for the given trace.
      * Call this at the beginning of a request if sampling decides to profile.
      */
-    startCpuProfile(traceId: string, spanId?: string): Promise<boolean>;
+    startCpuProfile(traceId?: string, spanId?: string): Promise<boolean>;
     /**
      * Stop a CPU profile and emit the ProfileEvent.
      */
     stopCpuProfile(traceId: string): Promise<void>;
-    /** Handle config change. */
+    /**
+     * Handle config change. Same pattern as `LoggingSubsystem.handleConfigChange`:
+     * `init.ts` synthesizes a `profiling` block (SDK defaults + `features.profiling`)
+     * onto the config object. We pull it back out via a typed cast since the
+     * public schema no longer carries the field.
+     */
     handleConfigChange(_diff: ConfigDiff, newConfig: Readonly<RemoteConfigResponse>): void;
     /** Stop all active profiles and disconnect inspector. */
     stop(): Promise<void>;
     private canProfile;
+    private shouldProfile;
     destroy(): void;
     static reset(): void;
 }

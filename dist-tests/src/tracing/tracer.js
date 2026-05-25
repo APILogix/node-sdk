@@ -21,7 +21,7 @@ import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-ho
 import { PulseSpan } from './span.js';
 import { getLogger } from '../utils/logger.js';
 import { processEvent } from '../core/event-pipeline.js';
-import { getRequestContext } from '../core/context.js';
+import { attachRequestContextToActiveSpan, getRequestContext, PULSE_CONTEXT_ATTRIBUTES, } from '../core/context.js';
 import { costGovernor } from '../utils/cost-governor.js';
 import { RemoteConfigSampler } from './remote-config-sampler.js';
 import { ConfigManager } from '../core/config-manager.js';
@@ -55,7 +55,11 @@ class PipelineSpanExporter {
                 // Cost governance: check span-per-trace limits
                 const traceId = span.spanContext().traceId;
                 if (!costGovernor.canCreateSpan(traceId)) {
-                    continue; // Drop span — trace exceeded budget
+                    continue; // Drop span — trace exceeded span budget
+                }
+                // Cost governance: check trace duration limits
+                if (!costGovernor.canContinueTrace(traceId)) {
+                    continue; // Drop span — trace exceeded max duration
                 }
                 const traceEvent = this.spanToEvent(span);
                 processEvent(traceEvent);
@@ -98,11 +102,8 @@ class PipelineSpanExporter {
         const attrs = span.attributes;
         const status = span.status;
         const durationMs = hrTimeToMs(span.duration);
-        // parentSpanId is available at runtime on ReadableSpan but not typed on the interface
-        const parentSpanId = span.parentSpanId;
+        const parentSpanId = span.parentSpanContext?.spanId;
         const statusLabel = status.code === 0 ? 'unset' : status.code === 1 ? 'ok' : 'error';
-        // Read current request context for tenant/session enrichment
-        const requestCtx = getRequestContext();
         // Apply tracing.capture.* security gates from remote config
         let filteredAttrs = Object.fromEntries(Object.entries(attrs).filter(([, v]) => v !== undefined));
         try {
@@ -164,11 +165,13 @@ class PipelineSpanExporter {
                 service: sdkConfig?.service ?? '',
                 environment: sdkConfig?.environment ?? '',
             },
-            // Tenant/session correlation from request context
-            requestId: requestCtx?.requestId,
-            sessionId: requestCtx?.sessionId,
-            userId: requestCtx?.userId,
-            tenantId: requestCtx?.extra?.['tenantId'],
+            // Internal marker allows shutdown force-flush to route finished spans
+            // while rejecting new user-captured events. Stripped by event pipeline.
+            __pulseInternal: true,
+            requestId: attrString(attrs[PULSE_CONTEXT_ATTRIBUTES.requestId]),
+            sessionId: attrString(attrs[PULSE_CONTEXT_ATTRIBUTES.sessionId]),
+            userId: attrString(attrs[PULSE_CONTEXT_ATTRIBUTES.userId]),
+            tenantId: attrString(attrs[PULSE_CONTEXT_ATTRIBUTES.tenantId]),
         };
     }
 }
@@ -275,8 +278,7 @@ export function startSpan(name, options) {
     }
     try {
         const otelOptions = {};
-        if (options?.attributes)
-            otelOptions.attributes = options.attributes;
+        otelOptions.attributes = withRequestContextAttributes(options?.attributes);
         if (options?.startTime)
             otelOptions.startTime = options.startTime;
         if (options?.links) {
@@ -319,6 +321,7 @@ export async function withSpan(name, fn, options) {
     }
     const otelOptions = toOtelSpanOptions(options);
     return tracer.startActiveSpan(name, otelOptions, async (span) => {
+        attachRequestContextToActiveSpan();
         const pulseSpan = new PulseSpan(span);
         try {
             const result = await fn(pulseSpan);
@@ -361,6 +364,7 @@ export function withSpanSync(name, fn, options) {
     }
     const otelOptions = toOtelSpanOptions(options);
     return tracer.startActiveSpan(name, otelOptions, span => {
+        attachRequestContextToActiveSpan();
         const pulseSpan = new PulseSpan(span);
         try {
             const result = fn(pulseSpan);
@@ -405,26 +409,51 @@ export function withContext(ctx, fn) {
 }
 // ─── Shutdown ───────────────────────────────────────────────────────────────
 /**
- * Gracefully shut down the tracer — flushes pending spans.
- * Called during SDK shutdown.
+ * Gracefully shut down the tracer — flushes pending spans and releases the
+ * provider/context manager so the next initTracer() can register cleanly.
+ *
+ * Idempotent: safe to call multiple times. Safe to call before initTracer
+ * (no-op).
  */
 export async function shutdownTracer() {
     const logger = getLogger();
-    if (!provider) {
-        logger.debug('Tracer shutdown skipped — not initialized');
-        return;
-    }
-    try {
-        await provider.forceFlush();
-        if (ownsProvider) {
-            await provider.shutdown();
-            delete globalThis[TRACER_PROVIDER_SYMBOL];
-        }
+    // Snapshot the provider into a local so concurrent calls or a reentrant
+    // initTracer() during shutdown can't see a half-cleared module.
+    const localProvider = provider;
+    const ownsLocal = ownsProvider;
+    if (!localProvider) {
+        // Even with no provider, ensure derived state is reset so a stale
+        // `initialized` flag from a partial init doesn't block reinit.
         initialized = false;
-        provider = null;
         tracer = null;
         sdkConfig = null;
         ownsProvider = false;
+        // Clear the global guard if we own it — otherwise leave it for
+        // whoever registered the provider externally.
+        if (ownsLocal) {
+            delete globalThis[TRACER_PROVIDER_SYMBOL];
+        }
+        logger.debug('Tracer shutdown skipped — no active provider');
+        return;
+    }
+    // Pre-clear module state so concurrent shutdown calls don't double-call
+    // forceFlush/shutdown on the same provider instance.
+    provider = null;
+    tracer = null;
+    sdkConfig = null;
+    ownsProvider = false;
+    initialized = false;
+    try {
+        await localProvider.forceFlush();
+    }
+    catch (err) {
+        logger.error('Failed to flush tracer during shutdown', { error: err });
+    }
+    try {
+        if (ownsLocal) {
+            await localProvider.shutdown();
+            delete globalThis[TRACER_PROVIDER_SYMBOL];
+        }
         logger.info('OpenTelemetry tracer shut down');
     }
     catch (err) {
@@ -450,13 +479,32 @@ function hrTimeToMs(hrTime) {
 }
 function toOtelSpanOptions(options) {
     const otelOptions = {};
-    if (options?.attributes)
-        otelOptions.attributes = options.attributes;
+    otelOptions.attributes = withRequestContextAttributes(options?.attributes);
     if (options?.startTime)
         otelOptions.startTime = options.startTime;
     if (options?.links)
         otelOptions.links = PulseSpan.toOTelLinks(options.links);
     return otelOptions;
+}
+function withRequestContextAttributes(attributes) {
+    const requestCtx = getRequestContext();
+    if (!requestCtx)
+        return attributes ?? {};
+    const tenantId = requestCtx.extra?.['tenantId'];
+    const enriched = {
+        ...(attributes ?? {}),
+        [PULSE_CONTEXT_ATTRIBUTES.requestId]: requestCtx.requestId,
+    };
+    if (requestCtx.sessionId)
+        enriched[PULSE_CONTEXT_ATTRIBUTES.sessionId] = requestCtx.sessionId;
+    if (requestCtx.userId)
+        enriched[PULSE_CONTEXT_ATTRIBUTES.userId] = requestCtx.userId;
+    if (typeof tenantId === 'string' && tenantId)
+        enriched[PULSE_CONTEXT_ATTRIBUTES.tenantId] = tenantId;
+    return enriched;
+}
+function attrString(value) {
+    return typeof value === 'string' && value.length > 0 ? value : undefined;
 }
 function getOtelGlobalApi() {
     const key = Symbol.for('opentelemetry.js.api.1');

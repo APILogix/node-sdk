@@ -10,20 +10,24 @@
  * - Kubernetes metadata (via environment variables)
  * - Cloud provider hints (via well-known env vars)
  *
- * This module is modeled after OpenTelemetry's Resource Detectors but
- * with zero external dependencies.
+ * OpenTelemetry owns host/process/os/env detection. The SDK adds product
+ * identity plus fallback container, Kubernetes, and cloud hints.
  */
 import { hostname, platform, arch, type, release, cpus, totalmem } from 'os';
-import { resourceFromAttributes } from '@opentelemetry/resources';
+import { existsSync, readFileSync } from 'node:fs';
+import { detectResources as detectOtelResources, envDetector, hostDetector, osDetector, processDetector, resourceFromAttributes, serviceInstanceIdDetector, } from '@opentelemetry/resources';
 import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION, ATTR_DEPLOYMENT_ENVIRONMENT_NAME, } from '@opentelemetry/semantic-conventions';
 let cachedResource = null;
 let cachedOtelResource = null;
+let cachedOtelResourceKey = null;
 /**
  * Detect resource attributes. Results are cached — detection happens once.
  */
 export function detectResources(sdkVersion) {
     if (cachedResource)
         return cachedResource;
+    const otelAttributes = detectBaseOtelResource().attributes;
+    const containerId = detectContainerId();
     const resource = {
         // SDK identity
         'telemetry.sdk.name': 'pulse-sdk',
@@ -42,11 +46,12 @@ export function detectResources(sdkVersion) {
         'host.cpu_count': cpus().length,
         'host.total_memory_mb': Math.round(totalmem() / (1024 * 1024)),
         // Container (best-effort)
-        ...(detectContainerId() ? { 'container.id': detectContainerId() } : {}),
+        ...(containerId ? { 'container.id': containerId } : {}),
         // Kubernetes (from standard env vars)
         ...detectKubernetesMetadata(),
         // Cloud (from standard env vars)
         ...detectCloudMetadata(),
+        ...pickOtelResourceOverrides(otelAttributes),
     };
     cachedResource = resource;
     return resource;
@@ -58,6 +63,7 @@ export function detectResources(sdkVersion) {
 export function resetResourceCache() {
     cachedResource = null;
     cachedOtelResource = null;
+    cachedOtelResourceKey = null;
 }
 /**
  * Detect and create an OTel Resource with all available metadata.
@@ -70,9 +76,11 @@ export function resetResourceCache() {
  * @param sdkVersion - SDK version string
  */
 export function detectOtelResource(service, version, environment, sdkVersion) {
-    if (cachedOtelResource)
+    const cacheKey = `${service}\0${version}\0${environment}\0${sdkVersion}`;
+    if (cachedOtelResource && cachedOtelResourceKey === cacheKey)
         return cachedOtelResource;
     const detected = detectResources(sdkVersion);
+    const otelDetected = detectBaseOtelResource();
     const attributes = {
         // Service identity (OTel semantic conventions)
         [ATTR_SERVICE_NAME]: service,
@@ -127,8 +135,51 @@ export function detectOtelResource(service, version, environment, sdkVersion) {
     if (isRunningInDocker()) {
         attributes['container.runtime'] = 'docker';
     }
-    cachedOtelResource = resourceFromAttributes(attributes);
+    cachedOtelResource = otelDetected.merge(resourceFromAttributes(attributes));
+    cachedOtelResourceKey = cacheKey;
     return cachedOtelResource;
+}
+function detectBaseOtelResource() {
+    try {
+        return detectOtelResources({
+            detectors: [
+                envDetector,
+                processDetector,
+                osDetector,
+                hostDetector,
+                serviceInstanceIdDetector,
+            ],
+        });
+    }
+    catch {
+        return resourceFromAttributes({});
+    }
+}
+function pickOtelResourceOverrides(attributes) {
+    const picked = {};
+    copyString(attributes, picked, 'host.name');
+    copyString(attributes, picked, 'host.arch');
+    copyString(attributes, picked, 'os.type');
+    copyString(attributes, picked, 'os.platform');
+    copyString(attributes, picked, 'os.release');
+    copyString(attributes, picked, 'process.runtime.name');
+    copyString(attributes, picked, 'process.runtime.version');
+    copyNumber(attributes, picked, 'process.pid');
+    return picked;
+}
+function copyString(source, target, key) {
+    const value = source[key];
+    if (typeof value === 'string' && value) {
+        ;
+        target[key] = value;
+    }
+}
+function copyNumber(source, target, key) {
+    const value = source[key];
+    if (typeof value === 'number' && Number.isFinite(value)) {
+        ;
+        target[key] = value;
+    }
 }
 // ─── Container Detection ────────────────────────────────────────────────────
 /**
@@ -144,9 +195,7 @@ function detectContainerId() {
     }
     // Try reading /proc/self/cgroup (Linux-only)
     try {
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
-        const fs = require('fs');
-        const cgroup = fs.readFileSync('/proc/self/cgroup', 'utf8');
+        const cgroup = readFileSync('/proc/self/cgroup', 'utf8');
         const match = cgroup.match(/[0-9a-f]{64}/);
         if (match)
             return match[0];
@@ -230,9 +279,7 @@ function detectServerlessEnvironment() {
 // ─── Docker Detection ───────────────────────────────────────────────────────
 function isRunningInDocker() {
     try {
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
-        const fs = require('fs');
-        return fs.existsSync('/.dockerenv');
+        return existsSync('/.dockerenv');
     }
     catch {
         return false;

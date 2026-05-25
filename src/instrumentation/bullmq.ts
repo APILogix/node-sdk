@@ -12,7 +12,7 @@
  */
 
 import { BullMQInstrumentation as OTelBullMQInstrumentation } from 'opentelemetry-instrumentation-bullmq'
-import type { TracingCaptureConfig } from '../types/config.js'
+import type { PrivacyCaptureConfig } from '../types/config.js'
 
 export interface BullMQInstrumentationOptions {
   enabled: boolean
@@ -25,7 +25,7 @@ export interface BullMQInstrumentationOptions {
 export function createBullMQInstrumentation(
   enabled: boolean,
   mergedOptions?: Partial<BullMQInstrumentationOptions>,
-  captureConfig?: TracingCaptureConfig
+  captureConfig?: PrivacyCaptureConfig
 ): OTelBullMQInstrumentation | null {
   if (!enabled) {
     return null

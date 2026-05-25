@@ -13,9 +13,21 @@
  * via a single assignment — no concurrent mutation is possible.
  */
 import { SDK_VERSION, SDK_NAME } from '../constants/version.js';
-import { BAKED_IN_REMOTE_CONFIG, CONFIG_FETCH_TIMEOUT_MS, CONFIG_RETRY_INTERVAL_MS } from '../constants/defaults.js';
+import { BAKED_IN_REMOTE_CONFIG, CONFIG_FETCH_TIMEOUT_MS, CONFIG_RETRY_INTERVAL_MS, SAFETY_CEILINGS, SAFETY_FLOORS, } from '../constants/defaults.js';
+import { REMOTE_CONFIG_SCHEMA_VERSION } from '../types/config.js';
 import { diffConfigs } from './config-differ.js';
 import { getLogger } from '../utils/logger.js';
+// ─── Local helpers ──────────────────────────────────────────────────────────
+function clampMax(value, ceiling) {
+    if (typeof value !== 'number' || !Number.isFinite(value))
+        return ceiling;
+    return Math.min(Math.max(0, value), ceiling);
+}
+function clampRange(value, floor, ceiling) {
+    if (typeof value !== 'number' || !Number.isFinite(value))
+        return floor;
+    return Math.min(Math.max(floor, value), ceiling);
+}
 export class ConfigManager {
     static instance = null;
     /** Current frozen config snapshot — swapped atomically on refresh. */
@@ -37,6 +49,13 @@ export class ConfigManager {
             ConfigManager.instance = new ConfigManager();
         }
         return ConfigManager.instance;
+    }
+    /**
+     * Whether this instance has been destroyed.
+     * Exposed for shutdown/reinit tests and for guard logic in long-running tasks.
+     */
+    isDestroyed() {
+        return this.destroyed;
     }
     // ─── Initialization ───────────────────────────────────────────────────────
     /**
@@ -97,12 +116,12 @@ export class ConfigManager {
     // ─── Refresh Loop ─────────────────────────────────────────────────────────
     /**
      * Start the background config refresh loop.
-     * Interval is determined by cache.ttlSeconds from the current config.
+     * Interval is determined by runtime.configTtlSeconds from the current config.
      */
     startRefreshLoop() {
         if (this.refreshTimer || this.destroyed)
             return;
-        const ttlMs = (this.currentConfig.cache?.ttlSeconds ?? 300) * 1000;
+        const ttlMs = (this.currentConfig.runtime?.configTtlSeconds ?? 300) * 1000;
         this.refreshTimer = setInterval(() => {
             void this.refreshConfig();
         }, ttlMs);
@@ -138,7 +157,10 @@ export class ConfigManager {
         this.isRefreshing = true;
         try {
             const newRemoteConfig = await this.fetchConfig();
-            if (!newRemoteConfig)
+            // Re-check destroyed state after the network round-trip — the SDK may
+            // have shut down while the request was in flight. Applying the new
+            // config to a destroyed manager would race against re-init.
+            if (!newRemoteConfig || this.destroyed)
                 return;
             const oldConfig = this.currentConfig;
             const merged = this.mergeConfigs(BAKED_IN_REMOTE_CONFIG, newRemoteConfig, this.initOptions ?? {});
@@ -154,17 +176,19 @@ export class ConfigManager {
                 diff.killswitchesChanged ||
                 diff.samplingChanged ||
                 diff.transportChanged ||
-                diff.securityChanged ||
-                diff.tracingChanged ||
-                diff.errorsChanged ||
-                diff.loggingChanged ||
-                diff.metricsChanged ||
-                diff.profilingChanged ||
+                diff.privacyChanged ||
                 diff.limitsChanged ||
-                diff.instrumentationChanged;
-            if (hasChanges) {
-                logger.info(`ConfigManager: Config changed, notifying ${this.listeners.size} listener(s)`);
-                for (const listener of this.listeners) {
+                diff.instrumentationChanged ||
+                diff.runtimeChanged;
+            if (hasChanges && !this.destroyed) {
+                // Snapshot listeners to a stable array — destroy() during dispatch
+                // must not mutate the iterator, and unsubscribe() during a listener
+                // call must not skip subsequent listeners.
+                const snapshot = [...this.listeners];
+                logger.info(`ConfigManager: Config changed, notifying ${snapshot.length} listener(s)`);
+                for (const listener of snapshot) {
+                    if (this.destroyed)
+                        break;
                     try {
                         listener(diff, frozen);
                     }
@@ -176,7 +200,7 @@ export class ConfigManager {
         }
         catch (err) {
             logger.warn(`ConfigManager: Refresh failed: ${err instanceof Error ? err.message : String(err)}`);
-            if (!this.currentConfig.cache?.staleWhileRevalidate) {
+            if (!this.currentConfig.runtime?.staleWhileRevalidate) {
                 logger.warn('ConfigManager: staleWhileRevalidate is off, entering degraded mode');
             }
             // Otherwise: keep using stale config (staleWhileRevalidate behavior)
@@ -187,16 +211,35 @@ export class ConfigManager {
     }
     // ─── Lifecycle ────────────────────────────────────────────────────────────
     /**
-     * Destroy the config manager. Stops all timers and clears listeners.
+     * Destroy the config manager. Idempotent: stops timers, clears listeners,
+     * and detaches the singleton so the next getInstance() call yields a fresh
+     * instance with no carry-over state.
      */
     destroy() {
+        // Idempotent: a second destroy() must be a no-op, but still ensure the
+        // singleton pointer is cleared in case it was rebuilt by accident.
+        if (this.destroyed) {
+            if (ConfigManager.instance === this) {
+                ConfigManager.instance = null;
+            }
+            return;
+        }
         this.destroyed = true;
         this.stopRefreshLoop();
         this.listeners.clear();
-        ConfigManager.instance = null;
+        this.initOptions = null;
+        this.configUrl = '';
+        // Only null the singleton pointer if it still points to this instance —
+        // otherwise we'd clobber a freshly-created instance from a concurrent
+        // init() call that already ran past getInstance().
+        if (ConfigManager.instance === this) {
+            ConfigManager.instance = null;
+        }
     }
     /**
-     * Reset the singleton (for testing).
+     * Reset the singleton (for testing and reinit).
+     * Always returns synchronously — pending background fetches are abandoned
+     * via the destroyed flag rather than awaited.
      */
     static reset() {
         if (ConfigManager.instance) {
@@ -238,7 +281,15 @@ export class ConfigManager {
             if (!response.ok) {
                 throw new Error(`HTTP ${response.status}: ${response.statusText}`);
             }
-            return (await response.json());
+            const parsed = (await response.json());
+            // Schema version gate — refuse configs from a newer major than this
+            // SDK understands. The backend can keep adding fields within the same
+            // major (forward-compatible deep merge), but a major bump means the
+            // shape changed in a way that could break older SDKs.
+            if (typeof parsed?.schemaVersion === 'number' && parsed.schemaVersion > REMOTE_CONFIG_SCHEMA_VERSION) {
+                throw new Error(`Remote config schema version ${parsed.schemaVersion} is newer than SDK-supported version ${REMOTE_CONFIG_SCHEMA_VERSION}; SDK upgrade required.`);
+            }
+            return parsed;
         }
         finally {
             clearTimeout(timeout);
@@ -246,28 +297,28 @@ export class ConfigManager {
     }
     /**
      * Detect SDK capabilities (feature strings the binary supports).
+     * The backend uses this list to know what knobs to send in the response.
      */
     detectCapabilities() {
         return [
             'tracing',
+            'requestCapture',
             'errors',
             'metrics',
             'logging',
             'profiling',
             'crons',
             'sessionReplay',
-            'dynamicSampling',
             'runtimeMetrics',
             'eventLoopMonitoring',
             'gcMonitoring',
-            'sourceMaps',
-            'releaseTracking',
-            'aiDetection',
         ];
     }
     // ─── Private: Merge ───────────────────────────────────────────────────────
     /**
      * Deep merge configs: base → remote → user overrides (last wins).
+     * After merging, applies safety ceilings/floors so backend mistakes
+     * cannot exceed sane SDK-side limits.
      */
     mergeConfigs(base, remote, options) {
         const merged = structuredClone(base);
@@ -278,7 +329,67 @@ export class ConfigManager {
         if (userOverrides) {
             this.deepMerge(merged, userOverrides);
         }
-        return merged;
+        return this.applySafetyClamps(merged);
+    }
+    /**
+     * Apply hard safety ceilings (and a couple of floors) to numeric fields
+     * the backend can set. The SDK never trusts a remote value above these
+     * bounds — a typo'd config that says `maxQueueSize: 1e9` would otherwise
+     * happily try to allocate enough memory to OOM the host.
+     *
+     * Also performs a no-op when `applyOverridesOnly` is true and the merged
+     * config is already a baked-in / safe-defaults snapshot. The clamps are
+     * idempotent so it's always safe to run them, but skipping the work
+     * during init when no remote config arrived saves a few ms.
+     */
+    applySafetyClamps(config) {
+        const c = config;
+        // limits — clamp every numeric field.
+        const limits = (c['limits'] ?? {});
+        c['limits'] = {
+            ...limits,
+            maxSpansPerTrace: clampMax(limits['maxSpansPerTrace'], SAFETY_CEILINGS.maxSpansPerTrace),
+            maxSpanAttributes: clampMax(limits['maxSpanAttributes'], SAFETY_CEILINGS.maxSpanAttributes),
+            maxAttributeLength: clampMax(limits['maxAttributeLength'], SAFETY_CEILINGS.maxAttributeLength),
+            maxPayloadSize: clampMax(limits['maxPayloadSize'], SAFETY_CEILINGS.maxPayloadSize),
+            maxQueueSize: clampMax(limits['maxQueueSize'], SAFETY_CEILINGS.maxQueueSize),
+            maxMemoryMb: clampMax(limits['maxMemoryMb'], SAFETY_CEILINGS.maxMemoryMb),
+            maxCpuOverheadPercent: clampMax(limits['maxCpuOverheadPercent'], SAFETY_CEILINGS.maxCpuOverheadPercent),
+        };
+        // runtime — clamp ttl and floor it so refresh never hammers the backend.
+        const runtime = (c['runtime'] ?? {});
+        const ttl = runtime['configTtlSeconds'];
+        if (typeof ttl === 'number') {
+            runtime['configTtlSeconds'] = clampRange(ttl, SAFETY_FLOORS.configTtlSeconds, SAFETY_CEILINGS.configTtlSeconds);
+        }
+        c['runtime'] = runtime;
+        // transport routes — clamp per-route batch/timeout/flush values.
+        const transport = (c['transport'] ?? {});
+        const routes = (transport['routes'] ?? {});
+        for (const [name, route] of Object.entries(routes)) {
+            const r = route;
+            if (typeof r['batchSize'] === 'number') {
+                r['batchSize'] = clampMax(r['batchSize'], SAFETY_CEILINGS.batchSize);
+            }
+            if (typeof r['flushIntervalMs'] === 'number') {
+                r['flushIntervalMs'] = clampRange(r['flushIntervalMs'], SAFETY_FLOORS.flushIntervalMs, SAFETY_CEILINGS.flushIntervalMs);
+            }
+            if (typeof r['timeoutMs'] === 'number') {
+                r['timeoutMs'] = clampRange(r['timeoutMs'], SAFETY_FLOORS.timeoutMs, SAFETY_CEILINGS.timeoutMs);
+            }
+            routes[name] = r;
+        }
+        transport['routes'] = routes;
+        const retry = (transport['retry'] ?? {});
+        if (typeof retry['maxRetries'] === 'number') {
+            retry['maxRetries'] = clampMax(retry['maxRetries'], SAFETY_CEILINGS.retryMaxRetries);
+        }
+        if (typeof retry['baseDelayMs'] === 'number') {
+            retry['baseDelayMs'] = clampMax(retry['baseDelayMs'], SAFETY_CEILINGS.retryBaseDelayMs);
+        }
+        transport['retry'] = retry;
+        c['transport'] = transport;
+        return c;
     }
     /**
      * Build remote config overrides from user init() options.
@@ -287,32 +398,41 @@ export class ConfigManager {
     buildUserOverrides(options) {
         const overrides = {};
         let hasOverrides = false;
+        // sampleRate is a coarse global override — applies to traces and requests.
         if (options.sampleRate !== undefined) {
-            overrides['sampling'] = { traces: options.sampleRate };
+            overrides['sampling'] = {
+                traces: options.sampleRate,
+                requests: options.sampleRate,
+            };
             hasOverrides = true;
         }
         if (options.enableErrors !== undefined ||
             options.enableTracing !== undefined ||
-            options.enableMetrics !== undefined) {
+            options.enableMetrics !== undefined ||
+            options.enablePerformance !== undefined) {
             overrides['features'] = {
                 ...(options.enableErrors !== undefined ? { errors: options.enableErrors } : {}),
                 ...(options.enableTracing !== undefined ? { tracing: options.enableTracing } : {}),
                 ...(options.enableMetrics !== undefined ? { metrics: options.enableMetrics } : {}),
+                ...(options.enablePerformance !== undefined ? { requestCapture: options.enablePerformance } : {}),
             };
             hasOverrides = true;
         }
-        if (options.maxBreadcrumbs !== undefined) {
-            overrides['limits'] = { maxBreadcrumbs: options.maxBreadcrumbs };
-            hasOverrides = true;
-        }
+        // dataScrubbing init option maps to privacy.scrubbing. The unified
+        // `fields` list takes both header- and body-style sensitive keys —
+        // the SecurityScrubber treats them uniformly.
         if (options.dataScrubbing) {
-            overrides['security'] = {
-                scrubbing: {
-                    ...(options.dataScrubbing.sensitiveHeaders ? { headers: options.dataScrubbing.sensitiveHeaders } : {}),
-                    ...(options.dataScrubbing.sensitiveKeys ? { bodyFields: options.dataScrubbing.sensitiveKeys } : {}),
-                },
-            };
-            hasOverrides = true;
+            const headers = options.dataScrubbing.sensitiveHeaders ?? [];
+            const fields = options.dataScrubbing.sensitiveKeys ?? [];
+            if (headers.length > 0 || fields.length > 0) {
+                overrides['privacy'] = {
+                    scrubbing: {
+                        ...(headers.length > 0 ? { headers } : {}),
+                        ...(fields.length > 0 ? { fields } : {}),
+                    },
+                };
+                hasOverrides = true;
+            }
         }
         if (options.environment) {
             overrides['sdk'] = { environment: options.environment };
@@ -329,7 +449,7 @@ export class ConfigManager {
             return base;
         const merged = structuredClone(base);
         this.deepMerge(merged, userOverrides);
-        return this.freezeDeep(merged);
+        return this.freezeDeep(this.applySafetyClamps(merged));
     }
     /**
      * Deep merge source into target. Mutates target.
@@ -379,9 +499,15 @@ export class ConfigManager {
             return;
         this.retryTimer = setTimeout(() => {
             this.retryTimer = null;
+            // The timer may have fired between scheduling and firing — bail if the
+            // manager was destroyed in the meantime.
+            if (this.destroyed)
+                return;
             void (async () => {
                 try {
                     await this.refreshConfig();
+                    if (this.destroyed)
+                        return;
                     if (this.lastFetchSuccess) {
                         getLogger().info('ConfigManager: Background retry succeeded, starting refresh loop');
                         this.startRefreshLoop();
@@ -391,7 +517,8 @@ export class ConfigManager {
                     }
                 }
                 catch {
-                    this.scheduleRetry();
+                    if (!this.destroyed)
+                        this.scheduleRetry();
                 }
             })();
         }, CONFIG_RETRY_INTERVAL_MS);

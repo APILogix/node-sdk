@@ -10,7 +10,7 @@
  * - Connection pool monitoring
  */
 import { MongoDBInstrumentation as OTelMongoDBInstrumentation } from '@opentelemetry/instrumentation-mongodb';
-import type { TracingCaptureConfig } from '../types/config.js';
+import type { PrivacyCaptureConfig } from '../types/config.js';
 export interface MongoDBInstrumentationOptions {
     enabled: boolean;
     enhancedDatabaseReporting?: boolean;
@@ -18,7 +18,7 @@ export interface MongoDBInstrumentationOptions {
     addStatementAttribute?: boolean;
     captureCommandArguments?: boolean;
 }
-export declare function createMongoDBInstrumentation(enabled: boolean, mergedOptions?: Partial<MongoDBInstrumentationOptions>, captureConfig?: TracingCaptureConfig): OTelMongoDBInstrumentation | null;
+export declare function createMongoDBInstrumentation(enabled: boolean, mergedOptions?: Partial<MongoDBInstrumentationOptions>, captureConfig?: PrivacyCaptureConfig): OTelMongoDBInstrumentation | null;
 export interface MongoDBSpanAttributes {
     'db.system': 'mongodb';
     'db.name': string;

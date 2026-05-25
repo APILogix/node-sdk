@@ -17,7 +17,7 @@
  * already captures these requests. This module adds axios-specific attributes
  * and ensures proper span naming conventions.
  */
-import type { TracingCaptureConfig } from '../types/config.js';
+import type { PrivacyCaptureConfig } from '../types/config.js';
 export interface AxiosInstrumentationOptions {
     enabled: boolean;
     captureRequestData?: boolean;
@@ -25,8 +25,8 @@ export interface AxiosInstrumentationOptions {
     requestTimeout?: number;
     maxBodySize?: number;
 }
-export declare function createAxiosInstrumentation(enabled: boolean, mergedOptions?: Partial<AxiosInstrumentationOptions>, captureConfig?: TracingCaptureConfig): {
-    setup: () => void;
+export declare function createAxiosInstrumentation(enabled: boolean, mergedOptions?: Partial<AxiosInstrumentationOptions>, captureConfig?: PrivacyCaptureConfig): {
+    setup: () => Promise<void>;
     teardown: () => void;
 } | null;
 export interface AxiosSpanAttributes {

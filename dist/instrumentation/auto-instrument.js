@@ -1,24 +1,17 @@
 /**
  * Auto Instrumentation — selective OpenTelemetry instrumentations
- * wrapped with Pulse SDK guards, now driven by remote config.
+ * wrapped with Pulse SDK guards, driven by remote config.
  *
  * Reads from ConfigManager.getConfig().instrumentation to decide
  * which modules to patch. Never monkey-patches a module if its
  * remote config flag is false.
  *
- * Provides:
- * - HTTP client instrumentation (http/https/fetch/undici)
- * - Express framework instrumentation
- * - Fastify framework instrumentation (with captureHooks / captureValidationErrors)
- * - GraphQL instrumentation (with captureResolvers)
- * - Prisma instrumentation (with captureQueries / captureParams)
- * - MongoDB instrumentation
- * - Redis instrumentation
- * - BullMQ instrumentation
- * - Axios HTTP client instrumentation
- * - Self-request guard (prevents tracing SDK's own ingestion calls)
- * - No duplicate spans (OTel SDK handles deduplication)
- * - Low-overhead runtime performance
+ * Lifecycle guarantees:
+ * - Idempotent registration via a global symbol guard (safe across multiple
+ *   imports of the SDK in the same process — common in monorepos).
+ * - Full reset on shutdown: the guard symbol is cleared AND every
+ *   instrumentation that exposes a teardown is invoked. This ensures the
+ *   next init() rebuilds instrumentation from scratch.
  *
  * Architecture:
  *   OTel Instrumentation → Pulse SpanProcessor → PipelineSpanExporter → EventPipeline
@@ -36,13 +29,30 @@ import { BullMQInstrumentation } from 'opentelemetry-instrumentation-bullmq';
 import { client } from '../core/client.js';
 import { getLogger } from '../utils/logger.js';
 import { ConfigManager } from '../core/config-manager.js';
+import { DEFAULT_TRACE_CAPTURE } from '../constants/internal-defaults.js';
 import { createAxiosInstrumentation } from './axios.js';
+// ─── Global Guard + Teardown Registry ───────────────────────────────────────
+// We attach to globalThis (via Symbol.for) so the guard survives multiple
+// independent imports of the SDK in the same process. Without this, a host
+// app that depends on two copies of the SDK (e.g., via different transitive
+// dependency paths) would patch http twice.
 const INSTRUMENTATION_GUARD = Symbol.for('pulse-sdk.auto-instrumentation.registered');
+const TEARDOWN_REGISTRY = Symbol.for('pulse-sdk.auto-instrumentation.teardowns');
+const UNREGISTER_FN = Symbol.for('pulse-sdk.auto-instrumentation.unregister');
+function getGlobalState() {
+    return globalThis;
+}
 function resolveInstrumentationOptions(userOptions) {
     const configManager = ConfigManager.getInstance();
     const config = configManager.getConfig();
     const instr = config.instrumentation;
-    const tracing = config.tracing;
+    // The wire schema dropped the `tracing.ignoredRoutes` / `tracing.ignoredMethods`
+    // arrays — those concerns are now expressed via `sampling.routes["/path"]`
+    // with all rates set to zero. Auto-instrumentation no longer applies its
+    // own filtering; the sampling engine is the single source of truth.
+    // `capture.*` flags come from `privacy.capture` (decision: capture pre-scrub),
+    // falling back to SDK-internal defaults when remote config hasn't loaded.
+    const captureConfig = config.privacy?.capture ?? DEFAULT_TRACE_CAPTURE;
     const httpEnabled = instr.http ?? userOptions.http ?? true;
     const httpsEnabled = instr.https ?? true;
     const expressEnabled = typeof instr.express === 'object'
@@ -86,20 +96,27 @@ function resolveInstrumentationOptions(userOptions) {
             captureHooks: fastifyConfig.captureHooks ?? true,
             captureValidationErrors: fastifyConfig.captureValidationErrors ?? true,
         },
-        ignoredRoutes: [...(tracing.ignoredRoutes ?? [])],
-        ignoredMethods: [...(tracing.ignoredMethods ?? [])],
-        captureConfig: tracing.capture ?? { headers: false, body: false, response: false, query: true, cookies: false },
+        // Empty arrays — route/method filtering is sampling-engine territory now.
+        // We still honour them in the OTel `ignoreIncomingRequestHook` below for
+        // any user-provided list, but they're not populated from remote config.
+        ignoredRoutes: [],
+        ignoredMethods: [],
+        captureConfig,
     };
 }
+/**
+ * Register all configured auto-instrumentations.
+ * Idempotent: a second call without an intervening reset is a no-op.
+ */
 export function registerAutoInstrumentations(options = {}) {
-    const g = globalThis;
+    const g = getGlobalState();
     if (g[INSTRUMENTATION_GUARD])
         return;
     g[INSTRUMENTATION_GUARD] = true;
+    g[TEARDOWN_REGISTRY] = [];
     const logger = getLogger();
     const resolved = resolveInstrumentationOptions(options);
     const instrumentations = [];
-    const axiosCleanup = [];
     if (resolved.http) {
         instrumentations.push(new HttpInstrumentation({
             ignoreOutgoingRequestHook: (request) => {
@@ -217,15 +234,26 @@ export function registerAutoInstrumentations(options = {}) {
             captureResponseData: resolved.captureConfig.response,
         }, resolved.captureConfig);
         if (axiosInstrumentation) {
-            axiosCleanup.push(axiosInstrumentation.teardown);
-            axiosInstrumentation.setup();
+            // Track teardown so reset() can fully unwind the patch.
+            g[TEARDOWN_REGISTRY].push(axiosInstrumentation.teardown);
+            // setup() is async (ESM-safe module loading) — fire-and-forget but
+            // surface any failure so we can detect setup races.
+            void axiosInstrumentation.setup().catch((err) => {
+                logger.warn('Axios instrumentation setup failed', { error: String(err) });
+            });
         }
     }
     const registeredInstrumentations = instrumentations.filter(Boolean);
     if (registeredInstrumentations.length > 0) {
-        registerInstrumentations({
+        // Each call to registerInstrumentations returns an unregister function
+        // that disables every instrumentation it registered. Capturing it lets
+        // resetAutoInstrumentations() fully unwind monkey-patches on the next
+        // shutdown — without this, the next init() would skip OTel registration
+        // because the guard symbol was cleared but the patches remained live.
+        const unregister = registerInstrumentations({
             instrumentations: registeredInstrumentations,
         });
+        g[UNREGISTER_FN] = unregister;
     }
     logger.info('Auto-instrumentations registered (remote-config-driven)', {
         http: resolved.http,
@@ -249,8 +277,49 @@ export function registerAutoInstrumentations(options = {}) {
         count: registeredInstrumentations.length,
     });
 }
+/**
+ * Fully reset auto-instrumentation state.
+ *
+ * Steps:
+ *   1. Run registered teardown callbacks (e.g., axios unwrap).
+ *   2. Call the OTel unregister handle to disable every instrumentation.
+ *   3. Clear the global guard so the next register call rebuilds from scratch.
+ *
+ * Errors in any single teardown are logged but never thrown — reset must
+ * always succeed so a failed instrumentation cannot block SDK reinit.
+ */
 export function resetAutoInstrumentations() {
-    delete globalThis[INSTRUMENTATION_GUARD];
+    const g = getGlobalState();
+    const logger = getLogger();
+    const teardowns = g[TEARDOWN_REGISTRY] ?? [];
+    for (const teardown of teardowns) {
+        try {
+            const result = teardown();
+            // Tolerate async teardowns; we don't await here because reset must be
+            // synchronous to integrate with the unconditional shutdown phase.
+            if (result && typeof result.catch === 'function') {
+                ;
+                result.catch(err => {
+                    logger.warn('Auto-instrumentation teardown rejected', { error: err });
+                });
+            }
+        }
+        catch (err) {
+            logger.warn('Auto-instrumentation teardown threw', { error: err });
+        }
+    }
+    const unregister = g[UNREGISTER_FN];
+    if (typeof unregister === 'function') {
+        try {
+            unregister();
+        }
+        catch (err) {
+            logger.warn('Auto-instrumentation unregister threw', { error: err });
+        }
+    }
+    delete g[INSTRUMENTATION_GUARD];
+    delete g[TEARDOWN_REGISTRY];
+    delete g[UNREGISTER_FN];
 }
 function isInternalSdkUrl(target, ingest) {
     if (target.origin !== ingest.origin)

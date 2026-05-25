@@ -17,6 +17,7 @@ import {
 } from '@opentelemetry/api'
 import { getLogger } from '../utils/logger.js'
 import { ConfigManager } from '../core/config-manager.js'
+import { TRACING_DEFAULTS } from '../constants/internal-defaults.js'
 
 // ─── W3C Header Constants ───────────────────────────────────────────────────
 
@@ -103,14 +104,11 @@ export function injectTraceContext(
   try {
     const activeCtx = ctx ?? otelContext.active()
 
-    // Only inject headers for propagation formats enabled in remote config
-    let shouldInjectW3C = true
-    try {
-      const propagationConfig = ConfigManager.getInstance().getConfig().tracing.propagation
-      shouldInjectW3C = propagationConfig.w3c !== false
-    } catch {
-      // ConfigManager not initialized — default to W3C
-    }
+    // Only inject headers for propagation formats enabled in remote config.
+    // Propagation flags moved out of the wire schema in v3 — they are now
+    // SDK-internal defaults (`TRACING_DEFAULTS.propagation`). Re-introduce
+    // a remote knob if customers ever need per-tenant control.
+    const shouldInjectW3C = TRACING_DEFAULTS.propagation.w3c
 
     if (shouldInjectW3C) {
       propagation.inject(activeCtx, headers, headerSetter)

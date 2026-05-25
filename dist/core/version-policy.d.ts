@@ -1,15 +1,15 @@
 /**
- * VersionPolicy — enforces version policy before SDK initialization.
+ * VersionPolicy — stub.
  *
- * Enforcement order:
- * 1. blockedVersions — if current version is blocked → fatal error, no-op mode, reject init
- * 2. forceUpgrade + below minimumVersion → hard error, refuse to initialize
- * 3. below minimumVersion (no forceUpgrade) → degraded mode (errors + logs only), persistent warning
- * 4. below latestVersion → informational log
- * 5. otherwise → OK
+ * The wire schema (post-migration) no longer carries a `versionPolicy`
+ * block. Version gating is a feature we may bring back, but it lives
+ * entirely on the backend now: if a customer's SDK is too old, the
+ * backend can simply refuse to issue a config (HTTP 426 Upgrade Required)
+ * and the SDK already enters its degraded "no remote config" mode.
+ *
+ * This class is kept as a stable shape so legacy call sites in `init.ts`
+ * still compile during the transition. Every call returns `{ status: 'ok' }`.
  */
-import type { VersionPolicyConfig } from '../types/config.js';
-/** Result of version policy enforcement. */
 export type VersionPolicyResult = {
     readonly status: 'ok';
 } | {
@@ -23,20 +23,10 @@ export type VersionPolicyResult = {
     readonly message: string;
 };
 export declare class VersionPolicy {
+    static enforce(_policy?: unknown): VersionPolicyResult;
     /**
-     * Enforce the version policy against the running SDK version.
-     *
-     * The caller must act on the result:
-     * - 'blocked' → reject init promise, enter no-op mode
-     * - 'force_upgrade' → throw hard error, refuse to initialize
-     * - 'degraded' → init with only errors + logs, persistent warning
-     * - 'ok' → proceed normally
-     */
-    static enforce(policy: VersionPolicyConfig): VersionPolicyResult;
-    /**
-     * Compare two semantic versions.
-     * Returns: -1 if a < b, 0 if a === b, 1 if a > b.
-     * Handles pre-release tags by stripping them for comparison.
+     * Compare two semver strings: returns -1 / 0 / 1. Retained because some
+     * non-config code paths still use it for version arithmetic.
      */
     static compareSemver(a: string, b: string): -1 | 0 | 1;
 }

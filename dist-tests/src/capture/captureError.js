@@ -26,6 +26,7 @@ import { epochMs } from '../utils/time.js';
 import { KillswitchEngine } from '../core/killswitch-engine.js';
 import { SamplingEngine } from '../core/sampling-engine.js';
 import { ConfigManager } from '../core/config-manager.js';
+import { SpanStatusCode, trace } from '@opentelemetry/api';
 /**
  * Capture an error/exception.
  *
@@ -64,6 +65,16 @@ export function captureError(error, options = {}) {
             }
         }
         const normalized = toError(error);
+        const activeSpan = trace.getActiveSpan();
+        if (activeSpan) {
+            try {
+                activeSpan.recordException(normalized);
+                activeSpan.setStatus({ code: SpanStatusCode.ERROR, message: normalized.message });
+            }
+            catch {
+                // Error capture must remain best-effort and never alter host control flow.
+            }
+        }
         const context = isOptionsObject(options)
             ? (options.context ?? {})
             : options;

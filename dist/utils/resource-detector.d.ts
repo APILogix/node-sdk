@@ -10,8 +10,8 @@
  * - Kubernetes metadata (via environment variables)
  * - Cloud provider hints (via well-known env vars)
  *
- * This module is modeled after OpenTelemetry's Resource Detectors but
- * with zero external dependencies.
+ * OpenTelemetry owns host/process/os/env detection. The SDK adds product
+ * identity plus fallback container, Kubernetes, and cloud hints.
  */
 import { type Resource } from '@opentelemetry/resources';
 export interface ResourceAttributes {

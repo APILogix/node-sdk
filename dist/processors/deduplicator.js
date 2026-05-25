@@ -43,6 +43,11 @@ class ErrorDeduplicator {
     /**
      * Check if an error fingerprint should be suppressed.
      * Returns true if the error is a duplicate within the suppression window.
+     *
+     * Map insertion order is preserved by ECMAScript spec, so we can rely on
+     * `entries.keys().next()` to give us the oldest entry (insertion order),
+     * which correlates closely with `lastSeen` because we re-insert on
+     * window expiry. This makes eviction O(k) instead of O(n log n).
      */
     isDuplicate(fingerprint) {
         const now = epochMs();
@@ -53,6 +58,8 @@ class ErrorDeduplicator {
             return false;
         }
         if (now - existing.lastSeen > this.suppressionWindowMs) {
+            // Re-insert to refresh insertion-order position (cheap O(1)).
+            this.entries.delete(fingerprint);
             this.entries.set(fingerprint, { firstSeen: now, lastSeen: now, count: 1 });
             return false;
         }
@@ -109,9 +116,11 @@ class ErrorDeduplicator {
         return false;
     }
     /**
-     * Reset all deduplication state.
+     * Reset all deduplication state. Also stops the cleanup timer so a
+     * subsequent start() can re-arm it cleanly. Idempotent.
      */
     reset() {
+        this.stop();
         this.entries.clear();
         this.replaySeen.clear();
         this.suppressedCount = 0;
@@ -131,18 +140,27 @@ class ErrorDeduplicator {
             logger.debug('Error dedup cleanup', { cleanedEntries: cleaned, remaining: this.entries.size });
         }
     }
+    /**
+     * Evict the oldest entries (by insertion order) when the cache exceeds
+     * its capacity. Map iteration is insertion-ordered per the ECMAScript
+     * spec, so this is O(k) where k is the eviction count — far cheaper than
+     * the previous sort-based eviction.
+     */
     evictIfNecessary() {
         if (this.entries.size <= this.maxEntries)
             return;
         const logger = getLogger();
         const toRemove = this.entries.size - this.maxEntries + Math.floor(this.maxEntries * 0.1);
-        const sorted = Array.from(this.entries.entries())
-            .sort((a, b) => a[1].lastSeen - b[1].lastSeen)
-            .slice(0, toRemove);
-        for (const [fp] of sorted) {
-            this.entries.delete(fp);
+        let evicted = 0;
+        const iterator = this.entries.keys();
+        while (evicted < toRemove) {
+            const next = iterator.next();
+            if (next.done)
+                break;
+            this.entries.delete(next.value);
+            evicted++;
         }
-        logger.debug('Error dedup eviction', { evicted: sorted.length, remaining: this.entries.size });
+        logger.debug('Error dedup eviction', { evicted, remaining: this.entries.size });
     }
 }
 export const errorDeduplicator = new ErrorDeduplicator();

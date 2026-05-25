@@ -4,7 +4,7 @@
  * Architecture:
  *   Every captured event flows through a deferred async pipeline:
  *     capture → accept → [setImmediate] → normalize → sanitize → enrich →
- *     dedup → scope → plugin processors → beforeSend → enqueue → persist
+ *     dedup → scope → plugin processors → beforeSend → route → persist
  *
  * Lifecycle model:
  *   1. `enqueueEvent()` synchronously validates and accepts the event,
@@ -74,7 +74,27 @@ export declare function enqueueEvent(rawEvent: SDKEvent | Event): EventReceipt;
  * async acceptance semantics via `EventReceipt`.
  */
 export declare function processEvent(rawEvent: SDKEvent | Event): boolean;
+/**
+ * Drain all in-flight pipeline work to completion.
+ *
+ * After this returns, the Set is guaranteed empty AND no new entries can be
+ * added (the pipelineDraining flag rejects new captures synchronously). The
+ * flag is automatically cleared when the SDK is no longer shutting down so
+ * the pipeline becomes accepting again on the next init().
+ *
+ * Bounded by an outer timeout in the lifecycle module — drain itself does
+ * not impose a time limit because individual pipeline tasks already have
+ * per-step timeouts.
+ */
 export declare function drainPendingEventProcessing(): Promise<void>;
+/**
+ * Reset the pipeline-draining flag. Called from the lifecycle module's
+ * unconditional cleanup phase to guarantee the next init() begins with an
+ * accepting pipeline.
+ *
+ * @internal
+ */
+export declare function resetEventPipeline(): void;
 /**
  * Async pipeline — processes a single event through all pipeline stages.
  *

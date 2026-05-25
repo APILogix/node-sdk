@@ -1,15 +1,22 @@
 /**
  * LimitsEngine — enforces payload and resource limits from remote config.
  *
- * Responsibilities:
- * - maxPayloadSize: Reject payloads exceeding limit before serialization.
- * - maxAttributesPerEvent: Trim excess attributes.
- * - maxAttributeLength: Truncate long attribute values.
- * - maxBreadcrumbs: Cap breadcrumb ring buffer.
- * - maxEventsPerSecond: Token-bucket rate limiter.
- * - maxMemoryUsageMb / maxCpuOverheadPercent: Resource monitors (advisory, log warnings).
+ * Backed by `LimitsConfig`, which is itself clamped to `SAFETY_CEILINGS`
+ * before reaching this engine. The wire schema (post v3 migration) only
+ * carries the bounds the backend cares about; per-attribute counts and
+ * lengths are reused for both span attributes and event-level fields like
+ * `context`, `attributes`, and `tags`.
  *
- * All enforcement is pre-transport — events are shaped before entering the queue.
+ * Responsibilities:
+ *   - maxPayloadSize: reject oversized serialized payloads pre-transport.
+ *   - maxSpanAttributes: bound attribute count on spans/events.
+ *   - maxAttributeLength: truncate long attribute string values.
+ *
+ * The previous schema's `maxEventsPerSecond` rate limiter has been removed —
+ * load shedding is now done by `loadShedder` and `tenantGovernor`, which
+ * make smarter, pressure-aware decisions. `maxBreadcrumbs` is now an init
+ * option, not part of remote config (a per-process concern, not a tenant
+ * one).
  */
 
 import type { LimitsConfig, ConfigDiff, RemoteConfigResponse } from '../types/config.js'
@@ -22,15 +29,8 @@ export class LimitsEngine {
   private config: LimitsConfig
   private destroyed: boolean = false
 
-  // Token bucket for rate limiting
-  private tokenBucket: number
-  private lastRefillTime: number
-  private eventsDropped: number = 0
-
   private constructor(config: LimitsConfig) {
     this.config = { ...config }
-    this.tokenBucket = config.maxEventsPerSecond
-    this.lastRefillTime = Date.now()
   }
 
   static initialize(config: LimitsConfig): LimitsEngine {
@@ -45,64 +45,49 @@ export class LimitsEngine {
     return LimitsEngine.instance
   }
 
-  // ─── Rate Limiting ────────────────────────────────────────────────────────
+  // ─── Admission ────────────────────────────────────────────────────────────
 
   /**
-   * Check if an event can be admitted (token bucket).
-   * Returns true if admitted, false if rate-limited.
+   * Backwards-compatible no-op admission gate.
+   *
+   * Rate limiting moved to `loadShedder` + `tenantGovernor`. We keep this
+   * method so the event pipeline doesn't have to fork by SDK version, but
+   * it always returns `true`. Removed entirely once the pipeline stops
+   * calling it.
    */
   admitEvent(): boolean {
-    this.refillTokens()
-
-    if (this.tokenBucket >= 1) {
-      this.tokenBucket -= 1
-      return true
-    }
-
-    this.eventsDropped++
-    if (this.eventsDropped % 100 === 1) {
-      getLogger().warn(
-        `[LimitsEngine] Rate limited — ${this.eventsDropped} events dropped (limit: ${this.config.maxEventsPerSecond}/s)`
-      )
-    }
-
-    return false
+    return true
   }
 
   // ─── Attribute Limiting ───────────────────────────────────────────────────
 
   /**
-   * Enforce attribute limits on an event.
-   * Trims excess attributes and truncates long values.
-   * Returns a new event (does not mutate the input).
+   * Enforce attribute limits on an event. Returns a new event (never mutates).
    */
   enforceAttributeLimits<T extends SDKEvent>(event: T): T {
     const clone = { ...event } as Record<string, unknown>
 
-    // Enforce maxAttributesPerEvent on 'attributes' field (spans)
     if ('attributes' in clone && typeof clone['attributes'] === 'object' && clone['attributes'] !== null) {
       clone['attributes'] = this.trimAttributes(
         clone['attributes'] as Record<string, unknown>,
-        this.config.maxAttributesPerEvent,
-        this.config.maxAttributeLength
+        this.config.maxSpanAttributes,
+        this.config.maxAttributeLength,
       )
     }
 
-    // Enforce on 'context' field (errors)
     if ('context' in clone && typeof clone['context'] === 'object' && clone['context'] !== null) {
       clone['context'] = this.trimAttributes(
         clone['context'] as Record<string, unknown>,
-        this.config.maxAttributesPerEvent,
-        this.config.maxAttributeLength
+        this.config.maxSpanAttributes,
+        this.config.maxAttributeLength,
       )
     }
 
-    // Enforce on 'tags' field (metrics)
     if ('tags' in clone && typeof clone['tags'] === 'object' && clone['tags'] !== null) {
       clone['tags'] = this.trimAttributes(
         clone['tags'] as Record<string, unknown>,
-        this.config.maxAttributesPerEvent,
-        this.config.maxAttributeLength
+        this.config.maxSpanAttributes,
+        this.config.maxAttributeLength,
       )
     }
 
@@ -111,76 +96,45 @@ export class LimitsEngine {
 
   // ─── Payload Size Check ───────────────────────────────────────────────────
 
-  /**
-   * Check if a serialized payload exceeds the max payload size.
-   * Returns true if the payload is within limits.
-   */
+  /** Returns true if the payload is within the configured size limit. */
   checkPayloadSize(serializedBytes: number): boolean {
     if (serializedBytes > this.config.maxPayloadSize) {
       getLogger().warn(
-        `[LimitsEngine] Payload size ${serializedBytes} exceeds limit ${this.config.maxPayloadSize}`
+        `[LimitsEngine] Payload size ${serializedBytes} exceeds limit ${this.config.maxPayloadSize}`,
       )
       return false
     }
     return true
   }
 
-  // ─── Breadcrumb Cap ───────────────────────────────────────────────────────
-
-  /** Get the maximum breadcrumbs allowed. */
-  getMaxBreadcrumbs(): number {
-    return this.config.maxBreadcrumbs
+  /** Maximum spans allowed in a single trace. */
+  getMaxSpansPerTrace(): number {
+    return this.config.maxSpansPerTrace
   }
 
   // ─── Config Change ────────────────────────────────────────────────────────
 
-  /** Handle config change — hot-swap limits. */
   handleConfigChange(_diff: ConfigDiff, newConfig: Readonly<RemoteConfigResponse>): void {
     if (this.destroyed) return
-
-    const newLimits = newConfig.limits
-    const logger = getLogger()
-
-    if (this.config.maxEventsPerSecond !== newLimits.maxEventsPerSecond) {
-      logger.info(`[LimitsEngine] Rate limit updated: ${newLimits.maxEventsPerSecond}/s`)
-    }
-
-    this.config = { ...newLimits }
-    this.tokenBucket = Math.min(this.tokenBucket, newLimits.maxEventsPerSecond)
+    this.config = { ...newConfig.limits }
+    getLogger().info('[LimitsEngine] Limits updated')
   }
 
-  /** Get current config. */
   getConfig(): Readonly<LimitsConfig> {
     return { ...this.config }
   }
 
-  /** Get drop stats. */
-  getDroppedCount(): number {
-    return this.eventsDropped
-  }
-
   // ─── Private ──────────────────────────────────────────────────────────────
-
-  private refillTokens(): void {
-    const now = Date.now()
-    const elapsed = (now - this.lastRefillTime) / 1000
-    this.lastRefillTime = now
-
-    this.tokenBucket = Math.min(
-      this.config.maxEventsPerSecond,
-      this.tokenBucket + elapsed * this.config.maxEventsPerSecond
-    )
-  }
 
   private trimAttributes(
     attrs: Record<string, unknown>,
     maxCount: number,
-    maxLength: number
+    maxLength: number,
   ): Record<string, unknown> {
     const keys = Object.keys(attrs)
 
     if (keys.length <= maxCount && !keys.some(k => this.needsTruncation(attrs[k], maxLength))) {
-      return attrs // Fast path: no changes needed
+      return attrs
     }
 
     const result: Record<string, unknown> = {}

@@ -2,15 +2,19 @@
  * SamplingEngine — deterministic, FNV-1a hash-based sampling.
  *
  * Replaces random Math.random() sampling with deterministic decisions:
- * - Same traceId → same decision across all SDK instances (consistent sampling).
- * - Route overrides: sampling.routes["/api/health"] = 0 → always drop.
- * - Dynamic rate updates via config refresh (no restart needed).
+ *   - Same traceId → same decision across all SDK instances (consistent
+ *     sampling), so a downstream service either has the same span as its
+ *     caller or it has none.
+ *   - Per-route overrides are now per-event-type. The wire schema looks
+ *     like: `routes: { "/health": { traces: 0, requests: 0 }, ... }`. A
+ *     missing event-type key inside a route falls through to the global
+ *     rate. A rate of 0 effectively replaces the old `ignoredRoutes` list.
+ *   - Hot-swappable via config refresh — no SDK restart.
  *
  * Algorithm:
- * 1. Compute FNV-1a 32-bit hash of the traceId (or eventId).
- * 2. Normalize to [0.0, 1.0] via hash / 2^32.
- * 3. Compare against the sampling rate for the event type.
- * 4. If route override exists, use route rate instead.
+ *   1. FNV-1a 32-bit hash of the id.
+ *   2. Normalize to [0.0, 1.0) by dividing by 2^32.
+ *   3. Compare against the rate for the event type (route-overridden if any).
  */
 import { getLogger } from '../utils/logger.js';
 export class SamplingEngine {
@@ -31,70 +35,57 @@ export class SamplingEngine {
         return SamplingEngine.instance;
     }
     // ─── Sampling Decision API ────────────────────────────────────────────────
-    /**
-     * Decide whether to sample a trace.
-     * @param traceId The trace ID (or any deterministic identifier)
-     * @param route Optional URL path for route-specific overrides
-     */
     shouldSampleTrace(traceId, route) {
         return this.decide(traceId, 'traces', route);
     }
-    /** Decide whether to sample an error. */
-    shouldSampleError(eventId) {
-        return this.decide(eventId, 'errors');
+    shouldSampleRequest(requestId, route) {
+        return this.decide(requestId, 'requests', route);
     }
-    /** Decide whether to sample a profile. */
-    shouldSampleProfile(traceId) {
-        return this.decide(traceId, 'profiles');
+    shouldSampleError(eventId, route) {
+        return this.decide(eventId, 'errors', route);
     }
-    /** Decide whether to sample a replay. */
+    shouldSampleProfile(traceId, route) {
+        return this.decide(traceId, 'profiles', route);
+    }
     shouldSampleReplay(sessionId) {
         return this.decide(sessionId, 'replays');
     }
     // ─── Config Change ────────────────────────────────────────────────────────
-    /** Handle config change — hot-swap sampling rates. */
     handleConfigChange(_diff, newConfig) {
         if (this.destroyed)
             return;
         const newSampling = newConfig.sampling;
-        const logger = getLogger();
-        if (this.config.traces !== newSampling.traces ||
-            this.config.errors !== newSampling.errors ||
-            this.config.profiles !== newSampling.profiles ||
-            this.config.replays !== newSampling.replays) {
-            logger.info(`[SamplingEngine] Rates updated — traces: ${newSampling.traces}, errors: ${newSampling.errors}, profiles: ${newSampling.profiles}, replays: ${newSampling.replays}`);
+        const old = this.config;
+        if (old.traces !== newSampling.traces ||
+            old.requests !== newSampling.requests ||
+            old.errors !== newSampling.errors ||
+            old.profiles !== newSampling.profiles ||
+            old.replays !== newSampling.replays) {
+            getLogger().info(`[SamplingEngine] Rates updated — traces: ${newSampling.traces}, requests: ${newSampling.requests}, errors: ${newSampling.errors}, profiles: ${newSampling.profiles}, replays: ${newSampling.replays}`);
         }
         this.config = { ...newSampling };
     }
-    /** Get current sampling config. */
     getConfig() {
         return { ...this.config };
     }
     // ─── Private ──────────────────────────────────────────────────────────────
-    /**
-     * Core sampling decision logic.
-     */
     decide(id, eventType, route) {
-        // Check route-specific override
-        if (route && eventType === 'traces') {
-            const routeRate = this.findRouteRate(route);
-            if (routeRate !== null) {
-                if (routeRate === 0)
-                    return { sampled: false, rate: 0, reason: 'always_drop' };
-                if (routeRate === 1)
-                    return { sampled: true, rate: 1, reason: 'always_sample' };
-                const hash = SamplingEngine.fnv1a32(id);
-                const normalized = hash / 0x100000000; // Normalize to [0.0, 1.0)
-                return {
-                    sampled: normalized < routeRate,
-                    rate: routeRate,
-                    reason: 'route_override',
-                };
+        // 1. Per-route override (longest prefix match) — applies to all event types.
+        if (route) {
+            const routeRates = this.findRouteRates(route);
+            if (routeRates) {
+                const routeRate = routeRates[eventType];
+                if (routeRate !== undefined) {
+                    return this.evaluate(id, routeRate, 'route_override');
+                }
             }
         }
-        // Global rate for this event type
+        // 2. Fall through to the global rate.
         const rate = this.config[eventType];
-        if (rate === 0)
+        return this.evaluate(id, rate, 'global_rate');
+    }
+    evaluate(id, rate, reason) {
+        if (rate <= 0)
             return { sampled: false, rate: 0, reason: 'always_drop' };
         if (rate >= 1)
             return { sampled: true, rate: 1, reason: 'always_sample' };
@@ -103,14 +94,14 @@ export class SamplingEngine {
         return {
             sampled: normalized < rate,
             rate,
-            reason: 'global_rate',
+            reason,
         };
     }
     /**
-     * Find the route-specific sampling rate by prefix match.
-     * Longest prefix wins.
+     * Find the route-specific override map by longest-prefix match.
+     * Returns the matched RouteSamplingRates record, or null.
      */
-    findRouteRate(route) {
+    findRouteRates(route) {
         const routes = this.config.routes;
         if (!routes || Object.keys(routes).length === 0)
             return null;
@@ -122,21 +113,17 @@ export class SamplingEngine {
                 bestLength = pattern.length;
             }
         }
-        return bestMatch !== null ? routes[bestMatch] : null;
+        return bestMatch !== null ? routes[bestMatch] ?? null : null;
     }
     /**
-     * FNV-1a 32-bit hash.
-     * Deterministic, fast, and well-distributed for trace IDs.
+     * FNV-1a 32-bit hash. Deterministic and fast.
      */
     static fnv1a32(input) {
-        let hash = 0x811c9dc5; // FNV offset basis
+        let hash = 0x811c9dc5;
         for (let i = 0; i < input.length; i++) {
             hash ^= input.charCodeAt(i);
-            // FNV prime: 16777619
-            // Using Math.imul for 32-bit integer multiplication
             hash = Math.imul(hash, 0x01000193);
         }
-        // Ensure unsigned 32-bit integer
         return hash >>> 0;
     }
     destroy() {
