@@ -1,0 +1,44 @@
+// tests/unit/trace-lifecycle.test.ts
+import { test, before, after } from 'node:test';
+import { strict as assert } from 'node:assert';
+import { initTracer, withSpan, startSpan, shutdownTracer } from '../../src/tracing/tracer.js';
+import { ProfilingSubsystem } from '../../src/subsystems/profiling-subsystem.js';
+
+// Simple mock to capture profiling calls
+const profilingCalls = { start: false, stop: false };
+
+before(() => {
+  // Mock the ProfilingSubsystem singleton
+  (ProfilingSubsystem as any).getInstance = () => ({
+    startCpuProfile: (traceId: string, spanId: string) => {
+      profilingCalls.start = true;
+    },
+    stopCpuProfile: (traceId: string) => {
+      profilingCalls.stop = true;
+    },
+  } as any);
+
+  const minimalConfig = {
+    service: 'test-service',
+    release: '1.0.0',
+    environment: 'dev',
+  } as any;
+  initTracer(minimalConfig);
+});
+
+after(async () => {
+  await shutdownTracer();
+});
+
+test('root and child spans share the same traceId and profiling occurs only on root span', async () => {
+  await withSpan('root-span', async (rootSpan) => {
+    const rootTraceId = (rootSpan as any).traceId;
+    const childSpan = startSpan('child-span');
+    const childTraceId = (childSpan as any).traceId;
+    assert.strictEqual(rootTraceId, childTraceId);
+    assert.ok(profilingCalls.start);
+    assert.ok(!profilingCalls.stop);
+    childSpan.end();
+  });
+  assert.ok(profilingCalls.stop);
+});

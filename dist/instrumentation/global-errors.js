@@ -18,6 +18,7 @@ import { captureError } from "../capture/captureError.js";
 import { toError } from "../core/errors.js";
 import { getLogger } from "../utils/logger.js";
 import { ERROR_DEFAULTS } from "../constants/internal-defaults.js";
+import { crashFlush } from "../core/lifecycle.js";
 let registered = false;
 // Store handler references for proper cleanup
 let uncaughtHandler = null;
@@ -80,14 +81,12 @@ export function setupGlobalErrorHandlers() {
                 error: err.message,
                 stack: err.stack,
             });
-            // Attempt a best-effort async flush. This is fire-and-forget
-            // because Node.js will likely terminate after uncaughtException.
-            // We do NOT call process.exit() — the SDK must never force-kill
-            // the host process. This matches Sentry SDK behavior.
-            import("../transport/batcher.js")
-                .then(({ flush }) => flush())
-                .catch(() => {
-                // If flush fails (e.g., SDK not initialized), swallow silently
+            // Use the bounded crashFlush() to give the transport a real chance
+            // to drain the error event before the process terminates. Unlike the
+            // previous fire-and-forget dynamic import, crashFlush() is bounded
+            // by a hard timeout (2s default) so the process won't hang.
+            crashFlush().catch(() => {
+                // Best-effort — if flush fails, we've already captured the error
             });
         };
         process.on("uncaughtException", uncaughtHandler);

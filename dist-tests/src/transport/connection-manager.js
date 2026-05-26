@@ -57,6 +57,8 @@ export class ConnectionManager {
         logs: 0,
         profiles: 0,
         crons: 0,
+        requests: 0,
+        replays: 0,
     };
     totalInUse = 0;
     constructor(options) {

@@ -4,6 +4,8 @@ import { ConnectionManager } from './connection-manager.js';
 import { HealthMonitor } from './health-monitor.js';
 import { context as otelContext } from '@opentelemetry/api';
 import { suppressTracing } from '@opentelemetry/core';
+import { SecurityScrubber } from '../processors/security-scrubber.js';
+import { sanitizeEvent } from '../processors/sanitizer.js';
 export class BatchManager {
     options;
     timer = null;
@@ -112,7 +114,15 @@ export class BatchManager {
         const targetSize = this.effectiveMaxBatchSize();
         let batch = this.options.queue.drain(targetSize);
         while (batch.length > 0) {
-            const payloadBytes = this.byteLength(batch);
+            const scrubber = SecurityScrubber.getInstance();
+            let safeBatch = batch;
+            if (scrubber) {
+                safeBatch = scrubber.scrubBatch(batch);
+            }
+            else {
+                safeBatch = batch.map(e => sanitizeEvent(e));
+            }
+            const payloadBytes = this.byteLength(safeBatch);
             // Sentinel: serialization itself failed (e.g., circular ref). The
             // bad events have already been dropped+reported by byteLength, so
             // don't requeue or try to split — that would re-serialize the same
@@ -120,7 +130,7 @@ export class BatchManager {
             if (payloadBytes < 0)
                 return [];
             if (payloadBytes <= this.options.maxPayloadBytes)
-                return batch;
+                return safeBatch;
             if (batch.length === 1) {
                 this.totalDropped++;
                 this.options.onDrop?.({

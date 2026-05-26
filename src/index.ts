@@ -25,7 +25,7 @@ import type { SDKInitOptions, RemoteConfig } from './types/config.js'
 // ─── Lifecycle ──────────────────────────────────────────────────────────────
 
 export { init } from './core/init.js'
-export { flush, shutdown } from './core/lifecycle.js'
+export { flush, shutdown, crashFlush } from './core/lifecycle.js'
 export { getConfig } from './core/config.js'
 export { SDKError } from './core/errors.js'
 
@@ -53,6 +53,9 @@ export { captureError } from './capture/captureError.js'
 export { captureRequest } from './capture/captureRequest.js'
 export { captureMessage } from './capture/captureMessage.js'
 export { captureEvent } from './capture/captureEvent.js'
+export { captureCronCheckIn } from './capture/captureCronCheckIn.js'
+export type { CronCheckInOptions } from './capture/captureCronCheckIn.js'
+export { startProfile, stopProfile } from './capture/captureProfile.js'
 export {
   captureMetric,
   incrementCounter,
@@ -109,6 +112,11 @@ export { createBullMQInstrumentation } from './instrumentation/bullmq.js'
 export type { BullMQInstrumentationOptions } from './instrumentation/bullmq.js'
 export { createAxiosInstrumentation } from './instrumentation/axios.js'
 export type { AxiosInstrumentationOptions } from './instrumentation/axios.js'
+export { createPgInstrumentation } from './instrumentation/pg.js'
+export type { PgInstrumentationOptions } from './instrumentation/pg.js'
+export { createMySQLInstrumentation } from './instrumentation/mysql.js'
+export type { MySQLInstrumentationOptions } from './instrumentation/mysql.js'
+export { patchEventEmitter, unpatchEventEmitter } from './instrumentation/event-emitter-patch.js'
 
 // ─── Logger control (apps wiring SDK into their own logger) ─────────────────
 

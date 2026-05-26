@@ -40,7 +40,7 @@ export interface SpanLink {
  * - No duplicated state — reads everything from the underlying OTel span.
  * - Fluent API for attribute/event chaining.
  */
-export declare class PulseSpan {
+export declare class PulseSpan implements OTelSpan {
     /** @internal The underlying OTel span — use getOTelSpan() for advanced access. */
     private readonly _span;
     /**
@@ -59,23 +59,36 @@ export declare class PulseSpan {
     /** Parent span ID — captured at construction from active context. */
     get parentSpanId(): string | undefined;
     /** Whether this span is still recording (not ended). */
-    get isRecording(): boolean;
+    isRecording(): boolean;
     /** Whether this span has been ended via PulseSpan.end(). */
     get isEnded(): boolean;
     /** Full OTel span context (traceId, spanId, traceFlags, traceState). */
-    get spanContext(): SpanContext;
+    spanContext(): SpanContext;
     /** Set a single attribute. No-op after end. */
     setAttribute(key: string, value: string | number | boolean): this;
     /** Set multiple attributes at once. No-op after end. */
     setAttributes(attributes: Attributes): this;
     /** Record a span event (annotation). No-op after end. */
     addEvent(name: string, attributes?: Attributes): this;
+    /** Add a single link to the span. No-op after end. */
+    addLink(link: Link): this;
+    /** Add multiple links to the span. No-op after end. */
+    addLinks(links: Link[]): this;
     /**
      * Record an error on the span.
      * Sets status to ERROR and records the exception as a span event.
      */
     recordError(error: Error, attributes?: Attributes): this;
+    /**
+     * OTel compat: recordException.
+     */
+    recordException(exception: any, time?: TimeInput): this;
+    /**
+     * OTel compat: updateName.
+     */
+    updateName(name: string): this;
     /** Set the span status. */
+    setStatus(status: import('@opentelemetry/api').SpanStatus): this;
     setStatus(status: SpanStatus, message?: string): this;
     /** End the span. Idempotent — calling multiple times is safe. */
     end(endTime?: TimeInput): void;

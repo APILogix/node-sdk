@@ -18,6 +18,8 @@ import { BatchSpanProcessor, ParentBasedSampler, TraceIdRatioBasedSampler, } fro
 import { resourceFromAttributes } from '@opentelemetry/resources';
 import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION, ATTR_DEPLOYMENT_ENVIRONMENT_NAME, } from '@opentelemetry/semantic-conventions';
 import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks';
+import { W3CTraceContextPropagator, CompositePropagator, W3CBaggagePropagator, } from '@opentelemetry/core';
+import { TRACING_DEFAULTS } from '../constants/internal-defaults.js';
 import { PulseSpan } from './span.js';
 import { getLogger } from '../utils/logger.js';
 import { processEvent } from '../core/event-pipeline.js';
@@ -25,6 +27,7 @@ import { attachRequestContextToActiveSpan, getRequestContext, PULSE_CONTEXT_ATTR
 import { costGovernor } from '../utils/cost-governor.js';
 import { RemoteConfigSampler } from './remote-config-sampler.js';
 import { ConfigManager } from '../core/config-manager.js';
+import { ProfilingSubsystem } from '../subsystems/profiling-subsystem.js';
 import os from 'node:os';
 import { SDK_NAME, SDK_VERSION } from '../constants/version.js';
 // ─── State ──────────────────────────────────────────────────────────────────
@@ -255,7 +258,18 @@ export function initTracer(config, customResources) {
         // Register context manager for async propagation
         const contextManager = new AsyncLocalStorageContextManager();
         contextManager.enable();
-        provider.register({ contextManager });
+        // Build composite propagator for W3C TraceContext + optional Baggage.
+        // Without this, OTel's HttpInstrumentation and UndiciInstrumentation
+        // will NOT inject traceparent headers into outgoing requests, which
+        // breaks distributed tracing across service boundaries.
+        const propagators = [
+            new W3CTraceContextPropagator(),
+        ];
+        if (TRACING_DEFAULTS.propagation.baggage) {
+            propagators.push(new W3CBaggagePropagator());
+        }
+        const propagator = new CompositePropagator({ propagators });
+        provider.register({ contextManager, propagator });
         globalState[TRACER_PROVIDER_SYMBOL] = true;
         ownsProvider = true;
         // Get the tracer instance
@@ -334,9 +348,20 @@ export async function withSpan(name, fn, options) {
         }
     }
     const otelOptions = toOtelSpanOptions(options);
+    const isRoot = !trace.getActiveSpan();
     return tracer.startActiveSpan(name, otelOptions, async (span) => {
         attachRequestContextToActiveSpan();
         const pulseSpan = new PulseSpan(span);
+        if (isRoot) {
+            try {
+                const subsystem = ProfilingSubsystem.getInstance();
+                if (subsystem)
+                    void subsystem.startCpuProfile(pulseSpan.traceId, pulseSpan.spanId);
+            }
+            catch (err) {
+                getLogger().warn('Failed to start CPU profile for root span', { error: err });
+            }
+        }
         try {
             const result = await fn(pulseSpan);
             pulseSpan.setStatus('ok');
@@ -350,6 +375,16 @@ export async function withSpan(name, fn, options) {
             throw err;
         }
         finally {
+            if (isRoot) {
+                try {
+                    const subsystem = ProfilingSubsystem.getInstance();
+                    if (subsystem)
+                        void subsystem.stopCpuProfile(pulseSpan.traceId);
+                }
+                catch (err) {
+                    getLogger().warn('Failed to stop CPU profile for root span', { error: err });
+                }
+            }
             pulseSpan.end();
         }
     });
@@ -377,9 +412,20 @@ export function withSpanSync(name, fn, options) {
         }
     }
     const otelOptions = toOtelSpanOptions(options);
+    const isRoot = !trace.getActiveSpan();
     return tracer.startActiveSpan(name, otelOptions, span => {
         attachRequestContextToActiveSpan();
         const pulseSpan = new PulseSpan(span);
+        if (isRoot) {
+            try {
+                const subsystem = ProfilingSubsystem.getInstance();
+                if (subsystem)
+                    void subsystem.startCpuProfile(pulseSpan.traceId, pulseSpan.spanId);
+            }
+            catch (err) {
+                getLogger().warn('Failed to start CPU profile for root span', { error: err });
+            }
+        }
         try {
             const result = fn(pulseSpan);
             pulseSpan.setStatus('ok');
@@ -393,6 +439,16 @@ export function withSpanSync(name, fn, options) {
             throw err;
         }
         finally {
+            if (isRoot) {
+                try {
+                    const subsystem = ProfilingSubsystem.getInstance();
+                    if (subsystem)
+                        void subsystem.stopCpuProfile(pulseSpan.traceId);
+                }
+                catch (err) {
+                    getLogger().warn('Failed to stop CPU profile for root span', { error: err });
+                }
+            }
             pulseSpan.end();
         }
     });

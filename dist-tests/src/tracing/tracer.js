@@ -25,6 +25,7 @@ import { attachRequestContextToActiveSpan, getRequestContext, PULSE_CONTEXT_ATTR
 import { costGovernor } from '../utils/cost-governor.js';
 import { RemoteConfigSampler } from './remote-config-sampler.js';
 import { ConfigManager } from '../core/config-manager.js';
+import { ProfilingSubsystem } from '../subsystems/profiling-subsystem.js';
 import os from 'node:os';
 import { SDK_NAME, SDK_VERSION } from '../constants/version.js';
 // ─── State ──────────────────────────────────────────────────────────────────
@@ -334,9 +335,20 @@ export async function withSpan(name, fn, options) {
         }
     }
     const otelOptions = toOtelSpanOptions(options);
+    const isRoot = !trace.getActiveSpan();
     return tracer.startActiveSpan(name, otelOptions, async (span) => {
         attachRequestContextToActiveSpan();
         const pulseSpan = new PulseSpan(span);
+        if (isRoot) {
+            try {
+                const subsystem = ProfilingSubsystem.getInstance();
+                if (subsystem)
+                    void subsystem.startCpuProfile(pulseSpan.traceId, pulseSpan.spanId);
+            }
+            catch (err) {
+                getLogger().warn('Failed to start CPU profile for root span', { error: err });
+            }
+        }
         try {
             const result = await fn(pulseSpan);
             pulseSpan.setStatus('ok');
@@ -350,6 +362,16 @@ export async function withSpan(name, fn, options) {
             throw err;
         }
         finally {
+            if (isRoot) {
+                try {
+                    const subsystem = ProfilingSubsystem.getInstance();
+                    if (subsystem)
+                        void subsystem.stopCpuProfile(pulseSpan.traceId);
+                }
+                catch (err) {
+                    getLogger().warn('Failed to stop CPU profile for root span', { error: err });
+                }
+            }
             pulseSpan.end();
         }
     });
@@ -377,9 +399,20 @@ export function withSpanSync(name, fn, options) {
         }
     }
     const otelOptions = toOtelSpanOptions(options);
+    const isRoot = !trace.getActiveSpan();
     return tracer.startActiveSpan(name, otelOptions, span => {
         attachRequestContextToActiveSpan();
         const pulseSpan = new PulseSpan(span);
+        if (isRoot) {
+            try {
+                const subsystem = ProfilingSubsystem.getInstance();
+                if (subsystem)
+                    void subsystem.startCpuProfile(pulseSpan.traceId, pulseSpan.spanId);
+            }
+            catch (err) {
+                getLogger().warn('Failed to start CPU profile for root span', { error: err });
+            }
+        }
         try {
             const result = fn(pulseSpan);
             pulseSpan.setStatus('ok');
@@ -393,6 +426,16 @@ export function withSpanSync(name, fn, options) {
             throw err;
         }
         finally {
+            if (isRoot) {
+                try {
+                    const subsystem = ProfilingSubsystem.getInstance();
+                    if (subsystem)
+                        void subsystem.stopCpuProfile(pulseSpan.traceId);
+                }
+                catch (err) {
+                    getLogger().warn('Failed to stop CPU profile for root span', { error: err });
+                }
+            }
             pulseSpan.end();
         }
     });

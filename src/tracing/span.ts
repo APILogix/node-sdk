@@ -24,7 +24,6 @@ import {
     context as otelContext,
 } from '@opentelemetry/api'
 import { getLogger } from '../utils/logger.js'
-
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 export type SpanStatus = 'ok' | 'error' | 'unset'
@@ -59,7 +58,7 @@ export interface SpanLink {
  * - No duplicated state — reads everything from the underlying OTel span.
  * - Fluent API for attribute/event chaining.
  */
-export class PulseSpan {
+export class PulseSpan implements OTelSpan {
     /** @internal The underlying OTel span — use getOTelSpan() for advanced access. */
     private readonly _span: OTelSpan
 
@@ -109,7 +108,7 @@ export class PulseSpan {
     }
 
     /** Whether this span is still recording (not ended). */
-    get isRecording(): boolean {
+    isRecording(): boolean {
         return this._span.isRecording()
     }
 
@@ -119,7 +118,7 @@ export class PulseSpan {
     }
 
     /** Full OTel span context (traceId, spanId, traceFlags, traceState). */
-    get spanContext(): SpanContext {
+    spanContext(): SpanContext {
         return this._span.spanContext()
     }
 
@@ -162,6 +161,28 @@ export class PulseSpan {
         return this
     }
 
+    /** Add a single link to the span. No-op after end. */
+    addLink(link: Link): this {
+        if (this._ended) return this
+        try {
+            this._span.addLink(link)
+        } catch (err) {
+            getLogger().warn('Failed to add span link', { error: err })
+        }
+        return this
+    }
+
+    /** Add multiple links to the span. No-op after end. */
+    addLinks(links: Link[]): this {
+        if (this._ended) return this
+        try {
+            this._span.addLinks(links)
+        } catch (err) {
+            getLogger().warn('Failed to add span links', { error: err })
+        }
+        return this
+    }
+
     /**
      * Record an error on the span.
      * Sets status to ERROR and records the exception as a span event.
@@ -183,17 +204,49 @@ export class PulseSpan {
         return this
     }
 
-    /** Set the span status. */
-    setStatus(status: SpanStatus, message?: string): this {
+    /**
+     * OTel compat: recordException.
+     */
+    recordException(exception: any, time?: TimeInput): this {
         if (this._ended) return this
         try {
-            const code =
-                status === 'ok'
-                    ? SpanStatusCode.OK
-                    : status === 'error'
-                        ? SpanStatusCode.ERROR
-                        : SpanStatusCode.UNSET
-            this._span.setStatus(message ? { code, message } : { code })
+            this._span.recordException(exception, time)
+        } catch (err) {
+            getLogger().warn('Failed to record exception', { error: err })
+        }
+        return this
+    }
+
+    /**
+     * OTel compat: updateName.
+     */
+    updateName(name: string): this {
+        if (this._ended) return this
+        try {
+            this._span.updateName(name)
+        } catch (err) {
+            getLogger().warn('Failed to update span name', { error: err })
+        }
+        return this
+    }
+
+    /** Set the span status. */
+    setStatus(status: import('@opentelemetry/api').SpanStatus): this;
+    setStatus(status: SpanStatus, message?: string): this;
+    setStatus(status: SpanStatus | import('@opentelemetry/api').SpanStatus, message?: string): this {
+        if (this._ended) return this
+        try {
+            if (typeof status === 'object') {
+                this._span.setStatus(status)
+            } else {
+                const code =
+                    status === 'ok'
+                        ? SpanStatusCode.OK
+                        : status === 'error'
+                            ? SpanStatusCode.ERROR
+                            : SpanStatusCode.UNSET
+                this._span.setStatus(message ? { code, message } : { code })
+            }
         } catch (err) {
             getLogger().warn('Failed to set span status', { error: err })
         }
@@ -204,6 +257,7 @@ export class PulseSpan {
     end(endTime?: TimeInput): void {
         if (this._ended) return
         this._ended = true
+        
         try {
             this._span.end(endTime)
         } catch (err) {

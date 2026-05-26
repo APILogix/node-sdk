@@ -8,6 +8,7 @@ import { compress, contentEncoding, type CompressionAlgorithm } from '../utils/c
 import { generateId } from '../utils/uuid.js'
 import { context } from '@opentelemetry/api'
 import { suppressTracing } from '@opentelemetry/core'
+import { SerializationPool } from './serialization-pool.js'
 
 export interface PostJsonOptions {
   /** Whether to log failures (disable for init to avoid noise). */
@@ -48,25 +49,40 @@ export async function postJson<T>(
 
   try {
     // Serialize body
-    const jsonString = JSON.stringify(body)
-    let payload: string | Uint8Array = jsonString
+    let payload: string | Uint8Array
     let encoding: string | undefined
 
-    // Apply compression if requested
-    if (options.compression && options.compression !== 'none') {
-      const jsonBuffer = Buffer.from(jsonString)
-      const compressed = await compress(jsonBuffer, options.compression)
+    if (Buffer.isBuffer(body) || body instanceof Uint8Array) {
+      payload = body as Uint8Array
+    } else {
+      const pool = SerializationPool.getInstance()
+      if (pool) {
+        const res = await pool.serialize(body as any[], options.compression ?? 'none')
+        payload = new Uint8Array(res.buffer)
+        if (res.algorithm !== 'none') {
+          encoding = contentEncoding(res.algorithm)
+        }
+      } else {
+        const jsonString = JSON.stringify(body)
+        payload = jsonString
 
-      if (compressed.algorithm !== 'none') {
-        payload = new Uint8Array(compressed.buffer)
-        encoding = contentEncoding(compressed.algorithm)
+        // Apply compression if requested
+        if (options.compression && options.compression !== 'none') {
+          const jsonBuffer = Buffer.from(jsonString)
+          const compressed = await compress(jsonBuffer, options.compression)
 
-        logger.debug('Payload compressed', {
-          algorithm: compressed.algorithm,
-          originalSize: compressed.originalSize,
-          compressedSize: compressed.compressedSize,
-          ratio: (compressed.compressedSize / compressed.originalSize).toFixed(2),
-        })
+          if (compressed.algorithm !== 'none') {
+            payload = new Uint8Array(compressed.buffer)
+            encoding = contentEncoding(compressed.algorithm)
+
+            logger.debug('Payload compressed', {
+              algorithm: compressed.algorithm,
+              originalSize: compressed.originalSize,
+              compressedSize: compressed.compressedSize,
+              ratio: (compressed.compressedSize / compressed.originalSize).toFixed(2),
+            })
+          }
+        }
       }
     }
 

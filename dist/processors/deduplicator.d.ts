@@ -56,13 +56,6 @@ declare class ErrorDeduplicator {
      */
     reset(): void;
     private cleanup;
-    /**
-     * Evict the oldest entries (by insertion order) when the cache exceeds
-     * its capacity. Map iteration is insertion-ordered per the ECMAScript
-     * spec, so this is O(k) where k is the eviction count — far cheaper than
-     * the previous sort-based eviction.
-     */
-    private evictIfNecessary;
 }
 export declare const errorDeduplicator: ErrorDeduplicator;
 export { ErrorDeduplicator };

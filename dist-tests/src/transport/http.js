@@ -7,6 +7,7 @@ import { compress, contentEncoding } from '../utils/compression.js';
 import { generateId } from '../utils/uuid.js';
 import { context } from '@opentelemetry/api';
 import { suppressTracing } from '@opentelemetry/core';
+import { SerializationPool } from './serialization-pool.js';
 export async function postJson(url, body, headers, timeoutMs, options = {}) {
     const logger = getLogger();
     const controller = new AbortController();
@@ -22,22 +23,38 @@ export async function postJson(url, body, headers, timeoutMs, options = {}) {
     });
     try {
         // Serialize body
-        const jsonString = JSON.stringify(body);
-        let payload = jsonString;
+        let payload;
         let encoding;
-        // Apply compression if requested
-        if (options.compression && options.compression !== 'none') {
-            const jsonBuffer = Buffer.from(jsonString);
-            const compressed = await compress(jsonBuffer, options.compression);
-            if (compressed.algorithm !== 'none') {
-                payload = new Uint8Array(compressed.buffer);
-                encoding = contentEncoding(compressed.algorithm);
-                logger.debug('Payload compressed', {
-                    algorithm: compressed.algorithm,
-                    originalSize: compressed.originalSize,
-                    compressedSize: compressed.compressedSize,
-                    ratio: (compressed.compressedSize / compressed.originalSize).toFixed(2),
-                });
+        if (Buffer.isBuffer(body) || body instanceof Uint8Array) {
+            payload = body;
+        }
+        else {
+            const pool = SerializationPool.getInstance();
+            if (pool) {
+                const res = await pool.serialize(body, options.compression ?? 'none');
+                payload = new Uint8Array(res.buffer);
+                if (res.algorithm !== 'none') {
+                    encoding = contentEncoding(res.algorithm);
+                }
+            }
+            else {
+                const jsonString = JSON.stringify(body);
+                payload = jsonString;
+                // Apply compression if requested
+                if (options.compression && options.compression !== 'none') {
+                    const jsonBuffer = Buffer.from(jsonString);
+                    const compressed = await compress(jsonBuffer, options.compression);
+                    if (compressed.algorithm !== 'none') {
+                        payload = new Uint8Array(compressed.buffer);
+                        encoding = contentEncoding(compressed.algorithm);
+                        logger.debug('Payload compressed', {
+                            algorithm: compressed.algorithm,
+                            originalSize: compressed.originalSize,
+                            compressedSize: compressed.compressedSize,
+                            ratio: (compressed.compressedSize / compressed.originalSize).toFixed(2),
+                        });
+                    }
+                }
             }
         }
         // Build headers
@@ -59,6 +76,7 @@ export async function postJson(url, body, headers, timeoutMs, options = {}) {
             body: payload,
             signal: controller.signal,
         }));
+        console.log('HTTP response received', { response });
         const text = await response.text();
         const parsed = text ? tryParseJson(text) : null;
         const durationMs = Date.now() - startedAt;

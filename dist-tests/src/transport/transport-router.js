@@ -11,6 +11,7 @@ import { ConnectionManager } from './connection-manager.js';
 import { HealthMonitor } from './health-monitor.js';
 import { RouteRegistry, TransportConfigurationError } from './route-registry.js';
 import { TransportEventQueue } from './transport-event-queue.js';
+import { MultiplexedTransport } from './multiplexed-transport.js';
 const MAX_PAYLOAD_BYTES = 5 * 1024 * 1024;
 const QUEUE_CONFIG = Object.freeze({
     errors: Object.freeze({ maxSize: 10_000, priority: 'high' }),
@@ -19,6 +20,8 @@ const QUEUE_CONFIG = Object.freeze({
     logs: Object.freeze({ maxSize: 25_000, priority: 'normal' }),
     profiles: Object.freeze({ maxSize: 5_000, priority: 'low' }),
     crons: Object.freeze({ maxSize: 1_000, priority: 'high' }),
+    requests: Object.freeze({ maxSize: 50_000, priority: 'normal' }),
+    replays: Object.freeze({ maxSize: 5_000, priority: 'low' }),
 });
 const BATCH_CONFIG = Object.freeze({
     errors: Object.freeze({ maxBatchSize: 100, maxWaitTimeMs: 1_000, minBatchSize: 1 }),
@@ -27,6 +30,8 @@ const BATCH_CONFIG = Object.freeze({
     logs: Object.freeze({ maxBatchSize: 200, maxWaitTimeMs: 10_000, minBatchSize: 10 }),
     profiles: Object.freeze({ maxBatchSize: 5, maxWaitTimeMs: 30_000, minBatchSize: 1 }),
     crons: Object.freeze({ maxBatchSize: 1, maxWaitTimeMs: 0, minBatchSize: 1 }),
+    requests: Object.freeze({ maxBatchSize: 500, maxWaitTimeMs: 5_000, minBatchSize: 10 }),
+    replays: Object.freeze({ maxBatchSize: 5, maxWaitTimeMs: 10_000, minBatchSize: 1 }),
 });
 const CONNECTION_LIMITS = Object.freeze({
     errors: 30,
@@ -35,6 +40,8 @@ const CONNECTION_LIMITS = Object.freeze({
     logs: 20,
     profiles: 5,
     crons: 5,
+    requests: 50,
+    replays: 10,
 });
 export class TransportRouter {
     transportConfig;
@@ -50,6 +57,8 @@ export class TransportRouter {
     destroyed = false;
     dropped = [];
     dropLogCount = 0;
+    multiplexed = null;
+    useMultiplexedTransport = false;
     constructor(transportConfig, apiKey, fetchImpl = fetch) {
         this.transportConfig = transportConfig;
         this.apiKey = apiKey;
@@ -70,7 +79,7 @@ export class TransportRouter {
      * NOTE: This method is async because shutdown drains in-flight batches.
      * Callers must await the returned promise before sending events.
      */
-    static async initialize(config, apiKey, fetchImpl) {
+    static async initialize(config, apiKey, fetchImpl, useMultiplexedTransport = false) {
         if (TransportRouter.instance) {
             // Await shutdown so in-flight batches drain before we replace the
             // singleton. The previous version of this method only fired
@@ -85,6 +94,11 @@ export class TransportRouter {
             TransportRouter.instance = null;
         }
         const router = new TransportRouter(config, apiKey, fetchImpl);
+        router.useMultiplexedTransport = useMultiplexedTransport;
+        if (useMultiplexedTransport) {
+            const baseUrl = new URL(router.registry.get('traces').url).origin;
+            router.multiplexed = new MultiplexedTransport(baseUrl, apiKey);
+        }
         TransportRouter.instance = router;
         return router;
     }
@@ -103,6 +117,10 @@ export class TransportRouter {
         }
         try {
             const definition = this.registry.resolve(event);
+            if (this.useMultiplexedTransport && this.multiplexed) {
+                this.multiplexed.enqueue(definition.route, [event]);
+                return true;
+            }
             const manager = this.batchManagers.get(definition.route);
             if (!manager) {
                 throw new TransportConfigurationError('Route has no batch manager', {
@@ -171,9 +189,9 @@ export class TransportRouter {
         };
     }
     getDebugState() {
-        const inFlightSends = { errors: 0, traces: 0, metrics: 0, logs: 0, profiles: 0, crons: 0 };
-        const queuedEvents = { errors: 0, traces: 0, metrics: 0, logs: 0, profiles: 0, crons: 0 };
-        const batchedEvents = { errors: 0, traces: 0, metrics: 0, logs: 0, profiles: 0, crons: 0 };
+        const inFlightSends = { errors: 0, traces: 0, metrics: 0, logs: 0, profiles: 0, crons: 0, requests: 0, replays: 0 };
+        const queuedEvents = { errors: 0, traces: 0, metrics: 0, logs: 0, profiles: 0, crons: 0, requests: 0, replays: 0 };
+        const batchedEvents = { errors: 0, traces: 0, metrics: 0, logs: 0, profiles: 0, crons: 0, requests: 0, replays: 0 };
         for (const route of this.registry.routes()) {
             const stats = this.batchManagers.get(route)?.stats();
             inFlightSends[route] = stats?.inFlightSends ?? 0;
@@ -188,7 +206,12 @@ export class TransportRouter {
         };
     }
     async flushAll() {
-        await Promise.allSettled([...this.batchManagers.values()].map(manager => manager.flush()));
+        if (this.useMultiplexedTransport && this.multiplexed) {
+            await this.multiplexed.flush();
+        }
+        else {
+            await Promise.allSettled([...this.batchManagers.values()].map(manager => manager.flush()));
+        }
     }
     async shutdown() {
         if (this.destroyed)
@@ -197,10 +220,20 @@ export class TransportRouter {
         // Phase 1: shut down each batch manager so in-flight HTTP sends complete.
         // We use shutdown (not flush) so the manager rejects new enqueues during
         // its own drain.
-        const shutdownResults = await Promise.allSettled([...this.batchManagers.values()].map(manager => manager.shutdown()));
-        for (const result of shutdownResults) {
-            if (result.status === 'rejected') {
-                getLogger().warn('[TransportRouter] BatchManager shutdown failed', { error: result.reason });
+        if (this.useMultiplexedTransport && this.multiplexed) {
+            try {
+                await this.multiplexed.shutdown();
+            }
+            catch (err) {
+                getLogger().warn('[TransportRouter] MultiplexedTransport shutdown failed', { error: err });
+            }
+        }
+        else {
+            const shutdownResults = await Promise.allSettled([...this.batchManagers.values()].map(manager => manager.shutdown()));
+            for (const result of shutdownResults) {
+                if (result.status === 'rejected') {
+                    getLogger().warn('[TransportRouter] BatchManager shutdown failed', { error: result.reason });
+                }
             }
         }
         // Phase 2: release all queued/batched references so GC can reclaim them.

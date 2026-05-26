@@ -33,6 +33,9 @@ import { ConfigManager } from '../core/config-manager.js'
 import type { InstrumentationConfig } from '../types/config.js'
 import { DEFAULT_TRACE_CAPTURE } from '../constants/internal-defaults.js'
 import { createAxiosInstrumentation } from './axios.js'
+import { createPgInstrumentation } from './pg.js'
+import { createMySQLInstrumentation } from './mysql.js'
+import { patchEventEmitter, unpatchEventEmitter } from './event-emitter-patch.js'
 
 // ─── Global Guard + Teardown Registry ───────────────────────────────────────
 // We attach to globalThis (via Symbol.for) so the guard survives multiple
@@ -67,6 +70,10 @@ export interface AutoInstrumentOptions {
   redis?: boolean
   bullmq?: boolean
   axios?: boolean
+  pg?: boolean
+  mysql2?: boolean
+  /** Automatically bind EventEmitter listeners to the active OTel context. Default: true. */
+  eventEmitterPatch?: boolean
 }
 
 interface ResolvedInstrumentation {
@@ -83,6 +90,11 @@ interface ResolvedInstrumentation {
   redis: boolean
   bullmq: boolean
   axios: boolean
+  pg: boolean
+  pgConfig: { enabled: boolean; captureQueries: boolean; captureParams: boolean }
+  mysql2: boolean
+  mysql2Config: { enabled: boolean; captureQueries: boolean }
+  eventEmitterPatch: boolean
   fastifyConfig: { captureHooks: boolean; captureValidationErrors: boolean }
   ignoredRoutes: string[]
   ignoredMethods: string[]
@@ -144,6 +156,26 @@ function resolveInstrumentationOptions(userOptions: AutoInstrumentOptions): Reso
   const bullmqEnabled = instr.bullmq ?? userOptions.bullmq ?? false
   const axiosEnabled = instr.axios ?? userOptions.axios ?? false
 
+  const instrAny = instr as unknown as Record<string, unknown>
+
+  const pgEnabled = typeof instrAny.pg === 'object'
+    ? (instrAny.pg as { enabled: boolean }).enabled
+    : (instrAny.pg ?? userOptions.pg ?? false) as boolean
+
+  const pgConfig = typeof instrAny.pg === 'object'
+    ? { enabled: pgEnabled, captureQueries: (instrAny.pg as Record<string, boolean>).captureQueries ?? false, captureParams: (instrAny.pg as Record<string, boolean>).captureParams ?? false }
+    : { enabled: pgEnabled, captureQueries: false, captureParams: false }
+
+  const mysql2Enabled = typeof instrAny.mysql2 === 'object'
+    ? (instrAny.mysql2 as { enabled: boolean }).enabled
+    : (instrAny.mysql2 ?? userOptions.mysql2 ?? false) as boolean
+
+  const mysql2Config = typeof instrAny.mysql2 === 'object'
+    ? { enabled: mysql2Enabled, captureQueries: (instrAny.mysql2 as Record<string, boolean>).captureQueries ?? false }
+    : { enabled: mysql2Enabled, captureQueries: false }
+
+  const eventEmitterPatchEnabled = userOptions.eventEmitterPatch ?? true
+
   return {
     http: httpEnabled && httpsEnabled,
     https: httpsEnabled,
@@ -158,6 +190,11 @@ function resolveInstrumentationOptions(userOptions: AutoInstrumentOptions): Reso
     redis: redisEnabled,
     bullmq: bullmqEnabled,
     axios: axiosEnabled,
+    pg: pgConfig.enabled,
+    pgConfig,
+    mysql2: mysql2Config.enabled,
+    mysql2Config,
+    eventEmitterPatch: eventEmitterPatchEnabled,
     fastifyConfig: {
       captureHooks: fastifyConfig.captureHooks ?? true,
       captureValidationErrors: fastifyConfig.captureValidationErrors ?? true,
@@ -338,6 +375,28 @@ export function registerAutoInstrumentations(options: AutoInstrumentOptions = {}
     }
   }
 
+  if (resolved.pg) {
+    const pgInstrumentation = createPgInstrumentation(
+      true,
+      { captureQueries: resolved.pgConfig.captureQueries, captureParams: resolved.pgConfig.captureParams },
+      resolved.captureConfig
+    )
+    if (pgInstrumentation) {
+      instrumentations.push(pgInstrumentation)
+    }
+  }
+
+  if (resolved.mysql2) {
+    const mysqlInstrumentation = createMySQLInstrumentation(
+      true,
+      { captureQueries: resolved.mysql2Config.captureQueries },
+      resolved.captureConfig
+    )
+    if (mysqlInstrumentation) {
+      instrumentations.push(mysqlInstrumentation)
+    }
+  }
+
   const registeredInstrumentations = instrumentations.filter(Boolean)
 
   if (registeredInstrumentations.length > 0) {
@@ -364,15 +423,26 @@ export function registerAutoInstrumentations(options: AutoInstrumentOptions = {}
     redis: resolved.redis,
     bullmq: resolved.bullmq,
     axios: resolved.axios,
+    pg: resolved.pg,
+    mysql2: resolved.mysql2,
+    eventEmitterPatch: resolved.eventEmitterPatch,
     fastifyCaptureHooks: resolved.fastifyConfig.captureHooks,
     fastifyCaptureValidationErrors: resolved.fastifyConfig.captureValidationErrors,
     graphqlCaptureResolvers: resolved.graphqlConfig.captureResolvers,
     prismaCaptureQueries: resolved.prismaConfig.captureQueries,
     prismaCaptureParams: resolved.prismaConfig.captureParams,
+    pgCaptureQueries: resolved.pgConfig.captureQueries,
+    mysql2CaptureQueries: resolved.mysql2Config.captureQueries,
     ignoredRoutes: resolved.ignoredRoutes,
     ignoredMethods: resolved.ignoredMethods,
     count: registeredInstrumentations.length,
   })
+
+  // Apply EventEmitter context binding patch so listeners preserve
+  // the async context (trace ID, span) that was active at registration time.
+  if (resolved.eventEmitterPatch) {
+    patchEventEmitter()
+  }
 }
 
 /**
@@ -418,6 +488,14 @@ export function resetAutoInstrumentations(): void {
   delete g[INSTRUMENTATION_GUARD]
   delete g[TEARDOWN_REGISTRY]
   delete g[UNREGISTER_FN]
+
+  // Remove the EventEmitter context binding patch so the next register
+  // call rebuilds from scratch with the latest configuration.
+  try {
+    unpatchEventEmitter()
+  } catch (err) {
+    logger.warn('EventEmitter unpatch threw', { error: err })
+  }
 }
 
 function isInternalSdkUrl(target: URL, ingest: URL): boolean {

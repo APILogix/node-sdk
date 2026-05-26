@@ -60,7 +60,6 @@ import {
 // ─── Remote Config Engine Imports ───────────────────────────────────────────
 import { KillswitchEngine } from './killswitch-engine.js'
 import { LimitsEngine } from './limits-engine.js'
-import { SecurityScrubber } from '../processors/security-scrubber.js'
 import { TransportRouter } from '../transport/transport-router.js'
 import { FeatureController } from './feature-controller.js'
 import { ConfigManager } from './config-manager.js'
@@ -340,15 +339,6 @@ export async function processEventAsync(rawEvent: SDKEvent | Event, assignedEven
 
     // Step 4: Normalize — fill defaults, truncate oversized fields
     event = normalizeEvent(event, client.metadata)
-
-    // Step 5: Sanitize — PII scrubbing via remote-config-driven SecurityScrubber
-    const securityScrubber = SecurityScrubber.getInstance()
-    if (securityScrubber) {
-      event = securityScrubber.scrub(event)
-    } else {
-      // Fallback to legacy sanitizer if SecurityScrubber not initialized
-      event = sanitizeEvent(event)
-    }
 
     // Step 6: Enrich with request context (trace/span IDs, breadcrumbs)
     event = enrichFromContext(event)

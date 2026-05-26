@@ -1,11 +1,11 @@
 import type { SDKEvent } from '../types/event.js'
 import type { TransportRemoteConfig, TransportRouteName } from '../types/config.js'
 
-export type EnterpriseRoute = 'errors' | 'traces' | 'metrics' | 'logs' | 'profiles' | 'crons'
+export type EnterpriseRoute = 'errors' | 'traces' | 'metrics' | 'logs' | 'profiles' | 'crons' | 'requests' | 'replays'
 
 export interface RouteDefinition {
   readonly route: EnterpriseRoute
-  readonly endpoint: '/v1/errors' | '/v1/traces' | '/v1/metrics' | '/v1/logs' | '/v1/profiles' | '/v1/checkins'
+  readonly endpoint: '/v1/errors' | '/v1/traces' | '/v1/metrics' | '/v1/logs' | '/v1/profiles' | '/v1/checkins' | '/v1/requests' | '/v1/replays'
   readonly method: 'POST'
   readonly contentType: 'application/json'
   readonly url: string
@@ -24,12 +24,12 @@ const EVENT_TYPE_TO_ROUTE: Readonly<Record<string, EnterpriseRoute>> = Object.fr
   error: 'errors',
   message: 'errors',
   span: 'traces',
-  request: 'traces',
+  request: 'requests',
   metric: 'metrics',
   log: 'logs',
   profile: 'profiles',
   cron_checkin: 'crons',
-  replay: 'logs',
+  replay: 'replays',
 })
 
 const ROUTE_ENDPOINTS: Readonly<Record<EnterpriseRoute, RouteDefinition['endpoint']>> = Object.freeze({
@@ -39,6 +39,8 @@ const ROUTE_ENDPOINTS: Readonly<Record<EnterpriseRoute, RouteDefinition['endpoin
   logs: '/v1/logs',
   profiles: '/v1/profiles',
   crons: '/v1/checkins',
+  requests: '/v1/requests',
+  replays: '/v1/replays',
 })
 
 export class RouteRegistry {
@@ -52,6 +54,8 @@ export class RouteRegistry {
       logs: createDefinition('logs', config),
       profiles: createDefinition('profiles', config),
       crons: createDefinition('crons', config),
+      requests: createDefinition('requests', config),
+      replays: createDefinition('replays', config),
     })
   }
 
@@ -70,7 +74,7 @@ export class RouteRegistry {
   }
 
   routes(): readonly EnterpriseRoute[] {
-    return ['errors', 'traces', 'metrics', 'logs', 'profiles', 'crons'] as const
+    return ['errors', 'traces', 'metrics', 'logs', 'profiles', 'crons', 'requests', 'replays'] as const
   }
 }
 
@@ -79,7 +83,17 @@ function createDefinition(route: EnterpriseRoute, config: TransportRemoteConfig)
   // Map EnterpriseRoute to TransportRouteName for config lookup
   const configRouteName = route as TransportRouteName
   // Wire schema renamed `endpoints` → `routes` in v3.
-  const configured = config.routes[configRouteName]?.url
+  let configured = config.routes[configRouteName]?.url
+
+  // Fallback for missing routes in older configs
+  if (!configured) {
+    if (route === 'requests') {
+      configured = config.routes['traces']?.url
+    } else if (route === 'replays') {
+      configured = config.routes['logs']?.url
+    }
+  }
+
   if (!configured) {
     throw new TransportConfigurationError('Missing endpoint for route', { route })
   }

@@ -17,6 +17,7 @@ export class SecurityScrubber {
     scrubbingConfig;
     piiConfig;
     destroyed = false;
+    hasScrubRules = false;
     // Pre-compiled sets for O(1) lookups. Headers and the unified `fields`
     // list each get their own lowercased Set so callers can avoid recomputing
     // them on every event.
@@ -31,6 +32,11 @@ export class SecurityScrubber {
         this.piiConfig = { ...config.piiDetection };
         this.sensitiveHeaders = new Set(config.scrubbing.headers.map((h) => h.toLowerCase()));
         this.sensitiveFields = new Set(config.scrubbing.fields.map((f) => f.toLowerCase()));
+        this.updateHasScrubRules();
+    }
+    updateHasScrubRules() {
+        this.hasScrubRules = !!((this.scrubbingConfig.enabled && (this.sensitiveHeaders.size > 0 || this.sensitiveFields.size > 0)) ||
+            (this.piiConfig.enabled && (this.piiConfig.maskEmails || this.piiConfig.maskPhones || this.piiConfig.maskIPs)));
     }
     static initialize(config) {
         if (SecurityScrubber.instance) {
@@ -47,10 +53,26 @@ export class SecurityScrubber {
      * Never mutates the original event. Never throws.
      */
     scrub(event) {
-        if (this.destroyed || !this.scrubbingConfig.enabled)
+        if (this.destroyed || !this.hasScrubRules)
             return event;
         try {
-            const clone = structuredClone(event);
+            const clone = { ...event };
+            // Shallow clone objects that we'll mutate
+            if ('context' in clone && typeof clone['context'] === 'object' && clone['context'] !== null) {
+                clone['context'] = { ...clone['context'] };
+            }
+            if ('attributes' in clone && typeof clone['attributes'] === 'object' && clone['attributes'] !== null) {
+                clone['attributes'] = { ...clone['attributes'] };
+            }
+            if ('body' in clone && typeof clone['body'] === 'object' && clone['body'] !== null && !Array.isArray(clone['body'])) {
+                clone['body'] = { ...clone['body'] };
+            }
+            if ('headers' in clone && typeof clone['headers'] === 'object' && clone['headers'] !== null) {
+                clone['headers'] = { ...clone['headers'] };
+            }
+            if ('query' in clone && typeof clone['query'] === 'object' && clone['query'] !== null) {
+                clone['query'] = { ...clone['query'] };
+            }
             // Scrub headers
             if ('headers' in clone && typeof clone['headers'] === 'object' && clone['headers'] !== null) {
                 clone['headers'] = this.scrubHeaders(clone['headers']);
@@ -84,6 +106,11 @@ export class SecurityScrubber {
             return event; // Return original on error
         }
     }
+    scrubBatch(events) {
+        if (this.destroyed || !this.hasScrubRules)
+            return events;
+        return events.map(e => this.scrub(e));
+    }
     /** Handle config change — hot-swap privacy config. */
     handleConfigChange(_diff, newConfig) {
         if (this.destroyed)
@@ -93,6 +120,7 @@ export class SecurityScrubber {
         this.piiConfig = { ...newPrivacy.piiDetection };
         this.sensitiveHeaders = new Set(newPrivacy.scrubbing.headers.map((h) => h.toLowerCase()));
         this.sensitiveFields = new Set(newPrivacy.scrubbing.fields.map((f) => f.toLowerCase()));
+        this.updateHasScrubRules();
         getLogger().info('[SecurityScrubber] Config updated');
     }
     // ─── Private Scrubbing Methods ────────────────────────────────────────────

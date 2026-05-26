@@ -15,7 +15,7 @@
  * branch that can throw is wrapped in a defensive try/catch.
  */
 import { captureError } from '../capture/captureError.js';
-import { captureRequest } from '../capture/captureRequest.js';
+import { trace } from '@opentelemetry/api';
 import { client } from '../core/client.js';
 import { attachRequestContextToActiveSpan, createContextStore, getSpanId, getTraceId, withContext, } from '../core/context.js';
 import { getLogger } from '../utils/logger.js';
@@ -84,29 +84,38 @@ export function monitorMiddleware(options = {}) {
                     const bodySnapshot = captureBodySnapshot(req.body, captureBody);
                     const responseSize = readContentLength(res.getHeader('content-length'));
                     recordCaptureAccepted(tenantId);
-                    captureRequest({
-                        type: 'request',
-                        requestId,
-                        method: req.method,
-                        url: normalizedRoute(req),
-                        statusCode: res.statusCode,
-                        latency: Date.now() - startTime,
-                        timestamp: Date.now(),
-                        traceId: getTraceId() ?? store.traceId,
-                        spanId: getSpanId() ?? store.spanId,
-                        ...(userId ? { userId } : {}),
-                        ...(tenantId ? { tenantId } : {}),
-                        ...(sessionId ? { sessionId } : {}),
-                        ...(clientIp ? { clientIp } : {}),
-                        ...(userAgent ? { userAgent } : {}),
-                        ...(referer ? { referer } : {}),
-                        ...(captureHeaders ? { headers: scrubHeadersSafe(req.headers) } : {}),
-                        ...(captureQuery ? { query: scrubQuery(req.query) } : {}),
-                        ...(bodySnapshot.body ? { body: bodySnapshot.body } : {}),
-                        ...(bodySnapshot.bodySize !== undefined ? { bodySize: bodySnapshot.bodySize } : {}),
-                        ...(responseSize !== undefined ? { responseSize } : {}),
-                        route: normalizedRoute(req),
-                    });
+                    // Enrich the active OTel span with Pulse-specific metadata instead
+                    // of emitting a separate `type: 'request'` event. OTel's
+                    // HttpInstrumentation and ExpressInstrumentation already create spans
+                    // for the request lifecycle — emitting a duplicate `captureRequest()`
+                    // event caused double billing and disconnected correlation.
+                    const activeSpan = trace.getActiveSpan();
+                    if (activeSpan) {
+                        const route = normalizedRoute(req);
+                        const enrichmentAttrs = {
+                            'http.route': route,
+                            'http.status_code': res.statusCode,
+                            'pulse.request_id': requestId,
+                            'pulse.latency_ms': Date.now() - startTime,
+                        };
+                        if (tenantId)
+                            enrichmentAttrs['pulse.tenant_id'] = tenantId;
+                        if (userId)
+                            enrichmentAttrs['pulse.user_id'] = userId;
+                        if (sessionId)
+                            enrichmentAttrs['pulse.session_id'] = sessionId;
+                        if (clientIp)
+                            enrichmentAttrs['http.client_ip'] = clientIp;
+                        if (userAgent)
+                            enrichmentAttrs['http.user_agent'] = userAgent;
+                        if (referer)
+                            enrichmentAttrs['http.referer'] = referer;
+                        if (bodySnapshot.bodySize !== undefined)
+                            enrichmentAttrs['http.request.body.size'] = bodySnapshot.bodySize;
+                        if (responseSize !== undefined)
+                            enrichmentAttrs['http.response.body.size'] = responseSize;
+                        activeSpan.setAttributes(enrichmentAttrs);
+                    }
                 }
                 catch (err) {
                     // The middleware must NEVER crash the host. Log and move on.

@@ -23,6 +23,7 @@ export class SecurityScrubber {
   private scrubbingConfig: ScrubbingConfig
   private piiConfig: PiiDetectionConfig
   private destroyed: boolean = false
+  private hasScrubRules: boolean = false
 
   // Pre-compiled sets for O(1) lookups. Headers and the unified `fields`
   // list each get their own lowercased Set so callers can avoid recomputing
@@ -41,6 +42,14 @@ export class SecurityScrubber {
 
     this.sensitiveHeaders = new Set(config.scrubbing.headers.map((h: string) => h.toLowerCase()))
     this.sensitiveFields = new Set(config.scrubbing.fields.map((f: string) => f.toLowerCase()))
+    this.updateHasScrubRules()
+  }
+
+  private updateHasScrubRules() {
+    this.hasScrubRules = !!(
+      (this.scrubbingConfig.enabled && (this.sensitiveHeaders.size > 0 || this.sensitiveFields.size > 0)) ||
+      (this.piiConfig.enabled && (this.piiConfig.maskEmails || this.piiConfig.maskPhones || this.piiConfig.maskIPs))
+    )
   }
 
   static initialize(config: PrivacyConfig): SecurityScrubber {
@@ -60,10 +69,27 @@ export class SecurityScrubber {
    * Never mutates the original event. Never throws.
    */
   scrub<T extends SDKEvent>(event: T): T {
-    if (this.destroyed || !this.scrubbingConfig.enabled) return event
+    if (this.destroyed || !this.hasScrubRules) return event
 
     try {
-      const clone = structuredClone(event) as Record<string, unknown>
+      const clone = { ...event } as Record<string, unknown>
+
+      // Shallow clone objects that we'll mutate
+      if ('context' in clone && typeof clone['context'] === 'object' && clone['context'] !== null) {
+        clone['context'] = { ...(clone['context'] as Record<string, unknown>) }
+      }
+      if ('attributes' in clone && typeof clone['attributes'] === 'object' && clone['attributes'] !== null) {
+        clone['attributes'] = { ...(clone['attributes'] as Record<string, unknown>) }
+      }
+      if ('body' in clone && typeof clone['body'] === 'object' && clone['body'] !== null && !Array.isArray(clone['body'])) {
+        clone['body'] = { ...(clone['body'] as Record<string, unknown>) }
+      }
+      if ('headers' in clone && typeof clone['headers'] === 'object' && clone['headers'] !== null) {
+        clone['headers'] = { ...(clone['headers'] as Record<string, unknown>) }
+      }
+      if ('query' in clone && typeof clone['query'] === 'object' && clone['query'] !== null) {
+        clone['query'] = { ...(clone['query'] as Record<string, unknown>) }
+      }
 
       // Scrub headers
       if ('headers' in clone && typeof clone['headers'] === 'object' && clone['headers'] !== null) {
@@ -107,6 +133,11 @@ export class SecurityScrubber {
     }
   }
 
+  scrubBatch<T extends SDKEvent>(events: T[]): T[] {
+    if (this.destroyed || !this.hasScrubRules) return events
+    return events.map(e => this.scrub(e))
+  }
+
   /** Handle config change — hot-swap privacy config. */
   handleConfigChange(_diff: ConfigDiff, newConfig: Readonly<RemoteConfigResponse>): void {
     if (this.destroyed) return
@@ -117,6 +148,7 @@ export class SecurityScrubber {
 
     this.sensitiveHeaders = new Set(newPrivacy.scrubbing.headers.map((h: string) => h.toLowerCase()))
     this.sensitiveFields = new Set(newPrivacy.scrubbing.fields.map((f: string) => f.toLowerCase()))
+    this.updateHasScrubRules()
 
     getLogger().info('[SecurityScrubber] Config updated')
   }

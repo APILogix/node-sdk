@@ -12,9 +12,45 @@ import { epochMs } from '../utils/time.js';
 const DEFAULT_SUPPRESSION_WINDOW_MS = 60_000; // 1 minute
 const DEFAULT_MAX_ENTRIES = 5000;
 const CLEANUP_INTERVAL_MS = 300_000; // 5 minutes
+class LRUCache {
+    capacity;
+    cache = new Map();
+    constructor(capacity) {
+        this.capacity = capacity;
+    }
+    setCapacity(capacity) {
+        this.capacity = capacity;
+        while (this.cache.size > this.capacity) {
+            this.cache.delete(this.cache.keys().next().value);
+        }
+    }
+    get(key) {
+        if (!this.cache.has(key))
+            return undefined;
+        const val = this.cache.get(key);
+        this.cache.delete(key);
+        this.cache.set(key, val);
+        return val;
+    }
+    set(key, value) {
+        if (this.cache.has(key)) {
+            this.cache.delete(key);
+        }
+        else if (this.cache.size >= this.capacity) {
+            this.cache.delete(this.cache.keys().next().value);
+        }
+        this.cache.set(key, value);
+    }
+    has(key) { return this.cache.has(key); }
+    delete(key) { return this.cache.delete(key); }
+    get size() { return this.cache.size; }
+    clear() { this.cache.clear(); }
+    entries() { return this.cache.entries(); }
+    values() { return this.cache.values(); }
+}
 class ErrorDeduplicator {
-    entries = new Map();
-    replaySeen = new Map();
+    entries = new LRUCache(DEFAULT_MAX_ENTRIES);
+    replaySeen = new LRUCache(1000);
     maxReplayEntries = 1000;
     suppressionWindowMs = DEFAULT_SUPPRESSION_WINDOW_MS;
     maxEntries = DEFAULT_MAX_ENTRIES;
@@ -25,6 +61,7 @@ class ErrorDeduplicator {
     configure(options = {}) {
         this.suppressionWindowMs = options.suppressionWindowMs ?? DEFAULT_SUPPRESSION_WINDOW_MS;
         this.maxEntries = options.maxEntries ?? DEFAULT_MAX_ENTRIES;
+        this.entries.setCapacity(this.maxEntries);
     }
     start() {
         if (this.initialized)
@@ -51,15 +88,12 @@ class ErrorDeduplicator {
      */
     isDuplicate(fingerprint) {
         const now = epochMs();
-        const existing = this.entries.get(fingerprint);
+        const existing = this.entries.get(fingerprint); // automatically moves to back
         if (!existing) {
             this.entries.set(fingerprint, { firstSeen: now, lastSeen: now, count: 1 });
-            this.evictIfNecessary();
             return false;
         }
         if (now - existing.lastSeen > this.suppressionWindowMs) {
-            // Re-insert to refresh insertion-order position (cheap O(1)).
-            this.entries.delete(fingerprint);
             this.entries.set(fingerprint, { firstSeen: now, lastSeen: now, count: 1 });
             return false;
         }
@@ -96,21 +130,9 @@ class ErrorDeduplicator {
      */
     isReplayDuplicate(fingerprint, replayId) {
         const key = `${fingerprint}:${replayId}`;
-        if (this.replaySeen.has(key)) {
+        if (this.replaySeen.get(key) !== undefined) {
             this.replayDuplicateCount++;
             return true;
-        }
-        // Bound the replay seen map
-        if (this.replaySeen.size >= this.maxReplayEntries) {
-            // Evict oldest 10%
-            const toRemove = Math.floor(this.maxReplayEntries * 0.1);
-            const keys = this.replaySeen.keys();
-            for (let i = 0; i < toRemove; i++) {
-                const result = keys.next();
-                if (result.done)
-                    break;
-                this.replaySeen.delete(result.value);
-            }
         }
         this.replaySeen.set(key, epochMs());
         return false;
@@ -139,28 +161,6 @@ class ErrorDeduplicator {
         if (cleaned > 0) {
             logger.debug('Error dedup cleanup', { cleanedEntries: cleaned, remaining: this.entries.size });
         }
-    }
-    /**
-     * Evict the oldest entries (by insertion order) when the cache exceeds
-     * its capacity. Map iteration is insertion-ordered per the ECMAScript
-     * spec, so this is O(k) where k is the eviction count — far cheaper than
-     * the previous sort-based eviction.
-     */
-    evictIfNecessary() {
-        if (this.entries.size <= this.maxEntries)
-            return;
-        const logger = getLogger();
-        const toRemove = this.entries.size - this.maxEntries + Math.floor(this.maxEntries * 0.1);
-        let evicted = 0;
-        const iterator = this.entries.keys();
-        while (evicted < toRemove) {
-            const next = iterator.next();
-            if (next.done)
-                break;
-            this.entries.delete(next.value);
-            evicted++;
-        }
-        logger.debug('Error dedup eviction', { evicted, remaining: this.entries.size });
     }
 }
 export const errorDeduplicator = new ErrorDeduplicator();

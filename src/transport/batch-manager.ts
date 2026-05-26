@@ -6,6 +6,8 @@ import { HealthMonitor } from './health-monitor.js'
 import type { EnterpriseRoute, RouteDefinition } from './route-registry.js'
 import { context as otelContext } from '@opentelemetry/api'
 import { suppressTracing } from '@opentelemetry/core'
+import { SecurityScrubber } from '../processors/security-scrubber.js'
+import { sanitizeEvent } from '../processors/sanitizer.js'
 
 export interface BatchManagerOptions {
   readonly route: EnterpriseRoute
@@ -148,7 +150,15 @@ export class BatchManager {
     const targetSize = this.effectiveMaxBatchSize()
     let batch = this.options.queue.drain(targetSize)
     while (batch.length > 0) {
-      const payloadBytes = this.byteLength(batch)
+      const scrubber = SecurityScrubber.getInstance()
+      let safeBatch = batch
+      if (scrubber) {
+        safeBatch = scrubber.scrubBatch(batch)
+      } else {
+        safeBatch = batch.map(e => sanitizeEvent(e))
+      }
+
+      const payloadBytes = this.byteLength(safeBatch)
 
       // Sentinel: serialization itself failed (e.g., circular ref). The
       // bad events have already been dropped+reported by byteLength, so
@@ -156,7 +166,7 @@ export class BatchManager {
       // bad payload and double-count the drop in stats.
       if (payloadBytes < 0) return []
 
-      if (payloadBytes <= this.options.maxPayloadBytes) return batch
+      if (payloadBytes <= this.options.maxPayloadBytes) return safeBatch
 
       if (batch.length === 1) {
         this.totalDropped++

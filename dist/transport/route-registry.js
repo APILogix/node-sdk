@@ -11,12 +11,12 @@ const EVENT_TYPE_TO_ROUTE = Object.freeze({
     error: 'errors',
     message: 'errors',
     span: 'traces',
-    request: 'traces',
+    request: 'requests',
     metric: 'metrics',
     log: 'logs',
     profile: 'profiles',
     cron_checkin: 'crons',
-    replay: 'logs',
+    replay: 'replays',
 });
 const ROUTE_ENDPOINTS = Object.freeze({
     errors: '/v1/errors',
@@ -25,6 +25,8 @@ const ROUTE_ENDPOINTS = Object.freeze({
     logs: '/v1/logs',
     profiles: '/v1/profiles',
     crons: '/v1/checkins',
+    requests: '/v1/requests',
+    replays: '/v1/replays',
 });
 export class RouteRegistry {
     definitions;
@@ -36,6 +38,8 @@ export class RouteRegistry {
             logs: createDefinition('logs', config),
             profiles: createDefinition('profiles', config),
             crons: createDefinition('crons', config),
+            requests: createDefinition('requests', config),
+            replays: createDefinition('replays', config),
         });
     }
     resolve(event) {
@@ -51,7 +55,7 @@ export class RouteRegistry {
         return this.definitions[route];
     }
     routes() {
-        return ['errors', 'traces', 'metrics', 'logs', 'profiles', 'crons'];
+        return ['errors', 'traces', 'metrics', 'logs', 'profiles', 'crons', 'requests', 'replays'];
     }
 }
 function createDefinition(route, config) {
@@ -59,7 +63,16 @@ function createDefinition(route, config) {
     // Map EnterpriseRoute to TransportRouteName for config lookup
     const configRouteName = route;
     // Wire schema renamed `endpoints` → `routes` in v3.
-    const configured = config.routes[configRouteName]?.url;
+    let configured = config.routes[configRouteName]?.url;
+    // Fallback for missing routes in older configs
+    if (!configured) {
+        if (route === 'requests') {
+            configured = config.routes['traces']?.url;
+        }
+        else if (route === 'replays') {
+            configured = config.routes['logs']?.url;
+        }
+    }
     if (!configured) {
         throw new TransportConfigurationError('Missing endpoint for route', { route });
     }

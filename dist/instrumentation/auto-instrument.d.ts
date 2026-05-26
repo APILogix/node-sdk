@@ -32,6 +32,10 @@ export interface AutoInstrumentOptions {
     redis?: boolean;
     bullmq?: boolean;
     axios?: boolean;
+    pg?: boolean;
+    mysql2?: boolean;
+    /** Automatically bind EventEmitter listeners to the active OTel context. Default: true. */
+    eventEmitterPatch?: boolean;
 }
 /**
  * Register all configured auto-instrumentations.

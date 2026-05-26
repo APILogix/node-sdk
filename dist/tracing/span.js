@@ -64,7 +64,7 @@ export class PulseSpan {
         return this._parentSpanId;
     }
     /** Whether this span is still recording (not ended). */
-    get isRecording() {
+    isRecording() {
         return this._span.isRecording();
     }
     /** Whether this span has been ended via PulseSpan.end(). */
@@ -72,7 +72,7 @@ export class PulseSpan {
         return this._ended;
     }
     /** Full OTel span context (traceId, spanId, traceFlags, traceState). */
-    get spanContext() {
+    spanContext() {
         return this._span.spanContext();
     }
     // ─── Mutation Methods (all never-throw, fluent) ─────────────────────
@@ -117,6 +117,30 @@ export class PulseSpan {
         }
         return this;
     }
+    /** Add a single link to the span. No-op after end. */
+    addLink(link) {
+        if (this._ended)
+            return this;
+        try {
+            this._span.addLink(link);
+        }
+        catch (err) {
+            getLogger().warn('Failed to add span link', { error: err });
+        }
+        return this;
+    }
+    /** Add multiple links to the span. No-op after end. */
+    addLinks(links) {
+        if (this._ended)
+            return this;
+        try {
+            this._span.addLinks(links);
+        }
+        catch (err) {
+            getLogger().warn('Failed to add span links', { error: err });
+        }
+        return this;
+    }
     /**
      * Record an error on the span.
      * Sets status to ERROR and records the exception as a span event.
@@ -139,17 +163,49 @@ export class PulseSpan {
         }
         return this;
     }
-    /** Set the span status. */
+    /**
+     * OTel compat: recordException.
+     */
+    recordException(exception, time) {
+        if (this._ended)
+            return this;
+        try {
+            this._span.recordException(exception, time);
+        }
+        catch (err) {
+            getLogger().warn('Failed to record exception', { error: err });
+        }
+        return this;
+    }
+    /**
+     * OTel compat: updateName.
+     */
+    updateName(name) {
+        if (this._ended)
+            return this;
+        try {
+            this._span.updateName(name);
+        }
+        catch (err) {
+            getLogger().warn('Failed to update span name', { error: err });
+        }
+        return this;
+    }
     setStatus(status, message) {
         if (this._ended)
             return this;
         try {
-            const code = status === 'ok'
-                ? SpanStatusCode.OK
-                : status === 'error'
-                    ? SpanStatusCode.ERROR
-                    : SpanStatusCode.UNSET;
-            this._span.setStatus(message ? { code, message } : { code });
+            if (typeof status === 'object') {
+                this._span.setStatus(status);
+            }
+            else {
+                const code = status === 'ok'
+                    ? SpanStatusCode.OK
+                    : status === 'error'
+                        ? SpanStatusCode.ERROR
+                        : SpanStatusCode.UNSET;
+                this._span.setStatus(message ? { code, message } : { code });
+            }
         }
         catch (err) {
             getLogger().warn('Failed to set span status', { error: err });

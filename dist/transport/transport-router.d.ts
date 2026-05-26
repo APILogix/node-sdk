@@ -24,6 +24,8 @@ export declare class TransportRouter {
     private destroyed;
     private readonly dropped;
     private dropLogCount;
+    private multiplexed;
+    private useMultiplexedTransport;
     private constructor();
     /**
      * Initialize the singleton transport router.
@@ -36,7 +38,7 @@ export declare class TransportRouter {
      * NOTE: This method is async because shutdown drains in-flight batches.
      * Callers must await the returned promise before sending events.
      */
-    static initialize(config: TransportRemoteConfig, apiKey: string, fetchImpl?: typeof fetch): Promise<TransportRouter>;
+    static initialize(config: TransportRemoteConfig, apiKey: string, fetchImpl?: typeof fetch, useMultiplexedTransport?: boolean): Promise<TransportRouter>;
     static getInstance(): TransportRouter | null;
     send(event: SDKEvent): boolean;
     sendBatch(events: readonly SDKEvent[]): void;

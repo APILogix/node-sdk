@@ -31,6 +31,9 @@ import { getLogger } from '../utils/logger.js';
 import { ConfigManager } from '../core/config-manager.js';
 import { DEFAULT_TRACE_CAPTURE } from '../constants/internal-defaults.js';
 import { createAxiosInstrumentation } from './axios.js';
+import { createPgInstrumentation } from './pg.js';
+import { createMySQLInstrumentation } from './mysql.js';
+import { patchEventEmitter, unpatchEventEmitter } from './event-emitter-patch.js';
 // ─── Global Guard + Teardown Registry ───────────────────────────────────────
 // We attach to globalThis (via Symbol.for) so the guard survives multiple
 // independent imports of the SDK in the same process. Without this, a host
@@ -78,6 +81,20 @@ function resolveInstrumentationOptions(userOptions) {
     const redisEnabled = instr.redis ?? userOptions.redis ?? false;
     const bullmqEnabled = instr.bullmq ?? userOptions.bullmq ?? false;
     const axiosEnabled = instr.axios ?? userOptions.axios ?? false;
+    const instrAny = instr;
+    const pgEnabled = typeof instrAny.pg === 'object'
+        ? instrAny.pg.enabled
+        : (instrAny.pg ?? userOptions.pg ?? false);
+    const pgConfig = typeof instrAny.pg === 'object'
+        ? { enabled: pgEnabled, captureQueries: instrAny.pg.captureQueries ?? false, captureParams: instrAny.pg.captureParams ?? false }
+        : { enabled: pgEnabled, captureQueries: false, captureParams: false };
+    const mysql2Enabled = typeof instrAny.mysql2 === 'object'
+        ? instrAny.mysql2.enabled
+        : (instrAny.mysql2 ?? userOptions.mysql2 ?? false);
+    const mysql2Config = typeof instrAny.mysql2 === 'object'
+        ? { enabled: mysql2Enabled, captureQueries: instrAny.mysql2.captureQueries ?? false }
+        : { enabled: mysql2Enabled, captureQueries: false };
+    const eventEmitterPatchEnabled = userOptions.eventEmitterPatch ?? true;
     return {
         http: httpEnabled && httpsEnabled,
         https: httpsEnabled,
@@ -92,6 +109,11 @@ function resolveInstrumentationOptions(userOptions) {
         redis: redisEnabled,
         bullmq: bullmqEnabled,
         axios: axiosEnabled,
+        pg: pgConfig.enabled,
+        pgConfig,
+        mysql2: mysql2Config.enabled,
+        mysql2Config,
+        eventEmitterPatch: eventEmitterPatchEnabled,
         fastifyConfig: {
             captureHooks: fastifyConfig.captureHooks ?? true,
             captureValidationErrors: fastifyConfig.captureValidationErrors ?? true,
@@ -249,6 +271,18 @@ export function registerAutoInstrumentations(options = {}) {
             });
         }
     }
+    if (resolved.pg) {
+        const pgInstrumentation = createPgInstrumentation(true, { captureQueries: resolved.pgConfig.captureQueries, captureParams: resolved.pgConfig.captureParams }, resolved.captureConfig);
+        if (pgInstrumentation) {
+            instrumentations.push(pgInstrumentation);
+        }
+    }
+    if (resolved.mysql2) {
+        const mysqlInstrumentation = createMySQLInstrumentation(true, { captureQueries: resolved.mysql2Config.captureQueries }, resolved.captureConfig);
+        if (mysqlInstrumentation) {
+            instrumentations.push(mysqlInstrumentation);
+        }
+    }
     const registeredInstrumentations = instrumentations.filter(Boolean);
     if (registeredInstrumentations.length > 0) {
         // Each call to registerInstrumentations returns an unregister function
@@ -273,15 +307,25 @@ export function registerAutoInstrumentations(options = {}) {
         redis: resolved.redis,
         bullmq: resolved.bullmq,
         axios: resolved.axios,
+        pg: resolved.pg,
+        mysql2: resolved.mysql2,
+        eventEmitterPatch: resolved.eventEmitterPatch,
         fastifyCaptureHooks: resolved.fastifyConfig.captureHooks,
         fastifyCaptureValidationErrors: resolved.fastifyConfig.captureValidationErrors,
         graphqlCaptureResolvers: resolved.graphqlConfig.captureResolvers,
         prismaCaptureQueries: resolved.prismaConfig.captureQueries,
         prismaCaptureParams: resolved.prismaConfig.captureParams,
+        pgCaptureQueries: resolved.pgConfig.captureQueries,
+        mysql2CaptureQueries: resolved.mysql2Config.captureQueries,
         ignoredRoutes: resolved.ignoredRoutes,
         ignoredMethods: resolved.ignoredMethods,
         count: registeredInstrumentations.length,
     });
+    // Apply EventEmitter context binding patch so listeners preserve
+    // the async context (trace ID, span) that was active at registration time.
+    if (resolved.eventEmitterPatch) {
+        patchEventEmitter();
+    }
 }
 /**
  * Fully reset auto-instrumentation state.
@@ -326,6 +370,14 @@ export function resetAutoInstrumentations() {
     delete g[INSTRUMENTATION_GUARD];
     delete g[TEARDOWN_REGISTRY];
     delete g[UNREGISTER_FN];
+    // Remove the EventEmitter context binding patch so the next register
+    // call rebuilds from scratch with the latest configuration.
+    try {
+        unpatchEventEmitter();
+    }
+    catch (err) {
+        logger.warn('EventEmitter unpatch threw', { error: err });
+    }
 }
 function isInternalSdkUrl(target, ingest) {
     if (target.origin !== ingest.origin)

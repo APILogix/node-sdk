@@ -46,6 +46,8 @@ export { captureError } from './capture/captureError.js';
 export { captureRequest } from './capture/captureRequest.js';
 export { captureMessage } from './capture/captureMessage.js';
 export { captureEvent } from './capture/captureEvent.js';
+export { captureCronCheckIn } from './capture/captureCronCheckIn.js';
+export { startProfile, stopProfile } from './capture/captureProfile.js';
 export { captureMetric, incrementCounter, setGauge, recordHistogram, addUpDownCounter, } from './capture/captureMetric.js';
 // ─── Context & breadcrumbs ──────────────────────────────────────────────────
 export { addBreadcrumb, getRequestContext, getTraceId, getSpanId } from './core/context.js';

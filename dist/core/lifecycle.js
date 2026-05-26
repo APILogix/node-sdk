@@ -115,6 +115,49 @@ export async function flush() {
     await persistentStorage.flush();
 }
 /**
+ * Emergency flush for crash scenarios (uncaughtException, SIGKILL).
+ *
+ * Drains only the event pipeline and transport queue with a hard timeout.
+ * Does NOT shut down subsystems or tear down plugins — the process is
+ * assumed to be terminating imminently.
+ *
+ * Design:
+ *   - Best-effort: swallows all errors so it never makes a crash worse.
+ *   - Bounded: hard timeout prevents indefinite process hang.
+ *   - Lightweight: no subsystem teardown, no singleton resets.
+ *
+ * @param timeoutMs Maximum time to wait for transport drain. Default: 2000ms.
+ */
+export async function crashFlush(timeoutMs = 2_000) {
+    try {
+        let timer;
+        const timeoutPromise = new Promise(resolve => {
+            timer = setTimeout(resolve, timeoutMs);
+            timer.unref();
+        });
+        const drainPromise = (async () => {
+            try {
+                await drainPendingEventProcessing();
+            }
+            catch {
+                // Best-effort — pipeline drain failure must not block transport flush
+            }
+            const router = TransportRouter.getInstance();
+            if (router) {
+                await router.flushAll();
+            }
+        })();
+        await Promise.race([drainPromise, timeoutPromise]);
+        if (timer)
+            clearTimeout(timer);
+    }
+    catch {
+        // Best-effort — swallow all errors during crash flush.
+        // The process is about to terminate; throwing here would only
+        // mask the original uncaught exception in the error output.
+    }
+}
+/**
  * Register SIGTERM/SIGINT handlers for automatic graceful shutdown.
  * Idempotent: a second call without an intervening reset is a no-op.
  */

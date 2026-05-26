@@ -17,12 +17,14 @@ export declare class SecurityScrubber {
     private scrubbingConfig;
     private piiConfig;
     private destroyed;
+    private hasScrubRules;
     private sensitiveHeaders;
     private sensitiveFields;
     private static readonly EMAIL_PATTERN;
     private static readonly PHONE_PATTERN;
     private static readonly IPV4_PATTERN;
     private constructor();
+    private updateHasScrubRules;
     static initialize(config: PrivacyConfig): SecurityScrubber;
     static getInstance(): SecurityScrubber | null;
     /**
@@ -30,6 +32,7 @@ export declare class SecurityScrubber {
      * Never mutates the original event. Never throws.
      */
     scrub<T extends SDKEvent>(event: T): T;
+    scrubBatch<T extends SDKEvent>(events: T[]): T[];
     /** Handle config change — hot-swap privacy config. */
     handleConfigChange(_diff: ConfigDiff, newConfig: Readonly<RemoteConfigResponse>): void;
     /**

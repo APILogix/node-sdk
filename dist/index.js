@@ -21,7 +21,7 @@
 import { init } from './core/init.js';
 // ─── Lifecycle ──────────────────────────────────────────────────────────────
 export { init } from './core/init.js';
-export { flush, shutdown } from './core/lifecycle.js';
+export { flush, shutdown, crashFlush } from './core/lifecycle.js';
 export { getConfig } from './core/config.js';
 export { SDKError } from './core/errors.js';
 /**
@@ -46,6 +46,8 @@ export { captureError } from './capture/captureError.js';
 export { captureRequest } from './capture/captureRequest.js';
 export { captureMessage } from './capture/captureMessage.js';
 export { captureEvent } from './capture/captureEvent.js';
+export { captureCronCheckIn } from './capture/captureCronCheckIn.js';
+export { startProfile, stopProfile } from './capture/captureProfile.js';
 export { captureMetric, incrementCounter, setGauge, recordHistogram, addUpDownCounter, } from './capture/captureMetric.js';
 // ─── Context & breadcrumbs ──────────────────────────────────────────────────
 export { addBreadcrumb, getRequestContext, getTraceId, getSpanId } from './core/context.js';
@@ -64,6 +66,9 @@ export { createMongoDBInstrumentation } from './instrumentation/mongodb.js';
 export { createRedisInstrumentation } from './instrumentation/redis.js';
 export { createBullMQInstrumentation } from './instrumentation/bullmq.js';
 export { createAxiosInstrumentation } from './instrumentation/axios.js';
+export { createPgInstrumentation } from './instrumentation/pg.js';
+export { createMySQLInstrumentation } from './instrumentation/mysql.js';
+export { patchEventEmitter, unpatchEventEmitter } from './instrumentation/event-emitter-patch.js';
 // ─── Logger control (apps wiring SDK into their own logger) ─────────────────
 export { setLogger, setDebugMode, setLogLevel } from './utils/logger.js';
 export { Severity, severityFromString } from './types/severity.js';

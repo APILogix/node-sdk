@@ -65,6 +65,21 @@ export declare function shutdown(timeoutMs?: number): Promise<ShutdownResult>;
  */
 export declare function flush(): Promise<void>;
 /**
+ * Emergency flush for crash scenarios (uncaughtException, SIGKILL).
+ *
+ * Drains only the event pipeline and transport queue with a hard timeout.
+ * Does NOT shut down subsystems or tear down plugins — the process is
+ * assumed to be terminating imminently.
+ *
+ * Design:
+ *   - Best-effort: swallows all errors so it never makes a crash worse.
+ *   - Bounded: hard timeout prevents indefinite process hang.
+ *   - Lightweight: no subsystem teardown, no singleton resets.
+ *
+ * @param timeoutMs Maximum time to wait for transport drain. Default: 2000ms.
+ */
+export declare function crashFlush(timeoutMs?: number): Promise<void>;
+/**
  * Register SIGTERM/SIGINT handlers for automatic graceful shutdown.
  * Idempotent: a second call without an intervening reset is a no-op.
  */
