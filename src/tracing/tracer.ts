@@ -47,6 +47,7 @@ import {
     W3CTraceContextPropagator,
     CompositePropagator,
     W3CBaggagePropagator,
+    suppressTracing,
 } from '@opentelemetry/core'
 import { TRACING_DEFAULTS } from '../constants/internal-defaults.js'
 import { PulseSpan, type SpanOptions } from './span.js'
@@ -75,6 +76,7 @@ let initialized = false
 let ownsProvider = false
 let sdkConfig: ResolvedSDKConfig | null = null
 const TRACER_PROVIDER_SYMBOL = Symbol.for('pulse-sdk.otel.tracer-provider')
+const PULSE_INTERNAL_CONTEXT_KEY = Symbol.for('pulse-sdk.internal-context')
 
 // ─── Span Exporter → SDK Event Pipeline ─────────────────────────────────────
 
@@ -93,11 +95,26 @@ const TRACER_PROVIDER_SYMBOL = Symbol.for('pulse-sdk.otel.tracer-provider')
 class PipelineSpanExporter implements SpanExporter {
 
     export(spans: ReadableSpan[], resultCallback: (result: { code: number; error?: Error }) => void): void {
-        try {
-            let allAccepted = true
+        const activeCtx = otelContext.active()
+        if (activeCtx.getValue(PULSE_INTERNAL_CONTEXT_KEY)) {
+            getLogger().warn('Exporter recursion detected: dropping spans to prevent telemetry loop', {
+                droppedSpans: spans.length,
+                event: 'EXPORTER_RECURSION_PREVENTED'
+            })
+            resultCallback({ code: 0 })
+            return
+        }
+
+        const safeCtx = suppressTracing(activeCtx.setValue(PULSE_INTERNAL_CONTEXT_KEY, true))
+
+        otelContext.with(safeCtx, () => {
+            try {
+                let allAccepted = true
+                const traceIdsInBatch = new Set<string>()
             for (const span of spans) {
                 const ctx = span.spanContext()
                 const traceId = ctx.traceId
+                traceIdsInBatch.add(traceId)
 
                 // Error-priority sampling: if the span was RECORD-only
                 // (not sampled) but contains an error, promote it to
@@ -157,11 +174,20 @@ class PipelineSpanExporter implements SpanExporter {
                     spanDurationTracker.cleanupTrace(traceId)
                 }
             }
+
+            // Flush completed traces at the end of the batch export to prevent race conditions
+            for (const traceId of traceIdsInBatch) {
+                try {
+                    getTraceAggregator().flushIfComplete(traceId)
+                } catch {}
+            }
+
             resultCallback({ code: allAccepted ? 0 : 1 })
         } catch (err) {
             getLogger().error('Span export failed', { error: err, spanCount: spans.length })
             resultCallback({ code: 1, error: err instanceof Error ? err : new Error(String(err)) })
         }
+        })
     }
 
     shutdown(): Promise<void> {

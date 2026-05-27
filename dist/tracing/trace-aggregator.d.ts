@@ -116,6 +116,12 @@ export declare class TraceAggregator {
      */
     addSpan(spanEvent: Record<string, unknown>): void;
     /**
+     * Flush the trace if its root span has arrived.
+     * This is called by the exporter at the end of a batch process to ensure
+     * all spans from the same batch are buffered before the trace is assembled.
+     */
+    flushIfComplete(traceId: string): void;
+    /**
      * Flush all pending traces (for shutdown).
      * Emits whatever is buffered, marking incomplete traces as partial.
      */

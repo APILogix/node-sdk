@@ -46,8 +46,10 @@
  * - `.unref()`-safe — no event loop retention
  * - WeakSet tracking prevents double-patching individual instances
  */
+import http from 'node:http';
 import { getLogger } from '../utils/logger.js';
 const GUARD_SYMBOL = Symbol.for('pulse-sdk.http-lifecycle-guard.installed');
+const ORIGINAL_EMIT = Symbol.for('pulse-sdk.http-lifecycle-guard.original-emit');
 /**
  * Classify whether an error originates from OTel HTTP instrumentation
  * lifecycle internals rather than from user application code.
@@ -126,7 +128,28 @@ export function installHttpLifecycleGuard() {
     if (g[GUARD_SYMBOL])
         return;
     g[GUARD_SYMBOL] = true;
-    getLogger().debug('HTTP lifecycle guard installed');
+    const originalEmit = http.ClientRequest.prototype.emit;
+    g[ORIGINAL_EMIT] = originalEmit;
+    http.ClientRequest.prototype.emit = function (event, ...args) {
+        // Only intercept close and error events which are the ones OTel listens to
+        // and where the race condition occurs.
+        if (event === 'close' || event === 'error') {
+            try {
+                return originalEmit.apply(this, [event, ...args]);
+            }
+            catch (err) {
+                if (err instanceof Error && isOtelInstrumentationError(err)) {
+                    // Swallow the OTel internal lifecycle TypeError.
+                    // It's a non-fatal race condition.
+                    return true; // Pretend it emitted successfully without crashing.
+                }
+                // Re-throw if it's not the specific OTel race condition
+                throw err;
+            }
+        }
+        return originalEmit.apply(this, [event, ...args]);
+    };
+    getLogger().debug('HTTP lifecycle guard installed (ClientRequest.emit patched)');
 }
 /**
  * Remove the HTTP lifecycle guard.
@@ -136,7 +159,11 @@ export function uninstallHttpLifecycleGuard() {
     const g = globalThis;
     if (!g[GUARD_SYMBOL])
         return;
+    if (g[ORIGINAL_EMIT]) {
+        http.ClientRequest.prototype.emit = g[ORIGINAL_EMIT];
+    }
     delete g[GUARD_SYMBOL];
-    getLogger().debug('HTTP lifecycle guard removed');
+    delete g[ORIGINAL_EMIT];
+    getLogger().debug('HTTP lifecycle guard removed (ClientRequest.emit restored)');
 }
 //# sourceMappingURL=http-lifecycle-guard.js.map

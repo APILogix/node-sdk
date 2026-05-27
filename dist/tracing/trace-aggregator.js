@@ -90,11 +90,18 @@ export class TraceAggregator {
         }
         trace.spans.set(spanId, spanEvent);
         // Root span detection: no parentSpanId means this is the root.
-        // In Node.js, child spans always end() before the parent span ends,
-        // and OTel's BatchSpanProcessor processes them in order. So when the
-        // root arrives, all children from the same batch are already buffered.
         if (!parentSpanId) {
             trace.rootSpan = spanEvent;
+        }
+    }
+    /**
+     * Flush the trace if its root span has arrived.
+     * This is called by the exporter at the end of a batch process to ensure
+     * all spans from the same batch are buffered before the trace is assembled.
+     */
+    flushIfComplete(traceId) {
+        const trace = this.pending.get(traceId);
+        if (trace && trace.rootSpan) {
             this.flushTrace(traceId);
         }
     }

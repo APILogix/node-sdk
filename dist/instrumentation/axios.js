@@ -141,25 +141,53 @@ export function createAxiosInstrumentation(enabled, mergedOptions, captureConfig
 }
 /**
  * ESM-safe Axios loader.
- * Tries dynamic import first (ESM), then falls back to createRequire (CJS interop).
+ *
+ * Resolution order:
+ *   1. createRequire(process.cwd()) — resolves from the consuming app's
+ *      node_modules, which is where axios is installed as a peer dependency.
+ *   2. Dynamic import('axios') — works if Node's ESM resolver can find it.
+ *   3. createRequire(import.meta.url) — resolves from the SDK's own
+ *      node_modules (useful when axios is bundled with the SDK).
+ *
+ * The previous implementation only tried (2) and (3), both of which resolve
+ * relative to the SDK package. When the SDK is `file:`-linked or installed
+ * as a dependency, axios lives in the *consumer's* node_modules and neither
+ * path finds it.
  */
 async function loadAxios() {
-    // ESM-first: try dynamic import
+    const logger = getLogger();
+    // Strategy 1: Resolve from the consuming application's working directory.
+    // This is the most reliable path when the SDK is a dependency and axios
+    // is installed as a peer dependency in the consumer's node_modules.
+    try {
+        const { createRequire } = await import('node:module');
+        const cwdRequire = createRequire(process.cwd() + '/package.json');
+        const mod = cwdRequire('axios');
+        return (mod.default ?? mod);
+    }
+    catch {
+        // Not found in cwd — try other strategies
+    }
+    // Strategy 2: ESM dynamic import — works when Node's module resolution
+    // can find axios (e.g. hoisted in a monorepo root).
     try {
         // @ts-expect-error — axios is an optional peer dependency; types may not be installed
         const mod = await import('axios');
         return (mod.default ?? mod);
     }
     catch {
-        // Fallback: createRequire for CJS interop in hybrid environments
-        try {
-            const { createRequire } = await import('node:module');
-            const req = createRequire(import.meta.url);
-            return req('axios');
-        }
-        catch {
-            return null;
-        }
+        // ESM resolution failed
+    }
+    // Strategy 3: createRequire relative to the SDK itself — last resort for
+    // cases where axios is bundled alongside the SDK.
+    try {
+        const { createRequire } = await import('node:module');
+        const req = createRequire(import.meta.url);
+        return req('axios');
+    }
+    catch {
+        logger.debug('Axios module not found in any resolution path');
+        return null;
     }
 }
 function buildUrl(baseURL, url) {

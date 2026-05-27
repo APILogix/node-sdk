@@ -18,6 +18,8 @@
 import type { ConfigDiff, RemoteConfigResponse } from '../types/config.js'
 import type { CronCheckInEvent, EventMetadata } from '../types/event.js'
 import { getLogger } from '../utils/logger.js'
+import { context } from '@opentelemetry/api'
+import { suppressTracing } from '@opentelemetry/core'
 
 type CronEmitter = (event: CronCheckInEvent) => void
 
@@ -80,20 +82,22 @@ export class CronSubsystem {
       }
 
       const timeoutHandle = setTimeout(() => {
-        logger.warn(`[CronSubsystem] Monitor '${monitorSlug}' timed out after ${this.monitorTimeoutMs}ms`)
-        this.inFlight.delete(monitorSlug)
+        context.with(suppressTracing(context.active()), () => {
+          logger.warn(`[CronSubsystem] Monitor '${monitorSlug}' timed out after ${this.monitorTimeoutMs}ms`)
+          this.inFlight.delete(monitorSlug)
 
-        // Emit an error check-in for the timeout
-        const timeoutEvent: CronCheckInEvent = {
-          type: 'cron_checkin',
-          monitorSlug,
-          status: 'error',
-          timestamp: Date.now(),
-          duration: this.monitorTimeoutMs,
-          environment: options?.environment,
-          metadata: this.metadata,
-        }
-        this.emitter(timeoutEvent)
+          // Emit an error check-in for the timeout
+          const timeoutEvent: CronCheckInEvent = {
+            type: 'cron_checkin',
+            monitorSlug,
+            status: 'error',
+            timestamp: Date.now(),
+            duration: this.monitorTimeoutMs,
+            environment: options?.environment,
+            metadata: this.metadata,
+          }
+          this.emitter(timeoutEvent)
+        })
       }, this.monitorTimeoutMs)
 
       if (typeof timeoutHandle === 'object' && 'unref' in timeoutHandle) {

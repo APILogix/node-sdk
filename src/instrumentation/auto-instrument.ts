@@ -229,6 +229,14 @@ export function registerAutoInstrumentations(options: AutoInstrumentOptions = {}
         ignoreOutgoingRequestHook: (request: unknown) => {
           if (!client.initialized) return false
           try {
+            const reqCheck = request as { getHeader?: (name: string) => string | number | string[] | undefined, headers?: Record<string, string | string[]> }
+            if (typeof reqCheck.getHeader === 'function' && reqCheck.getHeader('x-pulse-internal') === '1') {
+              return true
+            }
+            if (reqCheck.headers && reqCheck.headers['x-pulse-internal'] === '1') {
+              return true
+            }
+
             const ingestUrl = client.config.ingestUrl
             if (!ingestUrl) return false
 
@@ -325,6 +333,20 @@ export function registerAutoInstrumentations(options: AutoInstrumentOptions = {}
         ignoreRequestHook: (request: unknown) => {
           if (!client.initialized) return false
           try {
+            const reqCheck = request as { headers?: Record<string, string | string[]> | string[] }
+            if (reqCheck.headers) {
+               // In undici, headers can be an array of strings or an object
+               if (Array.isArray(reqCheck.headers)) {
+                   for (let i = 0; i < reqCheck.headers.length; i += 2) {
+                       if (reqCheck.headers[i]?.toLowerCase() === 'x-pulse-internal' && reqCheck.headers[i + 1] === '1') {
+                           return true
+                       }
+                   }
+               } else if (reqCheck.headers['x-pulse-internal'] === '1') {
+                   return true
+               }
+            }
+
             const ingest = new URL(client.config.ingestUrl)
             const req = request as Record<string, unknown>
             const rawOrigin = req.origin ?? req['origin']

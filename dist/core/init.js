@@ -250,19 +250,41 @@ async function initialize(options) {
             const apiKeyHash = createHash('sha256').update(options.apiKey).digest('hex');
             persistentStorage.configure({ apiKeyHash });
             const persistedEvents = await persistentStorage.init();
-            // CRITICAL: replay through `processEvent` (the full pipeline) rather
-            // than directly to the transport. Pre-init events were captured
-            // before SecurityScrubber, applyScopeToEvent, dedup, plugin processors,
-            // beforeSend, sampling, LimitsEngine, and loadShedder were configured.
-            // Sending them straight to the wire skipped every PII / governance
-            // filter — a request body containing an Authorization header captured
-            // pre-init reached the backend unredacted. Routing through processEvent
-            // ensures the same filter chain runs as for any post-init event.
-            for (const event of persistedEvents) {
-                processEvent(event);
+            // Replay through `processEvent` (the full pipeline) rather than
+            // directly to the transport, so SecurityScrubber, applyScopeToEvent,
+            // dedup, plugin processors, beforeSend, sampling, LimitsEngine, and
+            // loadShedder all see replayed events the same as fresh captures.
+            // Pre-init events were captured before these were configured —
+            // sending them straight to the wire would skip every PII / governance
+            // filter (a request body with an Authorization header captured
+            // pre-init would reach the backend unredacted otherwise).
+            //
+            // Replay is throttled with a setImmediate yield every batch to
+            // prevent a thundering herd: 10k persisted events all in flight at
+            // once would exhaust BatchManager queues, trigger load shedding, and
+            // cause legitimate replays to be dropped. Yielding hands control
+            // back to the event loop so the transport can drain naturally.
+            const REPLAY_BATCH_SIZE = 100;
+            const totalReplayCandidates = persistedEvents.length + eventQueue.size();
+            if (totalReplayCandidates > 0) {
+                logger.info('Replaying events from previous session', {
+                    persistedEvents: persistedEvents.length,
+                    legacyQueueEvents: eventQueue.size(),
+                    batchSize: REPLAY_BATCH_SIZE,
+                });
             }
-            for (const event of eventQueue.drainAll()) {
-                processEvent(event);
+            for (let i = 0; i < persistedEvents.length; i++) {
+                processEvent(persistedEvents[i]);
+                if ((i + 1) % REPLAY_BATCH_SIZE === 0) {
+                    await new Promise(resolve => setImmediate(resolve));
+                }
+            }
+            const legacyEvents = eventQueue.drainAll();
+            for (let i = 0; i < legacyEvents.length; i++) {
+                processEvent(legacyEvents[i]);
+                if ((i + 1) % REPLAY_BATCH_SIZE === 0) {
+                    await new Promise(resolve => setImmediate(resolve));
+                }
             }
             // Configure source map resolver if options provided
             if (options.sourceMaps) {

@@ -44,9 +44,8 @@ import { generateId } from '../utils/uuid.js';
 import { epochMs } from '../utils/time.js';
 import { errorDeduplicator } from '../processors/deduplicator.js';
 import { applyScopeToEvent } from './scope.js';
-import { persistentStorage } from '../storage/persistent-storage.js';
-import { persistenceGovernor } from '../storage/persistence-governor.js';
 import { loadShedder } from '../transport/load-shedder.js';
+import { getMemoryPressureLevel } from '../utils/backpressure.js';
 import { isSDKShuttingDown } from './lifecycle.js';
 import { acceptedReceipt, acceptedSyncReceipt, rejectedReceipt, } from './event-receipt.js';
 // ─── Remote Config Engine Imports ───────────────────────────────────────────
@@ -56,10 +55,10 @@ import { TransportRouter } from '../transport/transport-router.js';
 import { FeatureController } from './feature-controller.js';
 import { ConfigManager } from './config-manager.js';
 import { ERROR_DEFAULTS } from '../constants/internal-defaults.js';
+import { getSessionManager } from '../session/session-manager.js';
 const PLUGIN_TIMEOUT_MS = 50;
 const EVENT_PROCESSOR_TIMEOUT_MS = 50;
 const BEFORE_SEND_TIMEOUT_MS = 100;
-const CRITICAL_HEAP_RATIO = 0.92;
 const pendingPipelines = new Set();
 /**
  * Once set, no new event may join the pendingPipelines set — drain becomes
@@ -435,11 +434,18 @@ export async function processEventAsync(rawEvent, assignedEventId) {
             });
             return false;
         }
-        // Step 14: Priority-aware persistence for crash recovery
-        // Critical events always persist; transient telemetry skips under pressure
-        if (persistenceGovernor.shouldPersist(event)) {
-            persistentStorage.persist(event);
-        }
+        // Persistence is fallback-only — see persistent-storage.ts for the full
+        // architectural rationale. Events are NOT persisted here on the success
+        // path. They are persisted by the transport layer ONLY when:
+        //   1. An HTTP send actually fails (network error, 5xx, retry exhaustion)
+        //   2. A graceful shutdown drain runs out of time with events still queued
+        //
+        // Persisting unconditionally on every successful capture (the previous
+        // behaviour) caused the persisted events to be replayed on every process
+        // restart even when they had already been delivered, producing duplicate
+        // events, duplicate billing, and alert amplification. The transport's
+        // BatchManager owns the "did we deliver this batch?" decision and is the
+        // only correct place to decide whether to durably retain the batch.
         logger.debug('Event routed', {
             eventType: event.type,
             eventId: event.eventId,
@@ -528,8 +534,6 @@ function enrichFromContext(event) {
     const ctx = getRequestContext();
     const traceId = getTraceId();
     const spanId = getSpanId();
-    if (!ctx && !traceId && !spanId)
-        return event;
     const enrichment = {};
     if (traceId && !('traceId' in event && event.traceId)) {
         enrichment['traceId'] = traceId;
@@ -547,6 +551,27 @@ function enrichFromContext(event) {
             enrichment['breadcrumbs'] = crumbs;
         }
     }
+    // ─── Session tracking ───────────────────────────────────────────────
+    // The FeatureController gates whether the SessionManager singleton
+    // exists. If sessionReplay is enabled, attach the sessionId to every
+    // event and record activity/error counts so crash-free rate is accurate.
+    const featureCtrl = FeatureController.getInstance();
+    if (featureCtrl?.isEnabled('sessionReplay')) {
+        try {
+            const sessionMgr = getSessionManager();
+            const sessionId = sessionMgr.getSessionId() ?? sessionMgr.getSession().id;
+            enrichment['sessionId'] = sessionId;
+            if (event.type === 'error') {
+                sessionMgr.recordError();
+            }
+            else {
+                sessionMgr.recordActivity();
+            }
+        }
+        catch {
+            // Session tracking is best-effort — never block the pipeline
+        }
+    }
     if (Object.keys(enrichment).length === 0)
         return event;
     return { ...event, ...enrichment };
@@ -560,13 +585,11 @@ function isCriticalMemoryPressure() {
     if (now - memoryPressureCachedAt < MEMORY_PRESSURE_TTL_MS) {
         return memoryPressureCachedValue;
     }
-    const usage = process.memoryUsage();
     memoryPressureCachedAt = now;
-    if (usage.heapTotal <= 0) {
-        memoryPressureCachedValue = false;
-        return false;
-    }
-    memoryPressureCachedValue = usage.heapUsed / usage.heapTotal >= CRITICAL_HEAP_RATIO;
+    // Delegate to the shared utility which correctly guards against small
+    // heaps (< 100 MB) — V8 starts with a tiny heap that's 90%+ utilised
+    // before it expands, causing false-positive drops during startup.
+    memoryPressureCachedValue = getMemoryPressureLevel() === 'critical';
     return memoryPressureCachedValue;
 }
 function isHighPriority(event) {

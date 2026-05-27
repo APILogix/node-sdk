@@ -152,8 +152,27 @@ export declare class ConfigManager {
      */
     private applyUserOverrides;
     /**
+     * Keys that must never be copied during a deep merge — they would
+     * mutate the prototype chain of `target` and produce process-wide
+     * prototype pollution. `JSON.parse('{"__proto__":{"polluted":true}}')`
+     * creates an object whose `__proto__` is an *own property* of the
+     * parsed value, so naive iteration via `Object.keys()` enumerates it
+     * and `target[key] = source[key]` resolves to the legacy `__proto__`
+     * setter that mutates the prototype chain. Skipping these keys is
+     * the standard defence and aligns with how other observability SDKs
+     * (Sentry, Datadog) merge backend config.
+     *
+     * `validateRemoteConfig` doesn't catch this because the wire schema
+     * permits unknown keys for forward compatibility — defence in depth
+     * therefore lives here.
+     */
+    private static readonly DANGEROUS_MERGE_KEYS;
+    /**
      * Deep merge source into target. Mutates target.
      * Arrays are replaced, not merged. Objects are recursively merged.
+     *
+     * Refuses to copy `__proto__`, `constructor`, or `prototype` from the
+     * source — see `DANGEROUS_MERGE_KEYS` for the rationale.
      */
     private deepMerge;
     /**

@@ -57,46 +57,60 @@ export class SecurityScrubber {
             return event;
         try {
             const clone = { ...event };
-            // Shallow clone objects that we'll mutate
-            if ('context' in clone && typeof clone['context'] === 'object' && clone['context'] !== null) {
-                clone['context'] = { ...clone['context'] };
-            }
-            if ('attributes' in clone && typeof clone['attributes'] === 'object' && clone['attributes'] !== null) {
-                clone['attributes'] = { ...clone['attributes'] };
-            }
-            if ('body' in clone && typeof clone['body'] === 'object' && clone['body'] !== null && !Array.isArray(clone['body'])) {
-                clone['body'] = { ...clone['body'] };
-            }
-            if ('headers' in clone && typeof clone['headers'] === 'object' && clone['headers'] !== null) {
+            const hasHeaderRules = this.scrubbingConfig.enabled && this.sensitiveHeaders.size > 0;
+            const hasFieldRules = this.scrubbingConfig.enabled && this.sensitiveFields.size > 0;
+            const hasPiiRules = this.piiConfig.enabled && (this.piiConfig.maskEmails || this.piiConfig.maskPhones || this.piiConfig.maskIPs);
+            const needsDeepScrub = hasFieldRules || hasPiiRules;
+            // Shallow clone objects that we'll mutate — but only when we actually
+            // have rules that require inspecting them. Previously these clones
+            // ran unconditionally, wasting CPU and allocations for large payloads
+            // when only header scrubbing was configured.
+            if (hasHeaderRules && 'headers' in clone && typeof clone['headers'] === 'object' && clone['headers'] !== null) {
                 clone['headers'] = { ...clone['headers'] };
             }
-            if ('query' in clone && typeof clone['query'] === 'object' && clone['query'] !== null) {
+            if (hasFieldRules && 'query' in clone && typeof clone['query'] === 'object' && clone['query'] !== null) {
                 clone['query'] = { ...clone['query'] };
             }
+            if (needsDeepScrub) {
+                if ('context' in clone && typeof clone['context'] === 'object' && clone['context'] !== null) {
+                    clone['context'] = { ...clone['context'] };
+                }
+                if ('attributes' in clone && typeof clone['attributes'] === 'object' && clone['attributes'] !== null) {
+                    clone['attributes'] = { ...clone['attributes'] };
+                }
+                if ('body' in clone && typeof clone['body'] === 'object' && clone['body'] !== null && !Array.isArray(clone['body'])) {
+                    clone['body'] = { ...clone['body'] };
+                }
+            }
             // Scrub headers
-            if ('headers' in clone && typeof clone['headers'] === 'object' && clone['headers'] !== null) {
+            if (hasHeaderRules && 'headers' in clone && typeof clone['headers'] === 'object' && clone['headers'] !== null) {
                 clone['headers'] = this.scrubHeaders(clone['headers']);
             }
             // Scrub query params
-            if ('query' in clone && typeof clone['query'] === 'object' && clone['query'] !== null) {
+            if (hasFieldRules && 'query' in clone && typeof clone['query'] === 'object' && clone['query'] !== null) {
                 clone['query'] = this.scrubQueryParams(clone['query']);
             }
             // Scrub URL query string
-            if ('url' in clone && typeof clone['url'] === 'string') {
+            if (hasFieldRules && 'url' in clone && typeof clone['url'] === 'string') {
                 clone['url'] = this.scrubUrlQueryString(clone['url']);
             }
-            // Scrub body fields in context/attributes/body
-            if ('context' in clone && typeof clone['context'] === 'object' && clone['context'] !== null) {
-                clone['context'] = this.scrubBodyFields(clone['context']);
-            }
-            if ('attributes' in clone && typeof clone['attributes'] === 'object' && clone['attributes'] !== null) {
-                clone['attributes'] = this.scrubBodyFields(clone['attributes']);
-            }
-            if ('body' in clone && typeof clone['body'] === 'object' && clone['body'] !== null && !Array.isArray(clone['body'])) {
-                clone['body'] = this.scrubBodyFields(clone['body']);
+            // Scrub body fields in context/attributes/body — only when there
+            // are actually sensitive field names to check. This avoids the
+            // recursive traversal (up to depth 10) for every event when only
+            // header scrubbing is configured.
+            if (hasFieldRules) {
+                if ('context' in clone && typeof clone['context'] === 'object' && clone['context'] !== null) {
+                    clone['context'] = this.scrubBodyFields(clone['context']);
+                }
+                if ('attributes' in clone && typeof clone['attributes'] === 'object' && clone['attributes'] !== null) {
+                    clone['attributes'] = this.scrubBodyFields(clone['attributes']);
+                }
+                if ('body' in clone && typeof clone['body'] === 'object' && clone['body'] !== null && !Array.isArray(clone['body'])) {
+                    clone['body'] = this.scrubBodyFields(clone['body']);
+                }
             }
             // PII detection on string fields
-            if (this.piiConfig.enabled) {
+            if (hasPiiRules) {
                 this.scrubPiiInObject(clone);
             }
             return clone;

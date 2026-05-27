@@ -47,6 +47,7 @@ import { epochMs } from '../utils/time.js'
 import { errorDeduplicator } from '../processors/deduplicator.js'
 import { applyScopeToEvent } from './scope.js'
 import { loadShedder } from '../transport/load-shedder.js'
+import { getMemoryPressureLevel } from '../utils/backpressure.js'
 import { isSDKShuttingDown } from './lifecycle.js'
 import {
   type EventReceipt,
@@ -62,11 +63,11 @@ import { TransportRouter } from '../transport/transport-router.js'
 import { FeatureController } from './feature-controller.js'
 import { ConfigManager } from './config-manager.js'
 import { ERROR_DEFAULTS } from '../constants/internal-defaults.js'
+import { getSessionManager } from '../session/session-manager.js'
 
 const PLUGIN_TIMEOUT_MS = 50
 const EVENT_PROCESSOR_TIMEOUT_MS = 50
 const BEFORE_SEND_TIMEOUT_MS = 100
-const CRITICAL_HEAP_RATIO = 0.92
 const pendingPipelines = new Set<Promise<boolean>>()
 
 /**
@@ -589,7 +590,6 @@ function enrichFromContext(event: SDKEvent): SDKEvent {
   const ctx = getRequestContext()
   const traceId = getTraceId()
   const spanId = getSpanId()
-  if (!ctx && !traceId && !spanId) return event
 
   const enrichment: Record<string, unknown> = {}
 
@@ -611,6 +611,27 @@ function enrichFromContext(event: SDKEvent): SDKEvent {
     }
   }
 
+  // ─── Session tracking ───────────────────────────────────────────────
+  // The FeatureController gates whether the SessionManager singleton
+  // exists. If sessionReplay is enabled, attach the sessionId to every
+  // event and record activity/error counts so crash-free rate is accurate.
+  const featureCtrl = FeatureController.getInstance()
+  if (featureCtrl?.isEnabled('sessionReplay')) {
+    try {
+      const sessionMgr = getSessionManager()
+      const sessionId = sessionMgr.getSessionId() ?? sessionMgr.getSession().id
+      enrichment['sessionId'] = sessionId
+
+      if (event.type === 'error') {
+        sessionMgr.recordError()
+      } else {
+        sessionMgr.recordActivity()
+      }
+    } catch {
+      // Session tracking is best-effort — never block the pipeline
+    }
+  }
+
   if (Object.keys(enrichment).length === 0) return event
 
   return { ...event, ...enrichment } as SDKEvent
@@ -625,13 +646,11 @@ function isCriticalMemoryPressure(): boolean {
   if (now - memoryPressureCachedAt < MEMORY_PRESSURE_TTL_MS) {
     return memoryPressureCachedValue
   }
-  const usage = process.memoryUsage()
   memoryPressureCachedAt = now
-  if (usage.heapTotal <= 0) {
-    memoryPressureCachedValue = false
-    return false
-  }
-  memoryPressureCachedValue = usage.heapUsed / usage.heapTotal >= CRITICAL_HEAP_RATIO
+  // Delegate to the shared utility which correctly guards against small
+  // heaps (< 100 MB) — V8 starts with a tiny heap that's 90%+ utilised
+  // before it expands, causing false-positive drops during startup.
+  memoryPressureCachedValue = getMemoryPressureLevel() === 'critical'
   return memoryPressureCachedValue
 }
 

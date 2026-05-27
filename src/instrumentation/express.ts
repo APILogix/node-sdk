@@ -37,12 +37,15 @@
 
 import type { NextFunction, Request, Response } from 'express'
 import { captureError } from '../capture/captureError.js'
-import { trace, SpanKind, type Span } from '@opentelemetry/api'
+import { captureRequest } from '../capture/captureRequest.js'
+import { trace, context, SpanKind, type Span } from '@opentelemetry/api'
 import { client } from '../core/client.js'
 import {
   attachRequestContextToActiveSpan,
   createContextStore,
   withContext,
+  getTraceId,
+  getSpanId,
 } from '../core/context.js'
 import { getLogger } from '../utils/logger.js'
 import { generateId } from '../utils/uuid.js'
@@ -55,6 +58,7 @@ import {
   recordCaptureAccepted,
   resolveClientIp,
   scrubHeaders,
+  scrubQuery,
 } from './request-capture-utils.js'
 
 export interface PulseExpressOptions {
@@ -224,6 +228,32 @@ export function monitorMiddleware(options: PulseExpressOptions = {}) {
               if (responseSize !== undefined) enrichmentAttrs['http.response.body.size'] = responseSize
               activeSpan.setAttributes(enrichmentAttrs)
             }
+
+            // Emit the discrete request event to the central pipeline.
+            // This is routed to `/v1/requests` (or falls back to `/v1/traces`).
+            captureRequest({
+              type: 'request',
+              requestId,
+              method: req.method,
+              url: normalizedRoute(req),
+              statusCode: res.statusCode,
+              latency: Date.now() - startTime,
+              timestamp: startTime,
+              traceId: getTraceId() ?? store.traceId,
+              spanId: getSpanId() ?? store.spanId,
+              ...(userId ? { userId } : {}),
+              ...(tenantId ? { tenantId } : {}),
+              ...(sessionId ? { sessionId } : {}),
+              ...(clientIp ? { clientIp } : {}),
+              ...(userAgent ? { userAgent } : {}),
+              ...(referer ? { referer } : {}),
+              ...(captureHeaders ? { headers: scrubHeadersSafe(req.headers) } : {}),
+              ...(captureQuery && isRecord(req.query) ? { query: scrubQuery(req.query) } : {}),
+              ...(bodySnapshot.body ? { body: bodySnapshot.body } : {}),
+              ...(bodySnapshot.bodySize !== undefined ? { bodySize: bodySnapshot.bodySize } : {}),
+              ...(responseSize !== undefined ? { responseSize } : {}),
+              route: normalizedRoute(req),
+            })
           } catch (err) {
             // The middleware must NEVER crash the host. Log and move on.
             getLogger().error('monitorMiddleware completion failed', { error: err })
@@ -264,7 +294,18 @@ export function monitorMiddleware(options: PulseExpressOptions = {}) {
         })
       })
 
-      next()
+      // If we own the fallback span, bind it to OTel context so downstream
+      // auto-instrumented operations (Axios, MySQL, Redis, etc.) see it as
+      // their parent. Without this, OTel creates isolated traces for each
+      // outbound call because no active span exists in the propagation context.
+      if (ownedSpan) {
+        const spanContext = trace.setSpan(context.active(), ownedSpan)
+        context.with(spanContext, () => {
+          next()
+        })
+      } else {
+        next()
+      }
     })
   }
 }
@@ -304,4 +345,30 @@ function readContentLength(value: number | string | string[] | undefined): numbe
     return Number.isFinite(parsed) ? parsed : undefined
   }
   return undefined
+}
+
+const SENSITIVE_HEADER_FALLBACK = /authorization|cookie|token|secret|password/i
+
+function scrubHeadersSafe(headers: Request['headers']): Record<string, unknown> {
+  try {
+    const clone: Record<string, unknown> = {}
+    for (const [key, value] of Object.entries(headers)) {
+      clone[key] = value
+    }
+    return scrubHeaders(clone) ?? defensiveHeaderRedact(clone)
+  } catch {
+    return defensiveHeaderRedact(headers as unknown as Record<string, unknown>)
+  }
+}
+
+function defensiveHeaderRedact(headers: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(headers)) {
+    out[key] = SENSITIVE_HEADER_FALLBACK.test(key) ? '[Redacted]' : value
+  }
+  return out
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value)
 }

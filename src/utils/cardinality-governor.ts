@@ -81,10 +81,17 @@ export class CardinalityGovernor {
     private readonly enableRouteNormalization: boolean
 
     // Track unique series per instrument: Map<instrumentName, Set<serializedLabels>>
-    private readonly seriesTracker = new Map<string, Set<string>>()
+    private seriesTracker = new Map<string, Set<string>>()
     private totalSeries = 0
     private blockedAttributeCount = 0
     private droppedSeriesCount = 0
+
+    // Periodic eviction timer — resets tracked series every hour so that
+    // the cardinality budget can recover after transient spikes. Without
+    // this, once maxTotalSeries or maxSeriesPerMetric is hit, new metric
+    // series are permanently dropped until the process restarts.
+    private evictionTimer: ReturnType<typeof setInterval> | null = null
+    private static readonly EVICTION_INTERVAL_MS = 3_600_000 // 1 hour
 
     constructor(options: CardinalityGovernorOptions = {}) {
         this.maxDimensionsPerMetric = options.maxDimensionsPerMetric ?? 10
@@ -95,6 +102,9 @@ export class CardinalityGovernor {
             ...(options.blockedAttributes ?? []),
         ])
         this.enableRouteNormalization = options.enableRouteNormalization ?? true
+
+        this.evictionTimer = setInterval(() => this.evictStaleSeries(), CardinalityGovernor.EVICTION_INTERVAL_MS)
+        this.evictionTimer.unref()
     }
 
     /**
@@ -239,6 +249,38 @@ export class CardinalityGovernor {
         this.totalSeries = 0
         this.blockedAttributeCount = 0
         this.droppedSeriesCount = 0
+    }
+
+    /**
+     * Stop the eviction timer. Call during SDK shutdown to prevent
+     * the timer from holding the process alive.
+     */
+    shutdown(): void {
+        if (this.evictionTimer) {
+            clearInterval(this.evictionTimer)
+            this.evictionTimer = null
+        }
+    }
+
+    /**
+     * Periodic eviction — clears all tracked series and resets the
+     * totalSeries counter. This is intentionally a full reset rather
+     * than a partial eviction: cardinality limits are a *rate* budget
+     * ("max N unique series per window"), not a lifetime cap.
+     *
+     * Enterprise platforms (Datadog, New Relic) impose hourly custom-
+     * metric limits in the same way.
+     */
+    private evictStaleSeries(): void {
+        if (this.seriesTracker.size === 0) return
+        const evictedInstruments = this.seriesTracker.size
+        const evictedSeries = this.totalSeries
+        this.seriesTracker = new Map()
+        this.totalSeries = 0
+        getLogger().debug('Cardinality governor: evicted stale series', {
+            evictedInstruments,
+            evictedSeries,
+        })
     }
 }
 

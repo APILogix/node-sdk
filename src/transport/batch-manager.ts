@@ -371,7 +371,9 @@ export class BatchManager {
     const waitMs = this.effectiveMaxWaitMs(extended)
     this.timer = setTimeout(() => {
       this.timer = null
-      this.pump(true)
+      otelContext.with(suppressTracing(otelContext.active()), () => {
+        this.pump(true)
+      })
     }, waitMs)
     this.timer.unref?.()
   }

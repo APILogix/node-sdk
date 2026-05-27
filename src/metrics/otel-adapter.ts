@@ -29,7 +29,8 @@ import {
   ATTR_SERVICE_VERSION,
   ATTR_DEPLOYMENT_ENVIRONMENT_NAME,
 } from '@opentelemetry/semantic-conventions'
-import { metrics, type Meter, type Histogram, type Counter, type UpDownCounter, type Gauge } from '@opentelemetry/api'
+import { metrics, context, type Meter, type Histogram, type Counter, type UpDownCounter, type Gauge } from '@opentelemetry/api'
+import { suppressTracing } from '@opentelemetry/core'
 import { getLogger } from '../utils/logger.js'
 import { PulseMetricReader } from './pulse-metric-reader.js'
 import type { ResourceAttributes } from '../utils/resource-detector.js'
@@ -155,7 +156,11 @@ class OtelMetricsManager {
       globalState[METER_PROVIDER_SYMBOL] = true
       this.ownsProvider = true
 
-      this.flushTimer = setInterval(() => this.flush(), this.flushIntervalMs)
+      this.flushTimer = setInterval(() => {
+        context.with(suppressTracing(context.active()), () => {
+          void this.flush()
+        })
+      }, this.flushIntervalMs)
       this.flushTimer.unref()
 
       this.initialized = true

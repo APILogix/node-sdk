@@ -54,6 +54,20 @@ export declare class TransportRouter {
         droppedEvents: readonly QueueDropInfo[];
     };
     flushAll(): Promise<void>;
+    /**
+     * Drain every per-route queue and return the residual events.
+     *
+     * Called from the shutdown lifecycle AFTER `flushAll()` has done its best
+     * to deliver everything via the network. Anything still in the queues at
+     * this point is undelivered and would otherwise be lost when the process
+     * exits — the lifecycle layer pipes these into `persistentStorage` so they
+     * are replayed on the next start.
+     *
+     * Returns events in arbitrary route order. The caller is responsible for
+     * persisting them; this method does not touch the filesystem itself so
+     * tests can run without it.
+     */
+    drainAllQueues(): SDKEvent[];
     shutdown(): Promise<void>;
     static reset(): Promise<void>;
     private createQueuesAndBatchers;

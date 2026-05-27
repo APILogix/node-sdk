@@ -10,9 +10,29 @@
  *     and `tracing.capture.*` so a single remote-config flip changes capture
  *     behaviour at runtime — no redeploy.
  *
- * The middleware is intentionally fail-open: any unexpected error inside the
- * instrumentation path must NEVER take down the host application. Every
- * branch that can throw is wrapped in a defensive try/catch.
+ * Span ownership model:
+ *   When OpenTelemetry's `HttpInstrumentation` is enabled (the default,
+ *   registered by `registerAutoInstrumentations`), it creates a SERVER
+ *   span automatically for every incoming request. This middleware does
+ *   NOT create its own root span in that case — it enriches the OTel span
+ *   with Pulse-specific attributes (request id, tenant id, user id, route,
+ *   latency) when the response is finished.
+ *
+ *   When HTTP auto-instrumentation is disabled (deployment opt-out, or the
+ *   middleware is exercised in isolation by tests), we create our own
+ *   SERVER root span so the request is still fully captured. This keeps
+ *   the "exactly one root span per request" invariant regardless of the
+ *   OTel topology.
+ *
+ *   In both cases the AsyncLocalStorage `ContextStore` (request id,
+ *   breadcrumbs, user/tenant) is established for the entire request
+ *   lifetime via `withContext`, so any descendant code — including all
+ *   OTel auto-instrumented child spans (DB, Redis, outbound HTTP) — sees
+ *   the same trace context.
+ *
+ * The middleware is intentionally fail-open: any unexpected error inside
+ * the instrumentation path must NEVER take down the host application.
+ * Every branch that can throw is wrapped in a defensive try/catch.
  */
 import type { NextFunction, Request, Response } from 'express';
 export interface PulseExpressOptions {

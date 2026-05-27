@@ -55,6 +55,12 @@ export class CardinalityGovernor {
     totalSeries = 0;
     blockedAttributeCount = 0;
     droppedSeriesCount = 0;
+    // Periodic eviction timer — resets tracked series every hour so that
+    // the cardinality budget can recover after transient spikes. Without
+    // this, once maxTotalSeries or maxSeriesPerMetric is hit, new metric
+    // series are permanently dropped until the process restarts.
+    evictionTimer = null;
+    static EVICTION_INTERVAL_MS = 3_600_000; // 1 hour
     constructor(options = {}) {
         this.maxDimensionsPerMetric = options.maxDimensionsPerMetric ?? 10;
         this.maxSeriesPerMetric = options.maxSeriesPerMetric ?? 1000;
@@ -64,6 +70,8 @@ export class CardinalityGovernor {
             ...(options.blockedAttributes ?? []),
         ]);
         this.enableRouteNormalization = options.enableRouteNormalization ?? true;
+        this.evictionTimer = setInterval(() => this.evictStaleSeries(), CardinalityGovernor.EVICTION_INTERVAL_MS);
+        this.evictionTimer.unref();
     }
     /**
      * Sanitize metric attributes — removes blocked keys, normalizes routes,
@@ -188,6 +196,37 @@ export class CardinalityGovernor {
         this.totalSeries = 0;
         this.blockedAttributeCount = 0;
         this.droppedSeriesCount = 0;
+    }
+    /**
+     * Stop the eviction timer. Call during SDK shutdown to prevent
+     * the timer from holding the process alive.
+     */
+    shutdown() {
+        if (this.evictionTimer) {
+            clearInterval(this.evictionTimer);
+            this.evictionTimer = null;
+        }
+    }
+    /**
+     * Periodic eviction — clears all tracked series and resets the
+     * totalSeries counter. This is intentionally a full reset rather
+     * than a partial eviction: cardinality limits are a *rate* budget
+     * ("max N unique series per window"), not a lifetime cap.
+     *
+     * Enterprise platforms (Datadog, New Relic) impose hourly custom-
+     * metric limits in the same way.
+     */
+    evictStaleSeries() {
+        if (this.seriesTracker.size === 0)
+            return;
+        const evictedInstruments = this.seriesTracker.size;
+        const evictedSeries = this.totalSeries;
+        this.seriesTracker = new Map();
+        this.totalSeries = 0;
+        getLogger().debug('Cardinality governor: evicted stale series', {
+            evictedInstruments,
+            evictedSeries,
+        });
     }
 }
 // ─── Helpers ────────────────────────────────────────────────────────────────

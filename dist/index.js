@@ -50,7 +50,7 @@ export { captureCronCheckIn } from './capture/captureCronCheckIn.js';
 export { startProfile, stopProfile } from './capture/captureProfile.js';
 export { captureMetric, incrementCounter, setGauge, recordHistogram, addUpDownCounter, } from './capture/captureMetric.js';
 // ─── Context & breadcrumbs ──────────────────────────────────────────────────
-export { addBreadcrumb, getRequestContext, getTraceId, getSpanId } from './core/context.js';
+export { addBreadcrumb, getRequestContext, getTraceId, getSpanId, withContext, createContextStore, bindContext } from './core/context.js';
 // ─── Scope management ──────────────────────────────────────────────────────
 export { setUser, setTag, setTags, removeTag, setExtra, setExtras, removeExtra, setContext, getScopeData, clearScope, withScope, } from './core/scope.js';
 // ─── Tracing (manual span APIs) ─────────────────────────────────────────────
@@ -131,6 +131,10 @@ export function getSDKHealth() {
             initialized: persistenceStats.initialized,
             eventCount: persistenceStats.eventCount,
             fileSizeBytes: persistenceStats.fileSizeBytes,
+            totalDiscarded: persistenceStats.totalDiscarded,
+            replayCount: persistenceStats.replayCount,
+            lastReplayAt: persistenceStats.lastReplayAt,
+            totalReplayed: persistenceStats.totalReplayed,
         },
         sourceMaps: {
             cacheSize: sourceMapStats.cacheSize,

@@ -146,6 +146,13 @@ export function registerAutoInstrumentations(options = {}) {
                 if (!client.initialized)
                     return false;
                 try {
+                    const reqCheck = request;
+                    if (typeof reqCheck.getHeader === 'function' && reqCheck.getHeader('x-pulse-internal') === '1') {
+                        return true;
+                    }
+                    if (reqCheck.headers && reqCheck.headers['x-pulse-internal'] === '1') {
+                        return true;
+                    }
                     const ingestUrl = client.config.ingestUrl;
                     if (!ingestUrl)
                         return false;
@@ -237,6 +244,20 @@ export function registerAutoInstrumentations(options = {}) {
                 if (!client.initialized)
                     return false;
                 try {
+                    const reqCheck = request;
+                    if (reqCheck.headers) {
+                        // In undici, headers can be an array of strings or an object
+                        if (Array.isArray(reqCheck.headers)) {
+                            for (let i = 0; i < reqCheck.headers.length; i += 2) {
+                                if (reqCheck.headers[i]?.toLowerCase() === 'x-pulse-internal' && reqCheck.headers[i + 1] === '1') {
+                                    return true;
+                                }
+                            }
+                        }
+                        else if (reqCheck.headers['x-pulse-internal'] === '1') {
+                            return true;
+                        }
+                    }
                     const ingest = new URL(client.config.ingestUrl);
                     const req = request;
                     const rawOrigin = req.origin ?? req['origin'];

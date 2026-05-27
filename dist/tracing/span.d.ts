@@ -8,9 +8,21 @@
  *     1. Idempotent end() — safe to call multiple times
  *     2. Never-throw safety — all operations wrapped in try/catch
  *     3. Fluent API — setAttribute/addEvent return `this`
- *     4. parentSpanId — captured at construction from active context
+ *     4. parentSpanId — captured at construction from a *parent context*
+ *        the caller resolves *before* entering startActiveSpan.
  *   - All enrichment (X-Pulse-Tenant, tenant tags, SDK metadata) happens
  *     in PipelineSpanExporter.spanToEvent(), NOT here.
+ *
+ * Why parentSpanId is captured by the caller, not inside the constructor:
+ *   `tracer.startActiveSpan(name, opts, cb)` installs the new span as the
+ *   active span *before* the callback runs. If we read `trace.getActiveSpan()`
+ *   inside the constructor (which is called inside that callback), we'd read
+ *   the new span itself, so the "parent != self" guard would always fail and
+ *   `parentSpanId` would be undefined for every span the user creates via
+ *   `withSpan` / `withSpanSync`. To get the real parent, the caller must
+ *   snapshot the active span *before* opening the new active scope and pass
+ *   it as `parentSpanId` here. The exporter is unaffected because it reads
+ *   `parentSpanContext` from the OTel `ReadableSpan` directly.
  */
 import { type Span as OTelSpan, type SpanContext, type Attributes, type TimeInput, type Link } from '@opentelemetry/api';
 export type SpanStatus = 'ok' | 'error' | 'unset';
@@ -56,14 +68,23 @@ export declare class PulseSpan implements OTelSpan {
     /** @internal The underlying OTel span — use getOTelSpan() for advanced access. */
     private readonly _span;
     /**
-     * Parent span ID captured at construction from the OTel context.
-     * Stored here because the OTel Span API doesn't expose parentSpanId
-     * on the public interface (only on ReadableSpan after export).
+     * Parent span ID, supplied by the caller at construction time.
+     *
+     * The caller (typically `withSpan` / `withSpanSync` / `startSpan` in
+     * `tracer.ts`) snapshots `trace.getActiveSpan()?.spanContext().spanId`
+     * *before* opening a new active scope and passes it here. Reading the
+     * active span from inside the constructor would return the new span
+     * itself (because `tracer.startActiveSpan` installs it as active before
+     * invoking the callback), so we cannot do that lookup here.
+     *
+     * The exporter does NOT depend on this value — `PipelineSpanExporter`
+     * reads `parentSpanContext` from the OTel `ReadableSpan`. This field is
+     * for the user-facing `pulseSpan.parentSpanId` getter only.
      */
     private readonly _parentSpanId;
     /** Idempotent end guard — prevents double-end. */
     private _ended;
-    constructor(otelSpan: OTelSpan);
+    constructor(otelSpan: OTelSpan, parentSpanId?: string);
     /** Span ID — read live from OTel span context. */
     get spanId(): string;
     /** Trace ID — read live from OTel span context. */

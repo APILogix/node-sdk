@@ -6,6 +6,7 @@ import { context as otelContext } from '@opentelemetry/api';
 import { suppressTracing } from '@opentelemetry/core';
 import { SecurityScrubber } from '../processors/security-scrubber.js';
 import { sanitizeEvent } from '../processors/sanitizer.js';
+import { persistentStorage } from '../storage/persistent-storage.js';
 export class BatchManager {
     options;
     timer = null;
@@ -154,6 +155,10 @@ export class BatchManager {
             this.activeSends--;
             this.batched -= batch.length;
             this.totalFailed += batch.length;
+            // Connection-pool starvation is a transient failure (rate-limited or
+            // socket-saturated). Persist so a process crash before the next pump
+            // doesn't lose the batch, then re-queue for the next tick.
+            this.persistOnFailure(batch, 'connection_acquire_failed');
             this.options.queue.requeueFront(batch);
             this.ensureTimer(true);
             return;
@@ -190,15 +195,29 @@ export class BatchManager {
                     this.totalSent += batch.length;
                     this.totalRequests++;
                     this.totalBatchEvents += batch.length;
+                    // ACK: backend confirmed delivery. Remove the batch from disk if
+                    // it had been persisted on a previous failed attempt. discard()
+                    // is async (it rewrites the NDJSON file) but we do not await it
+                    // here — the send pipeline must not block on filesystem latency.
+                    // The write chain inside persistentStorage serializes discards
+                    // safely.
+                    this.discardOnSuccess(batch);
                 }
                 else if (response.status >= 500 || response.status === 429 || response.status === 408) {
                     this.options.healthMonitor.recordFailure(this.options.route);
                     this.totalFailed += batch.length;
+                    // Retry-eligible failure: persist before re-queue so a crash
+                    // between now and the next attempt doesn't lose the batch.
+                    this.persistOnFailure(batch, `http_${response.status}`);
                     this.options.queue.requeueFront(batch);
                 }
                 else {
                     this.options.healthMonitor.recordFailure(this.options.route);
                     this.totalDropped += batch.length;
+                    // Non-retryable failure (4xx other than 408/429). The backend
+                    // has rejected the batch and a retry would just be re-rejected.
+                    // Do NOT persist — replaying a permanent rejection forever is a
+                    // bug. Drop the batch and notify the dropper.
                     this.options.onDrop?.({
                         route: this.options.route,
                         reason: 'route_unavailable',
@@ -214,6 +233,10 @@ export class BatchManager {
         catch (error) {
             this.options.healthMonitor.recordFailure(this.options.route);
             this.totalFailed += batch.length;
+            // Network-level failure (DNS, TCP reset, abort, fetch rejection).
+            // The backend never saw the request, so retry is safe. Persist so a
+            // crash before retry doesn't drop the batch.
+            this.persistOnFailure(batch, 'network_error');
             this.options.queue.requeueFront(batch);
             getLogger().warn('[TransportRouter] Batch send failed', {
                 route: this.options.route,
@@ -228,6 +251,55 @@ export class BatchManager {
             this.firstQueuedAt = this.options.queue.isEmpty() ? 0 : Date.now();
             this.pump();
         }
+    }
+    /**
+     * Persist a batch to disk after a transient send failure.
+     *
+     * Called on network errors, retry-eligible HTTP failures (5xx, 429, 408),
+     * and connection-acquisition starvation. NOT called on 4xx permanent
+     * rejections — those are dropped because replaying them forever is a bug.
+     *
+     * Persistence is best-effort and never throws to the caller. The batch
+     * is still re-queued in memory by the caller; persistence is purely
+     * defense against process crash before the in-memory retry succeeds.
+     */
+    persistOnFailure(batch, reason) {
+        try {
+            if (persistentStorage.isInitialized) {
+                persistentStorage.persistBatch(batch);
+            }
+        }
+        catch (error) {
+            // Persistence failure on the failure path is genuinely best-effort.
+            // We've already counted the batch as failed; logging here is enough.
+            getLogger().debug('[TransportRouter] Failed to persist failed batch', {
+                route: this.options.route,
+                reason,
+                eventCount: batch.length,
+                error,
+            });
+        }
+    }
+    /**
+     * Discard delivered events from durable storage after backend ACK.
+     *
+     * Fire-and-forget: the rewrite is serialized through the storage write
+     * chain, so completion order is correct, but we do not await here so a
+     * slow filesystem cannot block the send pipeline. A crash before the
+     * discard write hits disk leaves the events on disk and produces a
+     * single duplicate replay on the next start — which the backend MUST
+     * dedupe by `eventId` per the at-least-once delivery contract.
+     */
+    discardOnSuccess(batch) {
+        if (!persistentStorage.isInitialized)
+            return;
+        void persistentStorage.discard(batch).catch(error => {
+            getLogger().debug('[TransportRouter] Failed to discard delivered batch', {
+                route: this.options.route,
+                eventCount: batch.length,
+                error,
+            });
+        });
     }
     effectiveMaxBatchSize() {
         const scaled = Math.floor(this.options.maxBatchSize * this.options.healthMonitor.batchScale(this.options.route));
@@ -255,7 +327,9 @@ export class BatchManager {
         const waitMs = this.effectiveMaxWaitMs(extended);
         this.timer = setTimeout(() => {
             this.timer = null;
-            this.pump(true);
+            otelContext.with(suppressTracing(otelContext.active()), () => {
+                this.pump(true);
+            });
         }, waitMs);
         this.timer.unref?.();
     }

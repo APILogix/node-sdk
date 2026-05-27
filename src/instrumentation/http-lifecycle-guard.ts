@@ -47,12 +47,15 @@
  * - WeakSet tracking prevents double-patching individual instances
  */
 
+import http from 'node:http'
 import { getLogger } from '../utils/logger.js'
 
 const GUARD_SYMBOL = Symbol.for('pulse-sdk.http-lifecycle-guard.installed')
+const ORIGINAL_EMIT = Symbol.for('pulse-sdk.http-lifecycle-guard.original-emit')
 
 interface GlobalWithGuard {
   [GUARD_SYMBOL]?: boolean
+  [ORIGINAL_EMIT]?: typeof http.ClientRequest.prototype.emit
 }
 
 /**
@@ -145,7 +148,29 @@ export function installHttpLifecycleGuard(): void {
   if (g[GUARD_SYMBOL]) return
   g[GUARD_SYMBOL] = true
 
-  getLogger().debug('HTTP lifecycle guard installed')
+  const originalEmit = http.ClientRequest.prototype.emit
+  g[ORIGINAL_EMIT] = originalEmit
+
+  http.ClientRequest.prototype.emit = function (event: string | symbol, ...args: unknown[]) {
+    // Only intercept close and error events which are the ones OTel listens to
+    // and where the race condition occurs.
+    if (event === 'close' || event === 'error') {
+      try {
+        return originalEmit.apply(this, [event, ...args])
+      } catch (err) {
+        if (err instanceof Error && isOtelInstrumentationError(err)) {
+          // Swallow the OTel internal lifecycle TypeError.
+          // It's a non-fatal race condition.
+          return true // Pretend it emitted successfully without crashing.
+        }
+        // Re-throw if it's not the specific OTel race condition
+        throw err
+      }
+    }
+    return originalEmit.apply(this, [event, ...args])
+  }
+
+  getLogger().debug('HTTP lifecycle guard installed (ClientRequest.emit patched)')
 }
 
 /**
@@ -155,7 +180,13 @@ export function installHttpLifecycleGuard(): void {
 export function uninstallHttpLifecycleGuard(): void {
   const g = globalThis as typeof globalThis & GlobalWithGuard
   if (!g[GUARD_SYMBOL]) return
-  delete g[GUARD_SYMBOL]
+  
+  if (g[ORIGINAL_EMIT]) {
+    http.ClientRequest.prototype.emit = g[ORIGINAL_EMIT]
+  }
 
-  getLogger().debug('HTTP lifecycle guard removed')
+  delete g[GUARD_SYMBOL]
+  delete g[ORIGINAL_EMIT]
+
+  getLogger().debug('HTTP lifecycle guard removed (ClientRequest.emit restored)')
 }

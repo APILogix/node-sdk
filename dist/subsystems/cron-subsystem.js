@@ -15,6 +15,8 @@
  * - Transport route is 'crons' with batchSize=1, flushIntervalMs=0 (immediate).
  */
 import { getLogger } from '../utils/logger.js';
+import { context } from '@opentelemetry/api';
+import { suppressTracing } from '@opentelemetry/core';
 /** Default timeout for in-flight cron monitors (5 minutes). */
 const DEFAULT_MONITOR_TIMEOUT_MS = 5 * 60 * 1000;
 export class CronSubsystem {
@@ -56,19 +58,21 @@ export class CronSubsystem {
                 clearTimeout(existing.timeoutHandle);
             }
             const timeoutHandle = setTimeout(() => {
-                logger.warn(`[CronSubsystem] Monitor '${monitorSlug}' timed out after ${this.monitorTimeoutMs}ms`);
-                this.inFlight.delete(monitorSlug);
-                // Emit an error check-in for the timeout
-                const timeoutEvent = {
-                    type: 'cron_checkin',
-                    monitorSlug,
-                    status: 'error',
-                    timestamp: Date.now(),
-                    duration: this.monitorTimeoutMs,
-                    environment: options?.environment,
-                    metadata: this.metadata,
-                };
-                this.emitter(timeoutEvent);
+                context.with(suppressTracing(context.active()), () => {
+                    logger.warn(`[CronSubsystem] Monitor '${monitorSlug}' timed out after ${this.monitorTimeoutMs}ms`);
+                    this.inFlight.delete(monitorSlug);
+                    // Emit an error check-in for the timeout
+                    const timeoutEvent = {
+                        type: 'cron_checkin',
+                        monitorSlug,
+                        status: 'error',
+                        timestamp: Date.now(),
+                        duration: this.monitorTimeoutMs,
+                        environment: options?.environment,
+                        metadata: this.metadata,
+                    };
+                    this.emitter(timeoutEvent);
+                });
             }, this.monitorTimeoutMs);
             if (typeof timeoutHandle === 'object' && 'unref' in timeoutHandle) {
                 ;

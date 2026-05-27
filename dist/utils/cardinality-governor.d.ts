@@ -35,10 +35,12 @@ export declare class CardinalityGovernor {
     private readonly maxTotalSeries;
     private readonly blockedAttributes;
     private readonly enableRouteNormalization;
-    private readonly seriesTracker;
+    private seriesTracker;
     private totalSeries;
     private blockedAttributeCount;
     private droppedSeriesCount;
+    private evictionTimer;
+    private static readonly EVICTION_INTERVAL_MS;
     constructor(options?: CardinalityGovernorOptions);
     /**
      * Sanitize metric attributes — removes blocked keys, normalizes routes,
@@ -63,6 +65,21 @@ export declare class CardinalityGovernor {
     normalizeRoute(path: string): string;
     getStats(): CardinalityStats;
     reset(): void;
+    /**
+     * Stop the eviction timer. Call during SDK shutdown to prevent
+     * the timer from holding the process alive.
+     */
+    shutdown(): void;
+    /**
+     * Periodic eviction — clears all tracked series and resets the
+     * totalSeries counter. This is intentionally a full reset rather
+     * than a partial eviction: cardinality limits are a *rate* budget
+     * ("max N unique series per window"), not a lifetime cap.
+     *
+     * Enterprise platforms (Datadog, New Relic) impose hourly custom-
+     * metric limits in the same way.
+     */
+    private evictStaleSeries;
 }
 export declare const cardinalityGovernor: CardinalityGovernor;
 //# sourceMappingURL=cardinality-governor.d.ts.map

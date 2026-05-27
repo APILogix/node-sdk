@@ -49,6 +49,7 @@ import { LoggingSubsystem } from '../subsystems/logging-subsystem.js'
 import { ProfilingSubsystem } from '../subsystems/profiling-subsystem.js'
 import { CronSubsystem } from '../subsystems/cron-subsystem.js'
 import { tenantGovernor } from './tenant-isolation.js'
+import { cardinalityGovernor } from '../utils/cardinality-governor.js'
 
 // ─── Module State ───────────────────────────────────────────────────────────
 
@@ -458,6 +459,7 @@ async function runUnconditionalCleanup(stepErrors: ShutdownStepError[]): Promise
   // Without an explicit reset here, a long-running process that re-inits
   // the SDK accumulates per-tenant rate-limit state across init cycles.
   runSync('tenant-governor.reset', () => tenantGovernor.reset(), stepErrors)
+  runSync('cardinality-governor.shutdown', () => { cardinalityGovernor.shutdown(); cardinalityGovernor.reset() }, stepErrors)
 
   // Reset the batcher (timer + circuit breaker + rate limiter + pressure monitor).
   // Imported lazily to avoid a circular dependency at module-load time.

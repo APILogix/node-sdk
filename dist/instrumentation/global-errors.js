@@ -84,7 +84,7 @@ export function setupGlobalErrorHandlers() {
             // 2. No user data is lost — the request was already aborted
             // 3. Crash-flushing for these would mask real application crashes
             if (isOtelInstrumentationError(err)) {
-                logger.warn('OTel instrumentation lifecycle error (non-fatal, suppressed)', {
+                logger.debug('OTel instrumentation lifecycle error (non-fatal, suppressed)', {
                     error: err.message,
                     hint: 'Socket destroyed before HTTP response — known OTel race condition',
                 });

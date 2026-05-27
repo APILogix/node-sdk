@@ -47,7 +47,8 @@ export type { CronCheckInOptions } from './capture/captureCronCheckIn.js';
 export { startProfile, stopProfile } from './capture/captureProfile.js';
 export { captureMetric, incrementCounter, setGauge, recordHistogram, addUpDownCounter, } from './capture/captureMetric.js';
 export type { EventReceipt } from './core/event-receipt.js';
-export { addBreadcrumb, getRequestContext, getTraceId, getSpanId } from './core/context.js';
+export { addBreadcrumb, getRequestContext, getTraceId, getSpanId, withContext, createContextStore, bindContext } from './core/context.js';
+export type { ContextStore } from './core/context.js';
 export { setUser, setTag, setTags, removeTag, setExtra, setExtras, removeExtra, setContext, getScopeData, clearScope, withScope, } from './core/scope.js';
 export type { User, ScopeData } from './core/scope.js';
 export { startSpan, withSpan, withSpanSync, getActiveSpan, flushTracer } from './tracing/tracer.js';
@@ -117,6 +118,14 @@ export declare function getSDKHealth(): {
         initialized: boolean;
         eventCount: number;
         fileSizeBytes: number;
+        /** Events confirmed delivered and removed from disk. */
+        totalDiscarded: number;
+        /** Number of replay() runs since this process started. */
+        replayCount: number;
+        /** Epoch ms of the most recent replay completion (0 if never replayed). */
+        lastReplayAt: number;
+        /** Events surfaced by the most recent replay (undelivered from prior session). */
+        totalReplayed: number;
     };
     sourceMaps: {
         cacheSize: number;
