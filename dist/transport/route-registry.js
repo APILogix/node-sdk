@@ -11,6 +11,7 @@ const EVENT_TYPE_TO_ROUTE = Object.freeze({
     error: 'errors',
     message: 'errors',
     span: 'traces',
+    trace: 'traces',
     request: 'requests',
     metric: 'metrics',
     log: 'logs',

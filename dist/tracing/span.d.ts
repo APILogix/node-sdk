@@ -21,6 +21,18 @@ export interface SpanOptions {
     startTime?: TimeInput;
     /** Span links — for batch processing, fan-out, or queue consumer patterns. */
     links?: SpanLink[];
+    /**
+     * Hard timeout for the span in milliseconds.
+     *
+     * If the operation exceeds this deadline, the span is force-ended with
+     * an ERROR status and a `pulse.span.timeout` event. The operation itself
+     * continues uninterrupted (fail-open semantics — the SDK never cancels
+     * user work).
+     *
+     * This prevents span leaks from hung operations that never resolve.
+     * The timer is `.unref()`'d so it does not keep the event loop alive.
+     */
+    timeoutMs?: number;
 }
 /**
  * A link to another span — models non-parent-child causal relationships.

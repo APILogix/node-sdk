@@ -69,6 +69,8 @@ export { createAxiosInstrumentation } from './instrumentation/axios.js';
 export { createPgInstrumentation } from './instrumentation/pg.js';
 export { createMySQLInstrumentation } from './instrumentation/mysql.js';
 export { patchEventEmitter, unpatchEventEmitter } from './instrumentation/event-emitter-patch.js';
+export { installHttpLifecycleGuard, uninstallHttpLifecycleGuard, isOtelInstrumentationError } from './instrumentation/http-lifecycle-guard.js';
+export { computeExclusiveDuration, SpanDurationTracker, spanDurationTracker } from './tracing/span-duration.js';
 // ─── Logger control (apps wiring SDK into their own logger) ─────────────────
 export { setLogger, setDebugMode, setLogLevel } from './utils/logger.js';
 export { Severity, severityFromString } from './types/severity.js';

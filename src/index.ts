@@ -67,7 +67,8 @@ export type { EventReceipt } from './core/event-receipt.js'
 
 // ─── Context & breadcrumbs ──────────────────────────────────────────────────
 
-export { addBreadcrumb, getRequestContext, getTraceId, getSpanId } from './core/context.js'
+export { addBreadcrumb, getRequestContext, getTraceId, getSpanId, withContext, createContextStore, bindContext } from './core/context.js'
+export type { ContextStore } from './core/context.js'
 
 // ─── Scope management ──────────────────────────────────────────────────────
 
@@ -117,6 +118,9 @@ export type { PgInstrumentationOptions } from './instrumentation/pg.js'
 export { createMySQLInstrumentation } from './instrumentation/mysql.js'
 export type { MySQLInstrumentationOptions } from './instrumentation/mysql.js'
 export { patchEventEmitter, unpatchEventEmitter } from './instrumentation/event-emitter-patch.js'
+export { installHttpLifecycleGuard, uninstallHttpLifecycleGuard, isOtelInstrumentationError } from './instrumentation/http-lifecycle-guard.js'
+export { computeExclusiveDuration, SpanDurationTracker, spanDurationTracker } from './tracing/span-duration.js'
+export type { SpanInterval, DurationBreakdown } from './tracing/span-duration.js'
 
 // ─── Logger control (apps wiring SDK into their own logger) ─────────────────
 
@@ -147,6 +151,8 @@ export type {
   ReplayEvent,
   CronCheckInEvent,
   SpanEvent,
+  TraceEvent,
+  AggregatedSpanEvent,
 } from './types/event.js'
 
 export type { Breadcrumb, BreadcrumbInput, BreadcrumbHint } from './types/breadcrumb.js'
@@ -189,7 +195,19 @@ export function getSDKHealth(): {
   session: { totalSessions: number; crashFreeRate: number; currentSessionId: string | null }
   pluginCount: number
   dedup: { trackedErrors: number; suppressedCount: number }
-  persistence: { initialized: boolean; eventCount: number; fileSizeBytes: number }
+  persistence: {
+    initialized: boolean
+    eventCount: number
+    fileSizeBytes: number
+    /** Events confirmed delivered and removed from disk. */
+    totalDiscarded: number
+    /** Number of replay() runs since this process started. */
+    replayCount: number
+    /** Epoch ms of the most recent replay completion (0 if never replayed). */
+    lastReplayAt: number
+    /** Events surfaced by the most recent replay (undelivered from prior session). */
+    totalReplayed: number
+  }
   sourceMaps: { cacheSize: number; hitRate: number }
   metrics: { histogramCount: number; counterCount: number; gaugeCount: number; totalFlushed: number }
 } {
@@ -229,6 +247,10 @@ export function getSDKHealth(): {
       initialized: persistenceStats.initialized,
       eventCount: persistenceStats.eventCount,
       fileSizeBytes: persistenceStats.fileSizeBytes,
+      totalDiscarded: persistenceStats.totalDiscarded,
+      replayCount: persistenceStats.replayCount,
+      lastReplayAt: persistenceStats.lastReplayAt,
+      totalReplayed: persistenceStats.totalReplayed,
     },
     sourceMaps: {
       cacheSize: sourceMapStats.cacheSize,

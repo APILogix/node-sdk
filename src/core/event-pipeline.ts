@@ -46,8 +46,6 @@ import { generateId } from '../utils/uuid.js'
 import { epochMs } from '../utils/time.js'
 import { errorDeduplicator } from '../processors/deduplicator.js'
 import { applyScopeToEvent } from './scope.js'
-import { persistentStorage } from '../storage/persistent-storage.js'
-import { persistenceGovernor } from '../storage/persistence-governor.js'
 import { loadShedder } from '../transport/load-shedder.js'
 import { isSDKShuttingDown } from './lifecycle.js'
 import {
@@ -495,12 +493,18 @@ export async function processEventAsync(rawEvent: SDKEvent | Event, assignedEven
       return false
     }
 
-    // Step 14: Priority-aware persistence for crash recovery
-    // Critical events always persist; transient telemetry skips under pressure
-    if (persistenceGovernor.shouldPersist(event as Event)) {
-      persistentStorage.persist(event as Event)
-    }
-
+    // Persistence is fallback-only — see persistent-storage.ts for the full
+    // architectural rationale. Events are NOT persisted here on the success
+    // path. They are persisted by the transport layer ONLY when:
+    //   1. An HTTP send actually fails (network error, 5xx, retry exhaustion)
+    //   2. A graceful shutdown drain runs out of time with events still queued
+    //
+    // Persisting unconditionally on every successful capture (the previous
+    // behaviour) caused the persisted events to be replayed on every process
+    // restart even when they had already been delivered, producing duplicate
+    // events, duplicate billing, and alert amplification. The transport's
+    // BatchManager owns the "did we deliver this batch?" decision and is the
+    // only correct place to decide whether to durably retain the batch.
     logger.debug('Event routed', {
       eventType: event.type,
       eventId: event.eventId,

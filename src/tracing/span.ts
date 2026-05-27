@@ -8,9 +8,21 @@
  *     1. Idempotent end() — safe to call multiple times
  *     2. Never-throw safety — all operations wrapped in try/catch
  *     3. Fluent API — setAttribute/addEvent return `this`
- *     4. parentSpanId — captured at construction from active context
+ *     4. parentSpanId — captured at construction from a *parent context*
+ *        the caller resolves *before* entering startActiveSpan.
  *   - All enrichment (X-Pulse-Tenant, tenant tags, SDK metadata) happens
  *     in PipelineSpanExporter.spanToEvent(), NOT here.
+ *
+ * Why parentSpanId is captured by the caller, not inside the constructor:
+ *   `tracer.startActiveSpan(name, opts, cb)` installs the new span as the
+ *   active span *before* the callback runs. If we read `trace.getActiveSpan()`
+ *   inside the constructor (which is called inside that callback), we'd read
+ *   the new span itself, so the "parent != self" guard would always fail and
+ *   `parentSpanId` would be undefined for every span the user creates via
+ *   `withSpan` / `withSpanSync`. To get the real parent, the caller must
+ *   snapshot the active span *before* opening the new active scope and pass
+ *   it as `parentSpanId` here. The exporter is unaffected because it reads
+ *   `parentSpanContext` from the OTel `ReadableSpan` directly.
  */
 
 import {
@@ -20,8 +32,6 @@ import {
     type Attributes,
     type TimeInput,
     type Link,
-    trace,
-    context as otelContext,
 } from '@opentelemetry/api'
 import { getLogger } from '../utils/logger.js'
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -35,6 +45,18 @@ export interface SpanOptions {
     startTime?: TimeInput
     /** Span links — for batch processing, fan-out, or queue consumer patterns. */
     links?: SpanLink[]
+    /**
+     * Hard timeout for the span in milliseconds.
+     *
+     * If the operation exceeds this deadline, the span is force-ended with
+     * an ERROR status and a `pulse.span.timeout` event. The operation itself
+     * continues uninterrupted (fail-open semantics — the SDK never cancels
+     * user work).
+     *
+     * This prevents span leaks from hung operations that never resolve.
+     * The timer is `.unref()`'d so it does not keep the event loop alive.
+     */
+    timeoutMs?: number
 }
 
 /**
@@ -63,31 +85,27 @@ export class PulseSpan implements OTelSpan {
     private readonly _span: OTelSpan
 
     /**
-     * Parent span ID captured at construction from the OTel context.
-     * Stored here because the OTel Span API doesn't expose parentSpanId
-     * on the public interface (only on ReadableSpan after export).
+     * Parent span ID, supplied by the caller at construction time.
+     *
+     * The caller (typically `withSpan` / `withSpanSync` / `startSpan` in
+     * `tracer.ts`) snapshots `trace.getActiveSpan()?.spanContext().spanId`
+     * *before* opening a new active scope and passes it here. Reading the
+     * active span from inside the constructor would return the new span
+     * itself (because `tracer.startActiveSpan` installs it as active before
+     * invoking the callback), so we cannot do that lookup here.
+     *
+     * The exporter does NOT depend on this value — `PipelineSpanExporter`
+     * reads `parentSpanContext` from the OTel `ReadableSpan`. This field is
+     * for the user-facing `pulseSpan.parentSpanId` getter only.
      */
     private readonly _parentSpanId: string | undefined
 
     /** Idempotent end guard — prevents double-end. */
     private _ended = false
 
-    constructor(otelSpan: OTelSpan) {
+    constructor(otelSpan: OTelSpan, parentSpanId?: string) {
         this._span = otelSpan
-
-        // Capture parent span ID from the context that was active BEFORE this
-        // span was created. The parent is the span that was active when
-        // startSpan/startActiveSpan was called.
-        try {
-            const parentContext = trace.getActiveSpan()?.spanContext()
-            // Only set parentSpanId if the parent is a DIFFERENT span
-            const thisSpanId = otelSpan.spanContext().spanId
-            if (parentContext && parentContext.spanId !== thisSpanId) {
-                this._parentSpanId = parentContext.spanId
-            }
-        } catch {
-            // Context access failed — parentSpanId remains undefined
-        }
+        this._parentSpanId = parentSpanId
     }
 
     // ─── Read-Through Getters (no duplicated state) ─────────────────────

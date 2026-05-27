@@ -36,6 +36,7 @@ import { createAxiosInstrumentation } from './axios.js'
 import { createPgInstrumentation } from './pg.js'
 import { createMySQLInstrumentation } from './mysql.js'
 import { patchEventEmitter, unpatchEventEmitter } from './event-emitter-patch.js'
+import { installHttpLifecycleGuard, uninstallHttpLifecycleGuard } from './http-lifecycle-guard.js'
 
 // ─── Global Guard + Teardown Registry ───────────────────────────────────────
 // We attach to globalThis (via Symbol.for) so the guard survives multiple
@@ -273,6 +274,39 @@ export function registerAutoInstrumentations(options: AutoInstrumentOptions = {}
             return false
           }
         },
+
+        // ─── Defensive Lifecycle Hooks ───────────────────────────────
+        // Guard against the socket destruction race condition in OTel's
+        // HTTP instrumentation. These hooks fire inside OTel's
+        // safeExecuteInTheMiddle so exceptions are caught — but more
+        // importantly they ensure the span gets diagnostic attributes
+        // when the socket is in a degraded state, preventing the
+        // downstream utils from crashing on null properties.
+
+        requestHook: (span, request) => {
+          try {
+            const req = request as unknown as Record<string, unknown>
+            const socket = req.socket as Record<string, unknown> | null | undefined
+            if (socket && (socket.destroyed === true || socket.writable === false)) {
+              span.setAttribute('pulse.http.socket_state', 'destroyed')
+            }
+          } catch {
+            // Never crash from a hook — isolated by design
+          }
+        },
+
+        responseHook: (span, response) => {
+          try {
+            const res = response as unknown as Record<string, unknown>
+            // Guard: if response object is incomplete (socket died before
+            // headers arrived), mark it so we can track in dashboards
+            if (res.statusCode == null) {
+              span.setAttribute('pulse.http.incomplete_response', true)
+            }
+          } catch {
+            // Never crash from a hook
+          }
+        },
       })
     )
   }
@@ -443,6 +477,10 @@ export function registerAutoInstrumentations(options: AutoInstrumentOptions = {}
   if (resolved.eventEmitterPatch) {
     patchEventEmitter()
   }
+
+  // Install the HTTP lifecycle guard to protect against socket
+  // destruction race conditions in OTel's HTTP instrumentation.
+  installHttpLifecycleGuard()
 }
 
 /**
@@ -495,6 +533,13 @@ export function resetAutoInstrumentations(): void {
     unpatchEventEmitter()
   } catch (err) {
     logger.warn('EventEmitter unpatch threw', { error: err })
+  }
+
+  // Remove the HTTP lifecycle guard
+  try {
+    uninstallHttpLifecycleGuard()
+  } catch (err) {
+    logger.warn('HTTP lifecycle guard uninstall threw', { error: err })
   }
 }
 

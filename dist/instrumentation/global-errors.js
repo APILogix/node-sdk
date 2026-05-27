@@ -19,6 +19,7 @@ import { toError } from "../core/errors.js";
 import { getLogger } from "../utils/logger.js";
 import { ERROR_DEFAULTS } from "../constants/internal-defaults.js";
 import { crashFlush } from "../core/lifecycle.js";
+import { isOtelInstrumentationError } from "./http-lifecycle-guard.js";
 let registered = false;
 // Store handler references for proper cleanup
 let uncaughtHandler = null;
@@ -71,6 +72,24 @@ export function setupGlobalErrorHandlers() {
     // ─── Uncaught Exception Handler ─────────────────────────────────────
     if (errorsConfig.captureUncaughtExceptions !== false) {
         uncaughtHandler = (err) => {
+            // ─── OTel Instrumentation Lifecycle Error Filter ──────────────
+            // OTel's HTTP instrumentation has a known race condition where
+            // socket destruction before response formation causes a TypeError
+            // in internal utility functions. These are non-fatal lifecycle
+            // artifacts of the instrumentation layer, NOT application errors.
+            //
+            // Logging at warn level (not triggering crash-flush) is correct
+            // because:
+            // 1. The span has already been closed by OTel's own guard
+            // 2. No user data is lost — the request was already aborted
+            // 3. Crash-flushing for these would mask real application crashes
+            if (isOtelInstrumentationError(err)) {
+                logger.warn('OTel instrumentation lifecycle error (non-fatal, suppressed)', {
+                    error: err.message,
+                    hint: 'Socket destroyed before HTTP response — known OTel race condition',
+                });
+                return;
+            }
             try {
                 captureError(err, { mechanism: "uncaughtException" });
             }

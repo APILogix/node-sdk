@@ -385,10 +385,33 @@ async function runOrchestratedShutdown(stepErrors: ShutdownStepError[]): Promise
     return Promise.resolve()
   }, stepErrors)
 
-  // 13. Drain any residual pre-init buffer events to disk before storage closes.
+  // 13. Drain residual events to disk before storage closes.
+  //
+  // Two queues hold events at this point:
+  //   - The legacy in-memory `eventQueue` (pre-init buffer + legacy batcher).
+  //   - The TransportRouter's per-route queues that the BatchManager flush
+  //     could not deliver in step 7 (network down, retry budget exhausted,
+  //     etc.). These are undelivered events that would be lost on process
+  //     exit — persist them so the next init replays them.
+  //
+  // Order matters: drain BatchManager queues first (they hold the largest
+  // backlog under outage scenarios), then the legacy queue.
   await runStep('persistent-storage.drain', async () => {
-    const remaining = eventQueue.drainAll()
-    for (const event of remaining) {
+    const router = TransportRouter.getInstance()
+    if (router) {
+      const residual = router.drainAllQueues()
+      if (residual.length > 0) {
+        getLogger().warn('Persisting undelivered events from transport queues for replay on next start', {
+          count: residual.length,
+        })
+        // SDKEvent and Event are interchangeable in this context — every
+        // event flowing through transport already has eventId/timestamp.
+        persistentStorage.persistBatch(residual as unknown as readonly import('../types/event.js').Event[])
+      }
+    }
+
+    const legacyRemaining = eventQueue.drainAll()
+    for (const event of legacyRemaining) {
       persistentStorage.persist(event)
     }
     await persistentStorage.flush()

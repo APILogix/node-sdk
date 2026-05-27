@@ -133,9 +133,12 @@ export interface SpanEvent {
   readonly traceId: string
   readonly parentSpanId?: string | undefined
   readonly name: string
+  readonly kind?: 'internal' | 'server' | 'client' | 'producer' | 'consumer' | undefined
   readonly startTime: number
   readonly endTime: number
   readonly duration: number
+  /** Wall-clock time in this span's own code, excluding child spans. */
+  readonly exclusiveDuration?: number | undefined
   readonly status: 'ok' | 'error' | 'unset'
   readonly statusMessage?: string | undefined
   readonly attributes?: Readonly<Record<string, unknown>> | undefined
@@ -199,6 +202,47 @@ export interface CronCheckInEvent {
   readonly metadata?: EventMetadata | undefined
 }
 
+// ─── Trace Aggregate Event ──────────────────────────────────────────────────
+
+/** Aggregated span with reconstructed children hierarchy. */
+export interface AggregatedSpanEvent {
+  readonly spanId: string
+  readonly parentSpanId?: string | undefined
+  readonly name: string
+  readonly kind?: string | undefined
+  readonly startTime: number
+  readonly endTime: number
+  readonly duration: number
+  readonly exclusiveDuration?: number | undefined
+  readonly status: string
+  readonly statusMessage?: string | undefined
+  readonly attributes?: Readonly<Record<string, unknown>> | undefined
+  readonly events?: readonly SpanEventItem[] | undefined
+  readonly links?: readonly SpanLink[] | undefined
+  readonly children: readonly AggregatedSpanEvent[]
+}
+
+/**
+ * Complete trace document with embedded span tree.
+ * Emitted by the TraceAggregator when a root span arrives,
+ * allowing the backend to receive ready-to-display trace waterfalls.
+ */
+export interface TraceEvent {
+  readonly type: 'trace'
+  eventId?: string
+  readonly traceId: string
+  readonly rootSpan: AggregatedSpanEvent
+  readonly spanCount: number
+  readonly totalDuration: number
+  /** True if the root span was never received (orphaned children). */
+  readonly isPartial: boolean
+  readonly metadata?: EventMetadata | undefined
+  readonly requestId?: string | undefined
+  readonly sessionId?: string | undefined
+  readonly userId?: string | undefined
+  readonly tenantId?: string | undefined
+}
+
 // ─── Discriminated Union ────────────────────────────────────────────────────
 
 /** Discriminated union of all event types. */
@@ -208,6 +252,7 @@ export type SDKEvent =
   | MessageEvent
   | MetricEvent
   | SpanEvent
+  | TraceEvent
   | LogEvent
   | ProfileEvent
   | ReplayEvent

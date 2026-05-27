@@ -247,6 +247,29 @@ export class TransportRouter {
     }
   }
 
+  /**
+   * Drain every per-route queue and return the residual events.
+   *
+   * Called from the shutdown lifecycle AFTER `flushAll()` has done its best
+   * to deliver everything via the network. Anything still in the queues at
+   * this point is undelivered and would otherwise be lost when the process
+   * exits — the lifecycle layer pipes these into `persistentStorage` so they
+   * are replayed on the next start.
+   *
+   * Returns events in arbitrary route order. The caller is responsible for
+   * persisting them; this method does not touch the filesystem itself so
+   * tests can run without it.
+   */
+  drainAllQueues(): SDKEvent[] {
+    const residual: SDKEvent[] = []
+    for (const queue of this.queues.values()) {
+      const size = queue.size()
+      if (size === 0) continue
+      residual.push(...queue.drain(size))
+    }
+    return residual
+  }
+
   async shutdown(): Promise<void> {
     if (this.destroyed) return
     this.destroyed = true

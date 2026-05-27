@@ -13,15 +13,19 @@
  *   - Centralized SDK name/version constants (no hardcoded strings)
  */
 import { trace, SpanKind, context as otelContext, } from '@opentelemetry/api';
+import { computeExclusiveDuration, spanDurationTracker, } from './span-duration.js';
+import { getTraceAggregator, resetTraceAggregator } from './trace-aggregator.js';
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { BatchSpanProcessor, ParentBasedSampler, TraceIdRatioBasedSampler, } from '@opentelemetry/sdk-trace-base';
 import { resourceFromAttributes } from '@opentelemetry/resources';
 import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION, ATTR_DEPLOYMENT_ENVIRONMENT_NAME, } from '@opentelemetry/semantic-conventions';
 import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks';
+import { W3CTraceContextPropagator, CompositePropagator, W3CBaggagePropagator, } from '@opentelemetry/core';
+import { TRACING_DEFAULTS } from '../constants/internal-defaults.js';
 import { PulseSpan } from './span.js';
 import { getLogger } from '../utils/logger.js';
 import { processEvent } from '../core/event-pipeline.js';
-import { attachRequestContextToActiveSpan, getRequestContext, PULSE_CONTEXT_ATTRIBUTES, } from '../core/context.js';
+import { getRequestContext, PULSE_CONTEXT_ATTRIBUTES, } from '../core/context.js';
 import { costGovernor } from '../utils/cost-governor.js';
 import { RemoteConfigSampler } from './remote-config-sampler.js';
 import { ConfigManager } from '../core/config-manager.js';
@@ -54,14 +58,31 @@ class PipelineSpanExporter {
         try {
             let allAccepted = true;
             for (const span of spans) {
+                const ctx = span.spanContext();
+                const traceId = ctx.traceId;
+                // Error-priority sampling: if the span was RECORD-only
+                // (not sampled) but contains an error, promote it to
+                // exported. Non-sampled, non-error spans are dropped.
+                const isSampled = (ctx.traceFlags & 1) === 1;
+                const hasError = span.status.code === 2
+                    || span.events.some(e => e.name === 'exception');
+                if (!isSampled && !hasError) {
+                    continue; // Drop non-sampled, non-error span
+                }
                 // Cost governance: check span-per-trace limits
-                const traceId = span.spanContext().traceId;
                 if (!costGovernor.canCreateSpan(traceId)) {
                     continue; // Drop span — trace exceeded span budget
                 }
                 // Cost governance: check trace duration limits
                 if (!costGovernor.canContinueTrace(traceId)) {
                     continue; // Drop span — trace exceeded max duration
+                }
+                // Record child interval for exclusive duration computation.
+                // Every span with a parent contributes to the parent's
+                // child coverage — needed to compute exclusiveDuration.
+                const parentSpanId = span.parentSpanContext?.spanId;
+                if (parentSpanId) {
+                    spanDurationTracker.recordChildInterval(traceId, parentSpanId, hrTimeToMs(span.startTime), hrTimeToMs(span.endTime));
                 }
                 const traceEvent = this.spanToEvent(span);
                 // Track whether the transport actually accepted the event.
@@ -71,6 +92,20 @@ class PipelineSpanExporter {
                 // killswitch, etc.) would be silently lost.
                 if (!processEvent(traceEvent)) {
                     allAccepted = false;
+                }
+                // Route span through TraceAggregator for tree reconstruction.
+                // The aggregator buffers spans by traceId and emits a complete
+                // 'trace' event (with embedded children) when the root arrives.
+                try {
+                    getTraceAggregator().addSpan(traceEvent);
+                }
+                catch {
+                    // Aggregation failure must never block span export
+                }
+                // If this is a root span (no parent), clean up the
+                // duration tracker to free memory.
+                if (!parentSpanId) {
+                    spanDurationTracker.cleanupTrace(traceId);
                 }
             }
             resultCallback({ code: allAccepted ? 0 : 1 });
@@ -150,6 +185,13 @@ class PipelineSpanExporter {
         catch {
             // ConfigManager not initialized — use unfiltered attributes
         }
+        const startTimeMs = hrTimeToMs(span.startTime);
+        const endTimeMs = hrTimeToMs(span.endTime);
+        // Compute exclusive (self) duration by subtracting merged child
+        // span intervals from this span's total duration. This enables
+        // performance attribution: "DB took 50ms, business logic 400ms".
+        const childIntervals = spanDurationTracker.getChildIntervals(ctx.traceId, ctx.spanId);
+        const durationBreakdown = computeExclusiveDuration(startTimeMs, endTimeMs, childIntervals);
         return {
             type: 'span',
             eventId: `span_${ctx.spanId}`,
@@ -157,9 +199,11 @@ class PipelineSpanExporter {
             traceId: ctx.traceId,
             parentSpanId,
             name: span.name,
-            startTime: hrTimeToMs(span.startTime),
-            endTime: hrTimeToMs(span.endTime),
+            kind: spanKindToString(span.kind),
+            startTime: startTimeMs,
+            endTime: endTimeMs,
             duration: durationMs,
+            exclusiveDuration: durationBreakdown.exclusiveDuration,
             status: statusLabel,
             statusMessage: status.message,
             attributes: filteredAttrs,
@@ -179,6 +223,7 @@ class PipelineSpanExporter {
                 sdkVersion: SDK_VERSION,
                 service: sdkConfig?.service ?? '',
                 environment: sdkConfig?.environment ?? '',
+                release: sdkConfig?.release ?? '',
             },
             // Internal marker allows shutdown force-flush to route finished spans
             // while rejecting new user-captured events. Stripped by event pipeline.
@@ -256,12 +301,27 @@ export function initTracer(config, customResources) {
         // Register context manager for async propagation
         const contextManager = new AsyncLocalStorageContextManager();
         contextManager.enable();
-        provider.register({ contextManager });
+        // Build composite propagator for W3C TraceContext + optional Baggage.
+        // Without this, OTel's HttpInstrumentation and UndiciInstrumentation
+        // will NOT inject traceparent headers into outgoing requests, which
+        // breaks distributed tracing across service boundaries.
+        const propagators = [
+            new W3CTraceContextPropagator(),
+        ];
+        if (TRACING_DEFAULTS.propagation.baggage) {
+            propagators.push(new W3CBaggagePropagator());
+        }
+        const propagator = new CompositePropagator({ propagators });
+        provider.register({ contextManager, propagator });
         globalState[TRACER_PROVIDER_SYMBOL] = true;
         ownsProvider = true;
         // Get the tracer instance
         tracer = trace.getTracer(SDK_NAME, SDK_VERSION);
         initialized = true;
+        // Start the trace aggregator's background sweep timer.
+        // This must happen AFTER the tracer is initialized so exported
+        // spans can flow through the aggregator.
+        getTraceAggregator().start();
         logger.info('OpenTelemetry tracer initialized', {
             service: config.service,
             environment: config.environment,
@@ -275,7 +335,44 @@ export function initTracer(config, customResources) {
 }
 // ─── Span Creation ──────────────────────────────────────────────────────────
 /**
- * Start a new span. Returns a PulseSpan wrapper.
+ * Snapshot the spanId of the currently-active span, if any.
+ *
+ * Used by every span-creating helper to capture the *parent* before opening
+ * a new active scope. We can't do this lookup inside `tracer.startActiveSpan`'s
+ * callback because by then the new span is already installed as active, and
+ * `trace.getActiveSpan()` would return the new span itself.
+ */
+function snapshotActiveSpanId() {
+    try {
+        return trace.getActiveSpan()?.spanContext().spanId;
+    }
+    catch {
+        return undefined;
+    }
+}
+/**
+ * Start a new span and return a `PulseSpan` wrapper.
+ *
+ * ⚠️  IMPORTANT — context semantics:
+ *
+ * This function does NOT install the new span as the *active* span in the
+ * AsyncLocalStorage context. Code that runs after `startSpan(...)` returns
+ * still sees the previous active span (or no active span). That means:
+ *
+ *   1. Any OTel auto-instrumentation that runs after this call (Prisma,
+ *      Redis, MongoDB, the next outbound HTTP request, etc.) will create
+ *      its span as a child of the *previous* active span, NOT this one.
+ *
+ *   2. `withSpan(...)` calls inside the same scope will be siblings of
+ *      this span, not children.
+ *
+ * This is the standard OTel `tracer.startSpan` semantics — for a span
+ * that needs to act as the active parent across an async boundary, use
+ * `withSpan(name, fn)` (callback form) or `startActiveSpan(name, fn)`.
+ *
+ * Use `startSpan` for short, manually-managed spans where the caller
+ * explicitly attaches children (or accepts that there are no children).
+ * The caller MUST call `span.end()` exactly once. There is no auto-close.
  *
  * @param name - Span name (e.g. 'HTTP GET /api/users', 'db.query', 'cache.get')
  * @param options - Optional span configuration
@@ -299,8 +396,9 @@ export function startSpan(name, options) {
         if (options?.links) {
             otelOptions.links = PulseSpan.toOTelLinks(options.links);
         }
+        const parentSpanId = snapshotActiveSpanId();
         const span = tracer.startSpan(name, otelOptions);
-        return new PulseSpan(span);
+        return new PulseSpan(span, parentSpanId);
     }
     catch (err) {
         logger.warn('Failed to start span', { name, error: err });
@@ -312,8 +410,38 @@ export function startSpan(name, options) {
     }
 }
 /**
- * Execute a function within a new span context.
- * The span is automatically ended when the function completes (or throws).
+ * Execute an async function within a new span context.
+ *
+ * The span is installed as the *active* span in the OTel context for the
+ * lifetime of the callback (and all async work it spawns), then ended
+ * automatically when the callback resolves, rejects, or hits its timeout.
+ *
+ * This is the canonical way to create user spans — child spans created by
+ * any code inside `fn` (whether by `withSpan`, by `startSpan`, or by OTel
+ * auto-instrumentation like `HttpInstrumentation` / `PrismaInstrumentation`)
+ * will be linked as children of this span via `AsyncLocalStorage`
+ * propagation.
+ *
+ * Lifecycle guarantees:
+ *   - The span is always ended exactly once (the `_ended` guard makes
+ *     `pulseSpan.end()` idempotent — both the timeout timer and the finally
+ *     block call it; only the first one wins).
+ *   - The span ends with status `ok` if the callback resolves cleanly,
+ *     `error` if it throws (the original exception is recorded as a span
+ *     event and re-thrown unmodified).
+ *   - If `options.timeoutMs` is set, the span force-ends with status
+ *     `error` after the deadline. The user's promise is NOT cancelled —
+ *     the SDK never aborts user work. A `pulse.span.timeout` event is
+ *     attached so the trace UI can show the deadline overrun.
+ *   - CPU profiling is started on the *root* span only and stopped in the
+ *     same `finally` block. Profiling failures are logged and never block
+ *     span lifecycle.
+ *
+ * Parent attribution:
+ *   The active span at *call time* (snapshotted before we open the new
+ *   active scope) is recorded as the parent of this span. This is what
+ *   `pulseSpan.parentSpanId` returns and what flows into the exported
+ *   span event via OTel's own `parentSpanContext`.
  */
 export async function withSpan(name, fn, options) {
     if (!tracer) {
@@ -335,10 +463,14 @@ export async function withSpan(name, fn, options) {
         }
     }
     const otelOptions = toOtelSpanOptions(options);
-    const isRoot = !trace.getActiveSpan();
+    // Snapshot the parent BEFORE entering the new active scope. Inside the
+    // callback below `trace.getActiveSpan()` returns the new span itself,
+    // so any parent lookup must happen out here.
+    const parentSpanId = snapshotActiveSpanId();
+    const isRoot = parentSpanId === undefined;
     return tracer.startActiveSpan(name, otelOptions, async (span) => {
-        attachRequestContextToActiveSpan();
-        const pulseSpan = new PulseSpan(span);
+        const pulseSpan = new PulseSpan(span, parentSpanId);
+        const logger = getLogger();
         if (isRoot) {
             try {
                 const subsystem = ProfilingSubsystem.getInstance();
@@ -346,22 +478,51 @@ export async function withSpan(name, fn, options) {
                     void subsystem.startCpuProfile(pulseSpan.traceId, pulseSpan.spanId);
             }
             catch (err) {
-                getLogger().warn('Failed to start CPU profile for root span', { error: err });
+                logger.warn('Failed to start CPU profile for root span', { error: err });
             }
+        }
+        // Timeout guard: if timeoutMs is set, create a timer that force-ends
+        // the span with TIMEOUT status but does NOT reject the user's promise.
+        // This is fail-open — the operation continues, only the span is ended.
+        let timeoutTimer;
+        if (options?.timeoutMs && options.timeoutMs > 0) {
+            const timeoutMs = options.timeoutMs;
+            timeoutTimer = setTimeout(() => {
+                if (!pulseSpan.isEnded) {
+                    pulseSpan.addEvent('pulse.span.timeout', {
+                        'pulse.timeout_ms': timeoutMs,
+                    });
+                    pulseSpan.setStatus('error', `Span timed out after ${timeoutMs}ms`);
+                    pulseSpan.end();
+                    logger.warn('Span force-ended due to timeout', {
+                        name,
+                        timeoutMs,
+                        traceId: pulseSpan.traceId,
+                        spanId: pulseSpan.spanId,
+                    });
+                }
+            }, timeoutMs);
+            timeoutTimer.unref(); // Don't keep event loop alive
         }
         try {
             const result = await fn(pulseSpan);
-            pulseSpan.setStatus('ok');
+            if (!pulseSpan.isEnded) {
+                pulseSpan.setStatus('ok');
+            }
             return result;
         }
         catch (err) {
-            if (err instanceof Error) {
-                pulseSpan.recordError(err);
+            if (!pulseSpan.isEnded) {
+                if (err instanceof Error) {
+                    pulseSpan.recordError(err);
+                }
+                pulseSpan.setStatus('error', err instanceof Error ? err.message : String(err));
             }
-            pulseSpan.setStatus('error', err instanceof Error ? err.message : String(err));
             throw err;
         }
         finally {
+            if (timeoutTimer)
+                clearTimeout(timeoutTimer);
             if (isRoot) {
                 try {
                     const subsystem = ProfilingSubsystem.getInstance();
@@ -369,15 +530,18 @@ export async function withSpan(name, fn, options) {
                         void subsystem.stopCpuProfile(pulseSpan.traceId);
                 }
                 catch (err) {
-                    getLogger().warn('Failed to stop CPU profile for root span', { error: err });
+                    logger.warn('Failed to stop CPU profile for root span', { error: err });
                 }
             }
-            pulseSpan.end();
+            pulseSpan.end(); // Idempotent — safe if timeout already ended it
         }
     });
 }
 /**
- * Execute a synchronous function within a new span context.
+ * Synchronous version of `withSpan`. Same contract, except `fn` may not
+ * return a Promise. The span is ended synchronously when `fn` returns or
+ * throws. Use this only when you genuinely need synchronous span ownership;
+ * `withSpan` is preferred everywhere else.
  */
 export function withSpanSync(name, fn, options) {
     if (!tracer) {
@@ -399,10 +563,10 @@ export function withSpanSync(name, fn, options) {
         }
     }
     const otelOptions = toOtelSpanOptions(options);
-    const isRoot = !trace.getActiveSpan();
+    const parentSpanId = snapshotActiveSpanId();
+    const isRoot = parentSpanId === undefined;
     return tracer.startActiveSpan(name, otelOptions, span => {
-        attachRequestContextToActiveSpan();
-        const pulseSpan = new PulseSpan(span);
+        const pulseSpan = new PulseSpan(span, parentSpanId);
         if (isRoot) {
             try {
                 const subsystem = ProfilingSubsystem.getInstance();
@@ -460,8 +624,15 @@ export function getTracer() {
 }
 /**
  * Execute a function within a specific OTel context.
+ *
+ * Prefer `withContext` from `core/context` for user-facing code — that
+ * helper additionally propagates the SDK's per-request `ContextStore`
+ * (breadcrumbs, requestId, tenantId). This function is the raw OTel
+ * primitive for advanced consumers (worker pools, custom propagation).
+ *
+ * @internal
  */
-export function withContext(ctx, fn) {
+export function withOtelContext(ctx, fn) {
     return otelContext.with(ctx, fn);
 }
 // ─── Shutdown ───────────────────────────────────────────────────────────────
@@ -516,6 +687,14 @@ export async function shutdownTracer() {
     catch (err) {
         logger.error('Failed to shut down OpenTelemetry tracer', { error: err });
     }
+    // Flush and reset the trace aggregator so buffered traces are emitted
+    // before the SDK exits and the singleton is cleared for reinit.
+    try {
+        resetTraceAggregator();
+    }
+    catch (err) {
+        logger.warn('Trace aggregator reset failed during shutdown', { error: err });
+    }
 }
 /**
  * Force-flush pending spans without shutting down.
@@ -533,6 +712,21 @@ export async function flushTracer() {
 // ─── Utilities ──────────────────────────────────────────────────────────────
 function hrTimeToMs(hrTime) {
     return hrTime[0] * 1000 + hrTime[1] / 1e6;
+}
+/**
+ * Convert OTel SpanKind enum to a human-readable string for the event payload.
+ * Critical for waterfall rendering and service map generation — without this,
+ * the UI cannot distinguish incoming requests (SERVER) from outgoing calls (CLIENT).
+ */
+function spanKindToString(kind) {
+    switch (kind) {
+        case SpanKind.INTERNAL: return 'internal';
+        case SpanKind.SERVER: return 'server';
+        case SpanKind.CLIENT: return 'client';
+        case SpanKind.PRODUCER: return 'producer';
+        case SpanKind.CONSUMER: return 'consumer';
+        default: return 'internal';
+    }
 }
 function toOtelSpanOptions(options) {
     const otelOptions = {};

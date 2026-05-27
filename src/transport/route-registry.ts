@@ -24,6 +24,7 @@ const EVENT_TYPE_TO_ROUTE: Readonly<Record<string, EnterpriseRoute>> = Object.fr
   error: 'errors',
   message: 'errors',
   span: 'traces',
+  trace: 'traces',
   request: 'requests',
   metric: 'metrics',
   log: 'logs',

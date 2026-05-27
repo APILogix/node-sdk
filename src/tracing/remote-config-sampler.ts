@@ -46,7 +46,11 @@ export class RemoteConfigSampler {
 
     return decision.sampled
       ? { decision: SamplingDecision.RECORD_AND_SAMPLED }
-      : { decision: SamplingDecision.NOT_RECORD }
+      // RECORD (not NOT_RECORD) so spans are still collected in memory.
+      // PipelineSpanExporter will promote error-bearing spans to exported
+      // even when not sampled — this is the SDK-side tail-sampling strategy
+      // for error-priority capture.
+      : { decision: SamplingDecision.RECORD }
   }
 
   toString(): string {

@@ -13,6 +13,8 @@
  *   - Centralized SDK name/version constants (no hardcoded strings)
  */
 import { trace, SpanKind, context as otelContext, } from '@opentelemetry/api';
+import { computeExclusiveDuration, spanDurationTracker, } from './span-duration.js';
+import { getTraceAggregator, resetTraceAggregator } from './trace-aggregator.js';
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { BatchSpanProcessor, ParentBasedSampler, TraceIdRatioBasedSampler, } from '@opentelemetry/sdk-trace-base';
 import { resourceFromAttributes } from '@opentelemetry/resources';
@@ -56,14 +58,31 @@ class PipelineSpanExporter {
         try {
             let allAccepted = true;
             for (const span of spans) {
+                const ctx = span.spanContext();
+                const traceId = ctx.traceId;
+                // Error-priority sampling: if the span was RECORD-only
+                // (not sampled) but contains an error, promote it to
+                // exported. Non-sampled, non-error spans are dropped.
+                const isSampled = (ctx.traceFlags & 1) === 1;
+                const hasError = span.status.code === 2
+                    || span.events.some(e => e.name === 'exception');
+                if (!isSampled && !hasError) {
+                    continue; // Drop non-sampled, non-error span
+                }
                 // Cost governance: check span-per-trace limits
-                const traceId = span.spanContext().traceId;
                 if (!costGovernor.canCreateSpan(traceId)) {
                     continue; // Drop span — trace exceeded span budget
                 }
                 // Cost governance: check trace duration limits
                 if (!costGovernor.canContinueTrace(traceId)) {
                     continue; // Drop span — trace exceeded max duration
+                }
+                // Record child interval for exclusive duration computation.
+                // Every span with a parent contributes to the parent's
+                // child coverage — needed to compute exclusiveDuration.
+                const parentSpanId = span.parentSpanContext?.spanId;
+                if (parentSpanId) {
+                    spanDurationTracker.recordChildInterval(traceId, parentSpanId, hrTimeToMs(span.startTime), hrTimeToMs(span.endTime));
                 }
                 const traceEvent = this.spanToEvent(span);
                 // Track whether the transport actually accepted the event.
@@ -73,6 +92,20 @@ class PipelineSpanExporter {
                 // killswitch, etc.) would be silently lost.
                 if (!processEvent(traceEvent)) {
                     allAccepted = false;
+                }
+                // Route span through TraceAggregator for tree reconstruction.
+                // The aggregator buffers spans by traceId and emits a complete
+                // 'trace' event (with embedded children) when the root arrives.
+                try {
+                    getTraceAggregator().addSpan(traceEvent);
+                }
+                catch {
+                    // Aggregation failure must never block span export
+                }
+                // If this is a root span (no parent), clean up the
+                // duration tracker to free memory.
+                if (!parentSpanId) {
+                    spanDurationTracker.cleanupTrace(traceId);
                 }
             }
             resultCallback({ code: allAccepted ? 0 : 1 });
@@ -152,6 +185,13 @@ class PipelineSpanExporter {
         catch {
             // ConfigManager not initialized — use unfiltered attributes
         }
+        const startTimeMs = hrTimeToMs(span.startTime);
+        const endTimeMs = hrTimeToMs(span.endTime);
+        // Compute exclusive (self) duration by subtracting merged child
+        // span intervals from this span's total duration. This enables
+        // performance attribution: "DB took 50ms, business logic 400ms".
+        const childIntervals = spanDurationTracker.getChildIntervals(ctx.traceId, ctx.spanId);
+        const durationBreakdown = computeExclusiveDuration(startTimeMs, endTimeMs, childIntervals);
         return {
             type: 'span',
             eventId: `span_${ctx.spanId}`,
@@ -159,9 +199,11 @@ class PipelineSpanExporter {
             traceId: ctx.traceId,
             parentSpanId,
             name: span.name,
-            startTime: hrTimeToMs(span.startTime),
-            endTime: hrTimeToMs(span.endTime),
+            kind: spanKindToString(span.kind),
+            startTime: startTimeMs,
+            endTime: endTimeMs,
             duration: durationMs,
+            exclusiveDuration: durationBreakdown.exclusiveDuration,
             status: statusLabel,
             statusMessage: status.message,
             attributes: filteredAttrs,
@@ -181,6 +223,7 @@ class PipelineSpanExporter {
                 sdkVersion: SDK_VERSION,
                 service: sdkConfig?.service ?? '',
                 environment: sdkConfig?.environment ?? '',
+                release: sdkConfig?.release ?? '',
             },
             // Internal marker allows shutdown force-flush to route finished spans
             // while rejecting new user-captured events. Stripped by event pipeline.
@@ -275,6 +318,10 @@ export function initTracer(config, customResources) {
         // Get the tracer instance
         tracer = trace.getTracer(SDK_NAME, SDK_VERSION);
         initialized = true;
+        // Start the trace aggregator's background sweep timer.
+        // This must happen AFTER the tracer is initialized so exported
+        // spans can flow through the aggregator.
+        getTraceAggregator().start();
         logger.info('OpenTelemetry tracer initialized', {
             service: config.service,
             environment: config.environment,
@@ -352,6 +399,7 @@ export async function withSpan(name, fn, options) {
     return tracer.startActiveSpan(name, otelOptions, async (span) => {
         attachRequestContextToActiveSpan();
         const pulseSpan = new PulseSpan(span);
+        const logger = getLogger();
         if (isRoot) {
             try {
                 const subsystem = ProfilingSubsystem.getInstance();
@@ -359,22 +407,51 @@ export async function withSpan(name, fn, options) {
                     void subsystem.startCpuProfile(pulseSpan.traceId, pulseSpan.spanId);
             }
             catch (err) {
-                getLogger().warn('Failed to start CPU profile for root span', { error: err });
+                logger.warn('Failed to start CPU profile for root span', { error: err });
             }
+        }
+        // Timeout guard: if timeoutMs is set, create a timer that force-ends
+        // the span with TIMEOUT status but does NOT reject the user's promise.
+        // This is fail-open — the operation continues, only the span is ended.
+        let timeoutTimer;
+        if (options?.timeoutMs && options.timeoutMs > 0) {
+            const timeoutMs = options.timeoutMs;
+            timeoutTimer = setTimeout(() => {
+                if (!pulseSpan.isEnded) {
+                    pulseSpan.addEvent('pulse.span.timeout', {
+                        'pulse.timeout_ms': timeoutMs,
+                    });
+                    pulseSpan.setStatus('error', `Span timed out after ${timeoutMs}ms`);
+                    pulseSpan.end();
+                    logger.warn('Span force-ended due to timeout', {
+                        name,
+                        timeoutMs,
+                        traceId: pulseSpan.traceId,
+                        spanId: pulseSpan.spanId,
+                    });
+                }
+            }, timeoutMs);
+            timeoutTimer.unref(); // Don't keep event loop alive
         }
         try {
             const result = await fn(pulseSpan);
-            pulseSpan.setStatus('ok');
+            if (!pulseSpan.isEnded) {
+                pulseSpan.setStatus('ok');
+            }
             return result;
         }
         catch (err) {
-            if (err instanceof Error) {
-                pulseSpan.recordError(err);
+            if (!pulseSpan.isEnded) {
+                if (err instanceof Error) {
+                    pulseSpan.recordError(err);
+                }
+                pulseSpan.setStatus('error', err instanceof Error ? err.message : String(err));
             }
-            pulseSpan.setStatus('error', err instanceof Error ? err.message : String(err));
             throw err;
         }
         finally {
+            if (timeoutTimer)
+                clearTimeout(timeoutTimer);
             if (isRoot) {
                 try {
                     const subsystem = ProfilingSubsystem.getInstance();
@@ -382,10 +459,10 @@ export async function withSpan(name, fn, options) {
                         void subsystem.stopCpuProfile(pulseSpan.traceId);
                 }
                 catch (err) {
-                    getLogger().warn('Failed to stop CPU profile for root span', { error: err });
+                    logger.warn('Failed to stop CPU profile for root span', { error: err });
                 }
             }
-            pulseSpan.end();
+            pulseSpan.end(); // Idempotent — safe if timeout already ended it
         }
     });
 }
@@ -529,6 +606,14 @@ export async function shutdownTracer() {
     catch (err) {
         logger.error('Failed to shut down OpenTelemetry tracer', { error: err });
     }
+    // Flush and reset the trace aggregator so buffered traces are emitted
+    // before the SDK exits and the singleton is cleared for reinit.
+    try {
+        resetTraceAggregator();
+    }
+    catch (err) {
+        logger.warn('Trace aggregator reset failed during shutdown', { error: err });
+    }
 }
 /**
  * Force-flush pending spans without shutting down.
@@ -546,6 +631,21 @@ export async function flushTracer() {
 // ─── Utilities ──────────────────────────────────────────────────────────────
 function hrTimeToMs(hrTime) {
     return hrTime[0] * 1000 + hrTime[1] / 1e6;
+}
+/**
+ * Convert OTel SpanKind enum to a human-readable string for the event payload.
+ * Critical for waterfall rendering and service map generation — without this,
+ * the UI cannot distinguish incoming requests (SERVER) from outgoing calls (CLIENT).
+ */
+function spanKindToString(kind) {
+    switch (kind) {
+        case SpanKind.INTERNAL: return 'internal';
+        case SpanKind.SERVER: return 'server';
+        case SpanKind.CLIENT: return 'client';
+        case SpanKind.PRODUCER: return 'producer';
+        case SpanKind.CONSUMER: return 'consumer';
+        default: return 'internal';
+    }
 }
 function toOtelSpanOptions(options) {
     const otelOptions = {};
