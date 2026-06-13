@@ -111,82 +111,86 @@ class PipelineSpanExporter implements SpanExporter {
             try {
                 let allAccepted = true
                 const traceIdsInBatch = new Set<string>()
-            for (const span of spans) {
-                const ctx = span.spanContext()
-                const traceId = ctx.traceId
-                traceIdsInBatch.add(traceId)
+                const rootTraceIds = new Set<string>()
 
-                // Error-priority sampling: if the span was RECORD-only
-                // (not sampled) but contains an error, promote it to
-                // exported. Non-sampled, non-error spans are dropped.
-                const isSampled = (ctx.traceFlags & 1) === 1
-                const hasError = span.status.code === 2
-                    || span.events.some(e => e.name === 'exception')
-                if (!isSampled && !hasError) {
-                    continue // Drop non-sampled, non-error span
+                // Pass 1: Record all child intervals for the batch first
+                for (const span of spans) {
+                    const ctx = span.spanContext()
+                    const traceId = ctx.traceId
+
+                    const isSampled = (ctx.traceFlags & 1) === 1
+                    const hasError = span.status.code === 2
+                        || span.events.some(e => e.name === 'exception')
+                    if (!isSampled && !hasError) {
+                        continue
+                    }
+
+                    if (!costGovernor.canCreateSpan(traceId) || !costGovernor.canContinueTrace(traceId)) {
+                        continue
+                    }
+
+                    const parentSpanId = span.parentSpanContext?.spanId
+                    if (parentSpanId) {
+                        spanDurationTracker.recordChildInterval(
+                            traceId,
+                            parentSpanId,
+                            hrTimeToMs(span.startTime),
+                            hrTimeToMs(span.endTime),
+                        )
+                    }
                 }
 
-                // Cost governance: check span-per-trace limits
-                if (!costGovernor.canCreateSpan(traceId)) {
-                    continue // Drop span — trace exceeded span budget
+                // Pass 2: Process spans, convert to events, and send to aggregator
+                for (const span of spans) {
+                    const ctx = span.spanContext()
+                    const traceId = ctx.traceId
+                    traceIdsInBatch.add(traceId)
+
+                    const isSampled = (ctx.traceFlags & 1) === 1
+                    const hasError = span.status.code === 2
+                        || span.events.some(e => e.name === 'exception')
+                    if (!isSampled && !hasError) {
+                        continue
+                    }
+
+                    if (!costGovernor.canCreateSpan(traceId) || !costGovernor.canContinueTrace(traceId)) {
+                        continue
+                    }
+
+                    const traceEvent = this.spanToEvent(span)
+                    if (!processEvent(traceEvent)) {
+                        allAccepted = false
+                    }
+
+                    try {
+                        getTraceAggregator().addSpan(traceEvent)
+                    } catch {}
+
+                    const parentSpanId = span.parentSpanContext?.spanId
+                    if (!parentSpanId) {
+                        rootTraceIds.add(traceId)
+                    }
                 }
 
-                // Cost governance: check trace duration limits
-                if (!costGovernor.canContinueTrace(traceId)) {
-                    continue // Drop span — trace exceeded max duration
+                // Flush completed traces at the end of the batch export to prevent race conditions
+                for (const traceId of traceIdsInBatch) {
+                    try {
+                        getTraceAggregator().flushIfComplete(traceId)
+                    } catch {}
                 }
 
-                // Record child interval for exclusive duration computation.
-                // Every span with a parent contributes to the parent's
-                // child coverage — needed to compute exclusiveDuration.
-                const parentSpanId = span.parentSpanContext?.spanId
-                if (parentSpanId) {
-                    spanDurationTracker.recordChildInterval(
-                        traceId,
-                        parentSpanId,
-                        hrTimeToMs(span.startTime),
-                        hrTimeToMs(span.endTime),
-                    )
+                // Clean up span duration tracker for traces whose root spans were processed in this batch
+                for (const traceId of rootTraceIds) {
+                    try {
+                        spanDurationTracker.cleanupTrace(traceId)
+                    } catch {}
                 }
 
-                const traceEvent = this.spanToEvent(span)
-                // Track whether the transport actually accepted the event.
-                // Reporting success unconditionally would lie to the
-                // OTel BatchSpanProcessor, which discards the span on
-                // success — so spans rejected by transport (queue full,
-                // killswitch, etc.) would be silently lost.
-                if (!processEvent(traceEvent)) {
-                    allAccepted = false
-                }
-
-                // Route span through TraceAggregator for tree reconstruction.
-                // The aggregator buffers spans by traceId and emits a complete
-                // 'trace' event (with embedded children) when the root arrives.
-                try {
-                    getTraceAggregator().addSpan(traceEvent)
-                } catch {
-                    // Aggregation failure must never block span export
-                }
-
-                // If this is a root span (no parent), clean up the
-                // duration tracker to free memory.
-                if (!parentSpanId) {
-                    spanDurationTracker.cleanupTrace(traceId)
-                }
+                resultCallback({ code: allAccepted ? 0 : 1 })
+            } catch (err) {
+                getLogger().error('Span export failed', { error: err, spanCount: spans.length })
+                resultCallback({ code: 1, error: err instanceof Error ? err : new Error(String(err)) })
             }
-
-            // Flush completed traces at the end of the batch export to prevent race conditions
-            for (const traceId of traceIdsInBatch) {
-                try {
-                    getTraceAggregator().flushIfComplete(traceId)
-                } catch {}
-            }
-
-            resultCallback({ code: allAccepted ? 0 : 1 })
-        } catch (err) {
-            getLogger().error('Span export failed', { error: err, spanCount: spans.length })
-            resultCallback({ code: 1, error: err instanceof Error ? err : new Error(String(err)) })
-        }
         })
     }
 

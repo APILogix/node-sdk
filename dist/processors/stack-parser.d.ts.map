@@ -1,1 +1,0 @@
-{"version":3,"file":"stack-parser.d.ts","sourceRoot":"","sources":["../../src/processors/stack-parser.ts"],"names":[],"mappings":"AAAA;;;;;;;;;;;;;;;;;;;;;;;;;GAyBG;AAEH,OAAO,KAAK,EAAE,UAAU,EAAE,MAAM,mBAAmB,CAAA;AACnD,YAAY,EAAE,UAAU,EAAE,MAAM,mBAAmB,CAAA;AA2NnD;;;;;;;;;;;GAWG;AACH,wBAAgB,UAAU,CAAC,KAAK,CAAC,EAAE,MAAM,EAAE,KAAK,CAAC,EAAE,KAAK,GAAG,UAAU,EAAE,CAetE"}
