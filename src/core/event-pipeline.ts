@@ -63,12 +63,24 @@ import { TransportRouter } from '../transport/transport-router.js'
 import { FeatureController } from './feature-controller.js'
 import { ConfigManager } from './config-manager.js'
 import { ERROR_DEFAULTS } from '../constants/internal-defaults.js'
-import { getSessionManager } from '../session/session-manager.js'
+import { peekSessionManager } from '../session/session-manager.js'
 
 const PLUGIN_TIMEOUT_MS = 50
 const EVENT_PROCESSOR_TIMEOUT_MS = 50
 const BEFORE_SEND_TIMEOUT_MS = 100
+/**
+ * Source-context attachment reads files from disk — bound it so slow I/O
+ * can never stall the pipeline. On timeout the original frames are kept.
+ */
+const SOURCE_CONTEXT_TIMEOUT_MS = 250
+/**
+ * Hard cap on in-flight pipeline tasks. Under sustained load faster than
+ * the pipeline drains, an unbounded set would exhaust memory; excess events
+ * are rejected instead and counted in `pendingPipelineDrops`.
+ */
+const MAX_PENDING_PIPELINES = 10_000
 const pendingPipelines = new Set<Promise<boolean>>()
+let pendingPipelineDrops = 0
 
 /**
  * Once set, no new event may join the pendingPipelines set — drain becomes
@@ -194,6 +206,20 @@ export function enqueueEvent(rawEvent: SDKEvent | Event): EventReceipt {
     resolveProcessed = resolve
   })
 
+  // Gate: bound in-flight work. Without a cap, a producer faster than the
+  // pipeline grows this set without bound and exhausts memory.
+  if (pendingPipelines.size >= MAX_PENDING_PIPELINES) {
+    pendingPipelineDrops++
+    if (pendingPipelineDrops === 1 || pendingPipelineDrops % 1000 === 0) {
+      logger.warn('Event rejected — pipeline overloaded', {
+        eventType,
+        maxPending: MAX_PENDING_PIPELINES,
+        totalDrops: pendingPipelineDrops,
+      })
+    }
+    return rejectedReceipt(eventId, 'pipeline_overloaded')
+  }
+
   pendingPipelines.add(pending)
 
   setImmediate(() => {
@@ -271,6 +297,7 @@ export async function drainPendingEventProcessing(): Promise<void> {
 export function resetEventPipeline(): void {
   pipelineDraining = false
   pendingPipelines.clear()
+  pendingPipelineDrops = 0
   // Invalidate cached memory pressure so the next event triggers a fresh
   // syscall — important for tests that rely on deterministic pressure reads.
   memoryPressureCachedAt = 0
@@ -376,7 +403,14 @@ export async function processEventAsync(rawEvent: SDKEvent | Event, assignedEven
         // attachSourceContext is now an SDK-internal default (not backend-controlled).
         if (ERROR_DEFAULTS.attachSourceContext) {
           const { attachSourceContext } = await import('../processors/source-context.js')
-          const enrichedFrames = await attachSourceContext((event as unknown as Record<string, unknown>).stack as import('../types/event.js').StackFrame[])
+          // Bounded: source-context reads files from disk; a slow or huge
+          // file must never stall the pipeline. On timeout the original
+          // frames are kept (withTimeout rejects → caught below).
+          const enrichedFrames = await withTimeout(
+            attachSourceContext((event as unknown as Record<string, unknown>).stack as import('../types/event.js').StackFrame[]),
+            SOURCE_CONTEXT_TIMEOUT_MS,
+            'attachSourceContext timed out'
+          )
           event = { ...event, stack: enrichedFrames } as unknown as SDKEvent
         }
       } catch {
@@ -612,13 +646,15 @@ function enrichFromContext(event: SDKEvent): SDKEvent {
   }
 
   // ─── Session tracking ───────────────────────────────────────────────
-  // The FeatureController gates whether the SessionManager singleton
-  // exists. If sessionReplay is enabled, attach the sessionId to every
-  // event and record activity/error counts so crash-free rate is accurate.
-  const featureCtrl = FeatureController.getInstance()
-  if (featureCtrl?.isEnabled('sessionReplay')) {
-    try {
-      const sessionMgr = getSessionManager()
+  // Attach the sessionId to every event whenever a session manager is
+  // active — not just when the sessionReplay feature is on. Crash-free
+  // session rates and trace↔session correlation depend on errors, spans,
+  // and requests all carrying the sessionId. peekSessionManager never
+  // creates a manager, so events can't manufacture one as a side effect
+  // when the session subsystem isn't running.
+  try {
+    const sessionMgr = peekSessionManager()
+    if (sessionMgr) {
       const sessionId = sessionMgr.getSessionId() ?? sessionMgr.getSession().id
       enrichment['sessionId'] = sessionId
 
@@ -627,9 +663,9 @@ function enrichFromContext(event: SDKEvent): SDKEvent {
       } else {
         sessionMgr.recordActivity()
       }
-    } catch {
-      // Session tracking is best-effort — never block the pipeline
     }
+  } catch {
+    // Session tracking is best-effort — never block the pipeline
   }
 
   if (Object.keys(enrichment).length === 0) return event

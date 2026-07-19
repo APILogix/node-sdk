@@ -52,6 +52,13 @@ export interface RemoteConfigResponse {
   readonly transport: TransportRemoteConfig
   readonly runtime: RuntimeConfig
   readonly meta: ConfigMeta
+
+  /**
+   * Billing/plan entitlements. Optional in the wire format — backends that
+   * predate this block simply omit it and every entitlement defaults to
+   * `true` (fail-open), so existing projects keep working unchanged.
+   */
+  readonly entitlements?: EntitlementsConfig
 }
 
 export interface SdkIdentityConfig {
@@ -105,6 +112,7 @@ export interface SamplingConfig {
   readonly errors: number
   readonly profiles: number
   readonly replays: number
+  readonly metrics: number
   /** Per-route overrides keyed by URL prefix. Longest prefix wins. */
   readonly routes: Readonly<Record<string, RouteSamplingRates>>
 }
@@ -122,7 +130,7 @@ export interface InstrumentationConfig {
   readonly prisma: PrismaInstrumentationConfig | boolean
   readonly mongodb: boolean
   readonly redis: boolean
-  readonly bullmq: boolean
+  readonly bullmq: BullMQInstrumentationConfig | boolean
 }
 
 export interface FastifyInstrumentationConfig {
@@ -144,6 +152,16 @@ export interface PrismaInstrumentationConfig {
   readonly enabled: boolean
   readonly captureQueries: boolean
   readonly captureParams: boolean
+}
+
+export interface BullMQInstrumentationConfig {
+  readonly enabled: boolean
+  /** Emit per-job spans for `Queue.addBulk` / `FlowProducer.addBulk`. Default: true. */
+  readonly emitCreateSpansForBulk?: boolean
+  /** Emit per-job spans for `FlowProducer.add` / `addBulk`. Default: true. */
+  readonly emitCreateSpansForFlow?: boolean
+  /** Only create producer spans when a parent span is active. Default: false. */
+  readonly requireParentSpanForPublish?: boolean
 }
 
 // ─── Privacy ────────────────────────────────────────────────────────────────
@@ -219,6 +237,46 @@ export interface KillswitchesConfig {
   readonly disableLogs: boolean
 }
 
+// ─── Entitlements ───────────────────────────────────────────────────────────
+
+/**
+ * Billing/plan entitlements sent by the control plane. These gate
+ * **developer-facing optional telemetry APIs** — they never gate core SDK
+ * behaviour (error capture, context, flush/shutdown), which always works.
+ *
+ * Semantics when an entitlement is `false`: the corresponding public API
+ * becomes a no-op — `startSpan()` returns a non-recording noop span,
+ * metric helpers drop the call, `captureLog()`/`captureProfile()`/
+ * `captureReplay()` emit nothing. Nothing throws; application code keeps
+ * running untouched.
+ *
+ * Unlike `features.*` (which stops the subsystem from being instantiated
+ * at all), entitlements leave automatic instrumentation running and only
+ * silence the custom-instrumentation surface the plan doesn't include.
+ */
+export interface EntitlementsConfig {
+  /** `startSpan()` / `withSpan()` / `withSpanSync()` custom tracing APIs. */
+  readonly customSpans: boolean
+  /** `counter()` / `gauge()` / `histogram()` and friends. */
+  readonly customMetrics: boolean
+  /** `startProfile()` / `stopProfile()` and automatic CPU/heap profiling. */
+  readonly profiling: boolean
+  /** `captureLog()` structured log capture. */
+  readonly logging: boolean
+  /** `captureReplay()` session-replay segment capture. */
+  readonly sessionReplay: boolean
+  /** `captureCronCheckIn()` cron monitoring check-ins. */
+  readonly crons: boolean
+  /** Automatic incoming HTTP request capture. */
+  readonly requestCapture: boolean
+  /** Automatic distributed tracing (HTTP/framework spans). */
+  readonly tracing: boolean
+  /** Automatic error capture (uncaught, unhandled, console.error). */
+  readonly errors: boolean
+  /** Automatic/runtime metrics collection. */
+  readonly metrics: boolean
+}
+
 // ─── Transport ──────────────────────────────────────────────────────────────
 
 /**
@@ -291,6 +349,7 @@ export interface ConfigDiff {
   readonly limitsChanged: boolean
   readonly instrumentationChanged: boolean
   readonly runtimeChanged: boolean
+  readonly entitlementsChanged: boolean
   readonly changes: ReadonlyMap<string, { old: unknown; new: unknown }>
 }
 

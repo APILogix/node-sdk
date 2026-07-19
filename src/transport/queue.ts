@@ -212,11 +212,12 @@ export class EventQueue {
     }
 
     requeueFront(events: Event[]) {
-        for (let i = events.length - 1; i >= 0; i--) {
-            const event = events[i]
-            if (event !== undefined) {
-                this.retryQueue.unshift(event)
-            }
+        // O(n) prepend: the previous per-event unshift loop was O(n²) —
+        // each unshift shifted every existing element. One concat does a
+        // single allocation + copy instead. Undefined holes are dropped,
+        // matching the old loop's guard.
+        if (events.length > 0) {
+            this.retryQueue = events.filter(e => e !== undefined).concat(this.retryQueue)
         }
 
         // Bound retry queue

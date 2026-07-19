@@ -20,7 +20,7 @@
 import type { SamplingConfig, ConfigDiff, RemoteConfigResponse, RouteSamplingRates } from '../types/config.js'
 import { getLogger } from '../utils/logger.js'
 
-export type SamplingEventType = 'traces' | 'requests' | 'errors' | 'profiles' | 'replays'
+export type SamplingEventType = 'traces' | 'requests' | 'errors' | 'profiles' | 'replays' | 'metrics'
 
 export type SamplingDecision = {
   readonly sampled: boolean
@@ -72,6 +72,10 @@ export class SamplingEngine {
     return this.decide(sessionId, 'replays')
   }
 
+  shouldSampleMetric(metricId: string, route?: string): SamplingDecision {
+    return this.decide(metricId, 'metrics', route)
+  }
+
   // ─── Config Change ────────────────────────────────────────────────────────
 
   handleConfigChange(_diff: ConfigDiff, newConfig: Readonly<RemoteConfigResponse>): void {
@@ -84,10 +88,11 @@ export class SamplingEngine {
       old.requests !== newSampling.requests ||
       old.errors !== newSampling.errors ||
       old.profiles !== newSampling.profiles ||
-      old.replays !== newSampling.replays
+      old.replays !== newSampling.replays ||
+      old.metrics !== newSampling.metrics
     ) {
       getLogger().info(
-        `[SamplingEngine] Rates updated — traces: ${newSampling.traces}, requests: ${newSampling.requests}, errors: ${newSampling.errors}, profiles: ${newSampling.profiles}, replays: ${newSampling.replays}`,
+        `[SamplingEngine] Rates updated — traces: ${newSampling.traces}, requests: ${newSampling.requests}, errors: ${newSampling.errors}, profiles: ${newSampling.profiles}, replays: ${newSampling.replays}, metrics: ${newSampling.metrics}`,
       )
     }
 

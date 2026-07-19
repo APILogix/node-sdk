@@ -286,7 +286,8 @@ export class ConfigManager {
         diff.privacyChanged ||
         diff.limitsChanged ||
         diff.instrumentationChanged ||
-        diff.runtimeChanged
+        diff.runtimeChanged ||
+        diff.entitlementsChanged
 
       if (hasChanges && !this.destroyed) {
         // Snapshot listeners to a stable array — destroy() during dispatch

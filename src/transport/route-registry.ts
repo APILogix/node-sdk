@@ -20,6 +20,23 @@ export class TransportConfigurationError extends Error {
   }
 }
 
+/**
+ * Origin used for routes whose URL is not configured yet. The baked-in
+ * defaults ship `url: ''` for every route (transport stays off until the
+ * first remote config delivers real endpoints), so the router must still
+ * construct cleanly with placeholder URLs — a monitoring SDK must never
+ * throw during init just because the control plane hasn't provided
+ * endpoints yet. `.invalid` is reserved by RFC 2606: even if a bug
+ * bypassed every guard and attempted a send, DNS resolution fails
+ * instantly instead of leaking telemetry to a real host.
+ */
+export const UNCONFIGURED_ROUTE_ORIGIN = 'https://unconfigured.invalid'
+
+/** True when a route definition carries a real, backend-supplied URL. */
+export function isRouteConfigured(definition: RouteDefinition): boolean {
+  return !definition.url.startsWith(UNCONFIGURED_ROUTE_ORIGIN)
+}
+
 const EVENT_TYPE_TO_ROUTE: Readonly<Record<string, EnterpriseRoute>> = Object.freeze({
   error: 'errors',
   message: 'errors',
@@ -96,7 +113,11 @@ function createDefinition(route: EnterpriseRoute, config: TransportRemoteConfig)
   }
 
   if (!configured) {
-    throw new TransportConfigurationError('Missing endpoint for route', { route })
+    // Route not configured yet (baked-in defaults or a partial remote
+    // config). Keep the router constructible — the send path checks
+    // isRouteConfigured() and drops with 'route_unconfigured' instead of
+    // touching the network.
+    configured = UNCONFIGURED_ROUTE_ORIGIN
   }
 
   return {

@@ -80,8 +80,20 @@ function resolveInstrumentationOptions(userOptions) {
         : { enabled: prismaEnabled, captureQueries: true, captureParams: false };
     const mongodbEnabled = instr.mongodb ?? userOptions.mongodb ?? false;
     const redisEnabled = instr.redis ?? userOptions.redis ?? false;
-    const bullmqEnabled = instr.bullmq ?? userOptions.bullmq ?? false;
     const axiosEnabled = instr.axios ?? userOptions.axios ?? false;
+    // BullMQ accepts an object form in remote config so the control plane can
+    // tune span verbosity without a redeploy. Boolean form = enabled with
+    // library defaults.
+    const bullmqEnabled = typeof instr.bullmq === 'object'
+        ? instr.bullmq.enabled
+        : (instr.bullmq ?? userOptions.bullmq ?? false);
+    const bullmqRemote = typeof instr.bullmq === 'object' ? instr.bullmq : undefined;
+    const bullmqConfig = {
+        enabled: bullmqEnabled,
+        emitCreateSpansForBulk: bullmqRemote?.emitCreateSpansForBulk ?? true,
+        emitCreateSpansForFlow: bullmqRemote?.emitCreateSpansForFlow ?? true,
+        requireParentSpanForPublish: bullmqRemote?.requireParentSpanForPublish ?? false,
+    };
     const instrAny = instr;
     const pgEnabled = typeof instrAny.pg === 'object'
         ? instrAny.pg.enabled
@@ -108,7 +120,8 @@ function resolveInstrumentationOptions(userOptions) {
         prismaConfig,
         mongodb: mongodbEnabled,
         redis: redisEnabled,
-        bullmq: bullmqEnabled,
+        bullmq: bullmqConfig.enabled,
+        bullmqConfig,
         axios: axiosEnabled,
         pg: pgConfig.enabled,
         pgConfig,
@@ -146,6 +159,13 @@ export function registerAutoInstrumentations(options = {}) {
                 if (!client.initialized)
                     return false;
                 try {
+                    const reqCheck = request;
+                    if (typeof reqCheck.getHeader === 'function' && reqCheck.getHeader('x-pulse-internal') === '1') {
+                        return true;
+                    }
+                    if (reqCheck.headers && reqCheck.headers['x-pulse-internal'] === '1') {
+                        return true;
+                    }
                     const ingestUrl = client.config.ingestUrl;
                     if (!ingestUrl)
                         return false;
@@ -237,6 +257,20 @@ export function registerAutoInstrumentations(options = {}) {
                 if (!client.initialized)
                     return false;
                 try {
+                    const reqCheck = request;
+                    if (reqCheck.headers) {
+                        // In undici, headers can be an array of strings or an object
+                        if (Array.isArray(reqCheck.headers)) {
+                            for (let i = 0; i < reqCheck.headers.length; i += 2) {
+                                if (reqCheck.headers[i]?.toLowerCase() === 'x-pulse-internal' && reqCheck.headers[i + 1] === '1') {
+                                    return true;
+                                }
+                            }
+                        }
+                        else if (reqCheck.headers['x-pulse-internal'] === '1') {
+                            return true;
+                        }
+                    }
                     const ingest = new URL(client.config.ingestUrl);
                     const req = request;
                     const rawOrigin = req.origin ?? req['origin'];
@@ -261,6 +295,12 @@ export function registerAutoInstrumentations(options = {}) {
     if (resolved.prisma) {
         instrumentations.push(new PrismaInstrumentation({
             enabled: true,
+            // captureQueries: false → drop every engine-level span (`prisma:engine:*`
+            // is the version-stable name prefix for query/connection spans) so raw
+            // SQL never leaves the process. Client-level operation spans
+            // (`prisma:client:*`) are kept. captureParams is enforced downstream by
+            // the pipeline scrubber — the underlying library has no param hook.
+            ...(resolved.prismaConfig.captureQueries ? {} : { ignoreSpanTypes: [/^prisma:engine:/] }),
         }));
     }
     if (resolved.mongodb) {
@@ -287,6 +327,9 @@ export function registerAutoInstrumentations(options = {}) {
     if (resolved.bullmq) {
         instrumentations.push(new BullMQInstrumentation({
             enabled: true,
+            emitCreateSpansForBulk: resolved.bullmqConfig.emitCreateSpansForBulk,
+            emitCreateSpansForFlow: resolved.bullmqConfig.emitCreateSpansForFlow,
+            requireParentSpanForPublish: resolved.bullmqConfig.requireParentSpanForPublish,
         }));
     }
     if (resolved.axios) {

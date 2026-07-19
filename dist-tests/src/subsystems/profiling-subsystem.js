@@ -15,6 +15,7 @@
  */
 import { getRequestContext } from '../core/context.js';
 import { getLogger } from '../utils/logger.js';
+import { SecurityScrubber } from '../processors/security-scrubber.js';
 import { trace } from '@opentelemetry/api';
 export class ProfilingSubsystem {
     static instance = null;
@@ -135,6 +136,12 @@ export class ProfilingSubsystem {
         try {
             const result = await session.post('Profiler.stop');
             const endTime = Date.now();
+            // Scrub the raw V8 profile payload — sampled stack frames can carry
+            // file paths and, via function/source names, fragments of user data.
+            // Fail-open when the scrubber isn't initialized: the pipeline-level
+            // scrub still runs before transport.
+            const scrubber = SecurityScrubber.getInstance();
+            const scrubbedProfile = scrubber ? scrubber.scrubValue(result.profile) : result.profile;
             const event = {
                 type: 'profile',
                 profileType: 'cpu',
@@ -144,7 +151,7 @@ export class ProfilingSubsystem {
                 startTime: active.startTime,
                 endTime,
                 duration: endTime - active.startTime,
-                profile: result.profile,
+                profile: scrubbedProfile,
                 timestamp: endTime,
                 metadata: this.metadata,
             };

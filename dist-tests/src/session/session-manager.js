@@ -169,6 +169,16 @@ export function getSessionManager(options) {
     return sessionManager;
 }
 /**
+ * Return the existing session manager WITHOUT creating one. The event
+ * pipeline uses this so session enrichment never manufactures a session as
+ * a side effect of unrelated telemetry — a sessionId is attached only when
+ * the session subsystem actually started a manager.
+ * @internal
+ */
+export function peekSessionManager() {
+    return sessionManager;
+}
+/**
  * Reset the global session manager. Idempotent.
  * Ends any active session as 'shutdown' so the final activity timestamp is
  * recorded, then clears the singleton so the next getSessionManager() yields

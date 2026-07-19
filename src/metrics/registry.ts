@@ -265,11 +265,28 @@ class MetricsRegistry {
 
 // ─── Utilities ──────────────────────────────────────────────────────────────
 
+const LABEL_CACHE_SIZE = 1000
+const labelCache = new Map<string, string>()
+
 function serializeLabels(labels: Record<string, string>): string {
-    return Object.entries(labels)
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([k, v]) => `${k}=${v}`)
-        .join(',')
+    const entries = Object.entries(labels)
+    if (entries.length === 0) return ''
+
+    // Fast path: if the labels were already sanitized in the same order, we
+    // can reuse the canonical string. The key is the sorted JSON of the labels.
+    const sorted = entries.sort(([a], [b]) => a.localeCompare(b))
+    const cacheKey = JSON.stringify(sorted)
+    const cached = labelCache.get(cacheKey)
+    if (cached !== undefined) return cached
+
+    const serialized = sorted.map(([k, v]) => `${k}=${v}`).join(',')
+
+    if (labelCache.size >= LABEL_CACHE_SIZE) {
+        const oldest = labelCache.keys().next().value
+        if (oldest !== undefined) labelCache.delete(oldest)
+    }
+    labelCache.set(cacheKey, serialized)
+    return serialized
 }
 
 // ─── Singleton ──────────────────────────────────────────────────────────────

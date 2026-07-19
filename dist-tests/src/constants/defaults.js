@@ -88,6 +88,7 @@ export const SAFE_DEFAULTS_SAMPLING = Object.freeze({
     errors: 0,
     profiles: 0,
     replays: 0,
+    metrics: 0,
     routes: Object.freeze({}),
 });
 export const SAFE_DEFAULTS_KILLSWITCHES = Object.freeze({
@@ -119,13 +120,18 @@ export const SAFE_DEFAULTS_PRIVACY = Object.freeze({
     scrubbing: Object.freeze({
         enabled: true,
         headers: Object.freeze(['authorization', 'cookie', 'x-api-key', 'x-auth-token']),
-        fields: Object.freeze(['password', 'token', 'secret', 'creditCard', 'ssn', 'nationalId', 'apiKey']),
+        // Includes OAuth/OIDC flow keys so authorization codes and tokens in
+        // redirect query strings or JSON bodies are never exfiltrated.
+        fields: Object.freeze([
+            'password', 'token', 'secret', 'creditCard', 'ssn', 'nationalId', 'apiKey',
+            'code', 'id_token', 'access_token', 'refresh_token', 'client_secret', 'assertion',
+        ]),
     }),
     piiDetection: Object.freeze({
         enabled: true,
         maskEmails: true,
         maskPhones: true,
-        maskIPs: false,
+        maskIPs: true,
     }),
 });
 export const SAFE_DEFAULTS_INSTRUMENTATION = Object.freeze({
@@ -159,20 +165,38 @@ export const SAFE_DEFAULTS_TRANSPORT = Object.freeze({
     }),
     keepAlive: true,
     routes: Object.freeze({
-        traces: Object.freeze({ url: '', batchSize: 100, flushIntervalMs: 5000, timeoutMs: 5000, compression: 'gzip', priority: 'high' }),
-        requests: Object.freeze({ url: '', batchSize: 200, flushIntervalMs: 2000, timeoutMs: 3000, compression: 'gzip', priority: 'high' }),
-        errors: Object.freeze({ url: '', batchSize: 10, flushIntervalMs: 1000, timeoutMs: 3000, compression: 'gzip', priority: 'critical' }),
-        metrics: Object.freeze({ url: '', batchSize: 100, flushIntervalMs: 10000, timeoutMs: 5000, compression: 'gzip', priority: 'normal' }),
-        logs: Object.freeze({ url: '', batchSize: 50, flushIntervalMs: 10000, timeoutMs: 5000, compression: 'gzip', priority: 'normal' }),
+        traces: Object.freeze({ url: '', batchSize: 500, flushIntervalMs: 5000, timeoutMs: 5000, compression: 'gzip', priority: 'high' }),
+        requests: Object.freeze({ url: '', batchSize: 500, flushIntervalMs: 5000, timeoutMs: 3000, compression: 'gzip', priority: 'high' }),
+        errors: Object.freeze({ url: '', batchSize: 100, flushIntervalMs: 1000, timeoutMs: 3000, compression: 'gzip', priority: 'critical' }),
+        metrics: Object.freeze({ url: '', batchSize: 1000, flushIntervalMs: 10000, timeoutMs: 5000, compression: 'gzip', priority: 'normal' }),
+        logs: Object.freeze({ url: '', batchSize: 200, flushIntervalMs: 10000, timeoutMs: 5000, compression: 'gzip', priority: 'normal' }),
         profiles: Object.freeze({ url: '', batchSize: 5, flushIntervalMs: 30000, timeoutMs: 15000, compression: 'gzip', priority: 'low' }),
         events: Object.freeze({ url: '', batchSize: 50, flushIntervalMs: 5000, timeoutMs: 5000, compression: 'gzip', priority: 'normal' }),
         crons: Object.freeze({ url: '', batchSize: 1, flushIntervalMs: 0, timeoutMs: 5000, compression: 'none', priority: 'high' }),
-        replays: Object.freeze({ url: '', batchSize: 1, flushIntervalMs: 5000, timeoutMs: 30000, compression: 'gzip', priority: 'low' }),
+        replays: Object.freeze({ url: '', batchSize: 5, flushIntervalMs: 10000, timeoutMs: 30000, compression: 'gzip', priority: 'low' }),
     }),
 });
 export const SAFE_DEFAULTS_RUNTIME = Object.freeze({
     configTtlSeconds: 300,
     staleWhileRevalidate: true,
+});
+/**
+ * Entitlement safe defaults are fail-open: when no remote config has
+ * arrived (or the backend predates the entitlements block), every
+ * developer API behaves as entitled. Only an explicit `false` from the
+ * control plane turns an API into a no-op.
+ */
+export const SAFE_DEFAULTS_ENTITLEMENTS = Object.freeze({
+    customSpans: true,
+    customMetrics: true,
+    profiling: true,
+    logging: true,
+    sessionReplay: true,
+    crons: true,
+    requestCapture: true,
+    tracing: true,
+    errors: true,
+    metrics: true,
 });
 // ─── Complete Baked-In Remote Config ────────────────────────────────────────
 /**
@@ -194,4 +218,5 @@ export const BAKED_IN_REMOTE_CONFIG = Object.freeze({
     transport: SAFE_DEFAULTS_TRANSPORT,
     runtime: SAFE_DEFAULTS_RUNTIME,
     meta: Object.freeze({ generatedAt: '', generatedBy: 'baked-in' }),
+    entitlements: SAFE_DEFAULTS_ENTITLEMENTS,
 });

@@ -24,7 +24,7 @@ export async function sendInitRequest(apiKey: string, baseUrl: string, timeoutMs
         throw new SDKError('baseUrl is required for init request', 'MISSING_BASE_URL')
     }
 
-    return postJson<InitResponse>(joinUrl(baseUrl, '/v1/init'), { apiKey }, {}, timeoutMs, { logFailures: false })
+    return postJson<InitResponse>(joinUrl(baseUrl, '/v1/init'), {}, { Authorization: `Bearer ${apiKey}` }, timeoutMs, { logFailures: false })
 }
 
 export async function sendEvents(events: Event[]) {
@@ -36,7 +36,7 @@ export async function sendEvents(events: Event[]) {
     const timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS
     let sentPayloads = 0
 
-    for (const payload of createPayloads(events.map(ensureEventId), apiKey, config.maxPayloadBytes)) {
+    for (const payload of createPayloads(events.map(ensureEventId), config.maxPayloadBytes)) {
         try {
             logger.debug('Ingest payload send started', {
                 event: 'INGEST_PAYLOAD_SEND_STARTED',
@@ -46,7 +46,10 @@ export async function sendEvents(events: Event[]) {
                 timeoutMs,
             })
 
-            await retry(() => postJson<unknown>(config.ingestUrl, payload, {}, timeoutMs, { logFailures: false, compression: config.compression }), {
+            // Batch sends are ALWAYS gzip-compressed. This is an SDK-level
+            // transport contract, not a remote/user-config knob — the
+            // backend expects `Content-Encoding: gzip` on every batch.
+            await retry(() => postJson<unknown>(config.ingestUrl, payload, { Authorization: `Bearer ${apiKey}` }, timeoutMs, { logFailures: false, compression: 'gzip' }), {
                 retries: config.maxRetries,
                 retryable: isRetryable,
                 budget: globalRetryBudget,
@@ -126,17 +129,17 @@ function isRetryable(error: Error) {
  * Uses incremental byte tracking — O(n) instead of re-serializing the
  * entire growing batch on every event (which was O(n²)).
  */
-function createPayloads(events: Event[], apiKey: string, maxPayloadBytes: number) {
+function createPayloads(events: Event[], maxPayloadBytes: number) {
     if (!Number.isInteger(maxPayloadBytes) || maxPayloadBytes <= 0) {
         throw new SDKError('maxPayloadBytes must be a positive integer', 'INVALID_MAX_PAYLOAD_BYTES', {
             maxPayloadBytes
         })
     }
 
-    // Pre-compute the wrapper overhead: {"apiKey":"...","events":[]}
-    const wrapperOverhead = safeJsonByteLength(createIngestPayload(apiKey, []), { maxPayloadBytes })
+    // Pre-compute the wrapper overhead: {"events":[]}
+    const wrapperOverhead = safeJsonByteLength(createIngestPayload([]), { maxPayloadBytes })
 
-    const payloads: Array<{ apiKey: string, events: Event[] }> = []
+    const payloads: Array<{ events: Event[] }> = []
     let current: Event[] = []
     let currentBatchBytes = wrapperOverhead
 
@@ -156,7 +159,7 @@ function createPayloads(events: Event[], apiKey: string, maxPayloadBytes: number
         const candidateBytes = currentBatchBytes + eventBytes + separatorBytes
 
         if (current.length > 0 && candidateBytes > maxPayloadBytes) {
-            payloads.push(createIngestPayload(apiKey, current))
+            payloads.push(createIngestPayload(current))
             current = [event]
             currentBatchBytes = wrapperOverhead + eventBytes
         } else {
@@ -166,22 +169,28 @@ function createPayloads(events: Event[], apiKey: string, maxPayloadBytes: number
     }
 
     if (current.length > 0) {
-        payloads.push(createIngestPayload(apiKey, current))
+        payloads.push(createIngestPayload(current))
     }
 
     return payloads
 }
 
-function createIngestPayload(apiKey: string, events: Event[]) {
+function createIngestPayload(events: Event[]) {
     return {
-        apiKey,
         events
     }
 }
 
-function validateApiKey(apiKey: string) {
+export function validateApiKey(apiKey: string) {
     if (typeof apiKey !== 'string' || apiKey.trim().length === 0) {
         throw new SDKError('apiKey is required', 'INVALID_API_KEY')
+    }
+    // The apiKey is interpolated into an `Authorization` HTTP header.
+    // Reject any character that could smuggle a second header line or
+    // otherwise break header framing (CR, LF, NUL and other C0 controls).
+    // eslint-disable-next-line no-control-regex
+    if (/[\x00-\x1f\x7f]/.test(apiKey)) {
+        throw new SDKError('apiKey contains illegal control characters', 'INVALID_API_KEY')
     }
 }
 

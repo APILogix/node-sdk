@@ -33,6 +33,20 @@ export interface AdaptivePressureOptions {
     readonly pollIntervalMs?: number
     /** Function to get current queue utilization (0.0–1.0). */
     readonly getQueueUtilization?: () => number
+    /** Optional absolute heap ceiling (MB). Passed to MemoryPressureMonitor. */
+    readonly maxMemoryMb?: number
+    /** Whether to monitor runtime memory pressure. Default: true */
+    readonly runtimeMetrics?: boolean
+    /** Whether to monitor event loop lag. Default: true */
+    readonly eventLoopMonitoring?: boolean
+    /** Whether to monitor GC pauses. Default: true */
+    readonly gcMonitoring?: boolean
+}
+
+interface AdaptivePressureFeatureFlags {
+    runtimeMetrics: boolean
+    eventLoopMonitoring: boolean
+    gcMonitoring: boolean
 }
 
 // ─── Scoring Constants ──────────────────────────────────────────────────────
@@ -47,6 +61,7 @@ export class AdaptivePressureMonitor {
     private readonly pollIntervalMs: number
     private readonly getQueueUtilization: () => number
     private readonly memoryMonitor: MemoryPressureMonitor
+    private readonly options: AdaptivePressureFeatureFlags
 
     private timer: ReturnType<typeof setInterval> | null = null
     private lastLevel: CompositePressureLevel = 'normal'
@@ -64,10 +79,16 @@ export class AdaptivePressureMonitor {
     constructor(options: AdaptivePressureOptions = {}) {
         this.pollIntervalMs = options.pollIntervalMs ?? 2000
         this.getQueueUtilization = options.getQueueUtilization ?? (() => 0)
+        this.options = {
+            runtimeMetrics: options.runtimeMetrics ?? true,
+            eventLoopMonitoring: options.eventLoopMonitoring ?? true,
+            gcMonitoring: options.gcMonitoring ?? true,
+        }
         this.memoryMonitor = new MemoryPressureMonitor({
             elevatedThreshold: 0.7,
             criticalThreshold: 0.9,
             pollIntervalMs: this.pollIntervalMs,
+            maxMemoryMb: options.maxMemoryMb,
         })
         this.lagMonitor = new EventLoopLagMonitor({ emitIntervalMs: this.pollIntervalMs })
         this.lastSnapshot = {
@@ -83,9 +104,15 @@ export class AdaptivePressureMonitor {
     start(): void {
         if (this.timer) return
 
-        this.memoryMonitor.start()
-        this.lagMonitor.start()
-        this.startGCTracking()
+        if (this.options.runtimeMetrics) {
+            this.memoryMonitor.start()
+        }
+        if (this.options.eventLoopMonitoring) {
+            this.lagMonitor.start()
+        }
+        if (this.options.gcMonitoring) {
+            this.startGCTracking()
+        }
         this.gcWindowStart = Date.now()
 
         this.timer = setInterval(() => {
@@ -105,12 +132,59 @@ export class AdaptivePressureMonitor {
         this.levelChangeCallbacks = []
     }
 
+    /**
+     * Reconfigure which pressure signals are active. Called during SDK init
+     * and on config refresh so the control plane can disable individual
+     * monitoring families without restarting the process.
+     */
+    configure(options: AdaptivePressureOptions): void {
+        if (options.runtimeMetrics !== undefined) {
+            this.options.runtimeMetrics = options.runtimeMetrics
+        }
+        if (options.eventLoopMonitoring !== undefined) {
+            this.options.eventLoopMonitoring = options.eventLoopMonitoring
+        }
+        if (options.gcMonitoring !== undefined) {
+            this.options.gcMonitoring = options.gcMonitoring
+        }
+        if (options.maxMemoryMb !== undefined) {
+            this.setMaxMemoryMb(options.maxMemoryMb)
+        }
+
+        // Apply changes immediately if already running
+        if (this.timer) {
+            if (this.options.runtimeMetrics) {
+                this.memoryMonitor.start()
+            } else {
+                this.memoryMonitor.stop()
+            }
+            if (this.options.eventLoopMonitoring) {
+                this.lagMonitor.start()
+            } else {
+                this.lagMonitor.stop()
+            }
+            if (this.options.gcMonitoring) {
+                this.startGCTracking()
+            } else {
+                this.stopGCTracking()
+            }
+        }
+    }
+
     getSnapshot(): PressureSnapshot {
         return this.lastSnapshot
     }
 
     getLevel(): CompositePressureLevel {
         return this.lastLevel
+    }
+
+    /**
+     * Reconfigure the absolute memory ceiling from remote config. Called
+     * during SDK init after the remote config has arrived.
+     */
+    setMaxMemoryMb(maxMemoryMb: number): void {
+        this.memoryMonitor.setMaxMemoryMb(maxMemoryMb)
     }
 
     /**
@@ -140,21 +214,34 @@ export class AdaptivePressureMonitor {
 
     private poll(): void {
         const now = Date.now()
-        // Read high-precision event loop lag from perf_hooks histogram
-        const lagStats = this.lagMonitor.getStats()
-        const currentLagMs = lagStats?.p99 ?? 0
+        // Read high-precision event loop lag from perf_hooks histogram only
+        // when event-loop monitoring is enabled; otherwise treat lag as normal.
+        const currentLagMs = this.options.eventLoopMonitoring
+            ? (this.lagMonitor.getStats()?.p99 ?? 0)
+            : 0
 
-        // Compute GC pressure as % of wall time
-        const gcWindowDuration = now - this.gcWindowStart
-        const gcPressure = gcWindowDuration > 0 ? (this.gcTimeMs / gcWindowDuration) * 100 : 0
+        // Compute GC pressure as % of wall time only when GC monitoring is
+        // enabled; otherwise reset the accumulator so a disabled-then-enabled
+        // flip doesn't report stale pressure.
+        let gcPressure = 0
+        if (this.options.gcMonitoring) {
+            const gcWindowDuration = now - this.gcWindowStart
+            gcPressure = gcWindowDuration > 0 ? (this.gcTimeMs / gcWindowDuration) * 100 : 0
 
-        // Reset GC window periodically (every 60s)
-        if (gcWindowDuration > 60_000) {
+            // Reset GC window periodically (every 60s)
+            if (gcWindowDuration > 60_000) {
+                this.gcTimeMs = 0
+                this.gcWindowStart = now
+            }
+        } else {
             this.gcTimeMs = 0
             this.gcWindowStart = now
         }
 
-        const memoryState = this.memoryMonitor.getState()
+        // Memory pressure is normal when runtime metrics are disabled.
+        const memoryState = this.options.runtimeMetrics
+            ? this.memoryMonitor.getState()
+            : { level: 'normal' as PressureLevel, heapUsedMb: 0, heapTotalMb: 0, rssMb: 0, heapUtilization: 0 }
         const queueUtil = this.getQueueUtilization()
 
         // Score each dimension

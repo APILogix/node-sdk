@@ -36,6 +36,7 @@ import { getRequestContext } from './context.js'
 import { RingBuffer } from './ring-buffer.js'
 import type { Breadcrumb } from '../types/breadcrumb.js'
 import { getLogger } from '../utils/logger.js'
+import { SecurityScrubber } from '../processors/security-scrubber.js'
 
 // ─── OTel Context Key ───────────────────────────────────────────────────────
 
@@ -73,9 +74,9 @@ export interface ScopeData {
 
 export class ScopeManager {
   private user: User | null = null
-  private tags: Record<string, string> = {}
-  private extra: Record<string, unknown> = {}
-  private contexts: Record<string, Record<string, unknown>> = {}
+  private tags: Record<string, string> = Object.create(null)
+  private extra: Record<string, unknown> = Object.create(null)
+  private contexts: Record<string, Record<string, unknown>> = Object.create(null)
 
   // ─── User Identification ──────────────────────────────────────────────
 
@@ -84,7 +85,7 @@ export class ScopeManager {
    * Pass null to clear the user.
    */
   setUser(user: User | null): void {
-    this.user = user ? { ...user } : null
+    this.user = user ? scrubUser(user) : null
   }
 
   /**
@@ -100,6 +101,7 @@ export class ScopeManager {
    * Set a single tag key/value pair. Tags are string-only and used for filtering.
    */
   setTag(key: string, value: string): void {
+    if (!isSafeKey(key)) return
     this.tags[key] = value
   }
 
@@ -108,7 +110,7 @@ export class ScopeManager {
    */
   setTags(tags: Record<string, string>): void {
     for (const [key, value] of Object.entries(tags)) {
-      this.tags[key] = value
+      if (isSafeKey(key)) this.tags[key] = value
     }
   }
 
@@ -132,6 +134,7 @@ export class ScopeManager {
    * Set a single extra context key/value. Extra can hold arbitrary data.
    */
   setExtra(key: string, value: unknown): void {
+    if (!isSafeKey(key)) return
     this.extra[key] = value
   }
 
@@ -140,7 +143,7 @@ export class ScopeManager {
    */
   setExtras(extras: Record<string, unknown>): void {
     for (const [key, value] of Object.entries(extras)) {
-      this.extra[key] = value
+      if (isSafeKey(key)) this.extra[key] = value
     }
   }
 
@@ -165,6 +168,7 @@ export class ScopeManager {
    * (e.g., 'device', 'os', 'app', 'culture').
    */
   setContext(name: string, context: Record<string, unknown> | null): void {
+    if (!isSafeKey(name)) return
     if (context === null) {
       delete this.contexts[name]
     } else {
@@ -424,4 +428,45 @@ export function applyScopeToEvent(event: Record<string, unknown>): Record<string
   }
 
   return enriched
+}
+
+// ─── Security Helpers ───────────────────────────────────────────────────────
+
+const DANGEROUS_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
+
+function isSafeKey(key: string): boolean {
+  return key !== '__proto__' && key !== 'constructor' && key !== 'prototype'
+}
+
+function scrubUser(user: User): User {
+  const scrubber = SecurityScrubber.getInstance()
+  const scrub = (value: string | undefined): string | undefined => {
+    if (!value) return value
+    if (!scrubber) return value
+    try {
+      return scrubber.scrubValue(value) as string
+    } catch {
+      return value
+    }
+  }
+
+  return {
+    ...user,
+    email: scrub(user.email),
+    username: scrub(user.username),
+    ipAddress: scrub(user.ipAddress),
+    data: user.data ? scrubObjectValues(user.data) : undefined,
+  }
+}
+
+function scrubObjectValues(obj: Record<string, unknown>): Record<string, unknown> {
+  const scrubber = SecurityScrubber.getInstance()
+  if (!scrubber) return { ...obj }
+  const result: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(obj)) {
+    if (isSafeKey(key)) {
+      result[key] = scrubber.scrubValue(value)
+    }
+  }
+  return result
 }

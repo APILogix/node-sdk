@@ -47,6 +47,8 @@ export { captureRequest } from './capture/captureRequest.js';
 export { captureMessage } from './capture/captureMessage.js';
 export { captureEvent } from './capture/captureEvent.js';
 export { captureCronCheckIn } from './capture/captureCronCheckIn.js';
+export { captureLog } from './capture/captureLog.js';
+export { captureReplay } from './capture/captureReplay.js';
 export { startProfile, stopProfile } from './capture/captureProfile.js';
 export { captureMetric, incrementCounter, setGauge, recordHistogram, addUpDownCounter, } from './capture/captureMetric.js';
 // ─── Context & breadcrumbs ──────────────────────────────────────────────────
@@ -131,6 +133,10 @@ export function getSDKHealth() {
             initialized: persistenceStats.initialized,
             eventCount: persistenceStats.eventCount,
             fileSizeBytes: persistenceStats.fileSizeBytes,
+            totalDiscarded: persistenceStats.totalDiscarded,
+            replayCount: persistenceStats.replayCount,
+            lastReplayAt: persistenceStats.lastReplayAt,
+            totalReplayed: persistenceStats.totalReplayed,
         },
         sourceMaps: {
             cacheSize: sourceMapStats.cacheSize,

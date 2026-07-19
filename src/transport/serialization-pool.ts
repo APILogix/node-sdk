@@ -104,9 +104,15 @@ export class SerializationPool {
     this.workers = []
   }
 
-  static reset() {
+  /**
+   * Terminate the worker pool and clear the singleton. Awaits worker
+   * termination so a shutdown/reinit cycle never leaks worker threads —
+   * the previous fire-and-forget `void shutdown()` let workers outlive
+   * the SDK and kept the host process alive.
+   */
+  static async reset(): Promise<void> {
     if (SerializationPool.instance) {
-      void SerializationPool.instance.shutdown()
+      await SerializationPool.instance.shutdown()
       SerializationPool.instance = null
     }
   }

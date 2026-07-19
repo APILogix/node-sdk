@@ -4,6 +4,20 @@ import { SDK_VERSION } from '../constants/version.js';
 import { epochMs } from '../utils/time.js';
 import { SecurityScrubber } from '../processors/security-scrubber.js';
 import { sanitizeEvent } from '../processors/sanitizer.js';
+import { compressGzip } from '../utils/compression.js';
+/**
+ * Hard bound on buffered events per route. Without it a permanently
+ * unreachable ingest endpoint grows `pendingBatches` without limit and
+ * OOMs the host process. Overflow drops the oldest events (head of the
+ * array) so the most recent telemetry is preserved.
+ */
+const MAX_PENDING_EVENTS_PER_ROUTE = 10_000;
+/**
+ * Routes whose events flush immediately instead of waiting for the next
+ * interval tick. Cron check-ins are time-sensitive (a 2s delay defeats
+ * timeout detection) and errors are the highest-signal telemetry we ship.
+ */
+const IMMEDIATE_FLUSH_ROUTES = new Set(['crons', 'errors']);
 export class MultiplexedTransport {
     baseUrl;
     apiKey;
@@ -12,10 +26,10 @@ export class MultiplexedTransport {
     pendingBatches = new Map();
     destroyed = false;
     flushing = false;
-    constructor(baseUrl, apiKey, flushIntervalMs = 2000) {
+    constructor(baseUrl, apiKey, flushIntervalMs) {
         this.baseUrl = baseUrl;
         this.apiKey = apiKey;
-        this.flushIntervalMs = flushIntervalMs;
+        this.flushIntervalMs = flushIntervalMs ?? 2000;
         this.flushTimer = setInterval(() => void this.flush(), this.flushIntervalMs);
         if (this.flushTimer.unref)
             this.flushTimer.unref();
@@ -25,7 +39,20 @@ export class MultiplexedTransport {
             return;
         const existing = this.pendingBatches.get(route) || [];
         existing.push(...events);
+        // Bound the buffer — drop oldest on overflow.
+        if (existing.length > MAX_PENDING_EVENTS_PER_ROUTE) {
+            const overflow = existing.length - MAX_PENDING_EVENTS_PER_ROUTE;
+            existing.splice(0, overflow);
+            getLogger().warn('[MultiplexedTransport] Pending buffer full, dropped oldest events', {
+                route,
+                dropped: overflow,
+            });
+        }
         this.pendingBatches.set(route, existing);
+        // Time-sensitive routes bypass the flush interval.
+        if (IMMEDIATE_FLUSH_ROUTES.has(route)) {
+            void this.flush();
+        }
     }
     async flush() {
         if (this.destroyed || this.flushing || this.pendingBatches.size === 0)
@@ -46,7 +73,6 @@ export class MultiplexedTransport {
                     batches.push({ route, events: safeEvents });
                 }
             }
-            this.pendingBatches.clear();
             if (batches.length === 0)
                 return;
             const payload = {
@@ -54,12 +80,25 @@ export class MultiplexedTransport {
                 timestamp: epochMs(),
                 sdk: SDK_VERSION
             };
-            await postJson(`${this.baseUrl}/v1/ingest`, payload, {
-                Authorization: `Bearer ${this.apiKey}`
-            }, 30000);
-        }
-        catch (err) {
-            getLogger().error('Failed to flush multiplexed transport', { error: err });
+            // Every batch is gzip-compressed before it leaves the process. This
+            // is an SDK-level transport contract, NOT a remote-config knob.
+            const compressedBody = await compressGzip(Buffer.from(JSON.stringify(payload), 'utf8'));
+            try {
+                await postJson(`${this.baseUrl}/v1/ingest`, compressedBody, {
+                    Authorization: `Bearer ${this.apiKey}`,
+                    'Content-Encoding': 'gzip',
+                }, 30000);
+                // Only now is it safe to drop the buffered events: the backend has
+                // acknowledged the batch. Clearing before the send (the old
+                // behaviour) lost every in-flight batch on network failure.
+                this.pendingBatches.clear();
+            }
+            catch (err) {
+                // Send failed — the events stay buffered for the next tick. The
+                // per-route bound in enqueue() keeps memory flat in a sustained
+                // outage.
+                getLogger().error('Failed to flush multiplexed transport', { error: err });
+            }
         }
         finally {
             this.flushing = false;
@@ -68,12 +107,15 @@ export class MultiplexedTransport {
     async shutdown() {
         if (this.destroyed)
             return;
-        this.destroyed = true;
         if (this.flushTimer) {
             clearInterval(this.flushTimer);
             this.flushTimer = null;
         }
+        // Final flush BEFORE setting destroyed — flush() early-returns once the
+        // destroyed flag is set, which previously dropped every buffered event
+        // at shutdown.
         await this.flush();
+        this.destroyed = true;
     }
     isEnabled() {
         return !this.destroyed;

@@ -20,14 +20,14 @@
  */
 
 import { createHash } from 'crypto'
-import type { SDKInitOptions, RemoteConfig, ResolvedSDKConfig, PlanTier, RemoteConfigResponse } from '../types/config.js'
+import type { SDKInitOptions, RemoteConfig, ResolvedSDKConfig, PlanTier, RemoteConfigResponse, TransportRemoteConfig, TransportRouteConfig } from '../types/config.js'
 import { sdkInitOptionsSchema } from '../types/config.js'
 import { client } from './client.js'
 import type { InitResponse } from '../transport/sender.js'
 import { sendInitRequest } from '../transport/sender.js'
 import { setupGlobalErrorHandlers, resetGlobalErrorHandlers } from '../instrumentation/global-errors.js'
 import { eventQueue } from '../transport/queue.js'
-import { DEFAULT_BASE_URL, DEFAULT_MAX_PAYLOAD_BYTES, DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT_MS } from '../constants/defaults.js'
+import { DEFAULT_BASE_URL, DEFAULT_MAX_PAYLOAD_BYTES, DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT_MS, SAFE_DEFAULTS_LIMITS } from '../constants/defaults.js'
 import { LOGGING_DEFAULTS, PROFILING_DEFAULTS, TRACING_DEFAULTS } from '../constants/internal-defaults.js'
 import { SDKError } from './errors.js'
 import { getLogger, setDebugMode, setLogLevel } from '../utils/logger.js'
@@ -43,6 +43,7 @@ import { errorDeduplicator } from '../processors/deduplicator.js'
 import { persistentStorage } from '../storage/persistent-storage.js'
 import { sourceMapResolver } from '../processors/source-map-resolver.js'
 import { metricsRegistry } from '../metrics/registry.js'
+import { adaptivePressure } from '../utils/adaptive-pressure.js'
 import { otelMetrics } from '../metrics/otel-adapter.js'
 import { slowRequestDetector } from '../processors/slow-request-detector.js'
 import { registerAutoInstrumentations, resetAutoInstrumentations } from '../instrumentation/auto-instrument.js'
@@ -51,8 +52,10 @@ import { costGovernor } from '../utils/cost-governor.js'
 // ─── New Remote Config Modules ──────────────────────────────────────────────
 
 import { ConfigManager } from './config-manager.js'
+import { diffConfigs } from './config-differ.js'
 import { VersionPolicy } from './version-policy.js'
 import { KillswitchEngine } from './killswitch-engine.js'
+import { EntitlementGate } from './entitlement-gate.js'
 import { SamplingEngine } from './sampling-engine.js'
 import { FeatureController } from './feature-controller.js'
 import { LimitsEngine } from './limits-engine.js'
@@ -178,6 +181,7 @@ async function initialize(options: SDKInitOptions): Promise<Readonly<RemoteConfi
   const featureController = FeatureController.initialize(remoteConfigResponse.features)
   const limitsEngine = LimitsEngine.initialize(remoteConfigResponse.limits)
   const securityScrubber = SecurityScrubber.initialize(remoteConfigResponse.privacy)
+  const entitlementGate = EntitlementGate.initialize(remoteConfigResponse.entitlements)
 
   if (isDegradedMode) {
     featureController.setDegradedMode(true)
@@ -260,6 +264,45 @@ async function initialize(options: SDKInitOptions): Promise<Readonly<RemoteConfi
       // Clamp to plan limits — features above plan are forced OFF with warnings
       const resolvedConfig = clampToPlan(rawConfigWithRemote, planFeatures)
       client.setResolvedConfig(resolvedConfig)
+
+      // ─── Fallback Control-Plane Derivation ─────────────────────────────
+      // The v3 control plane (/v1/sdk-config) owns route URLs, feature
+      // flags, sampling rates and killswitches. When it is unreachable the
+      // SDK runs on baked-in defaults — which are deliberately inert
+      // (placeholder URLs, all features off, sampling 0, transport killed)
+      // so a misconfigured SDK never floods an unsuspecting backend. But
+      // the legacy /v1/init handshake just proved connectivity and returned
+      // concrete backend intent (ingestUrl, samplingRate, plan), so derive
+      // a working control-plane snapshot from it. Skipped when the control
+      // plane is live — explicit remote config always wins.
+      if (!configManager.isLive() && remoteConfigResponse) {
+        const bridgedConfig = deriveFallbackRemoteConfig(
+          remoteConfigResponse,
+          resolvedConfig,
+        )
+        if (bridgedConfig) {
+          logger.info('Control plane unreachable — deriving config from init handshake', {
+            ingestUrl: resolvedConfig.ingestUrl,
+            samplingRate: resolvedConfig.samplingRate,
+          })
+          const bridgeDiff = diffConfigs(remoteConfigResponse, bridgedConfig)
+          remoteConfigResponse = bridgedConfig
+          if (bridgeDiff.transportChanged) {
+            transportRouter.handleConfigChange(bridgeDiff, bridgedConfig)
+          }
+          if (bridgeDiff.killswitchesChanged) {
+            // Flip disableTransport through the engine (not directly on the
+            // router) so killswitch state and router state stay coherent.
+            await killswitchEngine.handleConfigChange(bridgeDiff, bridgedConfig)
+          }
+          if (bridgeDiff.samplingChanged) {
+            samplingEngine.handleConfigChange(bridgeDiff, bridgedConfig)
+          }
+          if (bridgeDiff.featuresChanged) {
+            await featureController.handleConfigChange(bridgeDiff, bridgedConfig)
+          }
+        }
+      }
 
       // Configure pre-init buffer and apply feature gates before replaying it into transport.
       eventQueue.configure(resolvedConfig.maxQueueSize)
@@ -353,10 +396,26 @@ async function initialize(options: SDKInitOptions): Promise<Readonly<RemoteConfi
       // Configure slow request detector
       slowRequestDetector.configure({})
 
-      setupGlobalErrorHandlers()
+      // NOTE: setupGlobalErrorHandlers() is intentionally NOT called here.
+      // It runs inside the Phase 6 'errors' feature registration below so
+      // the remote features.errors toggle is authoritative: disabled at the
+      // control plane → no process-level handlers attached at all.
       registerSignalHandlers()
       errorDeduplicator.start()
       metricsRegistry.start()
+      // Start the adaptive pressure monitor — load-shedder and
+      // persistence-governor consult adaptivePressure.getLevel(), so without
+      // start() the singleton never samples memory/GC/event-loop pressure and
+      // load shedding would never engage under stress. Each signal family is
+      // gated by the corresponding remote-config feature flag so a backend can
+      // turn off runtime monitoring without a redeploy.
+      adaptivePressure.configure({
+        maxMemoryMb: resolvedConfig.remoteConfig?.limits?.maxMemoryMb ?? SAFE_DEFAULTS_LIMITS.maxMemoryMb,
+        runtimeMetrics: remoteConfigResponse.features.runtimeMetrics,
+        eventLoopMonitoring: remoteConfigResponse.features.eventLoopMonitoring,
+        gcMonitoring: remoteConfigResponse.features.gcMonitoring,
+      })
+      adaptivePressure.start()
       
       const { apiPayloadScrubber } = await import('../processors/sanitizer.js')
       apiPayloadScrubber.configure(resolvedConfig.dataScrubbing)
@@ -377,8 +436,16 @@ async function initialize(options: SDKInitOptions): Promise<Readonly<RemoteConfi
             registerAutoInstrumentations({}) // Reads from remote config internally
           }
         },
-        () => {
+        async () => {
+          // Real teardown: a remote features.tracing flip to false must stop
+          // span production, not just log. Mirrors the killswitch shutdown.
           logger.info('[FeatureController] Tracing subsystem stopped')
+          try { await shutdownTracer() } catch (err) {
+            logger.error('[FeatureController] shutdownTracer failed', { error: err })
+          }
+          try { resetAutoInstrumentations() } catch (err) {
+            logger.error('[FeatureController] resetAutoInstrumentations failed', { error: err })
+          }
         }
       )
 
@@ -422,8 +489,13 @@ async function initialize(options: SDKInitOptions): Promise<Readonly<RemoteConfi
             )
           }
         },
-        () => {
+        async () => {
+          // Real teardown: stop the OTel meter provider when the control
+          // plane disables metrics, mirroring the killswitch shutdown.
           logger.info('[FeatureController] Metrics subsystem stopped')
+          try { await otelMetrics.shutdown() } catch (err) {
+            logger.error('[FeatureController] otelMetrics.shutdown failed', { error: err })
+          }
         }
       )
 
@@ -458,7 +530,13 @@ async function initialize(options: SDKInitOptions): Promise<Readonly<RemoteConfi
           }
         },
         () => {
+          // Real teardown: detach uncaughtException / unhandledRejection
+          // listeners and restore console.error when the control plane
+          // disables error collection.
           logger.info('[FeatureController] Errors subsystem stopped')
+          try { resetGlobalErrorHandlers() } catch (err) {
+            logger.error('[FeatureController] resetGlobalErrorHandlers failed', { error: err })
+          }
         }
       )
 
@@ -586,6 +664,14 @@ async function initialize(options: SDKInitOptions): Promise<Readonly<RemoteConfi
         if (diff.samplingChanged) {
           samplingEngine.handleConfigChange(diff, newConfig)
         }
+        if (diff.featuresChanged || diff.limitsChanged) {
+          adaptivePressure.configure({
+            maxMemoryMb: newConfig.limits.maxMemoryMb,
+            runtimeMetrics: newConfig.features.runtimeMetrics,
+            eventLoopMonitoring: newConfig.features.eventLoopMonitoring,
+            gcMonitoring: newConfig.features.gcMonitoring,
+          })
+        }
         if (diff.featuresChanged) {
           void featureController.handleConfigChange(diff, newConfig)
           // The logging/profiling subsystems' config is synthesized from
@@ -606,6 +692,10 @@ async function initialize(options: SDKInitOptions): Promise<Readonly<RemoteConfi
               profiling: { ...PROFILING_DEFAULTS, enabled: newConfig.features.profiling },
             } as unknown as Readonly<RemoteConfigResponse>)
           }
+          const cronSub = CronSubsystem.getInstance()
+          if (cronSub) {
+            cronSub.handleConfigChange(diff, newConfig)
+          }
         }
         if (diff.limitsChanged) {
           limitsEngine.handleConfigChange(diff, newConfig)
@@ -615,6 +705,9 @@ async function initialize(options: SDKInitOptions): Promise<Readonly<RemoteConfi
         }
         if (diff.transportChanged) {
           transportRouter.handleConfigChange(diff, newConfig)
+        }
+        if (diff.entitlementsChanged) {
+          void entitlementGate.handleConfigChange(diff, newConfig)
         }
       })
 
@@ -898,8 +991,95 @@ function validateUrl(value: string, fieldName: string): void {
   }
 }
 
-function isRetryableInitError(error: unknown): boolean {
-  if (!(error instanceof SDKError)) return false
+/**
+ * Derive a working control-plane snapshot from the legacy init handshake.
+ *
+ * Baked-in defaults are deliberately inert: empty route URLs, every
+ * feature off, sampling rates 0 and `disableTransport` on — so an SDK
+ * pointing at a black hole stays quiet. Once the legacy /v1/init
+ * handshake succeeds we know the backend's real intent (ingestUrl,
+ * samplingRate, plan-clamped feature flags), so we map it onto the v3
+ * config shape. Returns null when there is nothing to derive.
+ */
+function deriveFallbackRemoteConfig(
+  remote: Readonly<RemoteConfigResponse>,
+  resolved: ResolvedSDKConfig,
+): RemoteConfigResponse | null {
+  const transport = deriveTransportFromIngestUrl(remote.transport, resolved.ingestUrl)
+
+  const candidate: RemoteConfigResponse = {
+    ...remote,
+    transport: transport ?? remote.transport,
+    killswitches: transport
+      ? { ...remote.killswitches, disableTransport: false }
+      : remote.killswitches,
+    features: {
+      ...remote.features,
+      errors: resolved.enableErrors,
+      requestCapture: resolved.enablePerformance,
+      tracing: resolved.enableTracing,
+      metrics: resolved.enableMetrics,
+      runtimeMetrics: resolved.enableMetrics,
+      eventLoopMonitoring: resolved.enableMetrics,
+      gcMonitoring: resolved.enableMetrics,
+      // No legacy flags exist for these — fail open, mirroring
+      // mergeConfig's "all features default ON" legacy semantics.
+      logging: true,
+      profiling: true,
+      crons: true,
+      sessionReplay: resolved.planFeatures.allowSessions,
+    },
+    sampling: {
+      ...remote.sampling,
+      traces: resolved.samplingRate,
+      requests: resolved.samplingRate,
+      // The legacy rate only ever governed performance data; errors and
+      // replays were all-or-nothing via their enable flags.
+      errors: 1,
+      profiles: resolved.samplingRate,
+      replays: 1,
+    },
+  }
+
+  const diff = diffConfigs(remote, candidate)
+  return diff.transportChanged || diff.killswitchesChanged || diff.featuresChanged || diff.samplingChanged
+    ? candidate
+    : null
+}
+
+/**
+ * Derive per-route ingest URLs from a single endpoint (the legacy init
+ * handshake's `ingestUrl`). Baked-in defaults ship empty route URLs; this
+ * fills every unconfigured route with the given endpoint. RouteRegistry's
+ * forcePath() rewrites the path per route, so one base endpoint is enough.
+ *
+ * Returns null when every route already has a URL (nothing to bridge).
+ */
+function deriveTransportFromIngestUrl(
+  transport: TransportRemoteConfig,
+  ingestUrl: string,
+): TransportRemoteConfig | null {
+  if (!ingestUrl) return null
+
+  let missing = 0
+  const routes = {} as Record<string, TransportRouteConfig>
+  for (const [name, route] of Object.entries(transport.routes)) {
+    if (route.url) {
+      routes[name] = route
+    } else {
+      routes[name] = { ...route, url: ingestUrl }
+      missing += 1
+    }
+  }
+
+  if (missing === 0) return null
+  return {
+    ...transport,
+    routes: routes as TransportRemoteConfig['routes'],
+  }
+}
+
+function isRetryableInitError(error: unknown): boolean {  if (!(error instanceof SDKError)) return false
   if (error.code === 'NETWORK_ERROR') return true
 
   const status = Number(error.context.statusCode ?? error.context.status)
@@ -946,6 +1126,30 @@ function initializeOfflineFallback(
 
   const transportRouter = TransportRouter.getInstance()
   if (transportRouter) {
+    // Same fallback derivation as the main init path: the control-plane
+    // modules were built from baked-in defaults (placeholder URLs, features
+    // off, sampling 0, transport killed), so point them at the fallback
+    // config before draining the queue — otherwise every buffered event
+    // would be silently dropped.
+    const currentRemote = ConfigManager.getInstance()?.getConfig()
+    const bridgedConfig = currentRemote
+      ? deriveFallbackRemoteConfig(currentRemote, resolvedConfig)
+      : null
+    if (currentRemote && bridgedConfig) {
+      const bridgeDiff = diffConfigs(currentRemote, bridgedConfig)
+      if (bridgeDiff.transportChanged) {
+        transportRouter.handleConfigChange(bridgeDiff, bridgedConfig)
+      }
+      if (bridgeDiff.killswitchesChanged) {
+        void KillswitchEngine.getInstance()?.handleConfigChange(bridgeDiff, bridgedConfig)
+      }
+      if (bridgeDiff.samplingChanged) {
+        SamplingEngine.getInstance()?.handleConfigChange(bridgeDiff, bridgedConfig)
+      }
+      if (bridgeDiff.featuresChanged) {
+        void FeatureController.getInstance()?.handleConfigChange(bridgeDiff, bridgedConfig)
+      }
+    }
     for (const event of eventQueue.drainAll()) {
       transportRouter.send(event as import('../types/event.js').SDKEvent)
     }

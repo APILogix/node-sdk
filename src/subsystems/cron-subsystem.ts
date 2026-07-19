@@ -86,14 +86,16 @@ export class CronSubsystem {
           logger.warn(`[CronSubsystem] Monitor '${monitorSlug}' timed out after ${this.monitorTimeoutMs}ms`)
           this.inFlight.delete(monitorSlug)
 
-          // Emit an error check-in for the timeout
+          // Emit an error check-in for the timeout. Same environment
+          // fallback as the completion path below — a timed-out monitor
+          // must not lose its environment metadata.
           const timeoutEvent: CronCheckInEvent = {
             type: 'cron_checkin',
             monitorSlug,
             status: 'error',
             timestamp: Date.now(),
             duration: this.monitorTimeoutMs,
-            environment: options?.environment,
+            environment: options?.environment ?? this.metadata.environment,
             metadata: this.metadata,
           }
           this.emitter(timeoutEvent)
@@ -132,9 +134,19 @@ export class CronSubsystem {
     logger.info(`[CronSubsystem] Check-in: ${monitorSlug} → ${status}`)
   }
 
-  /** Handle config change. */
-  handleConfigChange(_diff: ConfigDiff, _newConfig: Readonly<RemoteConfigResponse>): void {
-    // Cron subsystem has no dynamic config beyond enabled/disabled (handled by FeatureController)
+  /**
+   * Handle config change.
+   *
+   * The crons feature toggle itself is owned by the FeatureController (it
+   * initializes/resets this subsystem), but that flip travels an async void
+   * path — if this instance is still alive when the diff lands, stop the
+   * in-flight monitors immediately so no pending timeout can emit an error
+   * check-in against a feature the control plane has already disabled.
+   */
+  handleConfigChange(diff: ConfigDiff, newConfig: Readonly<RemoteConfigResponse>): void {
+    if (diff.featuresChanged && !newConfig.features.crons) {
+      this.stop()
+    }
   }
 
   /** Get list of in-flight monitors. */

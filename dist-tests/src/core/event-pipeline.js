@@ -44,9 +44,8 @@ import { generateId } from '../utils/uuid.js';
 import { epochMs } from '../utils/time.js';
 import { errorDeduplicator } from '../processors/deduplicator.js';
 import { applyScopeToEvent } from './scope.js';
-import { persistentStorage } from '../storage/persistent-storage.js';
-import { persistenceGovernor } from '../storage/persistence-governor.js';
 import { loadShedder } from '../transport/load-shedder.js';
+import { getMemoryPressureLevel } from '../utils/backpressure.js';
 import { isSDKShuttingDown } from './lifecycle.js';
 import { acceptedReceipt, acceptedSyncReceipt, rejectedReceipt, } from './event-receipt.js';
 // ─── Remote Config Engine Imports ───────────────────────────────────────────
@@ -56,11 +55,23 @@ import { TransportRouter } from '../transport/transport-router.js';
 import { FeatureController } from './feature-controller.js';
 import { ConfigManager } from './config-manager.js';
 import { ERROR_DEFAULTS } from '../constants/internal-defaults.js';
+import { peekSessionManager } from '../session/session-manager.js';
 const PLUGIN_TIMEOUT_MS = 50;
 const EVENT_PROCESSOR_TIMEOUT_MS = 50;
 const BEFORE_SEND_TIMEOUT_MS = 100;
-const CRITICAL_HEAP_RATIO = 0.92;
+/**
+ * Source-context attachment reads files from disk — bound it so slow I/O
+ * can never stall the pipeline. On timeout the original frames are kept.
+ */
+const SOURCE_CONTEXT_TIMEOUT_MS = 250;
+/**
+ * Hard cap on in-flight pipeline tasks. Under sustained load faster than
+ * the pipeline drains, an unbounded set would exhaust memory; excess events
+ * are rejected instead and counted in `pendingPipelineDrops`.
+ */
+const MAX_PENDING_PIPELINES = 10_000;
 const pendingPipelines = new Set();
+let pendingPipelineDrops = 0;
 /**
  * Once set, no new event may join the pendingPipelines set — drain becomes
  * monotonic and is guaranteed to complete in finite time. New events arriving
@@ -172,6 +183,19 @@ export function enqueueEvent(rawEvent) {
     const pending = new Promise(resolve => {
         resolveProcessed = resolve;
     });
+    // Gate: bound in-flight work. Without a cap, a producer faster than the
+    // pipeline grows this set without bound and exhausts memory.
+    if (pendingPipelines.size >= MAX_PENDING_PIPELINES) {
+        pendingPipelineDrops++;
+        if (pendingPipelineDrops === 1 || pendingPipelineDrops % 1000 === 0) {
+            logger.warn('Event rejected — pipeline overloaded', {
+                eventType,
+                maxPending: MAX_PENDING_PIPELINES,
+                totalDrops: pendingPipelineDrops,
+            });
+        }
+        return rejectedReceipt(eventId, 'pipeline_overloaded');
+    }
     pendingPipelines.add(pending);
     setImmediate(() => {
         processEventAsync(rawEvent, eventId).then(result => {
@@ -242,6 +266,7 @@ export async function drainPendingEventProcessing() {
 export function resetEventPipeline() {
     pipelineDraining = false;
     pendingPipelines.clear();
+    pendingPipelineDrops = 0;
     // Invalidate cached memory pressure so the next event triggers a fresh
     // syscall — important for tests that rely on deterministic pressure reads.
     memoryPressureCachedAt = 0;
@@ -335,7 +360,10 @@ export async function processEventAsync(rawEvent, assignedEventId) {
                 // attachSourceContext is now an SDK-internal default (not backend-controlled).
                 if (ERROR_DEFAULTS.attachSourceContext) {
                     const { attachSourceContext } = await import('../processors/source-context.js');
-                    const enrichedFrames = await attachSourceContext(event.stack);
+                    // Bounded: source-context reads files from disk; a slow or huge
+                    // file must never stall the pipeline. On timeout the original
+                    // frames are kept (withTimeout rejects → caught below).
+                    const enrichedFrames = await withTimeout(attachSourceContext(event.stack), SOURCE_CONTEXT_TIMEOUT_MS, 'attachSourceContext timed out');
                     event = { ...event, stack: enrichedFrames };
                 }
             }
@@ -435,11 +463,18 @@ export async function processEventAsync(rawEvent, assignedEventId) {
             });
             return false;
         }
-        // Step 14: Priority-aware persistence for crash recovery
-        // Critical events always persist; transient telemetry skips under pressure
-        if (persistenceGovernor.shouldPersist(event)) {
-            persistentStorage.persist(event);
-        }
+        // Persistence is fallback-only — see persistent-storage.ts for the full
+        // architectural rationale. Events are NOT persisted here on the success
+        // path. They are persisted by the transport layer ONLY when:
+        //   1. An HTTP send actually fails (network error, 5xx, retry exhaustion)
+        //   2. A graceful shutdown drain runs out of time with events still queued
+        //
+        // Persisting unconditionally on every successful capture (the previous
+        // behaviour) caused the persisted events to be replayed on every process
+        // restart even when they had already been delivered, producing duplicate
+        // events, duplicate billing, and alert amplification. The transport's
+        // BatchManager owns the "did we deliver this batch?" decision and is the
+        // only correct place to decide whether to durably retain the batch.
         logger.debug('Event routed', {
             eventType: event.type,
             eventId: event.eventId,
@@ -528,8 +563,6 @@ function enrichFromContext(event) {
     const ctx = getRequestContext();
     const traceId = getTraceId();
     const spanId = getSpanId();
-    if (!ctx && !traceId && !spanId)
-        return event;
     const enrichment = {};
     if (traceId && !('traceId' in event && event.traceId)) {
         enrichment['traceId'] = traceId;
@@ -547,6 +580,29 @@ function enrichFromContext(event) {
             enrichment['breadcrumbs'] = crumbs;
         }
     }
+    // ─── Session tracking ───────────────────────────────────────────────
+    // Attach the sessionId to every event whenever a session manager is
+    // active — not just when the sessionReplay feature is on. Crash-free
+    // session rates and trace↔session correlation depend on errors, spans,
+    // and requests all carrying the sessionId. peekSessionManager never
+    // creates a manager, so events can't manufacture one as a side effect
+    // when the session subsystem isn't running.
+    try {
+        const sessionMgr = peekSessionManager();
+        if (sessionMgr) {
+            const sessionId = sessionMgr.getSessionId() ?? sessionMgr.getSession().id;
+            enrichment['sessionId'] = sessionId;
+            if (event.type === 'error') {
+                sessionMgr.recordError();
+            }
+            else {
+                sessionMgr.recordActivity();
+            }
+        }
+    }
+    catch {
+        // Session tracking is best-effort — never block the pipeline
+    }
     if (Object.keys(enrichment).length === 0)
         return event;
     return { ...event, ...enrichment };
@@ -560,13 +616,11 @@ function isCriticalMemoryPressure() {
     if (now - memoryPressureCachedAt < MEMORY_PRESSURE_TTL_MS) {
         return memoryPressureCachedValue;
     }
-    const usage = process.memoryUsage();
     memoryPressureCachedAt = now;
-    if (usage.heapTotal <= 0) {
-        memoryPressureCachedValue = false;
-        return false;
-    }
-    memoryPressureCachedValue = usage.heapUsed / usage.heapTotal >= CRITICAL_HEAP_RATIO;
+    // Delegate to the shared utility which correctly guards against small
+    // heaps (< 100 MB) — V8 starts with a tiny heap that's 90%+ utilised
+    // before it expands, causing false-positive drops during startup.
+    memoryPressureCachedValue = getMemoryPressureLevel() === 'critical';
     return memoryPressureCachedValue;
 }
 function isHighPriority(event) {

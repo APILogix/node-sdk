@@ -1,6 +1,14 @@
 /**
  * Batch processor — drains the event queue and sends events in batches.
  *
+ * @deprecated DORMANT LEGACY PATH. `startBatcher()` has no call sites: the
+ * active transport pipeline is `TransportRouter` + `BatchManager`
+ * (per-route queues, health-aware batching, connection leasing). This module
+ * is retained only so the lifecycle's unconditional cleanup can call the
+ * idempotent `stopBatcher()` to reset its circuit breaker / rate limiter /
+ * pressure monitor on shutdown-reinit cycles. Do not add new call sites;
+ * the module is scheduled for removal in the next major release.
+ *
  * Lifecycle guarantees:
  * - startBatcher() is idempotent: a second call without an intervening stop
  *   reconfigures parameters but does NOT stack timers.

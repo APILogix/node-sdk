@@ -12,6 +12,8 @@ import { getLogger } from '../utils/logger.js'
 import { epochMs } from '../utils/time.js'
 import { metricsRegistry } from '../metrics/registry.js'
 import { KillswitchEngine } from '../core/killswitch-engine.js'
+import { EntitlementGate } from '../core/entitlement-gate.js'
+import { SamplingEngine } from '../core/sampling-engine.js'
 
 /**
  * Capture a metric sample.
@@ -30,10 +32,27 @@ export function captureMetric(
   const logger = getLogger()
 
   try {
+    // ─── Entitlement Gate ─────────────────────────────────────────────
+    if (!EntitlementGate.isAllowed('customMetrics')) {
+      return // Plan does not include custom metrics — silently no-op
+    }
+
     // ─── Killswitch Gate ──────────────────────────────────────────────
     const killswitch = KillswitchEngine.getInstance()
     if (killswitch?.isKilled('disableMetrics')) {
       return // Silently no-op when metrics are killed
+    }
+
+    // ─── Sampling Gate ────────────────────────────────────────────────
+    // Deterministic sampling per metric id (name + tags fingerprint). The
+    // `metrics` sampling rate is independent of `traces`/`requests` so a
+    // backend can throttle high-volume custom metrics without affecting
+    // error or trace capture.
+    const samplingEngine = SamplingEngine.getInstance()
+    if (samplingEngine) {
+      const metricId = `${name}:${serializeTags(options?.tags)}`
+      const decision = samplingEngine.shouldSampleMetric(metricId)
+      if (!decision.sampled) return
     }
 
     const labels = options?.tags ?? {}
@@ -66,6 +85,14 @@ export function captureMetric(
   }
 }
 
+function serializeTags(tags: Record<string, string> | undefined): string {
+  if (!tags || Object.keys(tags).length === 0) return ''
+  return Object.entries(tags)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([k, v]) => `${k}=${v}`)
+    .join('&')
+}
+
 // ─── Convenience Methods ────────────────────────────────────────────────────
 
 /** Increment a counter metric by the given value (default: 1). */
@@ -74,6 +101,7 @@ export function incrementCounter(
   value = 1,
   tags?: Record<string, string>
 ): void {
+  if (!EntitlementGate.isAllowed('customMetrics')) return
   metricsRegistry.incrementCounter(name, value, { labels: tags ?? {} })
 }
 
@@ -83,6 +111,7 @@ export function setGauge(
   value: number,
   tags?: Record<string, string>
 ): void {
+  if (!EntitlementGate.isAllowed('customMetrics')) return
   metricsRegistry.setGauge(name, value, { labels: tags ?? {} })
 }
 
@@ -93,6 +122,7 @@ export function recordHistogram(
   tags?: Record<string, string>,
   unit?: string
 ): void {
+  if (!EntitlementGate.isAllowed('customMetrics')) return
   metricsRegistry.recordHistogram(name, value, { labels: tags ?? {} })
 }
 
@@ -105,5 +135,6 @@ export function addUpDownCounter(
   value: number,
   tags?: Record<string, string>
 ): void {
+  if (!EntitlementGate.isAllowed('customMetrics')) return
   metricsRegistry.addUpDownCounter(name, value, { labels: tags ?? {} })
 }

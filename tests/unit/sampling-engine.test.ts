@@ -25,6 +25,7 @@ const baseSamplingConfig: SamplingConfig = {
   errors: 1.0,
   profiles: 0.02,
   replays: 0,
+  metrics: 1.0,
   routes: {
     '/health': { traces: 0, requests: 0 },
     '/metrics': { traces: 0, requests: 0 },
@@ -184,6 +185,7 @@ describe('SamplingEngine', () => {
           errors: 1.0,
           profiles: 0.02,
           replays: 0,
+          metrics: 1.0,
           routes: { '/health': { traces: 1.0 } },
         } as SamplingConfig,
       } as any)

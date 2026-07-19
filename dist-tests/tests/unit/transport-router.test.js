@@ -1,7 +1,15 @@
 import { describe, it, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { gunzipSync } from 'node:zlib';
 import { BAKED_IN_REMOTE_CONFIG } from '../../src/constants/defaults.js';
 import { TransportRouter } from '../../src/transport/transport-router.js';
+// Every batch leaves the SDK gzip-compressed (always-on transport
+// contract), so fetch stubs must decompress before asserting on payloads.
+function parseBody(body) {
+    const buf = typeof body === 'string' ? Buffer.from(body, 'utf8') : Buffer.from(body);
+    const isGzip = buf.length >= 2 && buf[0] === 0x1f && buf[1] === 0x8b;
+    return JSON.parse((isGzip ? gunzipSync(buf) : buf).toString('utf8'));
+}
 function config(base = 'https://collector.example.test') {
     const existing = BAKED_IN_REMOTE_CONFIG.transport;
     // v3 schema: top-level `routes` (was `endpoints`), retry/queue/keepAlive
@@ -91,7 +99,7 @@ describe('Unified TransportRouter', () => {
     it('routes event types to deterministic endpoints', async () => {
         const calls = [];
         const fetchImpl = async (url, options) => {
-            calls.push({ url: String(url), body: JSON.parse(String(options?.body)) });
+            calls.push({ url: String(url), body: parseBody(options?.body) });
             return okResponse();
         };
         const router = await TransportRouter.initialize(config(), 'test-key', fetchImpl);
@@ -104,8 +112,11 @@ describe('Unified TransportRouter', () => {
         assert.ok(urls.includes('/v1/errors'));
         assert.ok(urls.includes('/v1/traces'));
         assert.ok(urls.includes('/v1/metrics'));
+        // v3 routing: request events go to the dedicated /v1/requests route.
         const traceCall = calls.find(call => new URL(call.url).pathname === '/v1/traces');
-        assert.deepEqual(traceCall?.body.events.map((e) => e.type).sort(), ['request', 'span']);
+        assert.deepEqual(traceCall?.body.events.map((e) => e.type).sort(), ['span']);
+        const requestCall = calls.find(call => new URL(call.url).pathname === '/v1/requests');
+        assert.deepEqual(requestCall?.body.events.map((e) => e.type).sort(), ['request']);
     });
     it('hard-enforces per-route and global in-flight connection limits', async () => {
         const active = { errors: 0, traces: 0, metrics: 0 };
@@ -163,7 +174,7 @@ describe('Unified TransportRouter', () => {
         const fetchImpl = async (url, options) => {
             if (new URL(String(url)).pathname === '/v1/metrics') {
                 metricRequests++;
-                metricEvents += JSON.parse(String(options?.body)).events.length;
+                metricEvents += parseBody(options?.body).events.length;
             }
             return okResponse();
         };

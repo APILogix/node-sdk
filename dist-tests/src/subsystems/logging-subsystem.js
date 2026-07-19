@@ -11,6 +11,7 @@
  */
 import { getLogger } from '../utils/logger.js';
 import { getRequestContext, getSpanId, getTraceId } from '../core/context.js';
+import { SecurityScrubber } from '../processors/security-scrubber.js';
 /**
  * Marker placed on every wrapper function we install. Used to detect
  * already-wrapped console methods on reinit so we don't double-wrap.
@@ -76,13 +77,26 @@ export class LoggingSubsystem {
             level,
             message: truncated,
             timestamp: Date.now(),
-            args: args?.length ? args.slice(0, 10) : undefined,
+            args: args?.length ? this.scrubLogArgs(args.slice(0, 10)) : undefined,
             requestId: getRequestContext()?.requestId,
             traceId: getTraceId(),
             spanId: getSpanId(),
             metadata: this.metadata,
         };
         this.emitter(event);
+    }
+    /**
+     * Scrub log arguments before they are attached to (or stringified into)
+     * a log event. `console.log('creds', { password })` must never exfiltrate
+     * secrets — args go through the same field-redaction + PII rules as
+     * request bodies. Fail-open when the scrubber is not initialized yet:
+     * the pipeline-level scrub still runs before transport.
+     */
+    scrubLogArgs(args) {
+        const scrubber = SecurityScrubber.getInstance();
+        if (!scrubber)
+            return [...args];
+        return args.map(arg => scrubber.scrubValue(arg));
     }
     /**
      * Handle config change — hot-swap logging config.
@@ -155,13 +169,17 @@ export class LoggingSubsystem {
                     return;
                 LoggingSubsystem.captureReentry = true;
                 try {
-                    // Capture if level is allowed.
+                    // Capture if level is allowed. Args are scrubbed BEFORE the
+                    // message string is built — otherwise a secret inside an object
+                    // would land in `message` via safeStringify and bypass the
+                    // args-level redaction.
                     const mappedLevel = level === 'log' ? 'info' : level;
                     if (this.isLevelAllowed(mappedLevel) && !this.destroyed) {
-                        const message = args
+                        const scrubbedArgs = this.scrubLogArgs(args);
+                        const message = scrubbedArgs
                             .map(a => (typeof a === 'string' ? a : safeStringify(a)))
                             .join(' ');
-                        this.captureLog(mappedLevel, message, args);
+                        this.captureLog(mappedLevel, message, scrubbedArgs);
                     }
                 }
                 catch {

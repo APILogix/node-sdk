@@ -16,6 +16,7 @@
 import { readFile } from 'node:fs/promises';
 import { extname, normalize } from 'node:path';
 import { getLogger } from '../utils/logger.js';
+import { SecurityScrubber } from '../processors/security-scrubber.js';
 // ─── Constants ──────────────────────────────────────────────────────────────
 /** Max files cached in LRU. */
 const MAX_CACHED_FILES = 50;
@@ -126,9 +127,9 @@ export async function attachSourceContext(frames) {
                 const preStart = Math.max(0, lineIndex - CONTEXT_LINES);
                 const postEnd = Math.min(lines.length, lineIndex + CONTEXT_LINES + 1);
                 const sourceContext = {
-                    pre: lines.slice(preStart, lineIndex),
-                    line: lines[lineIndex] ?? '',
-                    post: lines.slice(lineIndex + 1, postEnd),
+                    pre: scrubLines(lines.slice(preStart, lineIndex)),
+                    line: scrubLine(lines[lineIndex] ?? ''),
+                    post: scrubLines(lines.slice(lineIndex + 1, postEnd)),
                 };
                 result.push({ ...frame, sourceContext });
             }
@@ -143,6 +144,20 @@ export async function attachSourceContext(frames) {
         logger.debug('[SourceContext] Failed to attach source context', { error: String(err) });
         return [...frames];
     }
+}
+function scrubLine(line) {
+    const scrubber = SecurityScrubber.getInstance();
+    if (!scrubber)
+        return line;
+    try {
+        return scrubber.scrubValue(line);
+    }
+    catch {
+        return line;
+    }
+}
+function scrubLines(lines) {
+    return lines.map(scrubLine);
 }
 /**
  * Reset the source context file cache.

@@ -18,6 +18,7 @@ import { readFile } from 'node:fs/promises'
 import { extname, normalize } from 'node:path'
 import type { StackFrame } from '../types/event.js'
 import { getLogger } from '../utils/logger.js'
+import { SecurityScrubber } from '../processors/security-scrubber.js'
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -154,9 +155,9 @@ export async function attachSourceContext(frames: readonly StackFrame[]): Promis
         const postEnd = Math.min(lines.length, lineIndex + CONTEXT_LINES + 1)
 
         const sourceContext = {
-          pre: lines.slice(preStart, lineIndex) as readonly string[],
-          line: lines[lineIndex] ?? '',
-          post: lines.slice(lineIndex + 1, postEnd) as readonly string[],
+          pre: scrubLines(lines.slice(preStart, lineIndex)),
+          line: scrubLine(lines[lineIndex] ?? ''),
+          post: scrubLines(lines.slice(lineIndex + 1, postEnd)),
         }
 
         result.push({ ...frame, sourceContext })
@@ -171,6 +172,20 @@ export async function attachSourceContext(frames: readonly StackFrame[]): Promis
     logger.debug('[SourceContext] Failed to attach source context', { error: String(err) })
     return [...frames]
   }
+}
+
+function scrubLine(line: string): string {
+  const scrubber = SecurityScrubber.getInstance()
+  if (!scrubber) return line
+  try {
+    return scrubber.scrubValue(line) as string
+  } catch {
+    return line
+  }
+}
+
+function scrubLines(lines: readonly string[]): readonly string[] {
+  return lines.map(scrubLine)
 }
 
 /**

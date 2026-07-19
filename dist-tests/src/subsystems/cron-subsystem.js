@@ -15,6 +15,8 @@
  * - Transport route is 'crons' with batchSize=1, flushIntervalMs=0 (immediate).
  */
 import { getLogger } from '../utils/logger.js';
+import { context } from '@opentelemetry/api';
+import { suppressTracing } from '@opentelemetry/core';
 /** Default timeout for in-flight cron monitors (5 minutes). */
 const DEFAULT_MONITOR_TIMEOUT_MS = 5 * 60 * 1000;
 export class CronSubsystem {
@@ -56,19 +58,23 @@ export class CronSubsystem {
                 clearTimeout(existing.timeoutHandle);
             }
             const timeoutHandle = setTimeout(() => {
-                logger.warn(`[CronSubsystem] Monitor '${monitorSlug}' timed out after ${this.monitorTimeoutMs}ms`);
-                this.inFlight.delete(monitorSlug);
-                // Emit an error check-in for the timeout
-                const timeoutEvent = {
-                    type: 'cron_checkin',
-                    monitorSlug,
-                    status: 'error',
-                    timestamp: Date.now(),
-                    duration: this.monitorTimeoutMs,
-                    environment: options?.environment,
-                    metadata: this.metadata,
-                };
-                this.emitter(timeoutEvent);
+                context.with(suppressTracing(context.active()), () => {
+                    logger.warn(`[CronSubsystem] Monitor '${monitorSlug}' timed out after ${this.monitorTimeoutMs}ms`);
+                    this.inFlight.delete(monitorSlug);
+                    // Emit an error check-in for the timeout. Same environment
+                    // fallback as the completion path below — a timed-out monitor
+                    // must not lose its environment metadata.
+                    const timeoutEvent = {
+                        type: 'cron_checkin',
+                        monitorSlug,
+                        status: 'error',
+                        timestamp: Date.now(),
+                        duration: this.monitorTimeoutMs,
+                        environment: options?.environment ?? this.metadata.environment,
+                        metadata: this.metadata,
+                    };
+                    this.emitter(timeoutEvent);
+                });
             }, this.monitorTimeoutMs);
             if (typeof timeoutHandle === 'object' && 'unref' in timeoutHandle) {
                 ;
@@ -101,9 +107,19 @@ export class CronSubsystem {
         this.emitter(event);
         logger.info(`[CronSubsystem] Check-in: ${monitorSlug} → ${status}`);
     }
-    /** Handle config change. */
-    handleConfigChange(_diff, _newConfig) {
-        // Cron subsystem has no dynamic config beyond enabled/disabled (handled by FeatureController)
+    /**
+     * Handle config change.
+     *
+     * The crons feature toggle itself is owned by the FeatureController (it
+     * initializes/resets this subsystem), but that flip travels an async void
+     * path — if this instance is still alive when the diff lands, stop the
+     * in-flight monitors immediately so no pending timeout can emit an error
+     * check-in against a feature the control plane has already disabled.
+     */
+    handleConfigChange(diff, newConfig) {
+        if (diff.featuresChanged && !newConfig.features.crons) {
+            this.stop();
+        }
     }
     /** Get list of in-flight monitors. */
     getInFlightMonitors() {

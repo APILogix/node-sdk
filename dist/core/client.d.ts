@@ -1,0 +1,54 @@
+import type { RemoteConfig, SDKInitOptions, ResolvedSDKConfig } from '../types/config.js';
+import type { SDKPlugin, EventProcessor } from '../types/plugin.js';
+import type { EventMetadata } from '../types/event.js';
+import type { Breadcrumb } from '../types/breadcrumb.js';
+import { RingBuffer } from './ring-buffer.js';
+import type { InitResponse } from '../transport/sender.js';
+declare class SDKClient {
+    private static instance;
+    private configValue;
+    private remoteConfigValue;
+    private initResponseValue;
+    private initPromise;
+    private apiKeyValue;
+    private initIdentityValue;
+    private pendingInitIdentityValue;
+    private optionsValue;
+    private readonly pluginRegistry;
+    private readonly eventProcessorRegistry;
+    private metadataValue;
+    private breadcrumbBuffer;
+    private constructor();
+    static getInstance(): SDKClient;
+    get initialized(): boolean;
+    get config(): Readonly<ResolvedSDKConfig>;
+    get remoteConfig(): Readonly<RemoteConfig> | null;
+    get initResponse(): Readonly<InitResponse> | null;
+    get projectId(): string | null;
+    get options(): Readonly<SDKInitOptions> | null;
+    get metadata(): Readonly<EventMetadata>;
+    get plugins(): readonly SDKPlugin[];
+    get eventProcessors(): readonly EventProcessor[];
+    get breadcrumbs(): RingBuffer<Breadcrumb>;
+    setOptions(options: SDKInitOptions): void;
+    setResolvedConfig(config: ResolvedSDKConfig): void;
+    setRemoteConfig(config: RemoteConfig): void;
+    setInitResponse(response: InitResponse): void;
+    /** @deprecated Use setResolvedConfig instead */
+    setConfig(config: RemoteConfig): void;
+    clearConfig(): void;
+    clear(): void;
+    getApiKey(): string;
+    hasSameIdentity(options: SDKInitOptions): boolean;
+    setPendingIdentity(options: SDKInitOptions): void;
+    clearPendingIdentity(): void;
+    hasSamePendingIdentity(options: SDKInitOptions): boolean;
+    setInitPromise(promise: Promise<Readonly<RemoteConfig> | undefined> | null): void;
+    getInitPromise(): Promise<Readonly<RemoteConfig> | undefined> | null;
+    registerPlugin(plugin: SDKPlugin): void;
+    registerEventProcessor(processor: EventProcessor): void;
+    initBreadcrumbs(capacity: number): void;
+}
+export declare const client: SDKClient;
+export {};
+//# sourceMappingURL=client.d.ts.map

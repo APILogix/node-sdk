@@ -141,10 +141,11 @@ class OtelMetricsManager {
             instrumentName: '*.size',
             aggregation: { type: AggregationType.EXPONENTIAL_HISTOGRAM, options: { maxSize: maxBuckets } },
           },
-          {
-            instrumentName: '*',
-            aggregation: { type: AggregationType.EXPONENTIAL_HISTOGRAM, options: { maxSize: maxBuckets } },
-          },
+          // NOTE: no bare '*' catch-all view here. The previous wildcard
+          // forced EXPONENTIAL_HISTOGRAM aggregation onto EVERY instrument —
+          // including counters and gauges — corrupting their semantics and
+          // inflating memory/cardinality. Instruments that match none of
+          // the suffix views above now keep their default aggregation.
         ],
       }
 

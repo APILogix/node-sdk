@@ -23,13 +23,14 @@ import { FeatureController } from '../core/feature-controller.js';
 import { KillswitchEngine } from '../core/killswitch-engine.js';
 import { SamplingEngine } from '../core/sampling-engine.js';
 import { SecurityScrubber } from '../processors/security-scrubber.js';
+import { sha256 } from '../utils/hash.js';
 import { tenantGovernor } from '../core/tenant-isolation.js';
 import { getLogger } from '../utils/logger.js';
 // Headers we always redact even when the SecurityScrubber isn't initialized.
 // Keep this list short and case-insensitive — the scrubber is the source of
 // truth once the SDK has finished bootstrapping.
 const FALLBACK_SENSITIVE_HEADER_PATTERN = /^(authorization|proxy-authorization|cookie|set-cookie|x-api-key|x-auth-token|x-csrf-token|x-session-token|api-key|access-token|refresh-token)$/i;
-const FALLBACK_SENSITIVE_BODY_PATTERN = /(password|passwd|secret|token|api[_-]?key|access[_-]?token|refresh[_-]?token|credit[_-]?card|cvv|ssn)/i;
+const FALLBACK_SENSITIVE_BODY_PATTERN = /(password|passwd|secret|token|api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|credit[_-]?card|cvv|ssn|(^|[_\-\s])code\b|authcode)/i;
 /** Maximum number of bytes of a request body we will look at before bailing. */
 const MAX_BODY_INSPECT_BYTES = 64 * 1024;
 /**
@@ -115,6 +116,7 @@ export function evaluateCaptureGate(input) {
         allowBody: cfg?.capture.body ?? false,
         allowResponse: cfg?.capture.response ?? false,
         allowCookies: cfg?.capture.cookies ?? false,
+        maskIp: cfg?.maskIp ?? true,
         sampledRate,
     };
 }
@@ -176,10 +178,17 @@ export function scrubQuery(query) {
  * body cannot be safely sized.
  */
 export function captureBodySnapshot(rawBody, allowBody) {
-    const size = computeBodySize(rawBody);
+    // Perf: the JSON.stringify-based size computation only runs when body
+    // capture is enabled. When it isn't, we report size only for bodies with
+    // an O(1) length (strings / Uint8Array) and skip serializing objects we
+    // are about to discard anyway.
     if (!allowBody) {
-        return { bodySize: size, body: undefined };
+        const cheapSize = rawBody != null && typeof rawBody === 'object' && !(rawBody instanceof Uint8Array)
+            ? undefined
+            : computeBodySize(rawBody);
+        return { bodySize: cheapSize, body: undefined };
     }
+    const size = computeBodySize(rawBody);
     if (rawBody == null)
         return { bodySize: size, body: undefined };
     // Only objects are scrubbed and forwarded. Strings and Buffers are reported
@@ -216,20 +225,51 @@ export function headerString(value) {
     return undefined;
 }
 /**
- * Resolve the originating client IP. Prefers `X-Forwarded-For` (first hop),
- * then `X-Real-IP`, then the socket remote address.
+ * Resolve the originating client IP.
+ *
+ * `X-Forwarded-For` / `X-Real-IP` are client-controllable headers — any
+ * caller can spoof them unless a trusted proxy overwrites them upstream.
+ * They are therefore only honored when the immediate peer
+ * (`socketRemoteAddress`) is in `trustedProxies` (exact IP match, or `*`
+ * to trust any peer — only safe when the app is unreachable except via a
+ * proxy). With no trusted proxies configured (the default), the socket
+ * address is authoritative and forwarding headers are ignored.
  */
-export function resolveClientIp(headers, socketRemoteAddress) {
-    const xff = headerString(headers['x-forwarded-for']);
-    if (xff) {
-        const first = xff.split(',')[0]?.trim();
-        if (first)
-            return first;
+export function resolveClientIp(headers, socketRemoteAddress, trustedProxies, maskIp, preferredIp) {
+    const rawIp = preferredIp ?? resolveRawClientIp(headers, socketRemoteAddress, trustedProxies);
+    if (!rawIp)
+        return undefined;
+    if (maskIp ?? true)
+        return sha256(rawIp).slice(0, 16);
+    return rawIp;
+}
+function resolveRawClientIp(headers, socketRemoteAddress, trustedProxies) {
+    if (socketRemoteAddress && isTrustedProxy(socketRemoteAddress, trustedProxies)) {
+        const xff = headerString(headers['x-forwarded-for']);
+        if (xff) {
+            const first = xff.split(',')[0]?.trim();
+            if (first)
+                return first;
+        }
+        const real = headerString(headers['x-real-ip']);
+        if (real)
+            return real;
     }
-    const real = headerString(headers['x-real-ip']);
-    if (real)
-        return real;
     return socketRemoteAddress;
+}
+/** Exact-match trusted proxy check; `*` trusts every peer. */
+function isTrustedProxy(socketRemoteAddress, trustedProxies) {
+    if (!trustedProxies || trustedProxies.length === 0)
+        return false;
+    const normalized = socketRemoteAddress.startsWith('::ffff:')
+        ? socketRemoteAddress.slice('::ffff:'.length)
+        : socketRemoteAddress;
+    return trustedProxies.some(proxy => {
+        if (proxy === '*')
+            return true;
+        const entry = proxy.startsWith('::ffff:') ? proxy.slice('::ffff:'.length) : proxy;
+        return entry === normalized || proxy === socketRemoteAddress;
+    });
 }
 /** Match a path against either string prefixes or regex patterns. */
 export function matchesIgnoredPath(path, patterns) {
@@ -247,6 +287,7 @@ function denied(reason) {
         allowBody: false,
         allowResponse: false,
         allowCookies: false,
+        maskIp: true,
         sampledRate: 0,
     };
 }
@@ -274,6 +315,7 @@ function safeGetTracingConfig() {
                 query: cfg.privacy?.capture?.query ?? true,
                 cookies: cfg.privacy?.capture?.cookies ?? false,
             },
+            maskIp: cfg.privacy?.piiDetection?.maskIPs ?? true,
         };
     }
     catch {
@@ -283,15 +325,19 @@ function safeGetTracingConfig() {
     }
 }
 function fallbackScrubHeaders(headers) {
-    const out = {};
+    const out = Object.create(null);
     for (const [key, value] of Object.entries(headers)) {
+        if (!isSafeKey(key))
+            continue;
         out[key] = FALLBACK_SENSITIVE_HEADER_PATTERN.test(key) ? '[Redacted]' : value;
     }
     return out;
 }
 function fallbackScrubBody(body) {
-    const out = {};
+    const out = Object.create(null);
     for (const [key, value] of Object.entries(body)) {
+        if (!isSafeKey(key))
+            continue;
         if (FALLBACK_SENSITIVE_BODY_PATTERN.test(key)) {
             out[key] = '[Redacted]';
             continue;
@@ -304,6 +350,9 @@ function fallbackScrubBody(body) {
         }
     }
     return out;
+}
+function isSafeKey(key) {
+    return key !== '__proto__' && key !== 'constructor' && key !== 'prototype';
 }
 function computeBodySize(rawBody) {
     if (rawBody == null)

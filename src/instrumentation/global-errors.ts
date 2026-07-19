@@ -21,6 +21,8 @@ import { getLogger } from "../utils/logger.js"
 import { ERROR_DEFAULTS } from "../constants/internal-defaults.js"
 import { crashFlush } from "../core/lifecycle.js"
 import { isOtelInstrumentationError } from "./http-lifecycle-guard.js"
+import { SecurityScrubber } from "../processors/security-scrubber.js"
+import { Severity } from "../types/severity.js"
 import type { ErrorsConfig } from "../types/config.js"
 
 let registered = false
@@ -178,17 +180,28 @@ function wrapConsoleError(): void {
 
     // Create an error event from the console.error call
     try {
-      const message = args.map(a => {
+      // Scrub args before stringifying — `console.error('creds', { password })`
+      // must never exfiltrate secrets into the error message. Error instances
+      // pass through untouched (scrubValue would strip their non-enumerable
+      // message/stack); their message/stack go through the pipeline-level
+      // scrub before transport. Fail-open when the scrubber isn't
+      // initialized yet for the same reason.
+      const scrubber = SecurityScrubber.getInstance()
+      const scrubbedArgs = scrubber
+        ? args.map(a => (a instanceof Error ? a : scrubber.scrubValue(a)))
+        : args
+
+      const message = scrubbedArgs.map(a => {
         if (a instanceof Error) return a.message
         if (typeof a === 'string') return a
         try { return JSON.stringify(a) } catch { return String(a) }
       }).join(' ')
 
-      const error = args.find(a => a instanceof Error) as Error | undefined
+      const error = scrubbedArgs.find(a => a instanceof Error) as Error | undefined
       captureError(error ?? new Error(message), {
         mechanism: 'console.error',
-        severity: 'error',
-      } as Record<string, unknown>)
+        severity: Severity.Error,
+      })
     } catch {
       // Never crash the host from console.error wrapping
     } finally {

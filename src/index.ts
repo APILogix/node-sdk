@@ -55,6 +55,9 @@ export { captureMessage } from './capture/captureMessage.js'
 export { captureEvent } from './capture/captureEvent.js'
 export { captureCronCheckIn } from './capture/captureCronCheckIn.js'
 export type { CronCheckInOptions } from './capture/captureCronCheckIn.js'
+export { captureLog } from './capture/captureLog.js'
+export type { CaptureLogLevel } from './capture/captureLog.js'
+export { captureReplay } from './capture/captureReplay.js'
 export { startProfile, stopProfile } from './capture/captureProfile.js'
 export {
   captureMetric,
@@ -136,6 +139,7 @@ export type {
   TransportOptions,
   PlanTier,
   PlanFeatures,
+  EntitlementsConfig,
 } from './types/config.js'
 
 export type {

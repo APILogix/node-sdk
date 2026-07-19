@@ -25,11 +25,13 @@ import { captureEvent } from './captureEvent.js'
 import { Severity, type SeverityLevel } from '../types/severity.js'
 import { epochMs } from '../utils/time.js'
 import type { ErrorEvent } from '../types/event.js'
+import type { Breadcrumb } from '../types/breadcrumb.js'
 import { KillswitchEngine } from '../core/killswitch-engine.js'
 import { SamplingEngine } from '../core/sampling-engine.js'
 import { ConfigManager } from '../core/config-manager.js'
 import { ERROR_DEFAULTS } from '../constants/internal-defaults.js'
 import { SpanStatusCode, trace } from '@opentelemetry/api'
+import { SecurityScrubber } from '../processors/security-scrubber.js'
 
 export interface CaptureErrorOptions {
   /** Additional context data to attach to the error event. */
@@ -38,6 +40,11 @@ export interface CaptureErrorOptions {
   severity?: SeverityLevel
   /** Custom fingerprint string for grouping. */
   fingerprint?: string
+  /**
+   * Capture mechanism — e.g. 'uncaughtException', 'unhandledRejection',
+   * 'console.error'. Defaults to 'manual' for direct developer calls.
+   */
+  mechanism?: string
 }
 
 /**
@@ -104,6 +111,9 @@ export function captureError(
     const customFingerprint = isOptionsObject(options)
       ? options.fingerprint
       : undefined
+    const mechanism = isOptionsObject(options)
+      ? (options.mechanism ?? 'manual')
+      : 'manual'
 
     // Parse stack frames synchronously — uses V8 CallSite API when available,
     // falls back to regex for pre-serialized stacks
@@ -131,19 +141,27 @@ export function captureError(
     // Generate fingerprint from potentially normalized frames
     const fingerprint = generateFingerprint(normalized, normalizedFrames, customFingerprint)
 
+    // Scrub free-form error message before it leaves the process
+    const scrubber = SecurityScrubber.getInstance()
+    const safeMessage = scrubber ? scrubber.scrubValue(normalized.message) as string : normalized.message
+
     const ctx = getRequestContext()
-    const breadcrumbs = ctx?.breadcrumbs.toArray() ?? []
+    const rawBreadcrumbs = ctx?.breadcrumbs.toArray() ?? []
+    const breadcrumbs = rawBreadcrumbs.length > 0
+      ? (scrubber ? rawBreadcrumbs.map(b => scrubBreadcrumb(b, scrubber)) : rawBreadcrumbs)
+      : undefined
 
     const event: ErrorEvent = {
       type: 'error',
-      message: normalized.message,
+      message: safeMessage,
       name: normalized.name,
       stack: stackFrames, // Keep original stack for display
       fingerprint,
       severity,
       timestamp: epochMs(),
       context,
-      breadcrumbs: breadcrumbs.length > 0 ? breadcrumbs : undefined,
+      mechanism,
+      breadcrumbs,
       requestId: ctx?.requestId,
       traceId: getTraceId(),
       spanId: getSpanId(),
@@ -157,5 +175,19 @@ export function captureError(
 
 function isOptionsObject(value: unknown): value is CaptureErrorOptions {
   if (!value || typeof value !== 'object') return false
-  return 'severity' in value || 'fingerprint' in value || 'context' in value
+  return 'severity' in value || 'fingerprint' in value || 'context' in value || 'mechanism' in value
+}
+
+function scrubBreadcrumb(breadcrumb: Breadcrumb, scrubber: SecurityScrubber): Breadcrumb {
+  const safeMessage = breadcrumb.message !== undefined
+    ? (scrubber.scrubValue(breadcrumb.message) as string)
+    : undefined
+  const safeData = breadcrumb.data !== undefined
+    ? (scrubber.scrubValue(breadcrumb.data) as Record<string, unknown>)
+    : undefined
+  return {
+    ...breadcrumb,
+    message: safeMessage,
+    data: safeData,
+  }
 }

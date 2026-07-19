@@ -35,13 +35,14 @@
  * Every branch that can throw is wrapped in a defensive try/catch.
  */
 import { captureError } from '../capture/captureError.js';
-import { trace, SpanKind } from '@opentelemetry/api';
+import { captureRequest } from '../capture/captureRequest.js';
+import { trace, context, SpanKind, SpanStatusCode } from '@opentelemetry/api';
 import { client } from '../core/client.js';
-import { attachRequestContextToActiveSpan, createContextStore, withContext, } from '../core/context.js';
+import { attachRequestContextToActiveSpan, createContextStore, withContext, getTraceId, getSpanId, } from '../core/context.js';
 import { getLogger } from '../utils/logger.js';
 import { generateId } from '../utils/uuid.js';
 import { getTracer } from '../tracing/tracer.js';
-import { captureBodySnapshot, evaluateCaptureGate, headerString, matchesIgnoredPath, recordCaptureAccepted, resolveClientIp, scrubHeaders, } from './request-capture-utils.js';
+import { captureBodySnapshot, evaluateCaptureGate, headerString, matchesIgnoredPath, recordCaptureAccepted, resolveClientIp, scrubHeaders, scrubQuery, } from './request-capture-utils.js';
 export function monitorMiddleware(options = {}) {
     return function pulseExpressMiddleware(req, res, next) {
         // Resolve the path *once*, defensively. Express attaches `path` only after
@@ -81,7 +82,7 @@ export function monitorMiddleware(options = {}) {
         const sessionId = headerString(req.headers['x-session-id']);
         const userAgent = headerString(req.headers['user-agent']);
         const referer = headerString(req.headers['referer'] ?? req.headers['referrer']);
-        const clientIp = resolveClientIp(req.headers, req.socket?.remoteAddress);
+        const clientIp = resolveClientIp(req.headers, req.socket?.remoteAddress, options.trustedProxies, decision.maskIp);
         const startTime = Date.now();
         const store = createContextStore(requestId, options.maxBreadcrumbs ?? client.config?.maxBreadcrumbs ?? 100, {
             userId,
@@ -175,6 +176,31 @@ export function monitorMiddleware(options = {}) {
                                 enrichmentAttrs['http.response.body.size'] = responseSize;
                             activeSpan.setAttributes(enrichmentAttrs);
                         }
+                        // Emit the discrete request event to the central pipeline.
+                        // This is routed to `/v1/requests` (or falls back to `/v1/traces`).
+                        captureRequest({
+                            type: 'request',
+                            requestId,
+                            method: req.method,
+                            url: normalizedRoute(req),
+                            statusCode: res.statusCode,
+                            latency: Date.now() - startTime,
+                            timestamp: startTime,
+                            traceId: getTraceId() ?? store.traceId,
+                            spanId: getSpanId() ?? store.spanId,
+                            ...(userId ? { userId } : {}),
+                            ...(tenantId ? { tenantId } : {}),
+                            ...(sessionId ? { sessionId } : {}),
+                            ...(clientIp ? { clientIp } : {}),
+                            ...(userAgent ? { userAgent } : {}),
+                            ...(referer ? { referer } : {}),
+                            ...(captureHeaders ? { headers: scrubHeadersSafe(req.headers) } : {}),
+                            ...(captureQuery && isRecord(req.query) ? { query: scrubQuery(req.query) } : {}),
+                            ...(bodySnapshot.body ? { body: bodySnapshot.body } : {}),
+                            ...(bodySnapshot.bodySize !== undefined ? { bodySize: bodySnapshot.bodySize } : {}),
+                            ...(responseSize !== undefined ? { responseSize } : {}),
+                            route: normalizedRoute(req),
+                        });
                     }
                     catch (err) {
                         // The middleware must NEVER crash the host. Log and move on.
@@ -222,7 +248,53 @@ export function monitorMiddleware(options = {}) {
                     }
                 });
             });
-            next();
+            // Intercept next(err) — errors routed to Express error-handling
+            // middleware never hit the response 'error' event, so without this
+            // they would never be captured. Plain next() calls pass through
+            // untouched.
+            const wrappedNext = (err) => {
+                if (err) {
+                    const error = err instanceof Error ? err : new Error(String(err));
+                    withContext(store, () => {
+                        try {
+                            captureError(error, {
+                                mechanism: 'express.next',
+                                context: {
+                                    requestId,
+                                    route: normalizedRoute(req),
+                                    framework: 'express',
+                                    ...(tenantId ? { tenantId } : {}),
+                                },
+                            });
+                            const activeSpan = ownedSpan ?? trace.getActiveSpan();
+                            if (activeSpan) {
+                                try {
+                                    activeSpan.recordException(error);
+                                    activeSpan.setStatus({ code: SpanStatusCode.ERROR, message: error.message });
+                                }
+                                catch { /* fail-open */ }
+                            }
+                        }
+                        catch (captureErr) {
+                            getLogger().error('monitorMiddleware next(err) capture failed', { error: captureErr });
+                        }
+                    });
+                }
+                next(err);
+            };
+            // If we own the fallback span, bind it to OTel context so downstream
+            // auto-instrumented operations (Axios, MySQL, Redis, etc.) see it as
+            // their parent. Without this, OTel creates isolated traces for each
+            // outbound call because no active span exists in the propagation context.
+            if (ownedSpan) {
+                const spanContext = trace.setSpan(context.active(), ownedSpan);
+                context.with(spanContext, () => {
+                    wrappedNext();
+                });
+            }
+            else {
+                wrappedNext();
+            }
         });
     };
 }
@@ -259,4 +331,27 @@ function readContentLength(value) {
         return Number.isFinite(parsed) ? parsed : undefined;
     }
     return undefined;
+}
+const SENSITIVE_HEADER_FALLBACK = /authorization|cookie|token|secret|password/i;
+function scrubHeadersSafe(headers) {
+    try {
+        const clone = {};
+        for (const [key, value] of Object.entries(headers)) {
+            clone[key] = value;
+        }
+        return scrubHeaders(clone) ?? defensiveHeaderRedact(clone);
+    }
+    catch {
+        return defensiveHeaderRedact(headers);
+    }
+}
+function defensiveHeaderRedact(headers) {
+    const out = {};
+    for (const [key, value] of Object.entries(headers)) {
+        out[key] = SENSITIVE_HEADER_FALLBACK.test(key) ? '[Redacted]' : value;
+    }
+    return out;
+}
+function isRecord(value) {
+    return !!value && typeof value === 'object' && !Array.isArray(value);
 }

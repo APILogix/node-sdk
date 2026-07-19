@@ -41,6 +41,13 @@ interface AxiosRequestConfig {
   [key: string]: unknown
 }
 
+interface AxiosResponseLike {
+  status?: number
+  statusText?: string
+  headers?: Record<string, unknown>
+  data?: unknown
+}
+
 const AXIOS_TRACER = trace.getTracer('@pulse-sdk/axios', '1.0.0')
 
 export function createAxiosInstrumentation(
@@ -78,83 +85,98 @@ export function createAxiosInstrumentation(
         return
       }
 
-      let axiosInstance: unknown
-
-      if (axiosModule.Axios) {
-        const axiosCtor = axiosModule.Axios as { prototype?: unknown }
-        axiosInstance = axiosCtor.prototype ? axiosCtor : axiosModule
-      } else {
-        axiosInstance = axiosModule
+      // Patch Axios.prototype.request so the default instance AND every
+      // user-created instance (axios.create()) is covered — they all
+      // inherit the prototype method. The previous code patched a `request`
+      // property on the Axios constructor itself, which real calls never
+      // go through, so no spans were ever produced.
+      const axiosCtor = axiosModule.Axios as { prototype?: Record<string, unknown> } | undefined
+      const patchTargets: Record<string, unknown>[] = []
+      if (axiosCtor?.prototype && typeof axiosCtor.prototype['request'] === 'function') {
+        patchTargets.push(axiosCtor.prototype)
+      } else if (typeof axiosModule['request'] === 'function') {
+        // No reachable prototype (unusual bundling) — patch the module object.
+        patchTargets.push(axiosModule)
       }
+      if (patchTargets.length === 0) return
 
-      const originalRequest = (axiosInstance as { request?: Function }).request?.bind(axiosInstance)
-      if (!originalRequest) return
+      for (const target of patchTargets) {
+        const originalRequest = target['request'] as (this: unknown, config: AxiosRequestConfig) => Promise<AxiosResponseLike>
 
-      const patchedRequest = async function (config: AxiosRequestConfig) {
-        const span = AXIOS_TRACER.startSpan(`HTTP ${config.method?.toUpperCase() ?? 'REQUEST'}`, {
-          kind: SpanKind.CLIENT,
-          attributes: {
-            'http.method': config.method?.toUpperCase() ?? 'GET',
-            'http.url': buildUrl(config.baseURL ?? '', config.url ?? ''),
-            'http.host': extractHost(config.baseURL ?? config.url ?? ''),
-            'http.scheme': extractScheme(config.baseURL ?? config.url ?? ''),
-            'http.user_agent': 'axios',
-            'http.axios.request_timeout': config.timeout ?? options.requestTimeout,
-            'db.system': 'http',
-          },
-        })
+        const patchedRequest = async function (this: unknown, config: AxiosRequestConfig) {
+          const span = AXIOS_TRACER.startSpan(`HTTP ${config.method?.toUpperCase() ?? 'REQUEST'}`, {
+            kind: SpanKind.CLIENT,
+            attributes: {
+              'http.method': config.method?.toUpperCase() ?? 'GET',
+              'http.url': buildUrl(config.baseURL ?? '', config.url ?? ''),
+              'http.host': extractHost(config.baseURL ?? config.url ?? ''),
+              'http.scheme': extractScheme(config.baseURL ?? config.url ?? ''),
+              'http.user_agent': 'axios',
+              'http.axios.request_timeout': config.timeout ?? options.requestTimeout,
+              'db.system': 'http',
+            },
+          })
 
-        if (captureHeaders && config.headers) {
-          const safeHeaders: Record<string, string> = {}
-          for (const [key, value] of Object.entries(config.headers)) {
-            safeHeaders[key] = typeof value === 'string' ? value : String(value)
+          if (captureHeaders && config.headers) {
+            const safeHeaders: Record<string, string> = {}
+            for (const [key, value] of Object.entries(config.headers)) {
+              safeHeaders[key] = typeof value === 'string' ? value : String(value)
+            }
+            span.setAttribute('http.request.headers', JSON.stringify(safeHeaders))
           }
-          span.setAttribute('http.request.headers', JSON.stringify(safeHeaders))
-        }
 
-        if (options.captureRequestData && config.params) {
-          span.setAttribute('http.request.query', JSON.stringify(config.params).slice(0, options.maxBodySize))
-        }
+          if (options.captureRequestData && config.params) {
+            span.setAttribute('http.request.query', JSON.stringify(config.params).slice(0, options.maxBodySize))
+          }
 
-        return context.with(trace.setSpan(context.active(), span), async () => {
-          try {
-            const response = await originalRequest(config)
+          return context.with(trace.setSpan(context.active(), span), async () => {
+            try {
+              const response = await originalRequest.call(this, config)
 
-            span.setAttribute('http.status_code', response.status ?? 0)
-            span.setAttribute('http.status_text', response.statusText ?? '')
+              span.setAttribute('http.status_code', response.status ?? 0)
+              span.setAttribute('http.status_text', response.statusText ?? '')
 
-            if (captureHeaders && response.headers) {
-              const safeResponseHeaders: Record<string, string> = {}
-              for (const [key, value] of Object.entries(response.headers)) {
-                safeResponseHeaders[key] = typeof value === 'string' ? value : String(value)
+              if (captureHeaders && response.headers) {
+                const safeResponseHeaders: Record<string, string> = {}
+                for (const [key, value] of Object.entries(response.headers)) {
+                  safeResponseHeaders[key] = typeof value === 'string' ? value : String(value)
+                }
+                span.setAttribute('http.response.headers', JSON.stringify(safeResponseHeaders))
               }
-              span.setAttribute('http.response.headers', JSON.stringify(safeResponseHeaders))
+
+              if (options.captureResponseData && response.data) {
+                const dataStr = typeof response.data === 'string'
+                  ? response.data.slice(0, options.maxBodySize)
+                  : JSON.stringify(response.data).slice(0, options.maxBodySize)
+                span.setAttribute('http.response.body', dataStr)
+              }
+
+              span.setStatus({ code: SpanStatusCode.OK })
+              span.end()
+
+              return response
+            } catch (error: unknown) {
+              span.setStatus({
+                code: SpanStatusCode.ERROR,
+                message: error instanceof Error ? error.message : 'Request failed',
+              })
+              span.recordException(error as Error)
+              span.end()
+              throw error
             }
+          })
+        }
 
-            if (options.captureResponseData && response.data) {
-              const dataStr = typeof response.data === 'string'
-                ? response.data.slice(0, options.maxBodySize)
-                : JSON.stringify(response.data).slice(0, options.maxBodySize)
-              span.setAttribute('http.response.body', dataStr)
-            }
-
-            span.setStatus({ code: SpanStatusCode.OK })
-            span.end()
-
-            return response
-          } catch (error: unknown) {
-            span.setStatus({
-              code: SpanStatusCode.ERROR,
-              message: error instanceof Error ? error.message : 'Request failed',
-            })
-            span.recordException(error as Error)
-            span.end()
-            throw error
+        target['request'] = patchedRequest
+        // Registered for teardown — restores the original only when our
+        // patch is still the installed one, so we never clobber a wrapper
+        // another library installed on top of us.
+        requestInterceptorPatchers.push(() => {
+          if (target['request'] === patchedRequest) {
+            target['request'] = originalRequest
           }
         })
       }
-
-      ;(axiosInstance as { request?: Function }).request = patchedRequest
 
       logger.info('Axios instrumentation registered', {
         captureRequestData: options.captureRequestData,
@@ -172,6 +194,10 @@ export function createAxiosInstrumentation(
     for (const patcher of responseInterceptorPatchers) {
       try { patcher() } catch { /* ignore */ }
     }
+    // Clear so a re-setup after teardown starts from a clean slate and
+    // restore closures can't run twice.
+    requestInterceptorPatchers.length = 0
+    responseInterceptorPatchers.length = 0
   }
 
   return { setup, teardown }

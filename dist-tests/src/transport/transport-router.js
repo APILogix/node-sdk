@@ -9,10 +9,32 @@ import { getLogger } from '../utils/logger.js';
 import { BatchManager } from './batch-manager.js';
 import { ConnectionManager } from './connection-manager.js';
 import { HealthMonitor } from './health-monitor.js';
-import { RouteRegistry, TransportConfigurationError } from './route-registry.js';
+import { RouteRegistry, TransportConfigurationError, isRouteConfigured } from './route-registry.js';
 import { TransportEventQueue } from './transport-event-queue.js';
 import { MultiplexedTransport } from './multiplexed-transport.js';
+import { SAFETY_CEILINGS, SAFETY_FLOORS } from '../constants/defaults.js';
+import { validateApiKey } from './sender.js';
 const MAX_PAYLOAD_BYTES = 5 * 1024 * 1024;
+/**
+ * Clamp a remote-config number into a safe range. The config manager already
+ * clamps during merge; this is defence-in-depth for direct construction
+ * (tests, warm-start replays, hand-built configs).
+ */
+function clampInt(value, min, max, fallback) {
+    if (!Number.isFinite(value))
+        return fallback;
+    return Math.min(max, Math.max(min, Math.floor(value)));
+}
+/** Map the wire priority onto the queue's three-tier priority. */
+function toQueuePriority(priority) {
+    if (priority === 'critical' || priority === 'high')
+        return 'high';
+    if (priority === 'normal')
+        return 'normal';
+    if (priority === 'low')
+        return 'low';
+    return undefined;
+}
 const QUEUE_CONFIG = Object.freeze({
     errors: Object.freeze({ maxSize: 10_000, priority: 'high' }),
     traces: Object.freeze({ maxSize: 50_000, priority: 'normal' }),
@@ -80,6 +102,10 @@ export class TransportRouter {
      * Callers must await the returned promise before sending events.
      */
     static async initialize(config, apiKey, fetchImpl, useMultiplexedTransport = false) {
+        // The apiKey is interpolated into an `Authorization` HTTP header on
+        // every batch send — reject control characters before they can smuggle
+        // header lines. Throws SDKError on an illegal key.
+        validateApiKey(apiKey);
         if (TransportRouter.instance) {
             // Await shutdown so in-flight batches drain before we replace the
             // singleton. The previous version of this method only fired
@@ -97,7 +123,8 @@ export class TransportRouter {
         router.useMultiplexedTransport = useMultiplexedTransport;
         if (useMultiplexedTransport) {
             const baseUrl = new URL(router.registry.get('traces').url).origin;
-            router.multiplexed = new MultiplexedTransport(baseUrl, apiKey);
+            const flushIntervalMs = clampInt(router.transportConfig.routes.traces?.flushIntervalMs ?? NaN, SAFETY_FLOORS.flushIntervalMs, SAFETY_CEILINGS.flushIntervalMs, 2000);
+            router.multiplexed = new MultiplexedTransport(baseUrl, apiKey, flushIntervalMs);
         }
         TransportRouter.instance = router;
         return router;
@@ -117,6 +144,18 @@ export class TransportRouter {
         }
         try {
             const definition = this.registry.resolve(event);
+            if (!isRouteConfigured(definition)) {
+                // No real endpoint for this route yet (baked-in defaults or a
+                // partial remote config). Drop locally with a visible reason
+                // instead of leaking traffic to the placeholder origin.
+                this.recordDrop({
+                    route: definition.route,
+                    reason: 'route_unconfigured',
+                    count: 1,
+                    eventType: event.type,
+                });
+                return false;
+            }
             if (this.useMultiplexedTransport && this.multiplexed) {
                 this.multiplexed.enqueue(definition.route, [event]);
                 return true;
@@ -158,9 +197,19 @@ export class TransportRouter {
     handleConfigChange(_diff, newConfig) {
         if (this.destroyed)
             return;
-        this.transportConfig = newConfig.transport;
-        this.registry = new RouteRegistry(newConfig.transport);
-        this.connectionManager = this.createConnectionManager(newConfig.transport);
+        this.updateTransport(newConfig.transport);
+    }
+    /**
+     * Hot-swap the transport configuration: rebuild the route registry,
+     * connection manager, queues and batchers, then re-enqueue everything
+     * that was waiting so no event is lost across the swap.
+     */
+    updateTransport(transport) {
+        if (this.destroyed)
+            return;
+        this.transportConfig = transport;
+        this.registry = new RouteRegistry(transport);
+        this.connectionManager = this.createConnectionManager(transport);
         const queued = new Map();
         for (const [route, queue] of this.queues) {
             queued.set(route, queue.drain(queue.size()));
@@ -213,6 +262,29 @@ export class TransportRouter {
             await Promise.allSettled([...this.batchManagers.values()].map(manager => manager.flush()));
         }
     }
+    /**
+     * Drain every per-route queue and return the residual events.
+     *
+     * Called from the shutdown lifecycle AFTER `flushAll()` has done its best
+     * to deliver everything via the network. Anything still in the queues at
+     * this point is undelivered and would otherwise be lost when the process
+     * exits — the lifecycle layer pipes these into `persistentStorage` so they
+     * are replayed on the next start.
+     *
+     * Returns events in arbitrary route order. The caller is responsible for
+     * persisting them; this method does not touch the filesystem itself so
+     * tests can run without it.
+     */
+    drainAllQueues() {
+        const residual = [];
+        for (const queue of this.queues.values()) {
+            const size = queue.size();
+            if (size === 0)
+                continue;
+            residual.push(...queue.drain(size));
+        }
+        return residual;
+    }
     async shutdown() {
         if (this.destroyed)
             return;
@@ -260,13 +332,23 @@ export class TransportRouter {
         TransportRouter.instance = null;
     }
     createQueuesAndBatchers() {
+        const overflowStrategy = this.transportConfig.queue.overflowStrategy;
         for (const route of this.registry.routes()) {
             const queueConfig = QUEUE_CONFIG[route];
             const batchConfig = BATCH_CONFIG[route];
+            const routeRemote = this.transportConfig.routes[route];
+            // Remote config drives the batching knobs. Values are clamped to the
+            // SDK's safety ceilings so a malformed config can never melt the event
+            // loop or blow out per-request memory.
+            const maxBatchSize = clampInt(routeRemote?.batchSize ?? NaN, 1, SAFETY_CEILINGS.batchSize, batchConfig.maxBatchSize);
+            const maxWaitTimeMs = clampInt(routeRemote?.flushIntervalMs ?? NaN, 0, SAFETY_CEILINGS.flushIntervalMs, batchConfig.maxWaitTimeMs);
+            const socketTimeoutMs = clampInt(routeRemote?.timeoutMs ?? NaN, SAFETY_FLOORS.timeoutMs, SAFETY_CEILINGS.timeoutMs, 30_000);
+            const priority = toQueuePriority(routeRemote?.priority) ?? queueConfig.priority;
             const queue = new TransportEventQueue({
                 route,
                 maxSize: queueConfig.maxSize,
-                priority: queueConfig.priority,
+                priority,
+                overflowStrategy,
                 onDrop: info => this.recordDrop(info),
             });
             const manager = new BatchManager({
@@ -276,11 +358,11 @@ export class TransportRouter {
                 queue,
                 connectionManager: this.connectionManager,
                 healthMonitor: this.healthMonitor,
-                maxBatchSize: batchConfig.maxBatchSize,
-                minBatchSize: batchConfig.minBatchSize,
-                maxWaitTimeMs: batchConfig.maxWaitTimeMs,
+                maxBatchSize,
+                minBatchSize: Math.min(batchConfig.minBatchSize, maxBatchSize),
+                maxWaitTimeMs,
                 maxPayloadBytes: MAX_PAYLOAD_BYTES,
-                socketTimeoutMs: 30_000,
+                socketTimeoutMs,
                 onDrop: info => this.recordDrop(info),
                 fetchImpl: this.fetchImpl,
             });
@@ -302,10 +384,11 @@ export class TransportRouter {
         const definition = this.registry.get(route);
         const stats = this.batchManagers.get(route)?.stats() ?? emptyStats(route);
         const health = this.healthMonitor.snapshot(route);
+        const priority = toQueuePriority(this.transportConfig.routes[route]?.priority) ?? QUEUE_CONFIG[route].priority;
         return {
             route,
             url: definition.url,
-            priority: QUEUE_CONFIG[route].priority,
+            priority,
             queueSize: stats.queuedEvents,
             queueCapacity: QUEUE_CONFIG[route].maxSize,
             inFlightCount: stats.inFlightSends,

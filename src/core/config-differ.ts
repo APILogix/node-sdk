@@ -26,6 +26,7 @@ export function diffConfigs(
   const limitsChanged = !deepEqual(oldConfig.limits, newConfig.limits)
   const instrumentationChanged = !deepEqual(oldConfig.instrumentation, newConfig.instrumentation)
   const runtimeChanged = !deepEqual(oldConfig.runtime, newConfig.runtime)
+  const entitlementsChanged = !deepEqual(oldConfig.entitlements, newConfig.entitlements)
 
   if (featuresChanged) collectChanges('features', oldConfig.features, newConfig.features, changes)
   if (killswitchesChanged) collectChanges('killswitches', oldConfig.killswitches, newConfig.killswitches, changes)
@@ -35,6 +36,7 @@ export function diffConfigs(
   if (limitsChanged) collectChanges('limits', oldConfig.limits, newConfig.limits, changes)
   if (instrumentationChanged) changes.set('instrumentation', { old: '[complex]', new: '[complex]' })
   if (runtimeChanged) collectChanges('runtime', oldConfig.runtime, newConfig.runtime, changes)
+  if (entitlementsChanged) collectChanges('entitlements', oldConfig.entitlements, newConfig.entitlements, changes)
 
   return {
     featuresChanged,
@@ -45,6 +47,7 @@ export function diffConfigs(
     limitsChanged,
     instrumentationChanged,
     runtimeChanged,
+    entitlementsChanged,
     changes,
   }
 }

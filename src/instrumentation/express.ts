@@ -38,7 +38,7 @@
 import type { NextFunction, Request, Response } from 'express'
 import { captureError } from '../capture/captureError.js'
 import { captureRequest } from '../capture/captureRequest.js'
-import { trace, context, SpanKind, type Span } from '@opentelemetry/api'
+import { trace, context, SpanKind, SpanStatusCode, type Span } from '@opentelemetry/api'
 import { client } from '../core/client.js'
 import {
   attachRequestContextToActiveSpan,
@@ -85,6 +85,14 @@ export interface PulseExpressOptions {
   readonly captureBody?: boolean
   /** Maximum number of breadcrumbs retained on the request scope. */
   readonly maxBreadcrumbs?: number
+  /**
+   * IPs of trusted reverse proxies (exact match, or `*` to trust any peer —
+   * only safe when the app is unreachable except via a proxy). When the
+   * immediate peer is trusted, `X-Forwarded-For` / `X-Real-IP` are used to
+   * resolve the client IP; otherwise those headers are ignored because any
+   * client can spoof them. Default: no trusted proxies (socket IP wins).
+   */
+  readonly trustedProxies?: readonly string[]
 }
 
 export function monitorMiddleware(options: PulseExpressOptions = {}) {
@@ -131,7 +139,7 @@ export function monitorMiddleware(options: PulseExpressOptions = {}) {
     const sessionId = headerString(req.headers['x-session-id'])
     const userAgent = headerString(req.headers['user-agent'])
     const referer = headerString(req.headers['referer'] ?? req.headers['referrer'])
-    const clientIp = resolveClientIp(req.headers, req.socket?.remoteAddress)
+    const clientIp = resolveClientIp(req.headers, req.socket?.remoteAddress, options.trustedProxies, decision.maskIp)
     const startTime = Date.now()
 
     const store = createContextStore(
@@ -294,6 +302,39 @@ export function monitorMiddleware(options: PulseExpressOptions = {}) {
         })
       })
 
+      // Intercept next(err) — errors routed to Express error-handling
+      // middleware never hit the response 'error' event, so without this
+      // they would never be captured. Plain next() calls pass through
+      // untouched.
+      const wrappedNext: NextFunction = (err?: unknown): void => {
+        if (err) {
+          const error = err instanceof Error ? err : new Error(String(err))
+          withContext(store, () => {
+            try {
+              captureError(error, {
+                mechanism: 'express.next',
+                context: {
+                  requestId,
+                  route: normalizedRoute(req),
+                  framework: 'express',
+                  ...(tenantId ? { tenantId } : {}),
+                },
+              })
+              const activeSpan = ownedSpan ?? trace.getActiveSpan()
+              if (activeSpan) {
+                try {
+                  activeSpan.recordException(error)
+                  activeSpan.setStatus({ code: SpanStatusCode.ERROR, message: error.message })
+                } catch { /* fail-open */ }
+              }
+            } catch (captureErr) {
+              getLogger().error('monitorMiddleware next(err) capture failed', { error: captureErr })
+            }
+          })
+        }
+        next(err as Error | undefined)
+      }
+
       // If we own the fallback span, bind it to OTel context so downstream
       // auto-instrumented operations (Axios, MySQL, Redis, etc.) see it as
       // their parent. Without this, OTel creates isolated traces for each
@@ -301,10 +342,10 @@ export function monitorMiddleware(options: PulseExpressOptions = {}) {
       if (ownedSpan) {
         const spanContext = trace.setSpan(context.active(), ownedSpan)
         context.with(spanContext, () => {
-          next()
+          wrappedNext()
         })
       } else {
-        next()
+        wrappedNext()
       }
     })
   }

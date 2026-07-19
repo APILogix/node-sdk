@@ -9,6 +9,7 @@ import { generateId } from '../utils/uuid.js'
 import { context } from '@opentelemetry/api'
 import { suppressTracing } from '@opentelemetry/core'
 import { SerializationPool } from './serialization-pool.js'
+import { SecurityScrubber } from '../processors/security-scrubber.js'
 
 export interface PostJsonOptions {
   /** Whether to log failures (disable for init to avoid noise). */
@@ -109,7 +110,6 @@ export async function postJson<T>(
         signal: controller.signal,
       })
     )
-    console.log('HTTP response received', { response})
 
     const text = await response.text()
     const parsed = text ? tryParseJson(text) : null
@@ -204,8 +204,31 @@ function tryParseJson(text: string): unknown | undefined {
 }
 
 function previewBody(body: unknown): unknown {
-  if (typeof body === 'string') return body.slice(0, 500)
+  if (typeof body === 'string') {
+    const text = body.slice(0, 500)
+    return scrubPreview(text)
+  }
+  if (body && typeof body === 'object') {
+    const scrubber = SecurityScrubber.getInstance()
+    if (scrubber) {
+      try {
+        return scrubber.scrubValue(body)
+      } catch {
+        // fall through to raw preview below
+      }
+    }
+  }
   return body
+}
+
+function scrubPreview(text: string): string {
+  const scrubber = SecurityScrubber.getInstance()
+  if (!scrubber) return text
+  try {
+    return scrubber.scrubValue(text) as string
+  } catch {
+    return text
+  }
 }
 
 /**

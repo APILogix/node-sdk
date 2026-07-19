@@ -115,6 +115,7 @@ describe('Remote Config Integration', () => {
                 errors: 1.0,
                 profiles: 0,
                 replays: 0,
+                metrics: 1.0,
                 routes: {},
             });
             const scrubber = SecurityScrubber.initialize({

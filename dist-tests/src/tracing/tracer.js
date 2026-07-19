@@ -20,7 +20,7 @@ import { BatchSpanProcessor, ParentBasedSampler, TraceIdRatioBasedSampler, } fro
 import { resourceFromAttributes } from '@opentelemetry/resources';
 import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION, ATTR_DEPLOYMENT_ENVIRONMENT_NAME, } from '@opentelemetry/semantic-conventions';
 import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks';
-import { W3CTraceContextPropagator, CompositePropagator, W3CBaggagePropagator, } from '@opentelemetry/core';
+import { W3CTraceContextPropagator, CompositePropagator, W3CBaggagePropagator, suppressTracing, } from '@opentelemetry/core';
 import { TRACING_DEFAULTS } from '../constants/internal-defaults.js';
 import { PulseSpan } from './span.js';
 import { getLogger } from '../utils/logger.js';
@@ -30,6 +30,7 @@ import { costGovernor } from '../utils/cost-governor.js';
 import { RemoteConfigSampler } from './remote-config-sampler.js';
 import { ConfigManager } from '../core/config-manager.js';
 import { ProfilingSubsystem } from '../subsystems/profiling-subsystem.js';
+import { EntitlementGate } from '../core/entitlement-gate.js';
 import os from 'node:os';
 import { SDK_NAME, SDK_VERSION } from '../constants/version.js';
 // ─── State ──────────────────────────────────────────────────────────────────
@@ -40,6 +41,28 @@ let initialized = false;
 let ownsProvider = false;
 let sdkConfig = null;
 const TRACER_PROVIDER_SYMBOL = Symbol.for('pulse-sdk.otel.tracer-provider');
+const PULSE_INTERNAL_CONTEXT_KEY = Symbol.for('pulse-sdk.internal-context');
+/**
+ * Build a non-recording PulseSpan. Used when the tracer is not initialized,
+ * when span creation fails, and when the `customSpans` entitlement is
+ * revoked — in every case the caller gets a span object it can safely call
+ * `end()` / `setAttribute()` on, but nothing is recorded or exported.
+ */
+function createNoopSpan(name) {
+    if (!noopTracer) {
+        noopTracer = trace.getTracer(SDK_NAME + '/noop');
+    }
+    return new PulseSpan(noopTracer.startSpan(name));
+}
+/**
+ * Custom developer spans are gated by the `customSpans` entitlement.
+ * Revoked ⇒ every custom span API returns a non-recording noop span.
+ * Automatic instrumentation is unaffected (it uses the OTel tracer
+ * directly, not these developer-facing wrappers).
+ */
+function customSpansAllowed() {
+    return EntitlementGate.isAllowed('customSpans');
+}
 // ─── Span Exporter → SDK Event Pipeline ─────────────────────────────────────
 /**
  * Custom SpanExporter that routes finished spans through the SDK's
@@ -55,65 +78,87 @@ const TRACER_PROVIDER_SYMBOL = Symbol.for('pulse-sdk.otel.tracer-provider');
  */
 class PipelineSpanExporter {
     export(spans, resultCallback) {
-        try {
-            let allAccepted = true;
-            for (const span of spans) {
-                const ctx = span.spanContext();
-                const traceId = ctx.traceId;
-                // Error-priority sampling: if the span was RECORD-only
-                // (not sampled) but contains an error, promote it to
-                // exported. Non-sampled, non-error spans are dropped.
-                const isSampled = (ctx.traceFlags & 1) === 1;
-                const hasError = span.status.code === 2
-                    || span.events.some(e => e.name === 'exception');
-                if (!isSampled && !hasError) {
-                    continue; // Drop non-sampled, non-error span
+        const activeCtx = otelContext.active();
+        if (activeCtx.getValue(PULSE_INTERNAL_CONTEXT_KEY)) {
+            getLogger().warn('Exporter recursion detected: dropping spans to prevent telemetry loop', {
+                droppedSpans: spans.length,
+                event: 'EXPORTER_RECURSION_PREVENTED'
+            });
+            resultCallback({ code: 0 });
+            return;
+        }
+        const safeCtx = suppressTracing(activeCtx.setValue(PULSE_INTERNAL_CONTEXT_KEY, true));
+        otelContext.with(safeCtx, () => {
+            try {
+                let allAccepted = true;
+                const traceIdsInBatch = new Set();
+                const rootTraceIds = new Set();
+                // Pass 1: Record all child intervals for the batch first
+                for (const span of spans) {
+                    const ctx = span.spanContext();
+                    const traceId = ctx.traceId;
+                    const isSampled = (ctx.traceFlags & 1) === 1;
+                    const hasError = span.status.code === 2
+                        || span.events.some(e => e.name === 'exception');
+                    if (!isSampled && !hasError) {
+                        continue;
+                    }
+                    if (!costGovernor.canCreateSpan(traceId) || !costGovernor.canContinueTrace(traceId)) {
+                        continue;
+                    }
+                    const parentSpanId = span.parentSpanContext?.spanId;
+                    if (parentSpanId) {
+                        spanDurationTracker.recordChildInterval(traceId, parentSpanId, hrTimeToMs(span.startTime), hrTimeToMs(span.endTime));
+                    }
                 }
-                // Cost governance: check span-per-trace limits
-                if (!costGovernor.canCreateSpan(traceId)) {
-                    continue; // Drop span — trace exceeded span budget
+                // Pass 2: Process spans, convert to events, and send to aggregator
+                for (const span of spans) {
+                    const ctx = span.spanContext();
+                    const traceId = ctx.traceId;
+                    traceIdsInBatch.add(traceId);
+                    const isSampled = (ctx.traceFlags & 1) === 1;
+                    const hasError = span.status.code === 2
+                        || span.events.some(e => e.name === 'exception');
+                    if (!isSampled && !hasError) {
+                        continue;
+                    }
+                    if (!costGovernor.canCreateSpan(traceId) || !costGovernor.canContinueTrace(traceId)) {
+                        continue;
+                    }
+                    const traceEvent = this.spanToEvent(span);
+                    if (!processEvent(traceEvent)) {
+                        allAccepted = false;
+                    }
+                    try {
+                        getTraceAggregator().addSpan(traceEvent);
+                    }
+                    catch { }
+                    const parentSpanId = span.parentSpanContext?.spanId;
+                    if (!parentSpanId) {
+                        rootTraceIds.add(traceId);
+                    }
                 }
-                // Cost governance: check trace duration limits
-                if (!costGovernor.canContinueTrace(traceId)) {
-                    continue; // Drop span — trace exceeded max duration
+                // Flush completed traces at the end of the batch export to prevent race conditions
+                for (const traceId of traceIdsInBatch) {
+                    try {
+                        getTraceAggregator().flushIfComplete(traceId);
+                    }
+                    catch { }
                 }
-                // Record child interval for exclusive duration computation.
-                // Every span with a parent contributes to the parent's
-                // child coverage — needed to compute exclusiveDuration.
-                const parentSpanId = span.parentSpanContext?.spanId;
-                if (parentSpanId) {
-                    spanDurationTracker.recordChildInterval(traceId, parentSpanId, hrTimeToMs(span.startTime), hrTimeToMs(span.endTime));
+                // Clean up span duration tracker for traces whose root spans were processed in this batch
+                for (const traceId of rootTraceIds) {
+                    try {
+                        spanDurationTracker.cleanupTrace(traceId);
+                    }
+                    catch { }
                 }
-                const traceEvent = this.spanToEvent(span);
-                // Track whether the transport actually accepted the event.
-                // Reporting success unconditionally would lie to the
-                // OTel BatchSpanProcessor, which discards the span on
-                // success — so spans rejected by transport (queue full,
-                // killswitch, etc.) would be silently lost.
-                if (!processEvent(traceEvent)) {
-                    allAccepted = false;
-                }
-                // Route span through TraceAggregator for tree reconstruction.
-                // The aggregator buffers spans by traceId and emits a complete
-                // 'trace' event (with embedded children) when the root arrives.
-                try {
-                    getTraceAggregator().addSpan(traceEvent);
-                }
-                catch {
-                    // Aggregation failure must never block span export
-                }
-                // If this is a root span (no parent), clean up the
-                // duration tracker to free memory.
-                if (!parentSpanId) {
-                    spanDurationTracker.cleanupTrace(traceId);
-                }
+                resultCallback({ code: allAccepted ? 0 : 1 });
             }
-            resultCallback({ code: allAccepted ? 0 : 1 });
-        }
-        catch (err) {
-            getLogger().error('Span export failed', { error: err, spanCount: spans.length });
-            resultCallback({ code: 1, error: err instanceof Error ? err : new Error(String(err)) });
-        }
+            catch (err) {
+                getLogger().error('Span export failed', { error: err, spanCount: spans.length });
+                resultCallback({ code: 1, error: err instanceof Error ? err : new Error(String(err)) });
+            }
+        });
     }
     shutdown() {
         return Promise.resolve();
@@ -380,13 +425,13 @@ function snapshotActiveSpanId() {
  */
 export function startSpan(name, options) {
     const logger = getLogger();
+    if (!customSpansAllowed()) {
+        logger.debug('startSpan called but customSpans entitlement is revoked — returning no-op span', { name });
+        return createNoopSpan(name);
+    }
     if (!tracer) {
         logger.debug('startSpan called but tracer is not initialized — returning no-op span', { name });
-        if (!noopTracer) {
-            noopTracer = trace.getTracer(SDK_NAME + '/noop');
-        }
-        const noopSpan = noopTracer.startSpan(name);
-        return new PulseSpan(noopSpan);
+        return createNoopSpan(name);
     }
     try {
         const otelOptions = {};
@@ -402,11 +447,7 @@ export function startSpan(name, options) {
     }
     catch (err) {
         logger.warn('Failed to start span', { name, error: err });
-        if (!noopTracer) {
-            noopTracer = trace.getTracer(SDK_NAME + '/noop');
-        }
-        const noopSpan = noopTracer.startSpan(name);
-        return new PulseSpan(noopSpan);
+        return createNoopSpan(name);
     }
 }
 /**
@@ -444,7 +485,7 @@ export function startSpan(name, options) {
  *   span event via OTel's own `parentSpanContext`.
  */
 export async function withSpan(name, fn, options) {
-    if (!tracer) {
+    if (!tracer || !customSpansAllowed()) {
         const span = startSpan(name, options);
         try {
             const result = await fn(span);
@@ -544,7 +585,7 @@ export async function withSpan(name, fn, options) {
  * `withSpan` is preferred everywhere else.
  */
 export function withSpanSync(name, fn, options) {
-    if (!tracer) {
+    if (!tracer || !customSpansAllowed()) {
         const span = startSpan(name, options);
         try {
             const result = fn(span);

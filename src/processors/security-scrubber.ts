@@ -132,6 +132,17 @@ export class SecurityScrubber {
         }
       }
 
+      // Top-level array sections (LogEvent.args, ReplayEvent.events,
+      // ProfileEvent.profile node arrays, breadcrumb lists, …) are scrubbed
+      // generically — copy-on-write, field redaction + PII inside.
+      if (needsDeepScrub) {
+        for (const [key, value] of Object.entries(clone)) {
+          if (Array.isArray(value)) {
+            clone[key] = this.scrubValue(value)
+          }
+        }
+      }
+
       // PII detection on string fields
       if (hasPiiRules) {
         this.scrubPiiInObject(clone)
@@ -149,6 +160,42 @@ export class SecurityScrubber {
   scrubBatch<T extends SDKEvent>(events: T[]): T[] {
     if (this.destroyed || !this.hasScrubRules) return events
     return events.map(e => this.scrub(e))
+  }
+
+  /**
+   * Scrub an arbitrary value (object, array, or string) with the active
+   * field-redaction and PII rules. Used for payload sections that are not
+   * part of the fixed event shape — e.g. `LogEvent.args`,
+   * `ReplayEvent.events`, profile payloads. Returns a new value; never
+   * mutates the input. Never throws.
+   */
+  scrubValue(value: unknown, depth: number = 0): unknown {
+    if (this.destroyed || !this.hasScrubRules) return value
+    if (depth > 10) return value
+
+    try {
+      if (typeof value === 'string') {
+        return this.piiConfig.enabled ? this.scrubPiiInString(value) : value
+      }
+      if (Array.isArray(value)) {
+        return value.map(item => this.scrubValue(item, depth + 1))
+      }
+      if (typeof value === 'object' && value !== null) {
+        const result: Record<string, unknown> = Object.create(null)
+        for (const [key, v] of Object.entries(value as Record<string, unknown>)) {
+          if (SecurityScrubber.DANGEROUS_KEYS.has(key)) continue
+          if (this.scrubbingConfig.enabled && this.sensitiveFields.has(key.toLowerCase())) {
+            result[key] = REDACTED
+          } else {
+            result[key] = this.scrubValue(v, depth + 1)
+          }
+        }
+        return result
+      }
+      return value
+    } catch {
+      return value
+    }
   }
 
   /** Handle config change — hot-swap privacy config. */
@@ -222,8 +269,19 @@ export class SecurityScrubber {
       if (SecurityScrubber.DANGEROUS_KEYS.has(key)) continue
       if (this.sensitiveFields.has(key.toLowerCase())) {
         result[key] = REDACTED
-      } else if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
-        result[key] = this.scrubBodyFields(value as Record<string, unknown>, depth + 1)
+      } else if (typeof value === 'object' && value !== null) {
+        // Arrays (e.g. LogEvent.args, ReplayEvent.events, profile nodes)
+        // are traversed item-by-item; objects inside arrays are scrubbed
+        // recursively. Scalars pass through untouched.
+        result[key] = Array.isArray(value)
+          ? value.map(item =>
+              typeof item === 'object' && item !== null
+                ? Array.isArray(item)
+                  ? (this.scrubValue(item, depth + 1) as unknown[])
+                  : this.scrubBodyFields(item as Record<string, unknown>, depth + 1)
+                : item,
+            )
+          : this.scrubBodyFields(value as Record<string, unknown>, depth + 1)
       } else {
         result[key] = value
       }
@@ -239,10 +297,36 @@ export class SecurityScrubber {
       const value = obj[key]
       if (typeof value === 'string') {
         obj[key] = this.scrubPiiInString(value)
-      } else if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
-        this.scrubPiiInObject(value as Record<string, unknown>, depth + 1)
+      } else if (typeof value === 'object' && value !== null) {
+        if (Array.isArray(value)) {
+          // Copy-on-write: arrays live on a shallow clone, so scrubbing in
+          // place would mutate the caller's original event. Produce a new
+          // array (and shallow copies of object items) instead.
+          obj[key] = this.scrubPiiInArray(value, depth + 1)
+        } else {
+          this.scrubPiiInObject(value as Record<string, unknown>, depth + 1)
+        }
       }
     }
+  }
+
+  private scrubPiiInArray(arr: unknown[], depth: number = 0): unknown[] {
+    if (depth > 10) return arr
+
+    return arr.map(item => {
+      if (typeof item === 'string') {
+        return this.scrubPiiInString(item)
+      }
+      if (Array.isArray(item)) {
+        return this.scrubPiiInArray(item, depth + 1)
+      }
+      if (typeof item === 'object' && item !== null) {
+        const copy = { ...(item as Record<string, unknown>) }
+        this.scrubPiiInObject(copy, depth + 1)
+        return copy
+      }
+      return item
+    })
   }
 
   private scrubPiiInString(str: string): string {

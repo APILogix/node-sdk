@@ -69,6 +69,12 @@ export interface ErrorEvent {
   readonly breadcrumbs?: readonly Breadcrumb[] | undefined
   readonly traceId?: string | undefined
   readonly spanId?: string | undefined
+  /**
+   * How the error was captured — e.g. 'uncaughtException',
+   * 'unhandledRejection', 'console.error', or 'manual' (developer API).
+   * Lets the backend distinguish crash-path errors from explicit captures.
+   */
+  readonly mechanism?: string | undefined
   readonly metadata?: EventMetadata | undefined
 }
 
@@ -145,6 +151,8 @@ export interface SpanEvent {
   readonly events?: readonly SpanEventItem[] | undefined
   readonly links?: readonly SpanLink[] | undefined
   readonly metadata?: EventMetadata | undefined
+  /** Internal flag used by the SDK pipeline for shutdown drains. */
+  readonly __pulseInternal?: boolean | undefined
 }
 
 // ─── New Event Types (Remote Config Driven) ─────────────────────────────────
@@ -234,6 +242,7 @@ export interface TraceEvent {
   readonly rootSpan: AggregatedSpanEvent
   readonly spanCount: number
   readonly totalDuration: number
+  readonly timestamp?: number | undefined
   /** True if the root span was never received (orphaned children). */
   readonly isPartial: boolean
   readonly metadata?: EventMetadata | undefined
@@ -241,6 +250,8 @@ export interface TraceEvent {
   readonly sessionId?: string | undefined
   readonly userId?: string | undefined
   readonly tenantId?: string | undefined
+  /** Internal flag used by the SDK pipeline for shutdown drains. */
+  readonly __pulseInternal?: boolean | undefined
 }
 
 // ─── Discriminated Union ────────────────────────────────────────────────────

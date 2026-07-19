@@ -90,6 +90,12 @@ interface ResolvedInstrumentation {
   mongodb: boolean
   redis: boolean
   bullmq: boolean
+  bullmqConfig: {
+    enabled: boolean
+    emitCreateSpansForBulk: boolean
+    emitCreateSpansForFlow: boolean
+    requireParentSpanForPublish: boolean
+  }
   axios: boolean
   pg: boolean
   pgConfig: { enabled: boolean; captureQueries: boolean; captureParams: boolean }
@@ -154,8 +160,22 @@ function resolveInstrumentationOptions(userOptions: AutoInstrumentOptions): Reso
 
   const mongodbEnabled = instr.mongodb ?? userOptions.mongodb ?? false
   const redisEnabled = instr.redis ?? userOptions.redis ?? false
-  const bullmqEnabled = instr.bullmq ?? userOptions.bullmq ?? false
   const axiosEnabled = instr.axios ?? userOptions.axios ?? false
+
+  // BullMQ accepts an object form in remote config so the control plane can
+  // tune span verbosity without a redeploy. Boolean form = enabled with
+  // library defaults.
+  const bullmqEnabled = typeof instr.bullmq === 'object'
+    ? instr.bullmq.enabled
+    : (instr.bullmq ?? userOptions.bullmq ?? false)
+
+  const bullmqRemote = typeof instr.bullmq === 'object' ? instr.bullmq : undefined
+  const bullmqConfig = {
+    enabled: bullmqEnabled,
+    emitCreateSpansForBulk: bullmqRemote?.emitCreateSpansForBulk ?? true,
+    emitCreateSpansForFlow: bullmqRemote?.emitCreateSpansForFlow ?? true,
+    requireParentSpanForPublish: bullmqRemote?.requireParentSpanForPublish ?? false,
+  }
 
   const instrAny = instr as unknown as Record<string, unknown>
 
@@ -189,7 +209,8 @@ function resolveInstrumentationOptions(userOptions: AutoInstrumentOptions): Reso
     prismaConfig,
     mongodb: mongodbEnabled,
     redis: redisEnabled,
-    bullmq: bullmqEnabled,
+    bullmq: bullmqConfig.enabled,
+    bullmqConfig,
     axios: axiosEnabled,
     pg: pgConfig.enabled,
     pgConfig,
@@ -376,6 +397,12 @@ export function registerAutoInstrumentations(options: AutoInstrumentOptions = {}
     instrumentations.push(
       new PrismaInstrumentation({
         enabled: true,
+        // captureQueries: false → drop every engine-level span (`prisma:engine:*`
+        // is the version-stable name prefix for query/connection spans) so raw
+        // SQL never leaves the process. Client-level operation spans
+        // (`prisma:client:*`) are kept. captureParams is enforced downstream by
+        // the pipeline scrubber — the underlying library has no param hook.
+        ...(resolved.prismaConfig.captureQueries ? {} : { ignoreSpanTypes: [/^prisma:engine:/] }),
       })
     )
   }
@@ -411,6 +438,9 @@ export function registerAutoInstrumentations(options: AutoInstrumentOptions = {}
     instrumentations.push(
       new BullMQInstrumentation({
         enabled: true,
+        emitCreateSpansForBulk: resolved.bullmqConfig.emitCreateSpansForBulk,
+        emitCreateSpansForFlow: resolved.bullmqConfig.emitCreateSpansForFlow,
+        requireParentSpanForPublish: resolved.bullmqConfig.requireParentSpanForPublish,
       })
     )
   }

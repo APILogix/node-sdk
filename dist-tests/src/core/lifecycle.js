@@ -41,6 +41,7 @@ import { resetAutoInstrumentations } from '../instrumentation/auto-instrument.js
 import { ConfigManager } from './config-manager.js';
 import { FeatureController } from './feature-controller.js';
 import { KillswitchEngine } from './killswitch-engine.js';
+import { EntitlementGate } from './entitlement-gate.js';
 import { SamplingEngine } from './sampling-engine.js';
 import { LimitsEngine } from './limits-engine.js';
 import { SecurityScrubber } from '../processors/security-scrubber.js';
@@ -48,6 +49,9 @@ import { LoggingSubsystem } from '../subsystems/logging-subsystem.js';
 import { ProfilingSubsystem } from '../subsystems/profiling-subsystem.js';
 import { CronSubsystem } from '../subsystems/cron-subsystem.js';
 import { tenantGovernor } from './tenant-isolation.js';
+import { cardinalityGovernor } from '../utils/cardinality-governor.js';
+import { adaptivePressure } from '../utils/adaptive-pressure.js';
+import { SerializationPool } from '../transport/serialization-pool.js';
 // ─── Module State ───────────────────────────────────────────────────────────
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 10_000;
 const HOOK_TIMEOUT_MS = 5_000;
@@ -310,10 +314,32 @@ async function runOrchestratedShutdown(stepErrors) {
         errorDeduplicator.reset();
         return Promise.resolve();
     }, stepErrors);
-    // 13. Drain any residual pre-init buffer events to disk before storage closes.
+    // 13. Drain residual events to disk before storage closes.
+    //
+    // Two queues hold events at this point:
+    //   - The legacy in-memory `eventQueue` (pre-init buffer + legacy batcher).
+    //   - The TransportRouter's per-route queues that the BatchManager flush
+    //     could not deliver in step 7 (network down, retry budget exhausted,
+    //     etc.). These are undelivered events that would be lost on process
+    //     exit — persist them so the next init replays them.
+    //
+    // Order matters: drain BatchManager queues first (they hold the largest
+    // backlog under outage scenarios), then the legacy queue.
     await runStep('persistent-storage.drain', async () => {
-        const remaining = eventQueue.drainAll();
-        for (const event of remaining) {
+        const router = TransportRouter.getInstance();
+        if (router) {
+            const residual = router.drainAllQueues();
+            if (residual.length > 0) {
+                getLogger().warn('Persisting undelivered events from transport queues for replay on next start', {
+                    count: residual.length,
+                });
+                // SDKEvent and Event are interchangeable in this context — every
+                // event flowing through transport already has eventId/timestamp.
+                persistentStorage.persistBatch(residual);
+            }
+        }
+        const legacyRemaining = eventQueue.drainAll();
+        for (const event of legacyRemaining) {
             persistentStorage.persist(event);
         }
         await persistentStorage.flush();
@@ -343,6 +369,7 @@ async function runUnconditionalCleanup(stepErrors) {
     runSync('config-manager.reset', () => ConfigManager.reset(), stepErrors);
     runSync('feature-controller.reset', () => FeatureController.reset(), stepErrors);
     runSync('killswitch-engine.reset', () => KillswitchEngine.reset(), stepErrors);
+    runSync('entitlement-gate.reset', () => EntitlementGate.reset(), stepErrors);
     runSync('sampling-engine.reset', () => SamplingEngine.reset(), stepErrors);
     runSync('limits-engine.reset', () => LimitsEngine.reset(), stepErrors);
     runSync('security-scrubber.reset', () => SecurityScrubber.reset(), stepErrors);
@@ -354,6 +381,15 @@ async function runUnconditionalCleanup(stepErrors) {
     // Without an explicit reset here, a long-running process that re-inits
     // the SDK accumulates per-tenant rate-limit state across init cycles.
     runSync('tenant-governor.reset', () => tenantGovernor.reset(), stepErrors);
+    runSync('cardinality-governor.shutdown', () => { cardinalityGovernor.shutdown(); cardinalityGovernor.reset(); }, stepErrors);
+    // adaptivePressure is started in init.ts (after metricsRegistry.start()).
+    // Stop its timers/observers so a reinit cycle doesn't stack pollers.
+    runSync('adaptive-pressure.stop', () => adaptivePressure.stop(), stepErrors);
+    // Terminate serialization worker threads — awaited so they can't outlive
+    // the SDK and hold the host process open across shutdown/reinit cycles.
+    await runStep('serialization-pool.reset', async () => {
+        await withTimeout(SerializationPool.reset(), SUBSYSTEM_STEP_TIMEOUT_MS, 'serialization pool reset timed out');
+    }, stepErrors);
     // Reset the batcher (timer + circuit breaker + rate limiter + pressure monitor).
     // Imported lazily to avoid a circular dependency at module-load time.
     await runStep('batcher.stop', async () => {

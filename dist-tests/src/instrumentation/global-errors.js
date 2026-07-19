@@ -20,6 +20,8 @@ import { getLogger } from "../utils/logger.js";
 import { ERROR_DEFAULTS } from "../constants/internal-defaults.js";
 import { crashFlush } from "../core/lifecycle.js";
 import { isOtelInstrumentationError } from "./http-lifecycle-guard.js";
+import { SecurityScrubber } from "../processors/security-scrubber.js";
+import { Severity } from "../types/severity.js";
 let registered = false;
 // Store handler references for proper cleanup
 let uncaughtHandler = null;
@@ -84,7 +86,7 @@ export function setupGlobalErrorHandlers() {
             // 2. No user data is lost — the request was already aborted
             // 3. Crash-flushing for these would mask real application crashes
             if (isOtelInstrumentationError(err)) {
-                logger.warn('OTel instrumentation lifecycle error (non-fatal, suppressed)', {
+                logger.debug('OTel instrumentation lifecycle error (non-fatal, suppressed)', {
                     error: err.message,
                     hint: 'Socket destroyed before HTTP response — known OTel race condition',
                 });
@@ -157,7 +159,17 @@ function wrapConsoleError() {
         consoleErrorReentry = true;
         // Create an error event from the console.error call
         try {
-            const message = args.map(a => {
+            // Scrub args before stringifying — `console.error('creds', { password })`
+            // must never exfiltrate secrets into the error message. Error instances
+            // pass through untouched (scrubValue would strip their non-enumerable
+            // message/stack); their message/stack go through the pipeline-level
+            // scrub before transport. Fail-open when the scrubber isn't
+            // initialized yet for the same reason.
+            const scrubber = SecurityScrubber.getInstance();
+            const scrubbedArgs = scrubber
+                ? args.map(a => (a instanceof Error ? a : scrubber.scrubValue(a)))
+                : args;
+            const message = scrubbedArgs.map(a => {
                 if (a instanceof Error)
                     return a.message;
                 if (typeof a === 'string')
@@ -169,10 +181,10 @@ function wrapConsoleError() {
                     return String(a);
                 }
             }).join(' ');
-            const error = args.find(a => a instanceof Error);
+            const error = scrubbedArgs.find(a => a instanceof Error);
             captureError(error ?? new Error(message), {
                 mechanism: 'console.error',
-                severity: 'error',
+                severity: Severity.Error,
             });
         }
         catch {

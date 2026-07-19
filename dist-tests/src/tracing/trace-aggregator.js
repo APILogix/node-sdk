@@ -90,11 +90,18 @@ export class TraceAggregator {
         }
         trace.spans.set(spanId, spanEvent);
         // Root span detection: no parentSpanId means this is the root.
-        // In Node.js, child spans always end() before the parent span ends,
-        // and OTel's BatchSpanProcessor processes them in order. So when the
-        // root arrives, all children from the same batch are already buffered.
         if (!parentSpanId) {
             trace.rootSpan = spanEvent;
+        }
+    }
+    /**
+     * Flush the trace if its root span has arrived.
+     * This is called by the exporter at the end of a batch process to ensure
+     * all spans from the same batch are buffered before the trace is assembled.
+     */
+    flushIfComplete(traceId) {
+        const trace = this.pending.get(traceId);
+        if (trace && trace.rootSpan) {
             this.flushTrace(traceId);
         }
     }
@@ -143,8 +150,26 @@ export class TraceAggregator {
                     return sStart < eStart ? s : earliest;
                 });
             }
-            // Build the tree
-            const rootAggregated = this.buildTree(rootSpanEvent, spans);
+            // Build the tree. Index children by parentSpanId once (O(n)) instead
+            // of filtering the full span list at every recursion level (O(n²)) —
+            // traces with thousands of spans would otherwise stall the event loop.
+            const childrenByParent = new Map();
+            for (const span of spans) {
+                const parentId = span.parentSpanId;
+                if (!parentId)
+                    continue;
+                const list = childrenByParent.get(parentId);
+                if (list) {
+                    list.push(span);
+                }
+                else {
+                    childrenByParent.set(parentId, [span]);
+                }
+            }
+            for (const list of childrenByParent.values()) {
+                list.sort((a, b) => a.startTime - b.startTime);
+            }
+            const rootAggregated = this.buildTree(rootSpanEvent, childrenByParent);
             // Calculate total duration from root
             const totalDuration = rootSpanEvent.duration ?? 0;
             const traceDocument = {
@@ -176,15 +201,14 @@ export class TraceAggregator {
         }
     }
     /**
-     * Recursively build the span tree by matching parentSpanId → spanId.
+     * Recursively build the span tree using the pre-built parentSpanId →
+     * children index. Children lists are already sorted by startTime.
      */
-    buildTree(rootEvent, allSpans) {
+    buildTree(rootEvent, childrenByParent) {
         const rootSpanId = rootEvent.spanId;
-        // Find direct children of this span
-        const children = allSpans
-            .filter(s => s.parentSpanId === rootSpanId)
-            .sort((a, b) => a.startTime - b.startTime)
-            .map(child => this.buildTree(child, allSpans));
+        // Find direct children of this span — O(1) lookup
+        const children = (childrenByParent.get(rootSpanId) ?? [])
+            .map(child => this.buildTree(child, childrenByParent));
         return {
             spanId: rootSpanId,
             parentSpanId: rootEvent.parentSpanId,

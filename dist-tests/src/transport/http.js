@@ -8,6 +8,7 @@ import { generateId } from '../utils/uuid.js';
 import { context } from '@opentelemetry/api';
 import { suppressTracing } from '@opentelemetry/core';
 import { SerializationPool } from './serialization-pool.js';
+import { SecurityScrubber } from '../processors/security-scrubber.js';
 export async function postJson(url, body, headers, timeoutMs, options = {}) {
     const logger = getLogger();
     const controller = new AbortController();
@@ -76,7 +77,6 @@ export async function postJson(url, body, headers, timeoutMs, options = {}) {
             body: payload,
             signal: controller.signal,
         }));
-        console.log('HTTP response received', { response });
         const text = await response.text();
         const parsed = text ? tryParseJson(text) : null;
         const durationMs = Date.now() - startedAt;
@@ -156,9 +156,33 @@ function tryParseJson(text) {
     }
 }
 function previewBody(body) {
-    if (typeof body === 'string')
-        return body.slice(0, 500);
+    if (typeof body === 'string') {
+        const text = body.slice(0, 500);
+        return scrubPreview(text);
+    }
+    if (body && typeof body === 'object') {
+        const scrubber = SecurityScrubber.getInstance();
+        if (scrubber) {
+            try {
+                return scrubber.scrubValue(body);
+            }
+            catch {
+                // fall through to raw preview below
+            }
+        }
+    }
     return body;
+}
+function scrubPreview(text) {
+    const scrubber = SecurityScrubber.getInstance();
+    if (!scrubber)
+        return text;
+    try {
+        return scrubber.scrubValue(text);
+    }
+    catch {
+        return text;
+    }
 }
 /**
  * Parse Retry-After header (seconds or HTTP-date format).

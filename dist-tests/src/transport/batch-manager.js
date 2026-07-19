@@ -6,6 +6,10 @@ import { context as otelContext } from '@opentelemetry/api';
 import { suppressTracing } from '@opentelemetry/core';
 import { SecurityScrubber } from '../processors/security-scrubber.js';
 import { sanitizeEvent } from '../processors/sanitizer.js';
+import { persistentStorage } from '../storage/persistent-storage.js';
+import { persistenceGovernor } from '../storage/persistence-governor.js';
+import { costGovernor } from '../utils/cost-governor.js';
+import { compressGzip } from '../utils/compression.js';
 export class BatchManager {
     options;
     timer = null;
@@ -103,10 +107,10 @@ export class BatchManager {
                 break;
             }
             const batch = this.nextSerializableBatch();
-            if (batch.length === 0)
+            if (!batch)
                 break;
             this.activeSends++;
-            this.batched += batch.length;
+            this.batched += batch.events.length;
             void this.sendBatch(batch);
         }
     }
@@ -115,22 +119,30 @@ export class BatchManager {
         let batch = this.options.queue.drain(targetSize);
         while (batch.length > 0) {
             const scrubber = SecurityScrubber.getInstance();
-            let safeBatch = batch;
-            if (scrubber) {
-                safeBatch = scrubber.scrubBatch(batch);
+            const safeBatch = scrubber ? scrubber.scrubBatch(batch) : batch.map(e => sanitizeEvent(e));
+            const payload = { events: safeBatch, route: this.options.route, timestamp: Date.now() };
+            let body;
+            let payloadBytes;
+            try {
+                body = JSON.stringify(payload);
+                payloadBytes = Buffer.byteLength(body);
             }
-            else {
-                safeBatch = batch.map(e => sanitizeEvent(e));
+            catch {
+                // Serialization failed (e.g., circular ref). Drop the entire batch in
+                // one go and emit a single onDrop notification. Do not requeue — that
+                // would re-serialize the same bad payload and double-count the drop.
+                this.totalDropped += batch.length;
+                this.options.onDrop?.({
+                    route: this.options.route,
+                    reason: 'serialization_failed',
+                    count: batch.length,
+                    eventType: batch[0]?.type,
+                });
+                return null;
             }
-            const payloadBytes = this.byteLength(safeBatch);
-            // Sentinel: serialization itself failed (e.g., circular ref). The
-            // bad events have already been dropped+reported by byteLength, so
-            // don't requeue or try to split — that would re-serialize the same
-            // bad payload and double-count the drop in stats.
-            if (payloadBytes < 0)
-                return [];
-            if (payloadBytes <= this.options.maxPayloadBytes)
-                return safeBatch;
+            if (payloadBytes <= this.options.maxPayloadBytes) {
+                return { events: safeBatch, body };
+            }
             if (batch.length === 1) {
                 this.totalDropped++;
                 this.options.onDrop?.({
@@ -139,31 +151,35 @@ export class BatchManager {
                     count: 1,
                     eventType: batch[0]?.type,
                 });
-                return [];
+                return null;
             }
             const half = Math.max(1, Math.floor(batch.length / 2));
             const overflow = batch.splice(half);
             this.options.queue.requeueFront(overflow);
         }
-        return [];
+        return null;
     }
     async sendBatch(batch) {
         const startedAt = Date.now();
+        const { events, body } = batch;
         const lease = await this.options.connectionManager.acquire(this.options.route);
         if (!lease) {
             this.activeSends--;
-            this.batched -= batch.length;
-            this.totalFailed += batch.length;
-            this.options.queue.requeueFront(batch);
+            this.batched -= events.length;
+            this.totalFailed += events.length;
+            // Connection-pool starvation is a transient failure (rate-limited or
+            // socket-saturated). Persist so a process crash before the next pump
+            // doesn't lose the batch, then re-queue for the next tick.
+            this.persistOnFailure(events, 'connection_acquire_failed');
+            this.options.queue.requeueFront(events);
             this.ensureTimer(true);
             return;
         }
         try {
-            const body = JSON.stringify({
-                events: batch,
-                route: this.options.route,
-                timestamp: Date.now(),
-            });
+            // Every batch is gzip-compressed before it leaves the process. This is
+            // an SDK-level transport contract, NOT a remote-config knob: the
+            // backend always expects `Content-Encoding: gzip` on batch sends.
+            const compressedBody = await compressGzip(Buffer.from(body, 'utf8'));
             const controller = new AbortController();
             const timeout = setTimeout(() => controller.abort(), this.options.socketTimeoutMs);
             timeout.unref?.();
@@ -177,33 +193,53 @@ export class BatchManager {
                     method: this.options.definition.method,
                     headers: {
                         'Content-Type': this.options.definition.contentType,
+                        'Content-Encoding': 'gzip',
                         Authorization: `Bearer ${this.options.apiKey}`,
                         'X-Route': this.options.route,
                         'x-pulse-internal': '1',
                     },
-                    body,
+                    body: new Uint8Array(compressedBody),
                     signal: controller.signal,
                 }));
                 const latency = Date.now() - startedAt;
                 if (response.ok) {
                     this.options.healthMonitor.recordSuccess(this.options.route, latency);
-                    this.totalSent += batch.length;
+                    this.totalSent += events.length;
                     this.totalRequests++;
-                    this.totalBatchEvents += batch.length;
+                    this.totalBatchEvents += events.length;
+                    // Feed the cost governor's bytes budget with the uncompressed
+                    // payload size — ingestion billing is per event byte, not per
+                    // compressed wire byte. Without this, shouldReduceTelemetry()
+                    // could never engage and getStats() always reported 0 bytes.
+                    costGovernor.recordBytesSent(Buffer.byteLength(body));
+                    // ACK: backend confirmed delivery. Remove the batch from disk if
+                    // it had been persisted on a previous failed attempt. discard()
+                    // is async (it rewrites the NDJSON file) but we do not await it
+                    // here — the send pipeline must not block on filesystem latency.
+                    // The write chain inside persistentStorage serializes discards
+                    // safely.
+                    this.discardOnSuccess(events);
                 }
                 else if (response.status >= 500 || response.status === 429 || response.status === 408) {
                     this.options.healthMonitor.recordFailure(this.options.route);
-                    this.totalFailed += batch.length;
-                    this.options.queue.requeueFront(batch);
+                    this.totalFailed += events.length;
+                    // Retry-eligible failure: persist before re-queue so a crash
+                    // between now and the next attempt doesn't lose the batch.
+                    this.persistOnFailure(events, `http_${response.status}`);
+                    this.options.queue.requeueFront(events);
                 }
                 else {
                     this.options.healthMonitor.recordFailure(this.options.route);
-                    this.totalDropped += batch.length;
+                    this.totalDropped += events.length;
+                    // Non-retryable failure (4xx other than 408/429). The backend
+                    // has rejected the batch and a retry would just be re-rejected.
+                    // Do NOT persist — replaying a permanent rejection forever is a
+                    // bug. Drop the batch and notify the dropper.
                     this.options.onDrop?.({
                         route: this.options.route,
                         reason: 'route_unavailable',
-                        count: batch.length,
-                        eventType: batch[0]?.type,
+                        count: events.length,
+                        eventType: events[0]?.type,
                     });
                 }
             }
@@ -213,21 +249,82 @@ export class BatchManager {
         }
         catch (error) {
             this.options.healthMonitor.recordFailure(this.options.route);
-            this.totalFailed += batch.length;
-            this.options.queue.requeueFront(batch);
+            this.totalFailed += events.length;
+            // Network-level failure (DNS, TCP reset, abort, fetch rejection).
+            // The backend never saw the request, so retry is safe. Persist so a
+            // crash before retry doesn't drop the batch.
+            this.persistOnFailure(events, 'network_error');
+            this.options.queue.requeueFront(events);
             getLogger().warn('[TransportRouter] Batch send failed', {
                 route: this.options.route,
                 error: error instanceof Error ? error.message : String(error),
-                eventCount: batch.length,
+                eventCount: events.length,
             });
         }
         finally {
             lease.release(true);
             this.activeSends--;
-            this.batched -= batch.length;
+            this.batched -= events.length;
             this.firstQueuedAt = this.options.queue.isEmpty() ? 0 : Date.now();
             this.pump();
         }
+    }
+    /**
+     * Persist a batch to disk after a transient send failure.
+     *
+     * Called on network errors, retry-eligible HTTP failures (5xx, 429, 408),
+     * and connection-acquisition starvation. NOT called on 4xx permanent
+     * rejections — those are dropped because replaying them forever is a bug.
+     *
+     * Persistence is best-effort and never throws to the caller. The batch
+     * is still re-queued in memory by the caller; persistence is purely
+     * defense against process crash before the in-memory retry succeeds.
+     */
+    persistOnFailure(batch, reason) {
+        try {
+            if (!persistentStorage.isInitialized)
+                return;
+            // Consult the persistence governor per event: critical-tier events
+            // (errors/crashes) always persist, but under adaptive pressure the
+            // governor sheds lower durability tiers and enforces the per-minute
+            // persist budget — so a failing backend can't turn into a disk-I/O
+            // storm exactly when the process is already under memory/GC pressure.
+            const survivable = batch.filter(event => persistenceGovernor.shouldPersist(event));
+            if (survivable.length > 0) {
+                persistentStorage.persistBatch(survivable);
+            }
+        }
+        catch (error) {
+            // Persistence failure on the failure path is genuinely best-effort.
+            // We've already counted the batch as failed; logging here is enough.
+            getLogger().debug('[TransportRouter] Failed to persist failed batch', {
+                route: this.options.route,
+                reason,
+                eventCount: batch.length,
+                error,
+            });
+        }
+    }
+    /**
+     * Discard delivered events from durable storage after backend ACK.
+     *
+     * Fire-and-forget: the rewrite is serialized through the storage write
+     * chain, so completion order is correct, but we do not await here so a
+     * slow filesystem cannot block the send pipeline. A crash before the
+     * discard write hits disk leaves the events on disk and produces a
+     * single duplicate replay on the next start — which the backend MUST
+     * dedupe by `eventId` per the at-least-once delivery contract.
+     */
+    discardOnSuccess(batch) {
+        if (!persistentStorage.isInitialized)
+            return;
+        void persistentStorage.discard(batch).catch(error => {
+            getLogger().debug('[TransportRouter] Failed to discard delivered batch', {
+                route: this.options.route,
+                eventCount: batch.length,
+                error,
+            });
+        });
     }
     effectiveMaxBatchSize() {
         const scaled = Math.floor(this.options.maxBatchSize * this.options.healthMonitor.batchScale(this.options.route));
@@ -255,7 +352,9 @@ export class BatchManager {
         const waitMs = this.effectiveMaxWaitMs(extended);
         this.timer = setTimeout(() => {
             this.timer = null;
-            this.pump(true);
+            otelContext.with(suppressTracing(otelContext.active()), () => {
+                this.pump(true);
+            });
         }, waitMs);
         this.timer.unref?.();
     }
@@ -264,32 +363,6 @@ export class BatchManager {
             return;
         clearTimeout(this.timer);
         this.timer = null;
-    }
-    /**
-     * Compute the JSON-encoded payload size for a batch.
-     *
-     * Returns a negative sentinel (-1) on serialization failure so callers can
-     * distinguish "payload too large" from "payload not serializable" and
-     * avoid re-serializing the same bad batch (which would double-count the
-     * dropped events in stats).
-     *
-     * On serialization failure we drop the entire batch in one go and emit
-     * a single onDrop notification with reason='serialization_failed'.
-     */
-    byteLength(events) {
-        try {
-            return Buffer.byteLength(JSON.stringify({ events, route: this.options.route, timestamp: Date.now() }));
-        }
-        catch {
-            this.totalDropped += events.length;
-            this.options.onDrop?.({
-                route: this.options.route,
-                reason: 'serialization_failed',
-                count: events.length,
-                eventType: events[0]?.type,
-            });
-            return -1;
-        }
     }
 }
 function sleep(ms) {

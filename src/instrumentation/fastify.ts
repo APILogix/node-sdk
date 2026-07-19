@@ -42,6 +42,14 @@ export interface PulseFastifyOptions {
   readonly captureQuery?: boolean
   readonly captureBody?: boolean
   readonly maxBreadcrumbs?: number
+  /**
+   * IPs of trusted reverse proxies (exact match, or `*` to trust any peer).
+   * Forwarded headers (`X-Forwarded-For` / `X-Real-IP`) are only honored
+   * when the immediate peer is trusted; otherwise the socket IP wins.
+   * Note: `request.ip` already respects Fastify's own `trustProxy` setting
+   * and takes precedence when available.
+   */
+  readonly trustedProxies?: readonly string[]
 }
 
 type FastifyInstance = {
@@ -133,7 +141,7 @@ export function fastifyPulsePlugin(
       const sessionId = headerString(request.headers['x-session-id'])
       const userAgent = headerString(request.headers['user-agent'])
       const referer = headerString(request.headers['referer'] ?? request.headers['referrer'])
-      const clientIp = request.ip ?? resolveClientIp(request.headers, request.socket?.remoteAddress)
+      const clientIp = resolveClientIp(request.headers, request.socket?.remoteAddress, options.trustedProxies, decision.maskIp, request.ip)
 
       const store = createContextStore(
         requestId,

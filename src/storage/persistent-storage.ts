@@ -64,7 +64,7 @@
  */
 
 import { existsSync, unlinkSync, statSync } from 'fs'
-import { appendFile, mkdir, readFile, rename, unlink, writeFile } from 'fs/promises'
+import { appendFile, mkdir, readFile, rename, stat, unlink, writeFile } from 'fs/promises'
 import { join, dirname } from 'path'
 import { tmpdir } from 'os'
 import { createHash } from 'crypto'
@@ -76,6 +76,11 @@ const DEFAULT_MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024 // 10MB
 const DEFAULT_MAX_EVENTS = 10000
 const DEFAULT_EVENT_TTL_MS = 24 * 60 * 60 * 1000 // 24 hours
 const FLUSH_DEBOUNCE_MS = 1000
+/**
+ * Events JSON-stringified per event-loop turn during flush. Keeps the
+ * synchronous serialization burst bounded so the host app stays responsive.
+ */
+const FLUSH_STRINGIFY_CHUNK_SIZE = 200
 const DEFAULT_IO_TIMEOUT_MS = 5_000 // Per file-operation timeout — protects against frozen filesystems.
 
 interface PersistentStorageOptions {
@@ -233,12 +238,20 @@ class PersistentStorage {
     const logger = getLogger()
     const entries: string[] = []
 
+    // Stringify in chunks, yielding to the event loop between them — a
+    // large buffer serialized in one synchronous loop would block the
+    // host application's event loop for the entire duration.
+    let processed = 0
     for (const event of this.buffer) {
       const entry: PersistedEventEntry = {
         event,
         persistedAt: epochMs(),
       }
       entries.push(JSON.stringify(entry))
+      processed++
+      if (processed % FLUSH_STRINGIFY_CHUNK_SIZE === 0) {
+        await new Promise<void>(resolve => setImmediate(resolve))
+      }
     }
 
     try {
@@ -535,13 +548,16 @@ class PersistentStorage {
 
   private async checkAndRotate(): Promise<void> {
     try {
-      if (!existsSync(this.dataFile)) return
-      const stats = statSync(this.dataFile)
+      // Async stat — the previous existsSync + statSync pair issued two
+      // blocking syscalls on every flush. `stat` throws ENOENT when the
+      // file doesn't exist yet, which the catch treats as "nothing to
+      // rotate".
+      const stats = await stat(this.dataFile)
       if (stats.size >= this.maxFileSizeBytes) {
         await this.rotate()
       }
     } catch {
-      // ignore
+      // File missing or unreadable — nothing to rotate.
     }
   }
 

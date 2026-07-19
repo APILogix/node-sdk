@@ -244,7 +244,8 @@ export class ConfigManager {
                 diff.privacyChanged ||
                 diff.limitsChanged ||
                 diff.instrumentationChanged ||
-                diff.runtimeChanged;
+                diff.runtimeChanged ||
+                diff.entitlementsChanged;
             if (hasChanges && !this.destroyed) {
                 // Snapshot listeners to a stable array — destroy() during dispatch
                 // must not mutate the iterator, and unsubscribe() during a listener
@@ -585,11 +586,35 @@ export class ConfigManager {
         return this.freezeDeep(this.applySafetyClamps(merged));
     }
     /**
+     * Keys that must never be copied during a deep merge — they would
+     * mutate the prototype chain of `target` and produce process-wide
+     * prototype pollution. `JSON.parse('{"__proto__":{"polluted":true}}')`
+     * creates an object whose `__proto__` is an *own property* of the
+     * parsed value, so naive iteration via `Object.keys()` enumerates it
+     * and `target[key] = source[key]` resolves to the legacy `__proto__`
+     * setter that mutates the prototype chain. Skipping these keys is
+     * the standard defence and aligns with how other observability SDKs
+     * (Sentry, Datadog) merge backend config.
+     *
+     * `validateRemoteConfig` doesn't catch this because the wire schema
+     * permits unknown keys for forward compatibility — defence in depth
+     * therefore lives here.
+     */
+    static DANGEROUS_MERGE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+    /**
      * Deep merge source into target. Mutates target.
      * Arrays are replaced, not merged. Objects are recursively merged.
+     *
+     * Refuses to copy `__proto__`, `constructor`, or `prototype` from the
+     * source — see `DANGEROUS_MERGE_KEYS` for the rationale.
      */
     deepMerge(target, source) {
         for (const key of Object.keys(source)) {
+            // Defence-in-depth: prototype-pollution keys never propagate, even
+            // from a hostile or buggy backend. The legacy `__proto__` setter
+            // would mutate Object.prototype process-wide.
+            if (ConfigManager.DANGEROUS_MERGE_KEYS.has(key))
+                continue;
             const sourceVal = source[key];
             const targetVal = target[key];
             if (sourceVal !== null &&

@@ -1,6 +1,18 @@
 import assert from "node:assert/strict"
+import { gunzipSync } from "node:zlib"
 process.env.SDK_BASE_URL = "https://api.example.test"
 process.env.LOCALAPPDATA = `${process.cwd()}\\.tmp`
+
+// The SDK gzip-compresses every batch it sends (always-on transport
+// contract). Bodies captured by the fetch stubs may be binary gzip or
+// plain JSON depending on the send path — detect by magic bytes.
+function parseBody(body) {
+  const buf = typeof body === "string"
+    ? Buffer.from(body, "utf8")
+    : Buffer.from(body.buffer ?? body, body.byteOffset ?? 0, body.byteLength ?? undefined)
+  const isGzip = buf.length >= 2 && buf[0] === 0x1f && buf[1] === 0x8b
+  return JSON.parse((isGzip ? gunzipSync(buf) : buf).toString("utf8"))
+}
 
 const { captureMessage, captureRequest, init, shutdown } = await import("../dist/index.js")
 const { addBreadcrumb, createContextStore, withContext } = await import("../dist/core/context.js")
@@ -65,13 +77,13 @@ function findRouteCall(calls, path) {
   await sendEvents([{ type: "manual", timestamp: Date.now() }])
 
   assert.equal(calls[0].url, "https://api.example.test/v1/init")
-  assert.deepEqual(JSON.parse(calls[0].body), { apiKey: "test-key" })
+  assert.deepEqual(parseBody(calls[0].body), { apiKey: "test-key" })
   assert.equal(calls[0].headers["x-api-key"], undefined)
 
   assert.equal(calls[1].url, "https://ingest.example.test/v1/events")
   assert.equal(calls[1].headers["x-api-key"], undefined)
-  assert.equal(JSON.parse(calls[1].body).apiKey, "test-key")
-  assert.ok(JSON.parse(calls[1].body).events[0].eventId)
+  assert.equal(parseBody(calls[1].body).apiKey, "test-key")
+  assert.ok(parseBody(calls[1].body).events[0].eventId)
 
   await assert.rejects(
     () => init({ apiKey: "other-key" }),
@@ -138,7 +150,7 @@ function findRouteCall(calls, path) {
   await shutdown()
 
   const errorCall = findRouteCall(calls, "/v1/errors")
-  const event = JSON.parse(errorCall.body).events[0]
+  const event = parseBody(errorCall.body).events[0]
 
   assert.equal(pluginSetupCount, 1)
   assert.equal(processorCount, 1)
@@ -180,10 +192,12 @@ function findRouteCall(calls, path) {
   await shutdown()
 
   const errorCall = findRouteCall(calls, "/v1/errors")
-  const event = JSON.parse(errorCall.body).events[0]
+  const event = parseBody(errorCall.body).events[0]
 
-  assert.equal(beforeSendCount, 0)
-  assert.equal(event.shouldNotAppear, undefined)
+  // v3 contract: beforeSend is available on every plan — it is no longer
+  // gated behind a paid tier.
+  assert.equal(beforeSendCount, 1)
+  assert.equal(event.shouldNotAppear, true)
 }
 
 {
@@ -195,7 +209,7 @@ function findRouteCall(calls, path) {
 
   await sendInitRequest("direct-key", "https://api.example.test/", 1000)
   assert.equal(calls[0].url, "https://api.example.test/v1/init")
-  assert.deepEqual(JSON.parse(calls[0].body), { apiKey: "direct-key" })
+  assert.deepEqual(parseBody(calls[0].body), { apiKey: "direct-key" })
 
   await assert.rejects(
     () => sendInitRequest("", "https://api.example.test", 1000),
@@ -361,9 +375,10 @@ function findRouteCall(calls, path) {
   await init({ apiKey: "buffer-key" })
   await shutdown()
 
-  const traceCall = findRouteCall(calls, "/v1/traces")
+  // v3 routes request events to the dedicated /v1/requests ingest route.
+  const traceCall = findRouteCall(calls, "/v1/requests")
   assert.ok(traceCall)
-  assert.equal(JSON.parse(traceCall.body).events[0].requestId, "pre-init")
+  assert.equal(parseBody(traceCall.body).events[0].requestId, "pre-init")
 }
 
 {

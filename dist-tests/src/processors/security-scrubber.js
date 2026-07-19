@@ -57,46 +57,70 @@ export class SecurityScrubber {
             return event;
         try {
             const clone = { ...event };
-            // Shallow clone objects that we'll mutate
-            if ('context' in clone && typeof clone['context'] === 'object' && clone['context'] !== null) {
-                clone['context'] = { ...clone['context'] };
-            }
-            if ('attributes' in clone && typeof clone['attributes'] === 'object' && clone['attributes'] !== null) {
-                clone['attributes'] = { ...clone['attributes'] };
-            }
-            if ('body' in clone && typeof clone['body'] === 'object' && clone['body'] !== null && !Array.isArray(clone['body'])) {
-                clone['body'] = { ...clone['body'] };
-            }
-            if ('headers' in clone && typeof clone['headers'] === 'object' && clone['headers'] !== null) {
+            const hasHeaderRules = this.scrubbingConfig.enabled && this.sensitiveHeaders.size > 0;
+            const hasFieldRules = this.scrubbingConfig.enabled && this.sensitiveFields.size > 0;
+            const hasPiiRules = this.piiConfig.enabled && (this.piiConfig.maskEmails || this.piiConfig.maskPhones || this.piiConfig.maskIPs);
+            const needsDeepScrub = hasFieldRules || hasPiiRules;
+            // Shallow clone objects that we'll mutate — but only when we actually
+            // have rules that require inspecting them. Previously these clones
+            // ran unconditionally, wasting CPU and allocations for large payloads
+            // when only header scrubbing was configured.
+            if (hasHeaderRules && 'headers' in clone && typeof clone['headers'] === 'object' && clone['headers'] !== null) {
                 clone['headers'] = { ...clone['headers'] };
             }
-            if ('query' in clone && typeof clone['query'] === 'object' && clone['query'] !== null) {
+            if (hasFieldRules && 'query' in clone && typeof clone['query'] === 'object' && clone['query'] !== null) {
                 clone['query'] = { ...clone['query'] };
             }
+            if (needsDeepScrub) {
+                if ('context' in clone && typeof clone['context'] === 'object' && clone['context'] !== null) {
+                    clone['context'] = { ...clone['context'] };
+                }
+                if ('attributes' in clone && typeof clone['attributes'] === 'object' && clone['attributes'] !== null) {
+                    clone['attributes'] = { ...clone['attributes'] };
+                }
+                if ('body' in clone && typeof clone['body'] === 'object' && clone['body'] !== null && !Array.isArray(clone['body'])) {
+                    clone['body'] = { ...clone['body'] };
+                }
+            }
             // Scrub headers
-            if ('headers' in clone && typeof clone['headers'] === 'object' && clone['headers'] !== null) {
+            if (hasHeaderRules && 'headers' in clone && typeof clone['headers'] === 'object' && clone['headers'] !== null) {
                 clone['headers'] = this.scrubHeaders(clone['headers']);
             }
             // Scrub query params
-            if ('query' in clone && typeof clone['query'] === 'object' && clone['query'] !== null) {
+            if (hasFieldRules && 'query' in clone && typeof clone['query'] === 'object' && clone['query'] !== null) {
                 clone['query'] = this.scrubQueryParams(clone['query']);
             }
             // Scrub URL query string
-            if ('url' in clone && typeof clone['url'] === 'string') {
+            if (hasFieldRules && 'url' in clone && typeof clone['url'] === 'string') {
                 clone['url'] = this.scrubUrlQueryString(clone['url']);
             }
-            // Scrub body fields in context/attributes/body
-            if ('context' in clone && typeof clone['context'] === 'object' && clone['context'] !== null) {
-                clone['context'] = this.scrubBodyFields(clone['context']);
+            // Scrub body fields in context/attributes/body — only when there
+            // are actually sensitive field names to check. This avoids the
+            // recursive traversal (up to depth 10) for every event when only
+            // header scrubbing is configured.
+            if (hasFieldRules) {
+                if ('context' in clone && typeof clone['context'] === 'object' && clone['context'] !== null) {
+                    clone['context'] = this.scrubBodyFields(clone['context']);
+                }
+                if ('attributes' in clone && typeof clone['attributes'] === 'object' && clone['attributes'] !== null) {
+                    clone['attributes'] = this.scrubBodyFields(clone['attributes']);
+                }
+                if ('body' in clone && typeof clone['body'] === 'object' && clone['body'] !== null && !Array.isArray(clone['body'])) {
+                    clone['body'] = this.scrubBodyFields(clone['body']);
+                }
             }
-            if ('attributes' in clone && typeof clone['attributes'] === 'object' && clone['attributes'] !== null) {
-                clone['attributes'] = this.scrubBodyFields(clone['attributes']);
-            }
-            if ('body' in clone && typeof clone['body'] === 'object' && clone['body'] !== null && !Array.isArray(clone['body'])) {
-                clone['body'] = this.scrubBodyFields(clone['body']);
+            // Top-level array sections (LogEvent.args, ReplayEvent.events,
+            // ProfileEvent.profile node arrays, breadcrumb lists, …) are scrubbed
+            // generically — copy-on-write, field redaction + PII inside.
+            if (needsDeepScrub) {
+                for (const [key, value] of Object.entries(clone)) {
+                    if (Array.isArray(value)) {
+                        clone[key] = this.scrubValue(value);
+                    }
+                }
             }
             // PII detection on string fields
-            if (this.piiConfig.enabled) {
+            if (hasPiiRules) {
                 this.scrubPiiInObject(clone);
             }
             return clone;
@@ -110,6 +134,45 @@ export class SecurityScrubber {
         if (this.destroyed || !this.hasScrubRules)
             return events;
         return events.map(e => this.scrub(e));
+    }
+    /**
+     * Scrub an arbitrary value (object, array, or string) with the active
+     * field-redaction and PII rules. Used for payload sections that are not
+     * part of the fixed event shape — e.g. `LogEvent.args`,
+     * `ReplayEvent.events`, profile payloads. Returns a new value; never
+     * mutates the input. Never throws.
+     */
+    scrubValue(value, depth = 0) {
+        if (this.destroyed || !this.hasScrubRules)
+            return value;
+        if (depth > 10)
+            return value;
+        try {
+            if (typeof value === 'string') {
+                return this.piiConfig.enabled ? this.scrubPiiInString(value) : value;
+            }
+            if (Array.isArray(value)) {
+                return value.map(item => this.scrubValue(item, depth + 1));
+            }
+            if (typeof value === 'object' && value !== null) {
+                const result = Object.create(null);
+                for (const [key, v] of Object.entries(value)) {
+                    if (SecurityScrubber.DANGEROUS_KEYS.has(key))
+                        continue;
+                    if (this.scrubbingConfig.enabled && this.sensitiveFields.has(key.toLowerCase())) {
+                        result[key] = REDACTED;
+                    }
+                    else {
+                        result[key] = this.scrubValue(v, depth + 1);
+                    }
+                }
+                return result;
+            }
+            return value;
+        }
+        catch {
+            return value;
+        }
     }
     /** Handle config change — hot-swap privacy config. */
     handleConfigChange(_diff, newConfig) {
@@ -177,8 +240,17 @@ export class SecurityScrubber {
             if (this.sensitiveFields.has(key.toLowerCase())) {
                 result[key] = REDACTED;
             }
-            else if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
-                result[key] = this.scrubBodyFields(value, depth + 1);
+            else if (typeof value === 'object' && value !== null) {
+                // Arrays (e.g. LogEvent.args, ReplayEvent.events, profile nodes)
+                // are traversed item-by-item; objects inside arrays are scrubbed
+                // recursively. Scalars pass through untouched.
+                result[key] = Array.isArray(value)
+                    ? value.map(item => typeof item === 'object' && item !== null
+                        ? Array.isArray(item)
+                            ? this.scrubValue(item, depth + 1)
+                            : this.scrubBodyFields(item, depth + 1)
+                        : item)
+                    : this.scrubBodyFields(value, depth + 1);
             }
             else {
                 result[key] = value;
@@ -196,10 +268,36 @@ export class SecurityScrubber {
             if (typeof value === 'string') {
                 obj[key] = this.scrubPiiInString(value);
             }
-            else if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
-                this.scrubPiiInObject(value, depth + 1);
+            else if (typeof value === 'object' && value !== null) {
+                if (Array.isArray(value)) {
+                    // Copy-on-write: arrays live on a shallow clone, so scrubbing in
+                    // place would mutate the caller's original event. Produce a new
+                    // array (and shallow copies of object items) instead.
+                    obj[key] = this.scrubPiiInArray(value, depth + 1);
+                }
+                else {
+                    this.scrubPiiInObject(value, depth + 1);
+                }
             }
         }
+    }
+    scrubPiiInArray(arr, depth = 0) {
+        if (depth > 10)
+            return arr;
+        return arr.map(item => {
+            if (typeof item === 'string') {
+                return this.scrubPiiInString(item);
+            }
+            if (Array.isArray(item)) {
+                return this.scrubPiiInArray(item, depth + 1);
+            }
+            if (typeof item === 'object' && item !== null) {
+                const copy = { ...item };
+                this.scrubPiiInObject(copy, depth + 1);
+                return copy;
+            }
+            return item;
+        });
     }
     scrubPiiInString(str) {
         let result = str;

@@ -200,13 +200,14 @@ class ApiPayloadScrubber {
         return result
       }
 
-      const result: Record<string, unknown> = {}
+      const result: Record<string, unknown> = Object.create(null)
       const entries = Object.entries(value)
       const limit = Math.min(entries.length, MAX_OBJECT_KEYS)
       for (let i = 0; i < limit; i++) {
         const entry = entries[i]
         if (!entry) continue
         const [key, nested] = entry
+        if (!isSafeKey(key)) continue
         if (this.isSensitiveKey(key)) {
           result[key] = REDACTED
         } else {
@@ -244,4 +245,8 @@ export function sanitizeEvent(event: SDKEvent): SDKEvent {
 
 export function sanitizeHeaders(headers: Readonly<Record<string, unknown>>): Record<string, unknown> {
   return apiPayloadScrubber.sanitizeHeaders(headers)
+}
+
+function isSafeKey(key: string): boolean {
+  return key !== '__proto__' && key !== 'constructor' && key !== 'prototype'
 }

@@ -20,7 +20,8 @@
 import { MeterProvider, AggregationType, } from '@opentelemetry/sdk-metrics';
 import { resourceFromAttributes } from '@opentelemetry/resources';
 import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION, ATTR_DEPLOYMENT_ENVIRONMENT_NAME, } from '@opentelemetry/semantic-conventions';
-import { metrics } from '@opentelemetry/api';
+import { metrics, context } from '@opentelemetry/api';
+import { suppressTracing } from '@opentelemetry/core';
 import { getLogger } from '../utils/logger.js';
 import { PulseMetricReader } from './pulse-metric-reader.js';
 import os from 'node:os';
@@ -106,10 +107,11 @@ class OtelMetricsManager {
                         instrumentName: '*.size',
                         aggregation: { type: AggregationType.EXPONENTIAL_HISTOGRAM, options: { maxSize: maxBuckets } },
                     },
-                    {
-                        instrumentName: '*',
-                        aggregation: { type: AggregationType.EXPONENTIAL_HISTOGRAM, options: { maxSize: maxBuckets } },
-                    },
+                    // NOTE: no bare '*' catch-all view here. The previous wildcard
+                    // forced EXPONENTIAL_HISTOGRAM aggregation onto EVERY instrument —
+                    // including counters and gauges — corrupting their semantics and
+                    // inflating memory/cardinality. Instruments that match none of
+                    // the suffix views above now keep their default aggregation.
                 ],
             };
             this.provider = new MeterProvider(meterProviderOptions);
@@ -117,7 +119,11 @@ class OtelMetricsManager {
             metrics.setGlobalMeterProvider(this.provider);
             globalState[METER_PROVIDER_SYMBOL] = true;
             this.ownsProvider = true;
-            this.flushTimer = setInterval(() => this.flush(), this.flushIntervalMs);
+            this.flushTimer = setInterval(() => {
+                context.with(suppressTracing(context.active()), () => {
+                    void this.flush();
+                });
+            }, this.flushIntervalMs);
             this.flushTimer.unref();
             this.initialized = true;
             logger.info('OpenTelemetry metrics initialized', {

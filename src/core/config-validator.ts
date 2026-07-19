@@ -99,7 +99,7 @@ export function validateRemoteConfig(payload: unknown): ValidationResult {
   const sampling = cfg['sampling']
   if (isPlainObject(sampling)) {
     const s = sampling as Record<string, unknown>
-    for (const k of ['traces', 'requests', 'errors', 'profiles', 'replays']) {
+    for (const k of ['traces', 'requests', 'errors', 'profiles', 'replays', 'metrics']) {
       if (k in s && !isProbability(s[k])) {
         errors.push(`sampling.${k} is not a number in [0, 1]`)
       }
@@ -125,6 +125,23 @@ export function validateRemoteConfig(payload: unknown): ValidationResult {
     for (const [k, v] of Object.entries(killswitches as Record<string, unknown>)) {
       if (typeof v !== 'boolean') {
         errors.push(`killswitches.${k} is not a boolean`)
+      }
+    }
+  }
+
+  // entitlements.* — OPTIONAL section (backends predating it omit it and
+  // every entitlement fails open). When present, same boolean rule as
+  // features: a wrong-typed value would coerce truthy/falsy and silently
+  // enable or disable paid APIs.
+  const entitlements = cfg['entitlements']
+  if (entitlements !== undefined) {
+    if (!isPlainObject(entitlements)) {
+      errors.push('entitlements is not an object')
+    } else {
+      for (const [k, v] of Object.entries(entitlements as Record<string, unknown>)) {
+        if (typeof v !== 'boolean') {
+          errors.push(`entitlements.${k} is not a boolean`)
+        }
       }
     }
   }

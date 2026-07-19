@@ -19,6 +19,7 @@ export function diffConfigs(oldConfig, newConfig) {
     const limitsChanged = !deepEqual(oldConfig.limits, newConfig.limits);
     const instrumentationChanged = !deepEqual(oldConfig.instrumentation, newConfig.instrumentation);
     const runtimeChanged = !deepEqual(oldConfig.runtime, newConfig.runtime);
+    const entitlementsChanged = !deepEqual(oldConfig.entitlements, newConfig.entitlements);
     if (featuresChanged)
         collectChanges('features', oldConfig.features, newConfig.features, changes);
     if (killswitchesChanged)
@@ -35,6 +36,8 @@ export function diffConfigs(oldConfig, newConfig) {
         changes.set('instrumentation', { old: '[complex]', new: '[complex]' });
     if (runtimeChanged)
         collectChanges('runtime', oldConfig.runtime, newConfig.runtime, changes);
+    if (entitlementsChanged)
+        collectChanges('entitlements', oldConfig.entitlements, newConfig.entitlements, changes);
     return {
         featuresChanged,
         killswitchesChanged,
@@ -44,6 +47,7 @@ export function diffConfigs(oldConfig, newConfig) {
         limitsChanged,
         instrumentationChanged,
         runtimeChanged,
+        entitlementsChanged,
         changes,
     };
 }

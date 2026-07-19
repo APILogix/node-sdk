@@ -12,10 +12,16 @@ const MAX_ARRAY_LENGTH = 100;
  * Normalize an event — fills in missing required fields, truncates oversized data.
  */
 export function normalizeEvent(event, metadata) {
+    // `timestamp` is present on every event variant except `TraceEvent`, which
+    // carries timing on `rootSpan.startTime`. Read it via an unknown-cast so
+    // the assignment stays compatible with the discriminated union.
+    const existingTimestamp = event.timestamp;
     const base = {
         ...event,
         eventId: event.eventId || generateId(),
-        timestamp: event.timestamp || epochMs(),
+        timestamp: typeof existingTimestamp === 'number' && existingTimestamp > 0
+            ? existingTimestamp
+            : epochMs(),
         metadata: event.metadata ?? metadata,
     };
     switch (base.type) {

@@ -241,8 +241,24 @@ export class TraceAggregator {
         })
       }
 
-      // Build the tree
-      const rootAggregated = this.buildTree(rootSpanEvent, spans)
+      // Build the tree. Index children by parentSpanId once (O(n)) instead
+      // of filtering the full span list at every recursion level (O(n²)) —
+      // traces with thousands of spans would otherwise stall the event loop.
+      const childrenByParent = new Map<string, Record<string, unknown>[]>()
+      for (const span of spans) {
+        const parentId = span.parentSpanId as string | undefined
+        if (!parentId) continue
+        const list = childrenByParent.get(parentId)
+        if (list) {
+          list.push(span)
+        } else {
+          childrenByParent.set(parentId, [span])
+        }
+      }
+      for (const list of childrenByParent.values()) {
+        list.sort((a, b) => (a.startTime as number) - (b.startTime as number))
+      }
+      const rootAggregated = this.buildTree(rootSpanEvent, childrenByParent)
 
       // Calculate total duration from root
       const totalDuration = (rootSpanEvent.duration as number) ?? 0
@@ -278,16 +294,18 @@ export class TraceAggregator {
   }
 
   /**
-   * Recursively build the span tree by matching parentSpanId → spanId.
+   * Recursively build the span tree using the pre-built parentSpanId →
+   * children index. Children lists are already sorted by startTime.
    */
-  private buildTree(rootEvent: Record<string, unknown>, allSpans: Record<string, unknown>[]): AggregatedSpan {
+  private buildTree(
+    rootEvent: Record<string, unknown>,
+    childrenByParent: ReadonlyMap<string, Record<string, unknown>[]>,
+  ): AggregatedSpan {
     const rootSpanId = rootEvent.spanId as string
 
-    // Find direct children of this span
-    const children = allSpans
-      .filter(s => (s.parentSpanId as string) === rootSpanId)
-      .sort((a, b) => (a.startTime as number) - (b.startTime as number))
-      .map(child => this.buildTree(child, allSpans))
+    // Find direct children of this span — O(1) lookup
+    const children = (childrenByParent.get(rootSpanId) ?? [])
+      .map(child => this.buildTree(child, childrenByParent))
 
     return {
       spanId: rootSpanId,

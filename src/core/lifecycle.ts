@@ -42,6 +42,7 @@ import { resetAutoInstrumentations } from '../instrumentation/auto-instrument.js
 import { ConfigManager } from './config-manager.js'
 import { FeatureController } from './feature-controller.js'
 import { KillswitchEngine } from './killswitch-engine.js'
+import { EntitlementGate } from './entitlement-gate.js'
 import { SamplingEngine } from './sampling-engine.js'
 import { LimitsEngine } from './limits-engine.js'
 import { SecurityScrubber } from '../processors/security-scrubber.js'
@@ -50,6 +51,8 @@ import { ProfilingSubsystem } from '../subsystems/profiling-subsystem.js'
 import { CronSubsystem } from '../subsystems/cron-subsystem.js'
 import { tenantGovernor } from './tenant-isolation.js'
 import { cardinalityGovernor } from '../utils/cardinality-governor.js'
+import { adaptivePressure } from '../utils/adaptive-pressure.js'
+import { SerializationPool } from '../transport/serialization-pool.js'
 
 // ─── Module State ───────────────────────────────────────────────────────────
 
@@ -448,6 +451,7 @@ async function runUnconditionalCleanup(stepErrors: ShutdownStepError[]): Promise
   runSync('config-manager.reset', () => ConfigManager.reset(), stepErrors)
   runSync('feature-controller.reset', () => FeatureController.reset(), stepErrors)
   runSync('killswitch-engine.reset', () => KillswitchEngine.reset(), stepErrors)
+  runSync('entitlement-gate.reset', () => EntitlementGate.reset(), stepErrors)
   runSync('sampling-engine.reset', () => SamplingEngine.reset(), stepErrors)
   runSync('limits-engine.reset', () => LimitsEngine.reset(), stepErrors)
   runSync('security-scrubber.reset', () => SecurityScrubber.reset(), stepErrors)
@@ -460,6 +464,15 @@ async function runUnconditionalCleanup(stepErrors: ShutdownStepError[]): Promise
   // the SDK accumulates per-tenant rate-limit state across init cycles.
   runSync('tenant-governor.reset', () => tenantGovernor.reset(), stepErrors)
   runSync('cardinality-governor.shutdown', () => { cardinalityGovernor.shutdown(); cardinalityGovernor.reset() }, stepErrors)
+  // adaptivePressure is started in init.ts (after metricsRegistry.start()).
+  // Stop its timers/observers so a reinit cycle doesn't stack pollers.
+  runSync('adaptive-pressure.stop', () => adaptivePressure.stop(), stepErrors)
+
+  // Terminate serialization worker threads — awaited so they can't outlive
+  // the SDK and hold the host process open across shutdown/reinit cycles.
+  await runStep('serialization-pool.reset', async () => {
+    await withTimeout(SerializationPool.reset(), SUBSYSTEM_STEP_TIMEOUT_MS, 'serialization pool reset timed out')
+  }, stepErrors)
 
   // Reset the batcher (timer + circuit breaker + rate limiter + pressure monitor).
   // Imported lazily to avoid a circular dependency at module-load time.

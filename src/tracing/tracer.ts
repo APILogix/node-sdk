@@ -63,6 +63,7 @@ import type { ResourceAttributes } from '../utils/resource-detector.js'
 import { RemoteConfigSampler } from './remote-config-sampler.js'
 import { ConfigManager } from '../core/config-manager.js'
 import { ProfilingSubsystem } from '../subsystems/profiling-subsystem.js'
+import { EntitlementGate } from '../core/entitlement-gate.js'
 import os from 'node:os'
 
 import { SDK_NAME, SDK_VERSION } from '../constants/version.js'
@@ -77,6 +78,29 @@ let ownsProvider = false
 let sdkConfig: ResolvedSDKConfig | null = null
 const TRACER_PROVIDER_SYMBOL = Symbol.for('pulse-sdk.otel.tracer-provider')
 const PULSE_INTERNAL_CONTEXT_KEY = Symbol.for('pulse-sdk.internal-context')
+
+/**
+ * Build a non-recording PulseSpan. Used when the tracer is not initialized,
+ * when span creation fails, and when the `customSpans` entitlement is
+ * revoked — in every case the caller gets a span object it can safely call
+ * `end()` / `setAttribute()` on, but nothing is recorded or exported.
+ */
+function createNoopSpan(name: string): PulseSpan {
+    if (!noopTracer) {
+        noopTracer = trace.getTracer(SDK_NAME + '/noop')
+    }
+    return new PulseSpan(noopTracer.startSpan(name))
+}
+
+/**
+ * Custom developer spans are gated by the `customSpans` entitlement.
+ * Revoked ⇒ every custom span API returns a non-recording noop span.
+ * Automatic instrumentation is unaffected (it uses the OTel tracer
+ * directly, not these developer-facing wrappers).
+ */
+function customSpansAllowed(): boolean {
+    return EntitlementGate.isAllowed('customSpans')
+}
 
 // ─── Span Exporter → SDK Event Pipeline ─────────────────────────────────────
 
@@ -494,13 +518,14 @@ function snapshotActiveSpanId(): string | undefined {
 export function startSpan(name: string, options?: SpanOptions): PulseSpan {
     const logger = getLogger()
 
+    if (!customSpansAllowed()) {
+        logger.debug('startSpan called but customSpans entitlement is revoked — returning no-op span', { name })
+        return createNoopSpan(name)
+    }
+
     if (!tracer) {
         logger.debug('startSpan called but tracer is not initialized — returning no-op span', { name })
-        if (!noopTracer) {
-            noopTracer = trace.getTracer(SDK_NAME + '/noop')
-        }
-        const noopSpan = noopTracer.startSpan(name)
-        return new PulseSpan(noopSpan)
+        return createNoopSpan(name)
     }
 
     try {
@@ -516,11 +541,7 @@ export function startSpan(name: string, options?: SpanOptions): PulseSpan {
         return new PulseSpan(span, parentSpanId)
     } catch (err) {
         logger.warn('Failed to start span', { name, error: err })
-        if (!noopTracer) {
-            noopTracer = trace.getTracer(SDK_NAME + '/noop')
-        }
-        const noopSpan = noopTracer.startSpan(name)
-        return new PulseSpan(noopSpan)
+        return createNoopSpan(name)
     }
 }
 
@@ -563,7 +584,7 @@ export async function withSpan<T>(
     fn: (span: PulseSpan) => T | Promise<T>,
     options?: SpanOptions
 ): Promise<T> {
-    if (!tracer) {
+    if (!tracer || !customSpansAllowed()) {
         const span = startSpan(name, options)
         try {
             const result = await fn(span)
@@ -663,7 +684,7 @@ export function withSpanSync<T>(
     fn: (span: PulseSpan) => T,
     options?: SpanOptions
 ): T {
-    if (!tracer) {
+    if (!tracer || !customSpansAllowed()) {
         const span = startSpan(name, options)
         try {
             const result = fn(span)
