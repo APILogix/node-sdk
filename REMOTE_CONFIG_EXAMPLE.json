@@ -1,0 +1,251 @@
+{
+  "schemaVersion": 1,
+  "sdk": {
+    "projectId": "proj_1234567890",
+    "environment": "production",
+    "release": "my-app@1.2.3"
+  },
+  "features": {
+    "tracing": true,
+    "requestCapture": true,
+    "errors": true,
+    "metrics": true,
+    "logging": true,
+    "profiling": false,
+    "crons": true,
+    "sessionReplay": false,
+    "runtimeMetrics": true,
+    "eventLoopMonitoring": true,
+    "gcMonitoring": true
+  },
+  "sampling": {
+    "traces": 1.0,
+    "requests": 1.0,
+    "errors": 1.0,
+    "profiles": 0.1,
+    "replays": 0.05,
+    "metrics": 1.0,
+    "routes": {
+      "/health": {
+        "traces": 0,
+        "requests": 0,
+        "errors": 0,
+        "metrics": 0
+      },
+      "/api/internal/": {
+        "traces": 0.1,
+        "requests": 0.1
+      }
+    }
+  },
+  "instrumentation": {
+    "http": true,
+    "https": true,
+    "fetch": true,
+    "axios": true,
+    "fastify": {
+      "enabled": true,
+      "captureHooks": true,
+      "captureValidationErrors": true
+    },
+    "express": {
+      "enabled": true
+    },
+    "graphql": {
+      "enabled": false,
+      "captureResolvers": false
+    },
+    "prisma": {
+      "enabled": false,
+      "captureQueries": false,
+      "captureParams": false
+    },
+    "mongodb": false,
+    "redis": false,
+    "bullmq": {
+      "enabled": false,
+      "emitCreateSpansForBulk": true,
+      "emitCreateSpansForFlow": true,
+      "requireParentSpanForPublish": false
+    }
+  },
+  "privacy": {
+    "capture": {
+      "headers": true,
+      "body": false,
+      "response": false,
+      "query": true,
+      "cookies": false
+    },
+    "scrubbing": {
+      "enabled": true,
+      "headers": [
+        "authorization",
+        "cookie",
+        "x-api-key",
+        "x-auth-token"
+      ],
+      "fields": [
+        "password",
+        "token",
+        "secret",
+        "creditCard",
+        "ssn",
+        "nationalId",
+        "apiKey",
+        "code",
+        "id_token",
+        "access_token",
+        "refresh_token",
+        "client_secret",
+        "assertion"
+      ]
+    },
+    "piiDetection": {
+      "enabled": true,
+      "maskEmails": true,
+      "maskPhones": true,
+      "maskIPs": true
+    }
+  },
+  "limits": {
+    "maxSpansPerTrace": 500,
+    "maxSpanAttributes": 100,
+    "maxAttributeLength": 2048,
+    "maxPayloadSize": 262144,
+    "maxQueueSize": 10000,
+    "maxMemoryMb": 256,
+    "maxCpuOverheadPercent": 5
+  },
+  "killswitches": {
+    "disableSDK": false,
+    "disableTracing": false,
+    "disableMetrics": false,
+    "disableTransport": false,
+    "disableProfiling": false,
+    "disableErrors": false,
+    "disableLogs": false
+  },
+  "transport": {
+    "retry": {
+      "enabled": true,
+      "maxRetries": 3,
+      "backoff": "exponential",
+      "baseDelayMs": 500
+    },
+    "queue": {
+      "overflowStrategy": "drop_oldest"
+    },
+    "keepAlive": true,
+    "routes": {
+      "traces": {
+        "url": "https://ingest.pulse.example.com/v1/traces",
+        "batchSize": 500,
+        "flushIntervalMs": 5000,
+        "timeoutMs": 5000,
+        "compression": "gzip",
+        "priority": "high"
+      },
+      "requests": {
+        "url": "https://ingest.pulse.example.com/v1/requests",
+        "batchSize": 500,
+        "flushIntervalMs": 5000,
+        "timeoutMs": 3000,
+        "compression": "gzip",
+        "priority": "high"
+      },
+      "errors": {
+        "url": "https://ingest.pulse.example.com/v1/errors",
+        "batchSize": 100,
+        "flushIntervalMs": 1000,
+        "timeoutMs": 3000,
+        "compression": "gzip",
+        "priority": "critical"
+      },
+      "metrics": {
+        "url": "https://ingest.pulse.example.com/v1/metrics",
+        "batchSize": 1000,
+        "flushIntervalMs": 10000,
+        "timeoutMs": 5000,
+        "compression": "gzip",
+        "priority": "normal"
+      },
+      "logs": {
+        "url": "https://ingest.pulse.example.com/v1/logs",
+        "batchSize": 200,
+        "flushIntervalMs": 10000,
+        "timeoutMs": 5000,
+        "compression": "gzip",
+        "priority": "normal"
+      },
+      "profiles": {
+        "url": "https://ingest.pulse.example.com/v1/profiles",
+        "batchSize": 5,
+        "flushIntervalMs": 30000,
+        "timeoutMs": 15000,
+        "compression": "gzip",
+        "priority": "low"
+      },
+      "events": {
+        "url": "https://ingest.pulse.example.com/v1/events",
+        "batchSize": 50,
+        "flushIntervalMs": 5000,
+        "timeoutMs": 5000,
+        "compression": "gzip",
+        "priority": "normal"
+      },
+      "crons": {
+        "url": "https://ingest.pulse.example.com/v1/checkins",
+        "batchSize": 1,
+        "flushIntervalMs": 0,
+        "timeoutMs": 5000,
+        "compression": "none",
+        "priority": "high"
+      },
+      "replays": {
+        "url": "https://ingest.pulse.example.com/v1/replays",
+        "batchSize": 5,
+        "flushIntervalMs": 10000,
+        "timeoutMs": 30000,
+        "compression": "gzip",
+        "priority": "low"
+      }
+    }
+  },
+  "runtime": {
+    "configTtlSeconds": 300,
+    "staleWhileRevalidate": true
+  },
+  "meta": {
+    "generatedAt": "2026-07-19T12:00:00.000Z",
+    "generatedBy": "pulse-control-plane",
+    "configHash": "sha256:abc123..."
+  },
+  "entitlements": {
+    "customSpans": true,
+    "customMetrics": true,
+    "profiling": false,
+    "logging": true,
+    "sessionReplay": false,
+    "crons": true,
+    "requestCapture": true,
+    "tracing": true,
+    "errors": true,
+    "metrics": true
+  }
+}
+
+It includes all the required top-level sections and types derived from src/types/config.ts and src/core/config-validator.ts:
+
+schemaVersion (must be 1- sdk` (projectId, environment, release)
+features (tracing, errors, metrics, logging, crons, profiling, sessionReplay, etc.)
+sampling (global rates + per-route overrides)
+instrumentation (http, express, fastify, graphql, prisma, mongodb, redis, bullmq, etc.)
+privacy (, scrubbing, piiDetection)
+limits (maxSpansPerTrace, maxPayloadSize, maxQueueSize, etc.)
+killswitches (disableSDK, disableTransport, disableErrors, etc.)
+transport (retry, queue overflow, keepAlive, and all 9 routes: traces, requests, errors, metrics, logs, profiles, events, crons, replays)
+runtime (configTtlSeconds, staleWhileRevalidate)
+metageneratedAt, generatedBy, configHash)
+entitlements (customSpans, customMetrics, profiling, logging, sessionReplay, crons, requestCapture, tracing, errors, metrics)
+The entitlements block is optional in the wire format if omitted, all entitlements default to true (fail-open).
