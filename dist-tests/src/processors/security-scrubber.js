@@ -11,6 +11,7 @@
  * The scrubber returns a new event — it never mutates the original.
  */
 import { getLogger } from '../utils/logger.js';
+import { isIP } from 'node:net';
 const REDACTED = '[Redacted]';
 export class SecurityScrubber {
     static instance = null;
@@ -27,6 +28,8 @@ export class SecurityScrubber {
     static EMAIL_PATTERN = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
     static PHONE_PATTERN = /(\+?1?\s*[-.\s]?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4})/g;
     static IPV4_PATTERN = /\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b/g;
+    static BRACKETED_IPV6_PATTERN = /\[([0-9A-Fa-f:.]+)(%[0-9A-Za-z_.-]+)?\](?::\d{1,5})?/g;
+    static IPV6_CANDIDATE_PATTERN = /(?<![0-9A-Za-z])([0-9A-Fa-f:.]+(?:%[0-9A-Za-z_.-]+)?)(?![0-9A-Za-z])/g;
     constructor(config) {
         this.scrubbingConfig = { ...config.scrubbing };
         this.piiConfig = { ...config.piiDetection };
@@ -94,34 +97,16 @@ export class SecurityScrubber {
             if (hasFieldRules && 'url' in clone && typeof clone['url'] === 'string') {
                 clone['url'] = this.scrubUrlQueryString(clone['url']);
             }
-            // Scrub body fields in context/attributes/body — only when there
-            // are actually sensitive field names to check. This avoids the
-            // recursive traversal (up to depth 10) for every event when only
-            // header scrubbing is configured.
-            if (hasFieldRules) {
-                if ('context' in clone && typeof clone['context'] === 'object' && clone['context'] !== null) {
-                    clone['context'] = this.scrubBodyFields(clone['context']);
-                }
-                if ('attributes' in clone && typeof clone['attributes'] === 'object' && clone['attributes'] !== null) {
-                    clone['attributes'] = this.scrubBodyFields(clone['attributes']);
-                }
-                if ('body' in clone && typeof clone['body'] === 'object' && clone['body'] !== null && !Array.isArray(clone['body'])) {
-                    clone['body'] = this.scrubBodyFields(clone['body']);
-                }
-            }
-            // Top-level array sections (LogEvent.args, ReplayEvent.events,
-            // ProfileEvent.profile node arrays, breadcrumb lists, …) are scrubbed
-            // generically — copy-on-write, field redaction + PII inside.
+            // Deep-copy and scrub every payload section, including scope-provided
+            // `extra` and `contexts`. This prevents sensitive keys from escaping
+            // merely because a new event field was added, and preserves caller
+            // immutability for nested objects/arrays.
             if (needsDeepScrub) {
                 for (const [key, value] of Object.entries(clone)) {
-                    if (Array.isArray(value)) {
-                        clone[key] = this.scrubValue(value);
-                    }
+                    if (key === 'metadata')
+                        continue;
+                    clone[key] = this.scrubValue(value);
                 }
-            }
-            // PII detection on string fields
-            if (hasPiiRules) {
-                this.scrubPiiInObject(clone);
             }
             return clone;
         }
@@ -308,6 +293,16 @@ export class SecurityScrubber {
             result = result.replace(SecurityScrubber.PHONE_PATTERN, '[phone]');
         }
         if (this.piiConfig.maskIPs) {
+            result = result.replace(SecurityScrubber.BRACKETED_IPV6_PATTERN, (candidate, address) => isIP(address) === 6 ? '[ip]' : candidate);
+            result = result.replace(SecurityScrubber.IPV6_CANDIDATE_PATTERN, (candidate) => {
+                const address = candidate.includes('%') ? candidate.slice(0, candidate.indexOf('%')) : candidate;
+                // Colon-delimited times and MAC addresses are not treated as IPs,
+                // even where a permissive parser might consider them abbreviated IPv6.
+                if (/^\d{1,2}:\d{2}:\d{2}$/.test(address) || /^(?:[0-9a-f]{2}:){5}[0-9a-f]{2}$/i.test(address)) {
+                    return candidate;
+                }
+                return isIP(address) === 6 ? '[ip]' : candidate;
+            });
             result = result.replace(SecurityScrubber.IPV4_PATTERN, '[ip]');
         }
         return result;

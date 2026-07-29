@@ -1,30 +1,27 @@
-import { DEFAULT_TIMEOUT_MS } from '../constants/defaults.js'
+import { DEFAULT_TIMEOUT_MS, resolveApiBaseUrl } from '../constants/defaults.js'
 import { randomUUID } from 'crypto'
 import { client } from '../core/client.js'
 import { SDKError } from '../core/errors.js'
 import { postJson } from './http.js'
 import { retry, globalRetryBudget } from './retry.js'
-import type { ResolvedSDKConfig } from '../types/config.js'
+import type { RemoteConfigResponse, ResolvedSDKConfig } from '../types/config.js'
 import type { Event } from '../types/event.js'
 import { getLogger } from '../utils/logger.js'
 
 export interface InitResponse {
     success: boolean
     projectId?: string
-    plan?: string
-    planFeatures?: Record<string, unknown>
-    config?: unknown
-    ingestion?: unknown
+    environment?: string
+    configRevision?: number | null
+    configHash?: string | null
+    config?: RemoteConfigResponse
 }
 
-export async function sendInitRequest(apiKey: string, baseUrl: string, timeoutMs = 5000) {
+export async function sendInitRequest(apiKey: string, baseUrl?: string, timeoutMs = 5000) {
     validateApiKey(apiKey)
+    const resolvedBaseUrl = resolveApiBaseUrl(baseUrl)
 
-    if (!baseUrl) {
-        throw new SDKError('baseUrl is required for init request', 'MISSING_BASE_URL')
-    }
-
-    return postJson<InitResponse>(joinUrl(baseUrl, '/v1/init'), {}, { Authorization: `Bearer ${apiKey}` }, timeoutMs, { logFailures: false })
+    return postJson<InitResponse>(joinUrl(resolvedBaseUrl, '/api/v1/init'), {}, { Authorization: `Bearer ${apiKey}` }, timeoutMs, { logFailures: false })
 }
 
 export async function sendEvents(events: Event[]) {

@@ -8,6 +8,7 @@ import { SDKError } from './errors.js'
 import type { InitResponse } from '../transport/sender.js'
 
 import { SDK_NAME, SDK_VERSION } from '../constants/version.js'
+import { resolveApplicationPackage } from '../utils/package-metadata.js'
 
 class SDKClient {
   private static instance: SDKClient
@@ -27,13 +28,15 @@ class SDKClient {
   private readonly eventProcessorRegistry: EventProcessor[] = []
 
   // ─── Metadata ─────────────────────────────────────────────────────────
-  private metadataValue: EventMetadata = {
+  private metadataValue: EventMetadata = Object.freeze({
     sdkName: SDK_NAME,
     sdkVersion: SDK_VERSION,
+    applicationName: 'unknown-application',
+    applicationVersion: '0.0.0-unknown',
     service: 'unknown-service',
     environment: 'production',
     release: '0.0.0-unknown',
-  }
+  })
 
   // ─── Breadcrumbs ──────────────────────────────────────────────────────
   private breadcrumbBuffer: RingBuffer<Breadcrumb> = new RingBuffer<Breadcrumb>(100)
@@ -99,13 +102,16 @@ class SDKClient {
     this.apiKeyValue = options.apiKey
     this.initIdentityValue = createInitIdentity(options)
 
-    this.metadataValue = {
+    const applicationPackage = resolveApplicationPackage(options)
+    this.metadataValue = Object.freeze({
       sdkName: SDK_NAME,
       sdkVersion: SDK_VERSION,
-      service: options.service ?? 'unknown-service',
+      applicationName: applicationPackage.name,
+      applicationVersion: applicationPackage.version,
+      service: options.service ?? applicationPackage.name ?? 'unknown-service',
       environment: options.environment ?? 'production',
-      release: options.release ?? '0.0.0-unknown',
-    }
+      release: options.release ?? applicationPackage.version,
+    })
   }
 
   setResolvedConfig(config: ResolvedSDKConfig): void {

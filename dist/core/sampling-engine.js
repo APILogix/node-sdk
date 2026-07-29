@@ -50,6 +50,9 @@ export class SamplingEngine {
     shouldSampleReplay(sessionId) {
         return this.decide(sessionId, 'replays');
     }
+    shouldSampleMetric(metricId, route) {
+        return this.decide(metricId, 'metrics', route);
+    }
     // ─── Config Change ────────────────────────────────────────────────────────
     handleConfigChange(_diff, newConfig) {
         if (this.destroyed)
@@ -60,8 +63,9 @@ export class SamplingEngine {
             old.requests !== newSampling.requests ||
             old.errors !== newSampling.errors ||
             old.profiles !== newSampling.profiles ||
-            old.replays !== newSampling.replays) {
-            getLogger().info(`[SamplingEngine] Rates updated — traces: ${newSampling.traces}, requests: ${newSampling.requests}, errors: ${newSampling.errors}, profiles: ${newSampling.profiles}, replays: ${newSampling.replays}`);
+            old.replays !== newSampling.replays ||
+            old.metrics !== newSampling.metrics) {
+            getLogger().info(`[SamplingEngine] Rates updated — traces: ${newSampling.traces}, requests: ${newSampling.requests}, errors: ${newSampling.errors}, profiles: ${newSampling.profiles}, replays: ${newSampling.replays}, metrics: ${newSampling.metrics}`);
         }
         this.config = { ...newSampling };
     }

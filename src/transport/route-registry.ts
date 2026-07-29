@@ -1,11 +1,11 @@
 import type { SDKEvent } from '../types/event.js'
 import type { TransportRemoteConfig, TransportRouteName } from '../types/config.js'
 
-export type EnterpriseRoute = 'errors' | 'traces' | 'metrics' | 'logs' | 'profiles' | 'crons' | 'requests' | 'replays'
+export type EnterpriseRoute = 'errors' | 'events' | 'traces' | 'spans' | 'metrics' | 'logs' | 'profiles' | 'crons' | 'requests' | 'replays'
 
 export interface RouteDefinition {
   readonly route: EnterpriseRoute
-  readonly endpoint: '/v1/errors' | '/v1/traces' | '/v1/metrics' | '/v1/logs' | '/v1/profiles' | '/v1/checkins' | '/v1/requests' | '/v1/replays'
+  readonly endpoint: '/api/v1/errors' | '/api/v1/events' | '/api/v1/traces' | '/api/v1/spans' | '/api/v1/metrics' | '/api/v1/logs' | '/api/v1/profiles' | '/api/v1/checkins' | '/api/v1/requests' | '/api/v1/replays'
   readonly method: 'POST'
   readonly contentType: 'application/json'
   readonly url: string
@@ -39,8 +39,8 @@ export function isRouteConfigured(definition: RouteDefinition): boolean {
 
 const EVENT_TYPE_TO_ROUTE: Readonly<Record<string, EnterpriseRoute>> = Object.freeze({
   error: 'errors',
-  message: 'errors',
-  span: 'traces',
+  message: 'events',
+  span: 'spans',
   trace: 'traces',
   request: 'requests',
   metric: 'metrics',
@@ -51,14 +51,16 @@ const EVENT_TYPE_TO_ROUTE: Readonly<Record<string, EnterpriseRoute>> = Object.fr
 })
 
 const ROUTE_ENDPOINTS: Readonly<Record<EnterpriseRoute, RouteDefinition['endpoint']>> = Object.freeze({
-  errors: '/v1/errors',
-  traces: '/v1/traces',
-  metrics: '/v1/metrics',
-  logs: '/v1/logs',
-  profiles: '/v1/profiles',
-  crons: '/v1/checkins',
-  requests: '/v1/requests',
-  replays: '/v1/replays',
+  errors: '/api/v1/errors',
+  events: '/api/v1/events',
+  traces: '/api/v1/traces',
+  spans: '/api/v1/spans',
+  metrics: '/api/v1/metrics',
+  logs: '/api/v1/logs',
+  profiles: '/api/v1/profiles',
+  crons: '/api/v1/checkins',
+  requests: '/api/v1/requests',
+  replays: '/api/v1/replays',
 })
 
 export class RouteRegistry {
@@ -67,7 +69,9 @@ export class RouteRegistry {
   constructor(config: TransportRemoteConfig) {
     this.definitions = Object.freeze({
       errors: createDefinition('errors', config),
+      events: createDefinition('events', config),
       traces: createDefinition('traces', config),
+      spans: createDefinition('spans', config),
       metrics: createDefinition('metrics', config),
       logs: createDefinition('logs', config),
       profiles: createDefinition('profiles', config),
@@ -92,7 +96,7 @@ export class RouteRegistry {
   }
 
   routes(): readonly EnterpriseRoute[] {
-    return ['errors', 'traces', 'metrics', 'logs', 'profiles', 'crons', 'requests', 'replays'] as const
+    return ['errors', 'events', 'traces', 'spans', 'metrics', 'logs', 'profiles', 'crons', 'requests', 'replays'] as const
   }
 }
 
@@ -105,7 +109,11 @@ function createDefinition(route: EnterpriseRoute, config: TransportRemoteConfig)
 
   // Fallback for missing routes in older configs
   if (!configured) {
-    if (route === 'requests') {
+    if (route === 'events') {
+      configured = config.routes['errors']?.url
+    } else if (route === 'requests') {
+      configured = config.routes['traces']?.url
+    } else if (route === 'spans') {
       configured = config.routes['traces']?.url
     } else if (route === 'replays') {
       configured = config.routes['logs']?.url

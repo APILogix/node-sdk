@@ -14,32 +14,81 @@ function parseBody(body) {
   return JSON.parse((isGzip ? gunzipSync(buf) : buf).toString("utf8"))
 }
 
+async function waitFor(predicate, timeoutMs = 1000) {
+  const deadline = Date.now() + timeoutMs
+  while (!predicate()) {
+    if (Date.now() > deadline) {
+      throw new Error("Timed out waiting for condition")
+    }
+    await new Promise(resolve => setTimeout(resolve, 5))
+  }
+}
+
 const { captureMessage, captureRequest, init, shutdown } = await import("../dist/index.js")
+const { DEFAULT_API_BASE_URL } = await import("../dist/constants/defaults.js")
+const { BAKED_IN_REMOTE_CONFIG } = await import("../dist/constants/defaults.js")
 const { addBreadcrumb, createContextStore, withContext } = await import("../dist/core/context.js")
 const { postJson } = await import("../dist/transport/http.js")
 const { sendEvents, sendInitRequest } = await import("../dist/transport/sender.js")
 const { redact } = await import("../dist/utils/logger.js")
 
+function schemaConfig(config = {}) {
+  if (config.rawConfig) return config.rawConfig
+
+  const routePath = {
+    errors: "/api/v1/errors",
+    events: "/api/v1/events",
+    traces: "/api/v1/traces",
+    spans: "/api/v1/spans",
+    requests: "/api/v1/requests",
+    metrics: "/api/v1/metrics",
+    logs: "/api/v1/logs",
+    profiles: "/api/v1/profiles",
+    crons: "/api/v1/checkins",
+    replays: "/api/v1/replays",
+  }
+  const batchSize = config.ingestion?.batchSize ?? 10
+  const flushIntervalMs = config.ingestion?.flushInterval ?? 1000
+  const maxPayloadSize = config.config?.maxPayloadBytes ?? 100000
+  const routes = Object.fromEntries(
+    Object.entries(BAKED_IN_REMOTE_CONFIG.transport.routes).map(([name, route]) => [
+      name,
+      {
+        ...route,
+        url: `https://ingest.example.test${routePath[name]}`,
+        batchSize,
+        flushIntervalMs,
+        timeoutMs: 5000,
+      },
+    ]),
+  )
+
+  return {
+    ...BAKED_IN_REMOTE_CONFIG,
+    sdk: { projectId: "test-project-id", environment: "test" },
+    features: { ...BAKED_IN_REMOTE_CONFIG.features, errors: true, requestCapture: true, tracing: true },
+    sampling: { ...BAKED_IN_REMOTE_CONFIG.sampling, requests: 1, traces: 1, errors: 1 },
+    killswitches: { ...BAKED_IN_REMOTE_CONFIG.killswitches, disableTransport: false },
+    limits: {
+      ...BAKED_IN_REMOTE_CONFIG.limits,
+      maxPayloadSize,
+      maxQueueSize: config.ingestion?.maxQueueSize ?? 100,
+    },
+    transport: {
+      ...BAKED_IN_REMOTE_CONFIG.transport,
+      retry: { ...BAKED_IN_REMOTE_CONFIG.transport.retry, maxRetries: config.config?.maxRetries ?? 0 },
+      routes,
+    },
+    meta: { generatedAt: new Date().toISOString(), generatedBy: "sdk-smoke" },
+  }
+}
+
 function initResponse(config = {}) {
   return new Response(JSON.stringify({
     success: true,
     projectId: "test-project-id",
-    plan: config.plan ?? "enterprise",
-    config: {
-      samplingRate: 1,
-      enableErrors: true,
-      enablePerformance: true,
-      maxRetries: 0,
-      maxPayloadBytes: 100000,
-      ...config.config,
-    },
-    ingestion: {
-      endpoint: "https://ingest.example.test/v1/events",
-      batchSize: 10,
-      maxQueueSize: 100,
-      flushInterval: 1000,
-      ...config.ingestion,
-    },
+    environment: "test",
+    config: schemaConfig(config),
   }), { status: 200, headers: { "content-type": "application/json" } })
 }
 
@@ -63,7 +112,7 @@ function findRouteCall(calls, path) {
       body: options.body,
     })
 
-    if (String(url).endsWith("/v1/init")) {
+    if (String(url).endsWith("/api/v1/init")) {
       return initResponse()
     }
 
@@ -76,14 +125,18 @@ function findRouteCall(calls, path) {
   await init({ apiKey: "test-key" })
   await sendEvents([{ type: "manual", timestamp: Date.now() }])
 
-  assert.equal(calls[0].url, "https://api.example.test/v1/init")
-  assert.deepEqual(parseBody(calls[0].body), { apiKey: "test-key" })
-  assert.equal(calls[0].headers["x-api-key"], undefined)
+  const initCall = findRouteCall(calls, "/api/v1/init")
+  assert.equal(initCall.url, "https://api.example.test/api/v1/init")
+  assert.deepEqual(parseBody(initCall.body), {})
+  assert.equal(initCall.headers.Authorization, "Bearer test-key")
+  assert.equal(initCall.headers["x-api-key"], undefined)
 
-  assert.equal(calls[1].url, "https://ingest.example.test/v1/events")
-  assert.equal(calls[1].headers["x-api-key"], undefined)
-  assert.equal(parseBody(calls[1].body).apiKey, "test-key")
-  assert.ok(parseBody(calls[1].body).events[0].eventId)
+  const ingestCall = findRouteCall(calls, "/api/v1/events")
+  assert.equal(ingestCall.url, "https://ingest.example.test/api/v1/events")
+  assert.equal(ingestCall.headers.Authorization, "Bearer test-key")
+  assert.equal(ingestCall.headers["x-api-key"], undefined)
+  assert.equal(parseBody(ingestCall.body).apiKey, undefined)
+  assert.ok(parseBody(ingestCall.body).events[0].eventId)
 
   await assert.rejects(
     () => init({ apiKey: "other-key" }),
@@ -103,7 +156,7 @@ function findRouteCall(calls, path) {
   globalThis.fetch = async (url, options) => {
     calls.push({ url: String(url), body: options.body })
 
-    if (String(url).endsWith("/v1/init")) {
+    if (String(url).endsWith("/api/v1/init")) {
       return initResponse({ ingestion: { batchSize: 1 } })
     }
 
@@ -149,8 +202,8 @@ function findRouteCall(calls, path) {
   })
   await shutdown()
 
-  const errorCall = findRouteCall(calls, "/v1/errors")
-  const event = parseBody(errorCall.body).events[0]
+  const eventCall = findRouteCall(calls, "/api/v1/events")
+  const event = parseBody(eventCall.body).events[0]
 
   assert.equal(pluginSetupCount, 1)
   assert.equal(processorCount, 1)
@@ -170,7 +223,7 @@ function findRouteCall(calls, path) {
   globalThis.fetch = async (url, options) => {
     calls.push({ url: String(url), body: options.body })
 
-    if (String(url).endsWith("/v1/init")) {
+    if (String(url).endsWith("/api/v1/init")) {
       return initResponse({ plan: "free", ingestion: { batchSize: 1 } })
     }
 
@@ -191,8 +244,8 @@ function findRouteCall(calls, path) {
   captureMessage("free hook message")
   await shutdown()
 
-  const errorCall = findRouteCall(calls, "/v1/errors")
-  const event = parseBody(errorCall.body).events[0]
+  const eventCall = findRouteCall(calls, "/api/v1/events")
+  const event = parseBody(eventCall.body).events[0]
 
   // v3 contract: beforeSend is available on every plan — it is no longer
   // gated behind a paid tier.
@@ -203,13 +256,19 @@ function findRouteCall(calls, path) {
 {
   const calls = []
   globalThis.fetch = async (url, options) => {
-    calls.push({ url: String(url), body: options.body })
+    calls.push({ url: String(url), body: options.body, headers: options.headers })
     return initResponse()
   }
 
   await sendInitRequest("direct-key", "https://api.example.test/", 1000)
-  assert.equal(calls[0].url, "https://api.example.test/v1/init")
-  assert.deepEqual(parseBody(calls[0].body), { apiKey: "direct-key" })
+  assert.equal(calls[0].url, "https://api.example.test/api/v1/init")
+  assert.deepEqual(parseBody(calls[0].body), {})
+  assert.equal(calls[0].headers.Authorization, "Bearer direct-key")
+
+  delete process.env.SDK_BASE_URL
+  await sendInitRequest("default-key", undefined, 1000)
+  assert.equal(calls[1].url, `${DEFAULT_API_BASE_URL}/api/v1/init`)
+  process.env.SDK_BASE_URL = "https://api.example.test"
 
   await assert.rejects(
     () => sendInitRequest("", "https://api.example.test", 1000),
@@ -220,7 +279,7 @@ function findRouteCall(calls, path) {
 {
   let resolveInit
   globalThis.fetch = async (url) => {
-    if (String(url).endsWith("/v1/init")) {
+    if (String(url).endsWith("/api/v1/init")) {
       await new Promise(resolve => {
         resolveInit = resolve
       })
@@ -234,6 +293,7 @@ function findRouteCall(calls, path) {
   }
 
   const pending = init({ apiKey: "pending-key" })
+  await waitFor(() => typeof resolveInit === "function")
   await assert.rejects(
     () => init({ apiKey: "different-pending-key" }),
     error => error.code === "SDK_INIT_IN_PROGRESS",
@@ -244,7 +304,7 @@ function findRouteCall(calls, path) {
 }
 
 {
-  globalThis.fetch = async () => initResponse({ ingestion: { maxQueueSize: undefined } })
+  globalThis.fetch = async () => initResponse({ rawConfig: {} })
 
   assert.equal(await init({ apiKey: "bad-config-key" }), undefined)
   await shutdown()
@@ -255,7 +315,7 @@ function findRouteCall(calls, path) {
   globalThis.fetch = async (url, options) => {
     calls.push({ url: String(url), body: options.body })
 
-    if (String(url).endsWith("/v1/init")) {
+    if (String(url).endsWith("/api/v1/init")) {
       return initResponse({ config: { maxPayloadBytes: 110 } })
     }
 
@@ -268,7 +328,7 @@ function findRouteCall(calls, path) {
   await init({ apiKey: "split-key" })
   await sendEvents([{ type: "x" }, { type: "x" }, { type: "x" }])
 
-  const ingestCalls = calls.filter(call => call.url === "https://ingest.example.test/v1/events")
+  const ingestCalls = calls.filter(call => call.url === "https://ingest.example.test/api/v1/events")
   assert.equal(ingestCalls.length, 3)
 
   await shutdown()
@@ -276,7 +336,7 @@ function findRouteCall(calls, path) {
 
 {
   globalThis.fetch = async (url) => {
-    if (String(url).endsWith("/v1/init")) return initResponse()
+    if (String(url).endsWith("/api/v1/init")) return initResponse()
     return new Response(JSON.stringify({ ok: true }), {
       status: 200,
       headers: { "content-type": "application/json" },
@@ -303,7 +363,7 @@ function findRouteCall(calls, path) {
 
 {
   globalThis.fetch = async (url) => {
-    if (String(url).endsWith("/v1/init")) return initResponse({ config: { maxPayloadBytes: 0 } })
+    if (String(url).endsWith("/api/v1/init")) return initResponse({ rawConfig: {} })
     return new Response(JSON.stringify({ ok: true }), {
       status: 200,
       headers: { "content-type": "application/json" },
@@ -317,16 +377,18 @@ function findRouteCall(calls, path) {
 {
   let ingestAttempts = 0
   globalThis.fetch = async (url, options) => {
-    if (String(url).endsWith("/v1/init")) {
+    if (String(url).endsWith("/api/v1/init")) {
       return initResponse({ config: { maxPayloadBytes: 110 } })
     }
 
-    ingestAttempts += 1
-    if (ingestAttempts === 2) {
-      return new Response(JSON.stringify({ failed: true }), {
-        status: 500,
-        headers: { "content-type": "application/json" },
-      })
+    if (String(url).endsWith("/api/v1/events")) {
+      ingestAttempts += 1
+      if (ingestAttempts === 2) {
+        return new Response(JSON.stringify({ failed: true }), {
+          status: 500,
+          headers: { "content-type": "application/json" },
+        })
+      }
     }
 
     return new Response(JSON.stringify({ ok: true }), {
@@ -353,7 +415,7 @@ function findRouteCall(calls, path) {
   globalThis.fetch = async (url, options) => {
     calls.push({ url: String(url), body: options.body })
 
-    if (String(url).endsWith("/v1/init")) {
+    if (String(url).endsWith("/api/v1/init")) {
       return initResponse({ ingestion: { batchSize: 1 } })
     }
 
@@ -375,8 +437,8 @@ function findRouteCall(calls, path) {
   await init({ apiKey: "buffer-key" })
   await shutdown()
 
-  // v3 routes request events to the dedicated /v1/requests ingest route.
-  const traceCall = findRouteCall(calls, "/v1/requests")
+  // v3 routes request events to the dedicated /api/v1/requests ingest route.
+  const traceCall = findRouteCall(calls, "/api/v1/requests")
   assert.ok(traceCall)
   assert.equal(parseBody(traceCall.body).events[0].requestId, "pre-init")
 }

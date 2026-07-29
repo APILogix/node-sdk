@@ -10,7 +10,7 @@
  */
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { shutdown, registerSignalHandlers, resetSignalHandlers, isSDKShuttingDown, } from '../../src/core/lifecycle.js';
+import { shutdown, registerSignalHandlers, resetSignalHandlers, isSDKShuttingDown, onBeforeShutdown, waitForShutdownCompletion, } from '../../src/core/lifecycle.js';
 import { ConfigManager } from '../../src/core/config-manager.js';
 import { resetAutoInstrumentations } from '../../src/instrumentation/auto-instrument.js';
 import { client } from '../../src/core/client.js';
@@ -91,6 +91,16 @@ describe('SDK Lifecycle — shutdown and reinit', () => {
         assert.ok(second);
         // Each sequential call returns a distinct ShutdownResult value.
         assert.notEqual(first, second);
+    });
+    it('returns at the caller deadline while cleanup retains ownership', async () => {
+        onBeforeShutdown(() => new Promise(resolve => setTimeout(resolve, 75)));
+        const startedAt = Date.now();
+        const result = await shutdown(10);
+        assert.equal(result.timedOut, true);
+        assert.ok(Date.now() - startedAt < 60, `shutdown exceeded deadline: ${Date.now() - startedAt}ms`);
+        assert.equal(isSDKShuttingDown(), true);
+        await waitForShutdownCompletion();
+        assert.equal(isSDKShuttingDown(), false);
     });
     it('shutdown returns a structured result with completed/timedOut/stepErrors', async () => {
         const result = await shutdown(2_000);

@@ -23,6 +23,8 @@ export declare class SecurityScrubber {
     private static readonly EMAIL_PATTERN;
     private static readonly PHONE_PATTERN;
     private static readonly IPV4_PATTERN;
+    private static readonly BRACKETED_IPV6_PATTERN;
+    private static readonly IPV6_CANDIDATE_PATTERN;
     private constructor();
     private updateHasScrubRules;
     static initialize(config: PrivacyConfig): SecurityScrubber;

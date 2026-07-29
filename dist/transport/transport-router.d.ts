@@ -5,7 +5,7 @@
  * event classification, bounded queues, adaptive batchers, route health,
  * and one shared connection manager with global and per-route limits.
  */
-import type { ConfigDiff, RemoteConfigResponse, TransportRemoteConfig } from '../types/config.js';
+import type { ConfigDiff, LimitsConfig, RemoteConfigResponse, TransportRemoteConfig } from '../types/config.js';
 import type { SDKEvent } from '../types/event.js';
 import type { MultiRouteTransportHealth } from '../types/transport.js';
 import { type EnterpriseRoute } from './route-registry.js';
@@ -20,6 +20,8 @@ export declare class TransportRouter {
     private healthMonitor;
     private batchManagers;
     private queues;
+    private limitsConfig;
+    private reconfiguration;
     private disabled;
     private destroyed;
     private readonly dropped;
@@ -38,20 +40,16 @@ export declare class TransportRouter {
      * NOTE: This method is async because shutdown drains in-flight batches.
      * Callers must await the returned promise before sending events.
      */
-    static initialize(config: TransportRemoteConfig, apiKey: string, fetchImpl?: typeof fetch, useMultiplexedTransport?: boolean): Promise<TransportRouter>;
+    static initialize(config: TransportRemoteConfig, apiKey: string, fetchImpl?: typeof fetch, useMultiplexedTransport?: boolean, limitsConfig?: LimitsConfig): Promise<TransportRouter>;
     static getInstance(): TransportRouter | null;
     send(event: SDKEvent): boolean;
     sendBatch(events: readonly SDKEvent[]): void;
     disable(): void;
     enable(): void;
     isDisabled(): boolean;
-    handleConfigChange(_diff: ConfigDiff, newConfig: Readonly<RemoteConfigResponse>): void;
-    /**
-     * Hot-swap the transport configuration: rebuild the route registry,
-     * connection manager, queues and batchers, then re-enqueue everything
-     * that was waiting so no event is lost across the swap.
-     */
-    updateTransport(transport: TransportRemoteConfig): void;
+    handleConfigChange(_diff: ConfigDiff, newConfig: Readonly<RemoteConfigResponse>): Promise<void>;
+    /** Build-then-swap transport reconfiguration serialized across refreshes. */
+    updateTransport(transport: TransportRemoteConfig, limits?: LimitsConfig): Promise<void>;
     getHealth(): MultiRouteTransportHealth;
     getDebugState(): {
         inFlightSends: Readonly<Record<EnterpriseRoute, number>>;
@@ -74,9 +72,9 @@ export declare class TransportRouter {
      * tests can run without it.
      */
     drainAllQueues(): SDKEvent[];
-    shutdown(): Promise<void>;
+    shutdown(): Promise<SDKEvent[]>;
     static reset(): Promise<void>;
-    private createQueuesAndBatchers;
+    private buildRuntime;
     private createConnectionManager;
     private routeHealth;
     private recordDrop;

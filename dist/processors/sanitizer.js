@@ -180,7 +180,7 @@ class ApiPayloadScrubber {
                 }
                 return result;
             }
-            const result = {};
+            const result = Object.create(null);
             const entries = Object.entries(value);
             const limit = Math.min(entries.length, MAX_OBJECT_KEYS);
             for (let i = 0; i < limit; i++) {
@@ -188,6 +188,8 @@ class ApiPayloadScrubber {
                 if (!entry)
                     continue;
                 const [key, nested] = entry;
+                if (!isSafeKey(key))
+                    continue;
                 if (this.isSensitiveKey(key)) {
                     result[key] = REDACTED;
                 }
@@ -223,5 +225,8 @@ export function sanitizeEvent(event) {
 }
 export function sanitizeHeaders(headers) {
     return apiPayloadScrubber.sanitizeHeaders(headers);
+}
+function isSafeKey(key) {
+    return key !== '__proto__' && key !== 'constructor' && key !== 'prototype';
 }
 //# sourceMappingURL=sanitizer.js.map

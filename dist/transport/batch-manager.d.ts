@@ -1,4 +1,5 @@
 import type { SDKEvent } from '../types/event.js';
+import type { TransportRetryConfig } from '../types/config.js';
 import { TransportEventQueue, type QueueDropInfo } from './transport-event-queue.js';
 import { ConnectionManager } from './connection-manager.js';
 import { HealthMonitor } from './health-monitor.js';
@@ -15,6 +16,7 @@ export interface BatchManagerOptions {
     readonly maxWaitTimeMs: number;
     readonly maxPayloadBytes: number;
     readonly socketTimeoutMs: number;
+    readonly retry: TransportRetryConfig;
     readonly onDrop?: (info: QueueDropInfo) => void;
     readonly fetchImpl?: typeof fetch;
 }
@@ -26,6 +28,7 @@ export interface BatchManagerStats {
     readonly totalSent: number;
     readonly totalDropped: number;
     readonly totalFailed: number;
+    readonly totalRetries: number;
     readonly totalRequests: number;
     readonly avgBatchSize: number;
 }
@@ -33,10 +36,18 @@ export declare class BatchManager {
     private readonly options;
     private timer;
     private activeSends;
+    private readonly activeSendPromises;
+    private readonly activeBatches;
+    private readonly activeAbortControllers;
+    private readonly handedOffEvents;
+    private readonly pendingRetryPromises;
+    private readonly pendingRetryTimers;
+    private readonly retryAttempts;
     private batched;
     private totalSent;
     private totalDropped;
     private totalFailed;
+    private totalRetries;
     private totalRequests;
     private totalBatchEvents;
     private destroyed;
@@ -44,18 +55,20 @@ export declare class BatchManager {
     private readonly fetchImpl;
     constructor(options: BatchManagerOptions);
     enqueue(event: SDKEvent): boolean;
-    /**
-     * Drain the queue. Bounded so a permanently-unreachable endpoint cannot
-     * keep flush() spinning forever — re-queued failures eventually exhaust
-     * the retry budget and the residual events are surrendered to the queue
-     * for the upstream lifecycle/persistence layer to handle.
-     */
+    /** Drain without event-loop polling; waits only on tracked work promises. */
     flush(): Promise<void>;
-    shutdown(): Promise<void>;
+    /**
+     * Stop new work, cancel delayed retries, abort active requests, and return
+     * any batches that could not be quiesced within the bounded wait. The
+     * router persists returned events before dropping manager references.
+     */
+    shutdown(timeoutMs?: number): Promise<SDKEvent[]>;
     stats(): BatchManagerStats;
     private pump;
     private nextSerializableBatch;
     private sendBatch;
+    private retryOrRetain;
+    private cancelPendingRetries;
     /**
      * Persist a batch to disk after a transient send failure.
      *
@@ -85,17 +98,5 @@ export declare class BatchManager {
     private effectiveMaxWaitMs;
     private ensureTimer;
     private clearTimer;
-    /**
-     * Compute the JSON-encoded payload size for a batch.
-     *
-     * Returns a negative sentinel (-1) on serialization failure so callers can
-     * distinguish "payload too large" from "payload not serializable" and
-     * avoid re-serializing the same bad batch (which would double-count the
-     * dropped events in stats).
-     *
-     * On serialization failure we drop the entire batch in one go and emit
-     * a single onDrop notification with reason='serialization_failed'.
-     */
-    private byteLength;
 }
 //# sourceMappingURL=batch-manager.d.ts.map

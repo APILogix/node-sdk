@@ -27,6 +27,7 @@ import { getLogger } from '../utils/logger.js';
 const DEFAULT_MAX_CACHE_SIZE = 100;
 const DEFAULT_CACHE_TTL_MS = 300_000; // 5 minutes
 const SOURCE_MAP_URL_REGEX = /\/\/[#@]\s*sourceMappingURL\s*=\s*(\S+)/;
+const MAX_SOURCE_MAP_SIZE_BYTES = 16 * 1024 * 1024; // 16 MiB
 class SourceMapResolver {
     cache = new Map();
     loadingPromises = new Map();
@@ -201,10 +202,22 @@ class SourceMapResolver {
                 const controller = new AbortController();
                 const timeoutId = setTimeout(() => controller.abort(), 5000);
                 try {
-                    const response = await fetch(sourceMapUrl, { signal: controller.signal });
+                    const response = await fetch(sourceMapUrl, {
+                        signal: controller.signal,
+                        redirect: 'manual',
+                    });
+                    // Reject redirects to prevent SSRF via attacker-controlled stack
+                    // filenames. The expected source map is at the exact URL.
+                    if (response.status >= 300 && response.status < 400)
+                        return null;
                     if (!response.ok)
                         return null;
+                    const contentLength = response.headers.get('content-length');
+                    if (contentLength && parseInt(contentLength, 10) > MAX_SOURCE_MAP_SIZE_BYTES)
+                        return null;
                     rawJson = await response.text();
+                    if (Buffer.byteLength(rawJson, 'utf8') > MAX_SOURCE_MAP_SIZE_BYTES)
+                        return null;
                 }
                 finally {
                     clearTimeout(timeoutId);

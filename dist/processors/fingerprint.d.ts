@@ -13,6 +13,9 @@ import type { StackFrame } from './stack-parser.js';
  * Generate a deterministic fingerprint for error grouping.
  * Same error type + same call path = same fingerprint.
  *
+ * Cached with a bounded LRU to avoid recomputing SHA-256 for repeated
+ * identical errors in high-throughput scenarios.
+ *
  * @param error - The normalized error
  * @param stackFrames - Parsed stack frames
  * @param customFingerprint - Optional explicit fingerprint override

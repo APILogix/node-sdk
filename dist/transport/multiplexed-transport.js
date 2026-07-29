@@ -26,10 +26,10 @@ export class MultiplexedTransport {
     pendingBatches = new Map();
     destroyed = false;
     flushing = false;
-    constructor(baseUrl, apiKey, flushIntervalMs = 2000) {
+    constructor(baseUrl, apiKey, flushIntervalMs) {
         this.baseUrl = baseUrl;
         this.apiKey = apiKey;
-        this.flushIntervalMs = flushIntervalMs;
+        this.flushIntervalMs = flushIntervalMs ?? 2000;
         this.flushTimer = setInterval(() => void this.flush(), this.flushIntervalMs);
         if (this.flushTimer.unref)
             this.flushTimer.unref();

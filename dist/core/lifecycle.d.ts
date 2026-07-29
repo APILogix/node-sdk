@@ -60,6 +60,13 @@ export declare function onBeforeShutdown(hook: () => Promise<void>): void;
  */
 export declare function shutdown(timeoutMs?: number): Promise<ShutdownResult>;
 /**
+ * Wait until all teardown work has released SDK-owned resources. A timed-out
+ * public shutdown can finish cleanup in the background; init() uses this
+ * barrier to prevent a new runtime from racing the previous one.
+ * @internal
+ */
+export declare function waitForShutdownCompletion(): Promise<void>;
+/**
  * Force-flush pending telemetry without tearing down the SDK.
  * Safe to call concurrently with regular event capture.
  */

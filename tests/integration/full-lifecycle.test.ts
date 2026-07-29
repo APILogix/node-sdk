@@ -20,6 +20,7 @@
 
 import { after, before, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
+import { gunzipSync } from 'node:zlib'
 
 import { init } from '../../src/core/init.js'
 import { shutdown, type ShutdownResult } from '../../src/core/lifecycle.js'
@@ -28,6 +29,7 @@ import { captureError } from '../../src/capture/captureError.js'
 import { captureMetric } from '../../src/capture/captureMetric.js'
 import { startSpan } from '../../src/tracing/tracer.js'
 import { client } from '../../src/core/client.js'
+import { BAKED_IN_REMOTE_CONFIG } from '../../src/constants/defaults.js'
 
 // ─── Mock Backend ───────────────────────────────────────────────────────────
 
@@ -43,77 +45,81 @@ async function startMockBackend(): Promise<MockServer> {
   const requests: Array<{ path: string; body: unknown }> = []
 
   const server = http.createServer((req, res) => {
-    let raw = ''
+    const chunks: Buffer[] = []
     req.on('data', chunk => {
-      raw += chunk
+      chunks.push(Buffer.from(chunk))
     })
     req.on('end', () => {
+      const raw = Buffer.concat(chunks)
+      const decoded = req.headers['content-encoding'] === 'gzip' ? gunzipSync(raw).toString('utf8') : raw.toString('utf8')
       try {
-        const body = raw ? JSON.parse(raw) : null
+        const body = decoded ? JSON.parse(decoded) : null
         requests.push({ path: req.url ?? '', body })
       } catch {
-        requests.push({ path: req.url ?? '', body: raw })
+        requests.push({ path: req.url ?? '', body: decoded })
       }
 
-      // /v1/init returns a minimal valid init response that points all
+      // /api/v1/init returns a minimal valid init response that points all
       // transport routes at this same mock server. Without per-route URLs,
       // the BatchManager would dispatch to the baked-in production URLs
       // (e.g. https://errors.pulse.dev) and fail every send.
-      if (req.url === '/v1/init') {
+      if (req.url === '/api/v1/init') {
         const port = (server.address() as { port: number }).port
         const localUrl = `http://127.0.0.1:${port}`
+        const paths: Record<string, string> = {
+          errors: '/api/v1/errors', events: '/api/v1/events', traces: '/api/v1/traces',
+          spans: '/api/v1/spans', requests: '/api/v1/requests', metrics: '/api/v1/metrics',
+          logs: '/api/v1/logs', profiles: '/api/v1/profiles', crons: '/api/v1/checkins',
+          replays: '/api/v1/replays',
+        }
+        const routes = Object.fromEntries(Object.entries(BAKED_IN_REMOTE_CONFIG.transport.routes).map(([name, route]) => [
+          name,
+          { ...route, url: `${localUrl}${paths[name]}`, batchSize: 50, flushIntervalMs: 250, timeoutMs: 2_000 },
+        ]))
         res.writeHead(200, { 'content-type': 'application/json' })
         res.end(
           JSON.stringify({
             success: true,
             projectId: 'proj-test',
+            environment: 'test',
             config: {
-              ingestUrl: `${localUrl}/v1/events`,
-              samplingRate: 1,
-              enableErrors: true,
-              enablePerformance: true,
-              maxRetries: 3,
-              maxPayloadBytes: 1_048_576,
-              plan: 'enterprise',
-            },
-            ingestion: {
-              maxQueueSize: 10_000,
-              batchSize: 50,
-              flushInterval: 1_000,
+              ...BAKED_IN_REMOTE_CONFIG,
+              sdk: { projectId: 'proj-test', environment: 'test', release: '1.0.0' },
+              features: { ...BAKED_IN_REMOTE_CONFIG.features, tracing: true, requestCapture: true, errors: true, metrics: true },
+              sampling: { ...BAKED_IN_REMOTE_CONFIG.sampling, traces: 1, requests: 1, errors: 1, metrics: 1 },
+              killswitches: { ...BAKED_IN_REMOTE_CONFIG.killswitches, disableTransport: false },
+              transport: { ...BAKED_IN_REMOTE_CONFIG.transport, routes },
+              meta: { generatedAt: new Date().toISOString(), generatedBy: 'integration-test-init' },
             },
           })
         )
         return
       }
 
-      // /v1/sdk-config returns minimal remote config with mock endpoints so
-      // the transport router does not dispatch to production URLs.
+      // Complete schema-v1 control-plane response with localhost routes.
       if (req.url === '/v1/sdk-config') {
         const port = (server.address() as { port: number }).port
         const localUrl = `http://127.0.0.1:${port}`
-        const endpoint = (path: string) => ({
-          url: `${localUrl}${path}`,
-          priority: 'normal',
-          batchSize: 50,
-          flushIntervalMs: 1_000,
-          compression: 'none',
-          timeoutMs: 2_000,
-        })
+        const paths: Record<string, string> = {
+          errors: '/api/v1/errors', events: '/api/v1/events', traces: '/api/v1/traces',
+          spans: '/api/v1/spans', requests: '/api/v1/requests',
+          metrics: '/api/v1/metrics', logs: '/api/v1/logs', profiles: '/api/v1/profiles',
+          crons: '/api/v1/checkins', replays: '/api/v1/replays',
+        }
+        const routes = Object.fromEntries(Object.entries(BAKED_IN_REMOTE_CONFIG.transport.routes).map(([name, route]) => [
+          name,
+          { ...route, url: `${localUrl}${paths[name]}`, batchSize: 50, flushIntervalMs: 250, timeoutMs: 2_000 },
+        ]))
         res.writeHead(200, { 'content-type': 'application/json' })
-        res.end(
-          JSON.stringify({
-            transport: {
-              endpoints: {
-                errors: { ...endpoint('/v1/errors'), priority: 'critical' },
-                traces: { ...endpoint('/v1/traces'), priority: 'high' },
-                metrics: endpoint('/v1/metrics'),
-                logs: endpoint('/v1/logs'),
-                profiles: endpoint('/v1/profiles'),
-                crons: endpoint('/v1/checkins'),
-              },
-            },
-          })
-        )
+        res.end(JSON.stringify({
+          ...BAKED_IN_REMOTE_CONFIG,
+          sdk: { projectId: 'proj-test', environment: 'test', release: '1.0.0' },
+          features: { ...BAKED_IN_REMOTE_CONFIG.features, tracing: true, requestCapture: true, errors: true, metrics: true },
+          sampling: { ...BAKED_IN_REMOTE_CONFIG.sampling, traces: 1, requests: 1, errors: 1, metrics: 1 },
+          killswitches: { ...BAKED_IN_REMOTE_CONFIG.killswitches, disableTransport: false },
+          transport: { ...BAKED_IN_REMOTE_CONFIG.transport, routes },
+          meta: { generatedAt: new Date().toISOString(), generatedBy: 'integration-test', configHash: 'integration-test' },
+        }))
         return
       }
 
@@ -329,7 +335,7 @@ describe('Full SDK lifecycle integration', { timeout: 60_000 }, () => {
     assert.equal(result.timedOut, false)
 
     // The backend should have received init + at least one event payload.
-    const initRequest = backend.requests.find(r => r.path === '/v1/init')
-    assert.ok(initRequest, 'mock backend should have received the /v1/init call')
+    const initRequest = backend.requests.find(r => r.path === '/api/v1/init')
+    assert.ok(initRequest, 'mock backend should have received the /api/v1/init call')
   })
 })

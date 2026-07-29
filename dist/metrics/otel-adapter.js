@@ -226,11 +226,11 @@ class OtelMetricsManager {
     /**
      * Force-flush all pending metrics through the event pipeline.
      */
-    async flush() {
+    async flush(internalTelemetry = false) {
         if (!this.reader)
             return;
         try {
-            await this.reader.collectAndExport();
+            await this.reader.collectAndExport(internalTelemetry);
         }
         catch (err) {
             getLogger().error('Failed to flush OTel metrics', { error: err });

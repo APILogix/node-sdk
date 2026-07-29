@@ -82,7 +82,7 @@ export function monitorMiddleware(options = {}) {
         const sessionId = headerString(req.headers['x-session-id']);
         const userAgent = headerString(req.headers['user-agent']);
         const referer = headerString(req.headers['referer'] ?? req.headers['referrer']);
-        const clientIp = resolveClientIp(req.headers, req.socket?.remoteAddress, options.trustedProxies);
+        const clientIp = resolveClientIp(req.headers, req.socket?.remoteAddress, options.trustedProxies, decision.maskIp);
         const startTime = Date.now();
         const store = createContextStore(requestId, options.maxBreadcrumbs ?? client.config?.maxBreadcrumbs ?? 100, {
             userId,

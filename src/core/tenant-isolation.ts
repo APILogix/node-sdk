@@ -20,11 +20,17 @@ import { epochMs } from '../utils/time.js'
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 export interface TenantGovernanceOptions {
+    /** Disabled by default until configured by the control plane. */
+    readonly enabled?: boolean
     /** Max tenants to track simultaneously. Default: 1000 */
     readonly maxTenantsTracked?: number
-    /** Default rate limit per tenant (events per minute). Default: 100 */
+    /** Legacy quota name. */
     readonly defaultQuotaPerTenant?: number
-    /** Enable fair scheduling across tenants. Default: true */
+    /** Events accepted per window. */
+    readonly quotaPerWindow?: number
+    /** High-priority events accepted after normal quota. */
+    readonly criticalReserve?: number
+    /** Enable fair scheduling across tenants. Reserved for queue schedulers. */
     readonly enableFairScheduling?: boolean
     /** Window duration for rate limiting in ms. Default: 60000 (1 minute) */
     readonly windowDurationMs?: number
@@ -38,6 +44,7 @@ export interface TenantStats {
 
 interface TenantWindow {
     eventCount: number
+    criticalCount: number
     windowStart: number
     lastSeen: number
     throttledCount: number
@@ -48,20 +55,63 @@ interface TenantWindow {
 const DEFAULT_TENANT = '_default'
 
 export class TenantGovernor {
-    private readonly maxTenantsTracked: number
-    private readonly defaultQuota: number
-    private readonly windowDurationMs: number
+    private enabled = false
+    private maxTenantsTracked = 1000
+    private defaultQuota = 100
+    private criticalReserve = 25
+    private windowDurationMs = 60_000
     private readonly windows = new Map<string, TenantWindow>()
     private totalThrottled = 0
     private cleanupTimer: ReturnType<typeof setInterval> | null = null
 
     constructor(options: TenantGovernanceOptions = {}) {
-        this.maxTenantsTracked = options.maxTenantsTracked ?? 1000
-        this.defaultQuota = options.defaultQuotaPerTenant ?? 100
-        this.windowDurationMs = options.windowDurationMs ?? 60_000
-
+        this.configure(options)
         this.cleanupTimer = setInterval(() => this.cleanup(), 30_000)
         this.cleanupTimer.unref()
+    }
+
+    configure(options: TenantGovernanceOptions | undefined): void {
+        this.enabled = options?.enabled ?? false
+        this.maxTenantsTracked = Math.max(1, Math.floor(options?.maxTenantsTracked ?? 1000))
+        this.defaultQuota = Math.max(1, Math.floor(options?.quotaPerWindow ?? options?.defaultQuotaPerTenant ?? 100))
+        this.criticalReserve = Math.max(0, Math.floor(options?.criticalReserve ?? 25))
+        this.windowDurationMs = Math.max(1000, Math.floor(options?.windowDurationMs ?? 60_000))
+        this.reset()
+    }
+
+    /** Atomically check and record one event. */
+    admit(tenantId: string | undefined, critical = false): boolean {
+        if (!this.enabled) return true
+        const id = tenantId?.trim() || DEFAULT_TENANT
+        const now = epochMs()
+        const window = this.getOrCreateWindow(id, now)
+        if (now - window.windowStart >= this.windowDurationMs) {
+            window.eventCount = 0
+            window.criticalCount = 0
+            window.windowStart = now
+        }
+        window.lastSeen = now
+        this.touch(id, window)
+
+        const normalAvailable = window.eventCount < this.defaultQuota
+        const reserveAvailable = critical && window.criticalCount < this.criticalReserve
+        if (normalAvailable || reserveAvailable) {
+            window.eventCount++
+            if (!normalAvailable) window.criticalCount++
+            return true
+        }
+
+        window.throttledCount++
+        this.totalThrottled++
+        if (window.throttledCount % 50 === 1) {
+            getLogger().warn('Tenant rate limited', {
+                tenantId: id === DEFAULT_TENANT ? '(default)' : `${id.slice(0, 8)}...`,
+                eventCount: window.eventCount,
+                quota: this.defaultQuota,
+                windowMs: this.windowDurationMs,
+            })
+        }
+        return false
     }
 
     /**
@@ -69,6 +119,7 @@ export class TenantGovernor {
      * Returns true if the event should be accepted, false if rate-limited.
      */
     canAcceptEvent(tenantId: string | undefined): boolean {
+        if (!this.enabled) return true
         const id = tenantId ?? DEFAULT_TENANT
         const now = epochMs()
         let window = this.windows.get(id)
@@ -81,6 +132,7 @@ export class TenantGovernor {
 
             window = {
                 eventCount: 0,
+                criticalCount: 0,
                 windowStart: now,
                 lastSeen: now,
                 throttledCount: 0,
@@ -120,6 +172,7 @@ export class TenantGovernor {
      * Record that an event was accepted for a tenant.
      */
     recordEvent(tenantId: string | undefined): void {
+        if (!this.enabled) return
         const id = tenantId ?? DEFAULT_TENANT
         const window = this.windows.get(id)
         if (window) {
@@ -157,15 +210,30 @@ export class TenantGovernor {
 
     // ─── Internal ───────────────────────────────────────────────────────────
 
-    private evictOldest(): void {
-        const toRemove = Math.floor(this.maxTenantsTracked * 0.1)
-        const sorted = [...this.windows.entries()]
-            .sort((a, b) => a[1].lastSeen - b[1].lastSeen)
-            .slice(0, toRemove)
-
-        for (const [tenantId] of sorted) {
-            this.windows.delete(tenantId)
+    private getOrCreateWindow(id: string, now: number): TenantWindow {
+        const existing = this.windows.get(id)
+        if (existing) return existing
+        if (this.windows.size >= this.maxTenantsTracked) this.evictOldest()
+        const created: TenantWindow = {
+            eventCount: 0,
+            criticalCount: 0,
+            windowStart: now,
+            lastSeen: now,
+            throttledCount: 0,
         }
+        this.windows.set(id, created)
+        return created
+    }
+
+    private touch(id: string, window: TenantWindow): void {
+        // Map insertion order is an O(1) LRU list for our bounded key set.
+        this.windows.delete(id)
+        this.windows.set(id, window)
+    }
+
+    private evictOldest(): void {
+        const oldest = this.windows.keys().next().value as string | undefined
+        if (oldest !== undefined) this.windows.delete(oldest)
     }
 
     private cleanup(): void {

@@ -36,8 +36,16 @@ import { REMOTE_CONFIG_SCHEMA_VERSION } from '../types/config.js'
 
 // ─── Legacy Defaults ────────────────────────────────────────────────────────
 
-/** Base URL must be provided via SDK_BASE_URL env var or `baseUrl` in SDK config. */
-export const DEFAULT_BASE_URL = process.env['SDK_BASE_URL'] || ''
+/** Production SaaS API origin used when neither `baseUrl` nor `SDK_BASE_URL` is provided. */
+export const DEFAULT_API_BASE_URL = 'https://api.veyontix.com'
+
+/**
+ * Resolve the SDK API origin from highest to lowest precedence:
+ * explicit init option, environment override, production SaaS endpoint.
+ */
+export function resolveApiBaseUrl(baseUrl?: string): string {
+  return baseUrl ?? process.env['SDK_BASE_URL'] ?? DEFAULT_API_BASE_URL
+}
 
 export const DEFAULT_TIMEOUT_MS = 5000
 export const DEFAULT_BATCH_SIZE = 50
@@ -138,6 +146,13 @@ export const SAFE_DEFAULTS_LIMITS: Readonly<LimitsConfig> = Object.freeze({
   maxQueueSize: 10_000,
   maxMemoryMb: 256,
   maxCpuOverheadPercent: 5,
+  tenantGovernance: Object.freeze({
+    enabled: false,
+    maxTenantsTracked: 1_000,
+    quotaPerWindow: 10_000,
+    windowDurationMs: 60_000,
+    criticalReserve: 100,
+  }),
 })
 
 export const SAFE_DEFAULTS_PRIVACY: Readonly<PrivacyConfig> = Object.freeze({
@@ -195,11 +210,18 @@ export const SAFE_DEFAULTS_TRANSPORT: Readonly<TransportRemoteConfig> = Object.f
   }),
   queue: Object.freeze({
     overflowStrategy: 'drop_oldest' as const,
+    maxSize: 10_000,
+    criticalReserve: 100,
+  }),
+  connections: Object.freeze({
+    maxTotalConnections: 100,
+    acquireTimeoutMs: 5_000,
   }),
   keepAlive: true,
   routes: Object.freeze({
     traces: Object.freeze({ url: '', batchSize: 500, flushIntervalMs: 5000, timeoutMs: 5000, compression: 'gzip' as const, priority: 'high' as const }),
     requests: Object.freeze({ url: '', batchSize: 500, flushIntervalMs: 5000, timeoutMs: 3000, compression: 'gzip' as const, priority: 'high' as const }),
+    spans: Object.freeze({ url: '', batchSize: 500, flushIntervalMs: 5000, timeoutMs: 5000, compression: 'gzip' as const, priority: 'high' as const }),
     errors: Object.freeze({ url: '', batchSize: 100, flushIntervalMs: 1000, timeoutMs: 3000, compression: 'gzip' as const, priority: 'critical' as const }),
     metrics: Object.freeze({ url: '', batchSize: 1000, flushIntervalMs: 10000, timeoutMs: 5000, compression: 'gzip' as const, priority: 'normal' as const }),
     logs: Object.freeze({ url: '', batchSize: 200, flushIntervalMs: 10000, timeoutMs: 5000, compression: 'gzip' as const, priority: 'normal' as const }),

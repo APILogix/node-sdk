@@ -210,6 +210,15 @@ export interface PiiDetectionConfig {
  * sets the values; the SDK clamps each one to a built-in safety ceiling
  * before applying it (see `SAFETY_CEILINGS` in constants/defaults).
  */
+export interface TenantGovernanceConfig {
+  readonly enabled: boolean
+  readonly maxTenantsTracked: number
+  readonly quotaPerWindow: number
+  readonly windowDurationMs: number
+  /** Additional high-priority/fatal events accepted after normal quota. */
+  readonly criticalReserve: number
+}
+
 export interface LimitsConfig {
   readonly maxSpansPerTrace: number
   readonly maxSpanAttributes: number
@@ -218,6 +227,7 @@ export interface LimitsConfig {
   readonly maxQueueSize: number
   readonly maxMemoryMb: number
   readonly maxCpuOverheadPercent: number
+  readonly tenantGovernance?: TenantGovernanceConfig
 }
 
 // ─── Killswitches ───────────────────────────────────────────────────────────
@@ -286,6 +296,7 @@ export interface EntitlementsConfig {
 export type TransportRouteName =
   | 'traces'
   | 'requests'
+  | 'spans'
   | 'errors'
   | 'metrics'
   | 'logs'
@@ -307,8 +318,15 @@ export interface TransportRouteConfig {
 export interface TransportRemoteConfig {
   readonly retry: TransportRetryConfig
   readonly queue: TransportQueueConfig
+  readonly connections?: TransportConnectionConfig
   readonly keepAlive: boolean
   readonly routes: Readonly<Record<TransportRouteName, TransportRouteConfig>>
+}
+
+export interface TransportConnectionConfig {
+  readonly maxTotalConnections: number
+  readonly maxConnectionsPerRoute?: Partial<Readonly<Record<TransportRouteName, number>>>
+  readonly acquireTimeoutMs: number
 }
 
 export interface TransportRetryConfig {
@@ -320,6 +338,10 @@ export interface TransportRetryConfig {
 
 export interface TransportQueueConfig {
   readonly overflowStrategy: 'drop_oldest' | 'drop_newest'
+  /** Per-route queue cap; also bounded by limits.maxQueueSize. */
+  readonly maxSize?: number
+  /** Slots protected from non-critical telemetry. */
+  readonly criticalReserve?: number
 }
 
 // ─── Runtime (config refresh behaviour) ─────────────────────────────────────
@@ -431,7 +453,14 @@ export interface SDKInitOptions {
   readonly apiKey: string
   readonly service?: string
   readonly environment?: string
+  /** Deployment release identifier (independent of package.json version). */
   readonly release?: string
+  /** Explicit consuming package name override. */
+  readonly applicationName?: string
+  /** Explicit consuming package version override. */
+  readonly applicationVersion?: string
+  /** package.json file to inspect; relative paths resolve from process.cwd(). */
+  readonly packageJsonPath?: string
   readonly enableErrors?: boolean
   readonly enablePerformance?: boolean
   readonly enableTracing?: boolean
@@ -499,6 +528,8 @@ export interface ResolvedSDKConfig {
   readonly service: string
   readonly environment: string
   readonly release: string
+  readonly applicationName: string
+  readonly applicationVersion: string
   readonly debug: boolean
 
   readonly plan: PlanTier
@@ -547,6 +578,9 @@ export const sdkInitOptionsSchema = z.object({
   service: z.string().trim().min(1).optional(),
   environment: z.string().trim().min(1).optional(),
   release: z.string().trim().min(1).optional(),
+  applicationName: z.string().trim().min(1).optional(),
+  applicationVersion: z.string().trim().min(1).optional(),
+  packageJsonPath: z.string().trim().min(1).optional(),
   enableErrors: z.boolean().optional(),
   enablePerformance: z.boolean().optional(),
   enableTracing: z.boolean().optional(),

@@ -294,9 +294,13 @@ export function registerAutoInstrumentations(options: AutoInstrumentOptions = {}
 
             const SDK_INGEST_PATHS = new Set([
               '/v1/events', '/v1/init', '/v1/sdk-config',
-              '/v1/traces', '/v1/requests', '/v1/errors',
+              '/v1/traces', '/v1/spans', '/v1/requests', '/v1/errors',
               '/v1/metrics', '/v1/logs', '/v1/profiles',
               '/v1/checkins', '/v1/replays',
+              '/api/v1/events', '/api/v1/init',
+              '/api/v1/traces', '/api/v1/spans', '/api/v1/requests', '/api/v1/errors',
+              '/api/v1/metrics', '/api/v1/logs', '/api/v1/profiles',
+              '/api/v1/checkins', '/api/v1/replays',
             ])
             return SDK_INGEST_PATHS.has(path)
           } catch {
@@ -606,6 +610,7 @@ function isInternalSdkUrl(target: URL, ingest: URL): boolean {
     || target.pathname === '/v1/init'
     || target.pathname === '/v1/sdk-config'
     || target.pathname === '/v1/traces'
+    || target.pathname === '/v1/spans'
     || target.pathname === '/v1/requests'
     || target.pathname === '/v1/errors'
     || target.pathname === '/v1/metrics'
@@ -613,6 +618,17 @@ function isInternalSdkUrl(target: URL, ingest: URL): boolean {
     || target.pathname === '/v1/profiles'
     || target.pathname === '/v1/checkins'
     || target.pathname === '/v1/replays'
+    || target.pathname === '/api/v1/events'
+    || target.pathname === '/api/v1/init'
+    || target.pathname === '/api/v1/traces'
+    || target.pathname === '/api/v1/spans'
+    || target.pathname === '/api/v1/requests'
+    || target.pathname === '/api/v1/errors'
+    || target.pathname === '/api/v1/metrics'
+    || target.pathname === '/api/v1/logs'
+    || target.pathname === '/api/v1/profiles'
+    || target.pathname === '/api/v1/checkins'
+    || target.pathname === '/api/v1/replays'
 }
 
 export { GraphQLInstrumentation, MongoDBInstrumentation, RedisInstrumentation, PrismaInstrumentation, BullMQInstrumentation }

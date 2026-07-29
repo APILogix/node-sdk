@@ -20,12 +20,19 @@ const FAILURE_THRESHOLD = 10
 const INITIAL_BACKOFF_MS = 1_000
 const MAX_BACKOFF_MS = 60_000
 const P99_DEGRADED_THRESHOLD_MS = 5_000
+const P99_RECOVERY_THRESHOLD_MS = 4_000
+const MIN_LATENCY_SAMPLES = 20
+const MAX_LATENCY_SAMPLES = 200
+const HISTOGRAM_BUCKETS = 256
+const HISTOGRAM_SCALE = 16
 
 class RouteHealth {
   private state: RouteHealthState = 'HEALTHY'
   private circuit: CircuitState = 'CLOSED'
   private readonly failures: number[] = []
-  private readonly latencies: number[] = []
+  private readonly latencies: Array<{ value: number; bucket: number }> = []
+  private readonly latencyHistogram = new Uint32Array(HISTOGRAM_BUCKETS)
+  private latencySum = 0
   private backoffMs = INITIAL_BACKOFF_MS
   private probeInFlight = false
   private openUntil = 0
@@ -49,7 +56,9 @@ class RouteHealth {
     this.failures.length = 0
     this.trackLatency(latencyMs)
     this.circuit = 'CLOSED'
-    this.state = this.p99Latency() > P99_DEGRADED_THRESHOLD_MS ? 'DEGRADED' : 'HEALTHY'
+    const p99 = this.p99Latency()
+    const threshold = this.state === 'DEGRADED' ? P99_RECOVERY_THRESHOLD_MS : P99_DEGRADED_THRESHOLD_MS
+    this.state = this.latencies.length >= MIN_LATENCY_SAMPLES && p99 > threshold ? 'DEGRADED' : 'HEALTHY'
     this.backoffMs = INITIAL_BACKOFF_MS
   }
 
@@ -91,7 +100,7 @@ class RouteHealth {
       healthState: this.state,
       circuitState: this.circuit,
       failureCount: this.failures.length,
-      avgLatencyMs: this.latencies.length > 0 ? this.latencies.reduce((sum, value) => sum + value, 0) / this.latencies.length : 0,
+      avgLatencyMs: this.latencies.length > 0 ? this.latencySum / this.latencies.length : 0,
       p99LatencyMs: this.p99Latency(),
       nextProbeAt: this.circuit === 'OPEN' ? this.openUntil : null,
       lastErrorAt: this.lastError,
@@ -100,15 +109,35 @@ class RouteHealth {
   }
 
   private trackLatency(latencyMs: number): void {
-    this.latencies.push(latencyMs)
-    if (this.latencies.length > 200) this.latencies.shift()
+    const value = Math.max(0, latencyMs)
+    const bucket = Math.min(
+      HISTOGRAM_BUCKETS - 1,
+      Math.floor(Math.log2(value + 1) * HISTOGRAM_SCALE),
+    )
+    this.latencies.push({ value, bucket })
+    this.latencyHistogram[bucket] = (this.latencyHistogram[bucket] ?? 0) + 1
+    this.latencySum += value
+
+    if (this.latencies.length > MAX_LATENCY_SAMPLES) {
+      const removed = this.latencies.shift()
+      if (removed) {
+        this.latencyHistogram[removed.bucket] = Math.max(0, (this.latencyHistogram[removed.bucket] ?? 0) - 1)
+        this.latencySum -= removed.value
+      }
+    }
   }
 
   private p99Latency(): number {
     if (this.latencies.length === 0) return 0
-    const sorted = [...this.latencies].sort((a, b) => a - b)
-    const index = Math.min(sorted.length - 1, Math.ceil(sorted.length * 0.99) - 1)
-    return sorted[index] ?? 0
+    const target = Math.max(1, Math.ceil(this.latencies.length * 0.99))
+    let seen = 0
+    for (let bucket = 0; bucket < this.latencyHistogram.length; bucket++) {
+      seen += this.latencyHistogram[bucket] ?? 0
+      if (seen >= target) {
+        return Math.max(0, Math.ceil(2 ** ((bucket + 1) / HISTOGRAM_SCALE) - 1))
+      }
+    }
+    return 0
   }
 
   private pruneFailures(now: number): void {

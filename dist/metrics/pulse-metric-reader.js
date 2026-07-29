@@ -37,7 +37,7 @@ export class PulseMetricReader extends MetricReader {
     /**
      * Collect metrics from the SDK and export through the event pipeline.
      */
-    async collectAndExport() {
+    async collectAndExport(internalTelemetry = false) {
         try {
             const result = await this.collect();
             if (!result)
@@ -50,7 +50,7 @@ export class PulseMetricReader extends MetricReader {
                     for (const dp of dataPoints) {
                         const event = this.dataPointToEvent(dp);
                         if (event) {
-                            processEvent(event);
+                            processEvent(internalTelemetry ? { ...event, __pulseInternal: true } : event);
                             exportedCount++;
                         }
                     }

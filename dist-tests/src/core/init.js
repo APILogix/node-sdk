@@ -24,12 +24,12 @@ import { client } from './client.js';
 import { sendInitRequest } from '../transport/sender.js';
 import { setupGlobalErrorHandlers, resetGlobalErrorHandlers } from '../instrumentation/global-errors.js';
 import { eventQueue } from '../transport/queue.js';
-import { DEFAULT_BASE_URL, DEFAULT_MAX_PAYLOAD_BYTES, DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT_MS, SAFE_DEFAULTS_LIMITS } from '../constants/defaults.js';
+import { DEFAULT_MAX_PAYLOAD_BYTES, DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT_MS, SAFE_DEFAULTS_LIMITS, resolveApiBaseUrl } from '../constants/defaults.js';
 import { LOGGING_DEFAULTS, PROFILING_DEFAULTS, TRACING_DEFAULTS } from '../constants/internal-defaults.js';
 import { SDKError } from './errors.js';
 import { getLogger, setDebugMode, setLogLevel } from '../utils/logger.js';
 import { initializePlugins } from '../plugins/index.js';
-import { registerSignalHandlers } from './lifecycle.js';
+import { registerSignalHandlers, waitForShutdownCompletion } from './lifecycle.js';
 import { processEvent } from './event-pipeline.js';
 import { sleep } from '../utils/time.js';
 import { initTracer, shutdownTracer } from '../tracing/tracer.js';
@@ -47,6 +47,7 @@ import { registerAutoInstrumentations, resetAutoInstrumentations } from '../inst
 import { costGovernor } from '../utils/cost-governor.js';
 // ─── New Remote Config Modules ──────────────────────────────────────────────
 import { ConfigManager } from './config-manager.js';
+import { isRemoteConfigResponse } from './config-validator.js';
 import { diffConfigs } from './config-differ.js';
 import { VersionPolicy } from './version-policy.js';
 import { KillswitchEngine } from './killswitch-engine.js';
@@ -59,6 +60,7 @@ import { TransportRouter } from '../transport/transport-router.js';
 import { LoggingSubsystem } from '../subsystems/logging-subsystem.js';
 import { ProfilingSubsystem } from '../subsystems/profiling-subsystem.js';
 import { CronSubsystem } from '../subsystems/cron-subsystem.js';
+import { tenantGovernor } from './tenant-isolation.js';
 const INIT_MAX_ATTEMPTS = 5;
 const INIT_BASE_RETRY_DELAY_MS = 500;
 const INIT_MAX_RETRY_DELAY_MS = 5000;
@@ -69,6 +71,10 @@ const INIT_MAX_RETRY_DELAY_MS = 5000;
  * @returns The resolved remote config, or undefined if init failed gracefully
  */
 export async function init(options) {
+    // A caller may re-init immediately after a deadline-bounded shutdown
+    // returns. Wait for the old runtime's exclusive cleanup ownership before
+    // constructing any replacement singleton or instrumentation.
+    await waitForShutdownCompletion();
     // Enable debug mode first so all init logging is visible if requested
     setDebugMode(options.debug ?? false);
     if (options.logLevel) {
@@ -102,7 +108,7 @@ export async function init(options) {
 async function initialize(options) {
     const logger = getLogger();
     const baseUrl = resolveBaseUrl(options.baseUrl);
-    const endpoint = `${baseUrl.replace(/\/+$/, '')}/v1/init`;
+    const endpoint = `${baseUrl.replace(/\/+$/, '')}/api/v1/init`;
     client.setOptions(options);
     // Initialize breadcrumb buffer
     client.initBreadcrumbs(options.maxBreadcrumbs ?? 100);
@@ -155,6 +161,7 @@ async function initialize(options) {
     const samplingEngine = SamplingEngine.initialize(remoteConfigResponse.sampling);
     const featureController = FeatureController.initialize(remoteConfigResponse.features);
     const limitsEngine = LimitsEngine.initialize(remoteConfigResponse.limits);
+    tenantGovernor.configure(remoteConfigResponse.limits.tenantGovernance);
     const securityScrubber = SecurityScrubber.initialize(remoteConfigResponse.privacy);
     const entitlementGate = EntitlementGate.initialize(remoteConfigResponse.entitlements);
     if (isDegradedMode) {
@@ -163,7 +170,7 @@ async function initialize(options) {
     // ─── Phase 4: Transport Router ──────────────────────────────────────────
     // Awaited so a previous instance fully drains before we send any new event
     // through the new router. Required for warm-start / hot-reload scenarios.
-    const transportRouter = await TransportRouter.initialize(remoteConfigResponse.transport, options.apiKey);
+    const transportRouter = await TransportRouter.initialize(remoteConfigResponse.transport, options.apiKey, undefined, false, remoteConfigResponse.limits);
     if (killswitchEngine.isKilled('disableTransport')) {
         transportRouter.disable();
     }
@@ -195,10 +202,14 @@ async function initialize(options) {
                 endpoint,
                 attempt,
                 projectId: response.projectId,
+                environment: response.environment,
+                configRevision: response.configRevision,
                 hasConfig: isObject(response.config),
-                hasIngestion: isObject(response.ingestion),
             });
             const remoteConfig = validateRemoteConfig(response);
+            const initControlPlaneConfig = response.config && isRemoteConfigResponse(response.config)
+                ? response.config
+                : null;
             client.setRemoteConfig(remoteConfig);
             client.setInitResponse(response);
             // Resolve plan features from backend response
@@ -219,26 +230,21 @@ async function initialize(options) {
             const resolvedConfig = clampToPlan(rawConfigWithRemote, planFeatures);
             client.setResolvedConfig(resolvedConfig);
             // ─── Fallback Control-Plane Derivation ─────────────────────────────
-            // The v3 control plane (/v1/sdk-config) owns route URLs, feature
-            // flags, sampling rates and killswitches. When it is unreachable the
-            // SDK runs on baked-in defaults — which are deliberately inert
-            // (placeholder URLs, all features off, sampling 0, transport killed)
-            // so a misconfigured SDK never floods an unsuspecting backend. But
-            // the legacy /v1/init handshake just proved connectivity and returned
-            // concrete backend intent (ingestUrl, samplingRate, plan), so derive
-            // a working control-plane snapshot from it. Skipped when the control
-            // plane is live — explicit remote config always wins.
-            if (!configManager.isLive() && remoteConfigResponse) {
-                const bridgedConfig = deriveFallbackRemoteConfig(remoteConfigResponse, resolvedConfig);
+            // The v3 control plane (/v1/sdk-config) owns route URLs, feature flags,
+            // sampling rates and killswitches. When it is unreachable, /v1/init now
+            // returns the same schema-v1 document, so use that full config directly.
+            // Explicit /v1/sdk-config delivery still wins when live.
+            if (!configManager.isLive() && remoteConfigResponse && initControlPlaneConfig) {
+                const bridgedConfig = initControlPlaneConfig;
                 if (bridgedConfig) {
-                    logger.info('Control plane unreachable — deriving config from init handshake', {
+                    logger.info('Control plane unreachable — using init config snapshot', {
                         ingestUrl: resolvedConfig.ingestUrl,
                         samplingRate: resolvedConfig.samplingRate,
                     });
                     const bridgeDiff = diffConfigs(remoteConfigResponse, bridgedConfig);
                     remoteConfigResponse = bridgedConfig;
                     if (bridgeDiff.transportChanged) {
-                        transportRouter.handleConfigChange(bridgeDiff, bridgedConfig);
+                        await transportRouter.handleConfigChange(bridgeDiff, bridgedConfig);
                     }
                     if (bridgeDiff.killswitchesChanged) {
                         // Flip disableTransport through the engine (not directly on the
@@ -250,6 +256,13 @@ async function initialize(options) {
                     }
                     if (bridgeDiff.featuresChanged) {
                         await featureController.handleConfigChange(bridgeDiff, bridgedConfig);
+                    }
+                    if (bridgeDiff.limitsChanged) {
+                        limitsEngine.handleConfigChange(bridgeDiff, bridgedConfig);
+                        tenantGovernor.configure(bridgedConfig.limits.tenantGovernance);
+                    }
+                    if (bridgeDiff.privacyChanged) {
+                        securityScrubber.handleConfigChange(bridgeDiff, bridgedConfig);
                     }
                 }
             }
@@ -545,7 +558,7 @@ async function initialize(options) {
             });
             // Register crons subsystem
             await featureController.register('crons', () => {
-                CronSubsystem.initialize((event) => transportRouter.send(event), eventMetadata);
+                CronSubsystem.initialize(event => { processEvent(event); }, eventMetadata);
             }, () => {
                 CronSubsystem.reset();
             });
@@ -558,10 +571,10 @@ async function initialize(options) {
                 logger.info('[FeatureController] Session replay subsystem stopped');
             });
             // ─── Phase 7: Wire Config Change Listeners ──────────────────────────
-            configManager.onConfigChange((diff, newConfig) => {
+            configManager.onConfigChange(async (diff, newConfig) => {
                 logger.info('[ConfigManager] Config changed, propagating to subsystems');
                 if (diff.killswitchesChanged) {
-                    void killswitchEngine.handleConfigChange(diff, newConfig);
+                    await killswitchEngine.handleConfigChange(diff, newConfig);
                 }
                 if (diff.samplingChanged) {
                     samplingEngine.handleConfigChange(diff, newConfig);
@@ -575,7 +588,7 @@ async function initialize(options) {
                     });
                 }
                 if (diff.featuresChanged) {
-                    void featureController.handleConfigChange(diff, newConfig);
+                    await featureController.handleConfigChange(diff, newConfig);
                     // The logging/profiling subsystems' config is synthesized from
                     // `features.*` plus SDK defaults. When `features` flips, push a
                     // refreshed shape to whichever subsystem is alive so its `enabled`
@@ -601,15 +614,16 @@ async function initialize(options) {
                 }
                 if (diff.limitsChanged) {
                     limitsEngine.handleConfigChange(diff, newConfig);
+                    tenantGovernor.configure(newConfig.limits.tenantGovernance);
                 }
                 if (diff.privacyChanged) {
                     securityScrubber.handleConfigChange(diff, newConfig);
                 }
                 if (diff.transportChanged) {
-                    transportRouter.handleConfigChange(diff, newConfig);
+                    await transportRouter.handleConfigChange(diff, newConfig);
                 }
                 if (diff.entitlementsChanged) {
-                    void entitlementGate.handleConfigChange(diff, newConfig);
+                    await entitlementGate.handleConfigChange(diff, newConfig);
                 }
             });
             // ─── Phase 8: Start Config Refresh Loop ────────────────────────────
@@ -671,9 +685,11 @@ async function initialize(options) {
 function mergeConfig(options, remote, planFeatures) {
     return {
         apiKey: options.apiKey,
-        service: options.service ?? 'unknown-service',
+        service: options.service ?? client.metadata.applicationName ?? 'unknown-service',
         environment: options.environment ?? 'production',
-        release: options.release ?? '0.0.0-unknown',
+        release: options.release ?? client.metadata.applicationVersion,
+        applicationName: client.metadata.applicationName,
+        applicationVersion: client.metadata.applicationVersion,
         debug: options.debug ?? false,
         // Plan info
         plan: planFeatures.tier,
@@ -720,38 +736,30 @@ function validateInitOptions(options) {
     }
 }
 function resolveBaseUrl(userBaseUrl) {
-    const baseUrl = userBaseUrl ?? DEFAULT_BASE_URL;
-    if (!baseUrl) {
-        throw new SDKError('SDK_BASE_URL is required', 'MISSING_BASE_URL');
-    }
+    const baseUrl = resolveApiBaseUrl(userBaseUrl);
     validateUrl(baseUrl, 'baseUrl');
     return baseUrl;
 }
 function validateRemoteConfig(response) {
-    const config = isObject(response.config) ? response.config : null;
-    const ingestion = isObject(response.ingestion) ? response.ingestion : null;
-    if (!config) {
-        throw new SDKError('Init config is missing or invalid', 'INVALID_INIT_CONFIG');
+    const config = response.config;
+    if (!isRemoteConfigResponse(config)) {
+        throw new SDKError('Init config must be a valid schema-v1 remote config', 'INVALID_INIT_CONFIG');
     }
-    const ingestUrl = stringField(config, ['ingestUrl', 'ingestURL', 'apiEndpoint'])
-        ?? stringField(ingestion, ['endpoint', 'ingestUrl', 'apiEndpoint']);
-    if (!ingestUrl) {
-        throw new SDKError('Init config missing ingestUrl', 'INVALID_INIT_CONFIG');
-    }
+    const route = config.transport.routes.events ??
+        config.transport.routes.requests ??
+        config.transport.routes.errors;
+    const ingestUrl = route.url;
     validateUrl(ingestUrl, 'ingestUrl');
     return {
         ingestUrl,
-        samplingRate: requiredNumberField(config['samplingRate'], 'samplingRate', 0, 1),
-        enableErrors: requiredBooleanField(config['enableErrors'], 'enableErrors'),
-        enablePerformance: requiredBooleanField(config['enablePerformance'], 'enablePerformance'),
-        maxQueueSize: requiredIntField(ingestion?.['maxQueueSize'] ?? ingestion?.['queueSizeLimit'], 'maxQueueSize', 1),
-        batchSize: requiredIntField(ingestion?.['batchSize'], 'batchSize', 1),
-        flushIntervalMs: requiredIntField(ingestion?.['flushInterval'] ?? ingestion?.['flushIntervalMs'], 'flushIntervalMs', 1),
-        maxRetries: optionalIntField(config['maxRetries'], 'maxRetries', DEFAULT_MAX_RETRIES, 0),
-        maxPayloadBytes: optionalIntField(config['maxPayloadBytes'], 'maxPayloadBytes', DEFAULT_MAX_PAYLOAD_BYTES, 1),
-        // Plan tier (defaults to 'free' if not provided by backend)
-        plan: response.plan ?? undefined,
-        planFeatures: response.planFeatures ?? undefined,
+        samplingRate: config.sampling.requests ?? config.sampling.traces ?? 1,
+        enableErrors: config.features.errors,
+        enablePerformance: config.features.requestCapture || config.features.tracing,
+        maxQueueSize: config.transport.queue.maxSize ?? config.limits.maxQueueSize,
+        batchSize: route.batchSize,
+        flushIntervalMs: route.flushIntervalMs,
+        maxRetries: config.transport.retry.maxRetries ?? DEFAULT_MAX_RETRIES,
+        maxPayloadBytes: config.limits.maxPayloadSize ?? DEFAULT_MAX_PAYLOAD_BYTES,
     };
 }
 function filterBufferedEvents(config) {
@@ -783,44 +791,6 @@ function filterBufferedEvents(config) {
         }
         return true;
     });
-}
-// ─── Field Extractors ───────────────────────────────────────────────────────
-function stringField(raw, names) {
-    if (!raw)
-        return null;
-    for (const name of names) {
-        const value = raw[name];
-        if (typeof value === 'string' && value.trim())
-            return value;
-    }
-    return null;
-}
-function requiredBooleanField(value, fieldName) {
-    if (typeof value !== 'boolean') {
-        throw new SDKError(`Init config field ${fieldName} must be boolean`, 'INVALID_INIT_CONFIG', { fieldName });
-    }
-    return value;
-}
-function requiredNumberField(value, fieldName, min, max) {
-    if (typeof value !== 'number' || !Number.isFinite(value) || value < min || value > max) {
-        throw new SDKError(`Init config field ${fieldName} out of range`, 'INVALID_INIT_CONFIG', {
-            fieldName, min, max, value,
-        });
-    }
-    return value;
-}
-function requiredIntField(value, fieldName, min) {
-    if (typeof value !== 'number' || !Number.isFinite(value) || !Number.isInteger(value) || value < min) {
-        throw new SDKError(`Init config field ${fieldName} must be an integer >= ${min}`, 'INVALID_INIT_CONFIG', {
-            fieldName, min, value,
-        });
-    }
-    return value;
-}
-function optionalIntField(value, fieldName, fallback, min) {
-    if (value === undefined || value === null)
-        return fallback;
-    return requiredIntField(value, fieldName, min);
 }
 function isObject(value) {
     return !!value && typeof value === 'object';
@@ -929,7 +899,7 @@ function retryDelayMs(attempt) {
 }
 function initializeOfflineFallback(options, baseUrl, logger) {
     const planFeatures = getOfflineFallbackPlan();
-    const ingestUrl = `${baseUrl.replace(/\/+$/, '')}/v1/events`;
+    const ingestUrl = `${baseUrl.replace(/\/+$/, '')}/api/v1/events`;
     const remoteConfig = {
         ingestUrl,
         samplingRate: 1,

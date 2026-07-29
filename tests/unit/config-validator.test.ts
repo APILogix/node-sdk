@@ -48,6 +48,7 @@ const validBase = {
     routes: {
       traces: { url: 'https://t.example/v1', batchSize: 100, flushIntervalMs: 5000, timeoutMs: 5000, compression: 'gzip' },
       requests: { url: 'https://r.example/v1', batchSize: 200, flushIntervalMs: 2000, timeoutMs: 3000, compression: 'gzip' },
+      spans: { url: 'https://s.example/v1', batchSize: 100, flushIntervalMs: 5000, timeoutMs: 5000, compression: 'gzip' },
       errors: { url: 'https://e.example/v1', batchSize: 10, flushIntervalMs: 1000, timeoutMs: 3000, compression: 'gzip' },
       metrics: { url: 'https://m.example/v1', batchSize: 100, flushIntervalMs: 10000, timeoutMs: 5000, compression: 'gzip' },
       logs: { url: 'https://l.example/v1', batchSize: 50, flushIntervalMs: 10000, timeoutMs: 5000, compression: 'gzip' },

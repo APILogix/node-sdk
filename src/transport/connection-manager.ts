@@ -78,7 +78,9 @@ export class ConnectionManager {
   private readonly routeSemaphores: Map<EnterpriseRoute, Semaphore>
   private readonly routeInUse: Record<EnterpriseRoute, number> = {
     errors: 0,
+    events: 0,
     traces: 0,
+    spans: 0,
     metrics: 0,
     logs: 0,
     profiles: 0,

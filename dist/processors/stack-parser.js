@@ -154,10 +154,17 @@ function parseLineRegex(line) {
 }
 /**
  * Parse an Error.stack string using regex fallback.
+ * Bounded to prevent runaway CPU/memory on massive or malformed stacks.
  */
 function parseStackString(stack) {
-    return stack
-        .split('\n')
+    const MAX_STACK_CHARS = 64_000;
+    const MAX_STACK_LINES = 500;
+    if (stack.length > MAX_STACK_CHARS) {
+        stack = stack.slice(0, MAX_STACK_CHARS);
+    }
+    const lines = stack.split('\n');
+    const bounded = lines.length > MAX_STACK_LINES ? lines.slice(0, MAX_STACK_LINES) : lines;
+    return bounded
         .slice(1) // Skip the error message line
         .map(line => line.trim())
         .filter(line => line.startsWith('at '))

@@ -20,8 +20,13 @@
  *      e.g. `maxQueueSize: 1e9` would otherwise OOM the host process.
  */
 import type { RemoteConfigResponse, FeaturesConfig, SamplingConfig, KillswitchesConfig, LimitsConfig, PrivacyConfig, TransportRemoteConfig, InstrumentationConfig, RuntimeConfig, EntitlementsConfig } from '../types/config.js';
-/** Base URL must be provided via SDK_BASE_URL env var or `baseUrl` in SDK config. */
-export declare const DEFAULT_BASE_URL: string;
+/** Production SaaS API origin used when neither `baseUrl` nor `SDK_BASE_URL` is provided. */
+export declare const DEFAULT_API_BASE_URL = "https://api.veyontix.com";
+/**
+ * Resolve the SDK API origin from highest to lowest precedence:
+ * explicit init option, environment override, production SaaS endpoint.
+ */
+export declare function resolveApiBaseUrl(baseUrl?: string): string;
 export declare const DEFAULT_TIMEOUT_MS = 5000;
 export declare const DEFAULT_BATCH_SIZE = 50;
 export declare const DEFAULT_FLUSH_INTERVAL_MS = 5000;

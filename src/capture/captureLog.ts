@@ -42,7 +42,8 @@ export function captureLog(level: CaptureLogLevel, message: string, ...args: unk
     const subsystem = LoggingSubsystem.getInstance()
     if (!subsystem) return
 
-    subsystem.captureLog(level === 'warn' ? 'warning' : level, message, args)
+    const normalizedLevel = level === 'warn' ? 'warning' : level === 'log' ? 'info' : level
+    subsystem.captureLog(normalizedLevel, message, args)
   } catch (err) {
     // Public capture APIs must never throw into user code.
     getLogger().warn('captureLog failed', { error: err })

@@ -340,10 +340,13 @@ class PipelineSpanExporter implements SpanExporter {
                 spanId: l.context.spanId,
                 attributes: l.attributes,
             })),
-            // Pulse-specific enrichment — done HERE, not in PulseSpan
+            // Pulse-specific enrichment. The event pipeline replaces this
+            // snapshot with the canonical immutable client metadata before send.
             metadata: {
                 sdkName: SDK_NAME,
                 sdkVersion: SDK_VERSION,
+                applicationName: sdkConfig?.applicationName ?? sdkConfig?.service ?? 'unknown-application',
+                applicationVersion: sdkConfig?.applicationVersion ?? sdkConfig?.release ?? '0.0.0-unknown',
                 service: sdkConfig?.service ?? '',
                 environment: sdkConfig?.environment ?? '',
                 release: sdkConfig?.release ?? '',

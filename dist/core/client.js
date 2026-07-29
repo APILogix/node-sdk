@@ -2,6 +2,7 @@ import { createHash } from 'crypto';
 import { RingBuffer } from './ring-buffer.js';
 import { SDKError } from './errors.js';
 import { SDK_NAME, SDK_VERSION } from '../constants/version.js';
+import { resolveApplicationPackage } from '../utils/package-metadata.js';
 class SDKClient {
     static instance;
     // ─── State ──────────────────────────────────────────────────────────────
@@ -17,13 +18,15 @@ class SDKClient {
     pluginRegistry = [];
     eventProcessorRegistry = [];
     // ─── Metadata ─────────────────────────────────────────────────────────
-    metadataValue = {
+    metadataValue = Object.freeze({
         sdkName: SDK_NAME,
         sdkVersion: SDK_VERSION,
+        applicationName: 'unknown-application',
+        applicationVersion: '0.0.0-unknown',
         service: 'unknown-service',
         environment: 'production',
         release: '0.0.0-unknown',
-    };
+    });
     // ─── Breadcrumbs ──────────────────────────────────────────────────────
     breadcrumbBuffer = new RingBuffer(100);
     constructor() { }
@@ -72,13 +75,16 @@ class SDKClient {
         this.optionsValue = options;
         this.apiKeyValue = options.apiKey;
         this.initIdentityValue = createInitIdentity(options);
-        this.metadataValue = {
+        const applicationPackage = resolveApplicationPackage(options);
+        this.metadataValue = Object.freeze({
             sdkName: SDK_NAME,
             sdkVersion: SDK_VERSION,
-            service: options.service ?? 'unknown-service',
+            applicationName: applicationPackage.name,
+            applicationVersion: applicationPackage.version,
+            service: options.service ?? applicationPackage.name ?? 'unknown-service',
             environment: options.environment ?? 'production',
-            release: options.release ?? '0.0.0-unknown',
-        };
+            release: options.release ?? applicationPackage.version,
+        });
     }
     setResolvedConfig(config) {
         this.configValue = deepFreeze(structuredClone(config));

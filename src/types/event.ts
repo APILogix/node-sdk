@@ -23,8 +23,13 @@ export interface StackFrame {
 export interface EventMetadata {
   readonly sdkName: string
   readonly sdkVersion: string
+  /** Consuming application's package.json name (or an explicit override). */
+  readonly applicationName: string
+  /** Consuming application's package.json version (or an explicit override). */
+  readonly applicationVersion: string
   readonly service: string
   readonly environment: string
+  /** Deployment release; retained separately from applicationVersion for compatibility. */
   readonly release: string
   readonly serverName?: string
 }

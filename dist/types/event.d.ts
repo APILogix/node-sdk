@@ -17,8 +17,13 @@ export interface StackFrame {
 export interface EventMetadata {
     readonly sdkName: string;
     readonly sdkVersion: string;
+    /** Consuming application's package.json name (or an explicit override). */
+    readonly applicationName: string;
+    /** Consuming application's package.json version (or an explicit override). */
+    readonly applicationVersion: string;
     readonly service: string;
     readonly environment: string;
+    /** Deployment release; retained separately from applicationVersion for compatibility. */
     readonly release: string;
     readonly serverName?: string;
 }
@@ -137,6 +142,8 @@ export interface SpanEvent {
     readonly events?: readonly SpanEventItem[] | undefined;
     readonly links?: readonly SpanLink[] | undefined;
     readonly metadata?: EventMetadata | undefined;
+    /** Internal flag used by the SDK pipeline for shutdown drains. */
+    readonly __pulseInternal?: boolean | undefined;
 }
 /** Log event captured from console interception or explicit API. */
 export interface LogEvent {
@@ -216,6 +223,7 @@ export interface TraceEvent {
     readonly rootSpan: AggregatedSpanEvent;
     readonly spanCount: number;
     readonly totalDuration: number;
+    readonly timestamp?: number | undefined;
     /** True if the root span was never received (orphaned children). */
     readonly isPartial: boolean;
     readonly metadata?: EventMetadata | undefined;
@@ -223,6 +231,8 @@ export interface TraceEvent {
     readonly sessionId?: string | undefined;
     readonly userId?: string | undefined;
     readonly tenantId?: string | undefined;
+    /** Internal flag used by the SDK pipeline for shutdown drains. */
+    readonly __pulseInternal?: boolean | undefined;
 }
 /** Discriminated union of all event types. */
 export type SDKEvent = RequestEvent | ErrorEvent | MessageEvent | MetricEvent | SpanEvent | TraceEvent | LogEvent | ProfileEvent | ReplayEvent | CronCheckInEvent;

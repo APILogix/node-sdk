@@ -43,7 +43,7 @@ export declare class PulseMetricReader extends MetricReader {
     /**
      * Collect metrics from the SDK and export through the event pipeline.
      */
-    collectAndExport(): Promise<void>;
+    collectAndExport(internalTelemetry?: boolean): Promise<void>;
     private processMetricData;
     private dataPointToEvent;
     getStats(): {

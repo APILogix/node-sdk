@@ -14,10 +14,18 @@ export class BatchManager {
     options;
     timer = null;
     activeSends = 0;
+    activeSendPromises = new Set();
+    activeBatches = new Set();
+    activeAbortControllers = new Set();
+    handedOffEvents = new WeakSet();
+    pendingRetryPromises = new Set();
+    pendingRetryTimers = new Map();
+    retryAttempts = new Map();
     batched = 0;
     totalSent = 0;
     totalDropped = 0;
     totalFailed = 0;
+    totalRetries = 0;
     totalRequests = 0;
     totalBatchEvents = 0;
     destroyed = false;
@@ -45,40 +53,47 @@ export class BatchManager {
         }
         return true;
     }
-    /**
-     * Drain the queue. Bounded so a permanently-unreachable endpoint cannot
-     * keep flush() spinning forever — re-queued failures eventually exhaust
-     * the retry budget and the residual events are surrendered to the queue
-     * for the upstream lifecycle/persistence layer to handle.
-     */
+    /** Drain without event-loop polling; waits only on tracked work promises. */
     async flush() {
         this.clearTimer();
-        const FLUSH_DEADLINE_MS = 4_000; // Bounded so caller's outer timeout wins
-        const FLUSH_MAX_FAILED_REQUESTS = 5;
-        const startedAt = Date.now();
+        const deadline = Date.now() + 4_000;
         const failedAtStart = this.totalFailed;
         const droppedAtStart = this.totalDropped;
-        while (!this.options.queue.isEmpty() || this.activeSends > 0) {
+        while (!this.options.queue.isEmpty() || this.activeSendPromises.size > 0 || this.pendingRetryPromises.size > 0) {
             this.pump(true);
-            if (this.activeSends === 0 && this.options.queue.isEmpty())
+            const work = [...this.activeSendPromises, ...this.pendingRetryPromises];
+            if (work.length === 0)
                 break;
-            // Bail if the deadline has passed — the outer shutdown timeout will
-            // surface this via stepErrors. Better than spinning forever.
-            if (Date.now() - startedAt > FLUSH_DEADLINE_MS)
+            const remainingMs = deadline - Date.now();
+            if (remainingMs <= 0)
                 break;
-            // Bail if we've accumulated too many failures during this single flush
-            // cycle — the endpoint is unreachable and re-queuing is making the
-            // problem worse. Surrender residual events to the caller (which
-            // typically persists them to disk).
+            const completed = await settleWithin(work, remainingMs);
+            if (!completed)
+                break;
             const newFailures = (this.totalFailed - failedAtStart) + (this.totalDropped - droppedAtStart);
-            if (newFailures >= FLUSH_MAX_FAILED_REQUESTS)
+            if (newFailures >= Math.max(5, this.options.retry.maxRetries + 1))
                 break;
-            await sleep(10);
         }
     }
-    async shutdown() {
+    /**
+     * Stop new work, cancel delayed retries, abort active requests, and return
+     * any batches that could not be quiesced within the bounded wait. The
+     * router persists returned events before dropping manager references.
+     */
+    async shutdown(timeoutMs = 4_000) {
         this.destroyed = true;
-        await this.flush();
+        this.clearTimer();
+        this.cancelPendingRetries();
+        for (const controller of this.activeAbortControllers)
+            controller.abort();
+        const completed = await settleWithin([...this.activeSendPromises], Math.max(1, timeoutMs));
+        this.cancelPendingRetries();
+        if (completed)
+            return [];
+        const residual = [...this.activeBatches].flatMap(events => [...events]);
+        for (const event of residual)
+            this.handedOffEvents.add(event);
+        return residual;
     }
     stats() {
         return {
@@ -89,6 +104,7 @@ export class BatchManager {
             totalSent: this.totalSent,
             totalDropped: this.totalDropped + this.options.queue.droppedCount(),
             totalFailed: this.totalFailed,
+            totalRetries: this.totalRetries,
             totalRequests: this.totalRequests,
             avgBatchSize: this.totalRequests > 0 ? this.totalBatchEvents / this.totalRequests : 0,
         };
@@ -111,7 +127,13 @@ export class BatchManager {
                 break;
             this.activeSends++;
             this.batched += batch.events.length;
-            void this.sendBatch(batch);
+            this.activeBatches.add(batch.events);
+            const sendPromise = this.sendBatch(batch);
+            this.activeSendPromises.add(sendPromise);
+            void sendPromise.then(() => this.activeSendPromises.delete(sendPromise), error => {
+                this.activeSendPromises.delete(sendPromise);
+                getLogger().warn('[TransportRouter] Unhandled batch send failure', { route: this.options.route, error });
+            });
         }
     }
     nextSerializableBatch() {
@@ -164,6 +186,7 @@ export class BatchManager {
         const { events, body } = batch;
         const lease = await this.options.connectionManager.acquire(this.options.route);
         if (!lease) {
+            this.activeBatches.delete(events);
             this.activeSends--;
             this.batched -= events.length;
             this.totalFailed += events.length;
@@ -171,8 +194,7 @@ export class BatchManager {
             // socket-saturated). Persist so a process crash before the next pump
             // doesn't lose the batch, then re-queue for the next tick.
             this.persistOnFailure(events, 'connection_acquire_failed');
-            this.options.queue.requeueFront(events);
-            this.ensureTimer(true);
+            this.retryOrRetain(events);
             return;
         }
         try {
@@ -181,6 +203,9 @@ export class BatchManager {
             // backend always expects `Content-Encoding: gzip` on batch sends.
             const compressedBody = await compressGzip(Buffer.from(body, 'utf8'));
             const controller = new AbortController();
+            this.activeAbortControllers.add(controller);
+            if (this.destroyed)
+                controller.abort();
             const timeout = setTimeout(() => controller.abort(), this.options.socketTimeoutMs);
             timeout.unref?.();
             try {
@@ -200,6 +225,8 @@ export class BatchManager {
                     },
                     body: new Uint8Array(compressedBody),
                     signal: controller.signal,
+                    // Never forward the bearer token to a redirected origin.
+                    redirect: 'manual',
                 }));
                 const latency = Date.now() - startedAt;
                 if (response.ok) {
@@ -207,6 +234,8 @@ export class BatchManager {
                     this.totalSent += events.length;
                     this.totalRequests++;
                     this.totalBatchEvents += events.length;
+                    for (const event of events)
+                        this.retryAttempts.delete(event.eventId ?? '');
                     // Feed the cost governor's bytes budget with the uncompressed
                     // payload size — ingestion billing is per event byte, not per
                     // compressed wire byte. Without this, shouldReduceTelemetry()
@@ -226,11 +255,13 @@ export class BatchManager {
                     // Retry-eligible failure: persist before re-queue so a crash
                     // between now and the next attempt doesn't lose the batch.
                     this.persistOnFailure(events, `http_${response.status}`);
-                    this.options.queue.requeueFront(events);
+                    this.retryOrRetain(events);
                 }
                 else {
                     this.options.healthMonitor.recordFailure(this.options.route);
                     this.totalDropped += events.length;
+                    for (const event of events)
+                        this.retryAttempts.delete(event.eventId ?? '');
                     // Non-retryable failure (4xx other than 408/429). The backend
                     // has rejected the batch and a retry would just be re-rejected.
                     // Do NOT persist — replaying a permanent rejection forever is a
@@ -245,6 +276,7 @@ export class BatchManager {
             }
             finally {
                 clearTimeout(timeout);
+                this.activeAbortControllers.delete(controller);
             }
         }
         catch (error) {
@@ -254,7 +286,7 @@ export class BatchManager {
             // The backend never saw the request, so retry is safe. Persist so a
             // crash before retry doesn't drop the batch.
             this.persistOnFailure(events, 'network_error');
-            this.options.queue.requeueFront(events);
+            this.retryOrRetain(events);
             getLogger().warn('[TransportRouter] Batch send failed', {
                 route: this.options.route,
                 error: error instanceof Error ? error.message : String(error),
@@ -262,12 +294,63 @@ export class BatchManager {
             });
         }
         finally {
+            this.activeBatches.delete(events);
             lease.release(true);
             this.activeSends--;
             this.batched -= events.length;
             this.firstQueuedAt = this.options.queue.isEmpty() ? 0 : Date.now();
             this.pump();
         }
+    }
+    retryOrRetain(events) {
+        if (this.destroyed) {
+            const retained = events.filter(event => !this.handedOffEvents.has(event));
+            this.options.queue.requeueFront(retained);
+            for (const event of events)
+                this.retryAttempts.delete(event.eventId ?? '');
+            return;
+        }
+        if (!this.options.retry.enabled || this.options.retry.maxRetries <= 0)
+            return;
+        const retryable = [];
+        let highestAttempt = 0;
+        for (const event of events) {
+            const key = event.eventId ?? '';
+            const attempt = (this.retryAttempts.get(key) ?? 0) + 1;
+            if (attempt > this.options.retry.maxRetries) {
+                this.retryAttempts.delete(key);
+                continue;
+            }
+            this.retryAttempts.set(key, attempt);
+            highestAttempt = Math.max(highestAttempt, attempt);
+            retryable.push(event);
+        }
+        if (retryable.length === 0)
+            return;
+        this.totalRetries += retryable.length;
+        const delayMs = retryDelay(this.options.retry, highestAttempt);
+        let resolveRetry;
+        const pending = new Promise(resolve => { resolveRetry = resolve; });
+        this.pendingRetryPromises.add(pending);
+        const timer = setTimeout(() => {
+            this.pendingRetryTimers.delete(timer);
+            this.pendingRetryPromises.delete(pending);
+            this.options.queue.requeueFront(retryable);
+            if (!this.destroyed)
+                this.ensureTimer(true);
+            resolveRetry();
+        }, delayMs);
+        timer.unref?.();
+        this.pendingRetryTimers.set(timer, { events: retryable, resolve: resolveRetry });
+    }
+    cancelPendingRetries() {
+        for (const [timer, pending] of this.pendingRetryTimers) {
+            clearTimeout(timer);
+            this.options.queue.requeueFront(pending.events);
+            pending.resolve();
+        }
+        this.pendingRetryTimers.clear();
+        this.pendingRetryPromises.clear();
     }
     /**
      * Persist a batch to disk after a transient send failure.
@@ -365,6 +448,27 @@ export class BatchManager {
         this.timer = null;
     }
 }
-function sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
+async function settleWithin(promises, timeoutMs) {
+    let timer;
+    try {
+        return await Promise.race([
+            Promise.allSettled(promises).then(() => true),
+            new Promise(resolve => {
+                timer = setTimeout(() => resolve(false), timeoutMs);
+                timer.unref?.();
+            }),
+        ]);
+    }
+    finally {
+        if (timer)
+            clearTimeout(timer);
+    }
+}
+function retryDelay(config, attempt) {
+    const base = Math.max(0, config.baseDelayMs);
+    if (config.backoff === 'fixed')
+        return base;
+    if (config.backoff === 'linear')
+        return Math.min(30_000, base * attempt);
+    return Math.min(30_000, base * 2 ** Math.max(0, attempt - 1));
 }

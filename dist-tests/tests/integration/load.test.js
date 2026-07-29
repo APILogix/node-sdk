@@ -20,44 +20,53 @@
  */
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { gunzipSync } from 'node:zlib';
 import { init } from '../../src/core/init.js';
 import { shutdown } from '../../src/core/lifecycle.js';
 import { captureMessage } from '../../src/capture/captureMessage.js';
 import { captureError } from '../../src/capture/captureError.js';
 import { captureMetric } from '../../src/capture/captureMetric.js';
 import { TransportRouter } from '../../src/transport/transport-router.js';
+import { BAKED_IN_REMOTE_CONFIG } from '../../src/constants/defaults.js';
 async function startMockBackend() {
     const http = await import('node:http');
     let receivedBatches = 0;
     let receivedEvents = 0;
     const server = http.createServer((req, res) => {
-        let raw = '';
+        const chunks = [];
         req.on('data', chunk => {
-            raw += chunk;
+            chunks.push(Buffer.from(chunk));
         });
         req.on('end', () => {
+            const raw = Buffer.concat(chunks);
             const port = server.address().port;
             const localUrl = `http://127.0.0.1:${port}`;
             // Init endpoint
-            if (req.url === '/v1/init') {
+            if (req.url === '/api/v1/init') {
+                const routePaths = {
+                    errors: '/api/v1/errors', events: '/api/v1/events', traces: '/api/v1/traces',
+                    spans: '/api/v1/spans', requests: '/api/v1/requests', metrics: '/api/v1/metrics',
+                    logs: '/api/v1/logs', profiles: '/api/v1/profiles', crons: '/api/v1/checkins',
+                    replays: '/api/v1/replays',
+                };
+                const routes = Object.fromEntries(Object.entries(BAKED_IN_REMOTE_CONFIG.transport.routes).map(([name, route]) => [
+                    name,
+                    { ...route, url: `${localUrl}${routePaths[name]}`, batchSize: 500, flushIntervalMs: 250, timeoutMs: 3_000 },
+                ]));
                 res.writeHead(200, { 'content-type': 'application/json' });
                 res.end(JSON.stringify({
                     success: true,
                     projectId: 'load-test',
-                    plan: 'enterprise',
+                    environment: 'test',
                     config: {
-                        ingestUrl: `${localUrl}/v1/events`,
-                        samplingRate: 1,
-                        enableErrors: true,
-                        enablePerformance: true,
-                        maxRetries: 3,
-                        maxPayloadBytes: 5 * 1024 * 1024,
-                        plan: 'enterprise',
-                    },
-                    ingestion: {
-                        maxQueueSize: 100_000,
-                        batchSize: 500,
-                        flushInterval: 250,
+                        ...BAKED_IN_REMOTE_CONFIG,
+                        sdk: { projectId: 'load-test', environment: 'test', release: '1.0.0' },
+                        features: { ...BAKED_IN_REMOTE_CONFIG.features, tracing: true, requestCapture: true, errors: true, metrics: true },
+                        sampling: { ...BAKED_IN_REMOTE_CONFIG.sampling, traces: 1, requests: 1, errors: 1, metrics: 1 },
+                        killswitches: { ...BAKED_IN_REMOTE_CONFIG.killswitches, disableTransport: false },
+                        limits: { ...BAKED_IN_REMOTE_CONFIG.limits, maxPayloadSize: 5_242_880, maxQueueSize: 100_000 },
+                        transport: { ...BAKED_IN_REMOTE_CONFIG.transport, routes },
+                        meta: { generatedAt: new Date().toISOString(), generatedBy: 'load-test-init' },
                     },
                 }));
                 return;
@@ -132,15 +141,16 @@ async function startMockBackend() {
                         queue: { overflowStrategy: 'drop_oldest' },
                         keepAlive: true,
                         routes: {
-                            traces: route('/v1/traces'),
-                            requests: route('/v1/requests'),
-                            errors: route('/v1/errors'),
-                            metrics: route('/v1/metrics'),
-                            logs: route('/v1/logs'),
-                            profiles: route('/v1/profiles'),
-                            events: route('/v1/events'),
-                            crons: route('/v1/checkins'),
-                            replays: route('/v1/replays'),
+                            traces: route('/api/v1/traces'),
+                            requests: route('/api/v1/requests'),
+                            spans: route('/api/v1/spans'),
+                            errors: route('/api/v1/errors'),
+                            metrics: route('/api/v1/metrics'),
+                            logs: route('/api/v1/logs'),
+                            profiles: route('/api/v1/profiles'),
+                            events: route('/api/v1/events'),
+                            crons: route('/api/v1/checkins'),
+                            replays: route('/api/v1/replays'),
                         },
                     },
                     runtime: { configTtlSeconds: 300, staleWhileRevalidate: true },
@@ -150,7 +160,8 @@ async function startMockBackend() {
             }
             // All ingest routes — count events and ack.
             try {
-                const body = raw ? JSON.parse(raw) : null;
+                const decoded = req.headers['content-encoding'] === 'gzip' ? gunzipSync(raw).toString('utf8') : raw.toString('utf8');
+                const body = decoded ? JSON.parse(decoded) : null;
                 if (body && Array.isArray(body.events)) {
                     receivedBatches += 1;
                     receivedEvents += body.events.length;

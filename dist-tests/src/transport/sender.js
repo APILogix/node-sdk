@@ -1,4 +1,4 @@
-import { DEFAULT_TIMEOUT_MS } from '../constants/defaults.js';
+import { DEFAULT_TIMEOUT_MS, resolveApiBaseUrl } from '../constants/defaults.js';
 import { randomUUID } from 'crypto';
 import { client } from '../core/client.js';
 import { SDKError } from '../core/errors.js';
@@ -7,10 +7,8 @@ import { retry, globalRetryBudget } from './retry.js';
 import { getLogger } from '../utils/logger.js';
 export async function sendInitRequest(apiKey, baseUrl, timeoutMs = 5000) {
     validateApiKey(apiKey);
-    if (!baseUrl) {
-        throw new SDKError('baseUrl is required for init request', 'MISSING_BASE_URL');
-    }
-    return postJson(joinUrl(baseUrl, '/v1/init'), {}, { Authorization: `Bearer ${apiKey}` }, timeoutMs, { logFailures: false });
+    const resolvedBaseUrl = resolveApiBaseUrl(baseUrl);
+    return postJson(joinUrl(resolvedBaseUrl, '/api/v1/init'), {}, { Authorization: `Bearer ${apiKey}` }, timeoutMs, { logFailures: false });
 }
 export async function sendEvents(events) {
     if (events.length === 0)

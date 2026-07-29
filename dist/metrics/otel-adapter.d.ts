@@ -70,7 +70,7 @@ declare class OtelMetricsManager {
     /**
      * Force-flush all pending metrics through the event pipeline.
      */
-    flush(): Promise<void>;
+    flush(internalTelemetry?: boolean): Promise<void>;
     /**
      * Shut down the OTel metrics provider.
      */

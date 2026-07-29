@@ -14,15 +14,21 @@ import { context as otelContext } from '@opentelemetry/api'
 import { EventEmitter } from 'events'
 import { getLogger } from '../utils/logger.js'
 
+type ListenerMethod = typeof EventEmitter.prototype.on
+type EventListener = (...args: any[]) => void
+type RemovableListener = EventListener & { listener?: EventListener }
+
 const PATCH_SYMBOL = Symbol.for('pulse-sdk.event-emitter-patch.applied')
 
 interface GlobalWithPatch {
   [PATCH_SYMBOL]?: boolean
 }
 
-let originalOn: typeof EventEmitter.prototype.on | null = null
-let originalAddListener: typeof EventEmitter.prototype.addListener | null = null
-let originalOnce: typeof EventEmitter.prototype.once | null = null
+let originalOn: ListenerMethod | null = null
+let originalAddListener: ListenerMethod | null = null
+let originalOnce: ListenerMethod | null = null
+let originalPrependListener: ListenerMethod | null = null
+let originalPrependOnceListener: ListenerMethod | null = null
 
 /**
  * Patch EventEmitter.prototype to automatically bind listeners to the
@@ -39,28 +45,75 @@ export function patchEventEmitter(): void {
   originalOn = EventEmitter.prototype.on
   originalAddListener = EventEmitter.prototype.addListener
   originalOnce = EventEmitter.prototype.once
+  originalPrependListener = EventEmitter.prototype.prependListener
+  originalPrependOnceListener = EventEmitter.prototype.prependOnceListener
 
-  const patchedOn: typeof EventEmitter.prototype.on = function patchedOn(
-    this: EventEmitter,
-    event: string | symbol,
-    listener: (...args: any[]) => void,
-  ): EventEmitter {
-    const bound = otelContext.bind(otelContext.active(), listener)
-    return originalOn!.call(this, event, bound)
+  const bind = (listener: EventListener): RemovableListener => {
+    const contextBound = otelContext.bind(otelContext.active(), listener)
+    const wrapper: RemovableListener = function contextBoundListener(this: unknown, ...args: any[]): void {
+      contextBound.apply(this, args)
+    }
+    // Node's removeListener(event, original) and listeners(event) honor the
+    // conventional `.listener` backlink. Keeping it on every context wrapper
+    // makes registration fully reversible without retaining emitters in a map.
+    Object.defineProperty(wrapper, 'listener', { value: listener, configurable: true })
+    return wrapper
   }
 
-  const patchedOnce: typeof EventEmitter.prototype.once = function patchedOnce(
+  const bindOnce = (
+    emitter: EventEmitter,
+    event: string | symbol,
+    listener: EventListener,
+    prepend: boolean,
+  ): EventEmitter => {
+    const contextBound = otelContext.bind(otelContext.active(), listener)
+    const wrapper: RemovableListener = function contextBoundOnceListener(this: EventEmitter, ...args: any[]): void {
+      // Remove before invocation, matching EventEmitter.once semantics even
+      // when the listener recursively emits the same event.
+      this.removeListener(event, wrapper)
+      contextBound.apply(this, args)
+    }
+    Object.defineProperty(wrapper, 'listener', { value: listener, configurable: true })
+    return (prepend ? originalPrependListener! : originalOn!).call(emitter, event, wrapper)
+  }
+
+  const patchedOn: ListenerMethod = function patchedOn(
     this: EventEmitter,
     event: string | symbol,
-    listener: (...args: any[]) => void,
+    listener: EventListener,
   ): EventEmitter {
-    const bound = otelContext.bind(otelContext.active(), listener)
-    return originalOnce!.call(this, event, bound)
+    return originalOn!.call(this, event, bind(listener))
+  }
+
+  const patchedOnce: ListenerMethod = function patchedOnce(
+    this: EventEmitter,
+    event: string | symbol,
+    listener: EventListener,
+  ): EventEmitter {
+    return bindOnce(this, event, listener, false)
+  }
+
+  const patchedPrepend: ListenerMethod = function patchedPrepend(
+    this: EventEmitter,
+    event: string | symbol,
+    listener: EventListener,
+  ): EventEmitter {
+    return originalPrependListener!.call(this, event, bind(listener))
+  }
+
+  const patchedPrependOnce: ListenerMethod = function patchedPrependOnce(
+    this: EventEmitter,
+    event: string | symbol,
+    listener: EventListener,
+  ): EventEmitter {
+    return bindOnce(this, event, listener, true)
   }
 
   EventEmitter.prototype.on = patchedOn
   EventEmitter.prototype.addListener = patchedOn
   EventEmitter.prototype.once = patchedOnce
+  EventEmitter.prototype.prependListener = patchedPrepend
+  EventEmitter.prototype.prependOnceListener = patchedPrependOnce
 
   getLogger().debug('EventEmitter context binding patch applied')
 }
@@ -78,10 +131,14 @@ export function unpatchEventEmitter(): void {
   if (originalOn) EventEmitter.prototype.on = originalOn
   if (originalAddListener) EventEmitter.prototype.addListener = originalAddListener
   if (originalOnce) EventEmitter.prototype.once = originalOnce
+  if (originalPrependListener) EventEmitter.prototype.prependListener = originalPrependListener
+  if (originalPrependOnceListener) EventEmitter.prototype.prependOnceListener = originalPrependOnceListener
 
   originalOn = null
   originalAddListener = null
   originalOnce = null
+  originalPrependListener = null
+  originalPrependOnceListener = null
   delete g[PATCH_SYMBOL]
 
   getLogger().debug('EventEmitter context binding patch removed')

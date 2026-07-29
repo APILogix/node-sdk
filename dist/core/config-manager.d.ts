@@ -28,7 +28,7 @@ export declare enum ConfigState {
     /** A valid remote config is live. */
     Live = "live"
 }
-type ConfigChangeListener = (diff: ConfigDiff, newConfig: Readonly<RemoteConfigResponse>) => void;
+type ConfigChangeListener = (diff: ConfigDiff, newConfig: Readonly<RemoteConfigResponse>) => void | Promise<void>;
 export declare class ConfigManager {
     private static instance;
     /** Current frozen config snapshot — swapped atomically on refresh. */

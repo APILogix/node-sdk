@@ -23,7 +23,7 @@ import { FeatureController } from '../core/feature-controller.js';
 import { KillswitchEngine } from '../core/killswitch-engine.js';
 import { SamplingEngine } from '../core/sampling-engine.js';
 import { SecurityScrubber } from '../processors/security-scrubber.js';
-import { tenantGovernor } from '../core/tenant-isolation.js';
+import { sha256 } from '../utils/hash.js';
 import { getLogger } from '../utils/logger.js';
 // Headers we always redact even when the SecurityScrubber isn't initialized.
 // Keep this list short and case-insensitive — the scrubber is the source of
@@ -91,10 +91,8 @@ export function evaluateCaptureGate(input) {
             return denied('remote_ignored_route');
         }
     }
-    // 5. Tenant admission. Only check; do not record yet.
-    if (!tenantGovernor.canAcceptEvent(input.tenantId)) {
-        return denied('tenant_quota');
-    }
+    // 5. Tenant admission is performed atomically by the canonical event
+    // pipeline so manual and automatic request capture share one quota.
     // 6. Sampling — `sampling.routes["/path"].requests` lets the backend
     //    silence noisy paths or boost critical ones without a redeploy.
     //    Falls back to the global `sampling.requests` rate. We use a stable
@@ -115,15 +113,13 @@ export function evaluateCaptureGate(input) {
         allowBody: cfg?.capture.body ?? false,
         allowResponse: cfg?.capture.response ?? false,
         allowCookies: cfg?.capture.cookies ?? false,
+        maskIp: cfg?.maskIp ?? true,
         sampledRate,
     };
 }
-/**
- * Record that a request capture was admitted for a tenant. Called once the
- * adapter has produced an event and is about to enqueue it.
- */
-export function recordCaptureAccepted(tenantId) {
-    tenantGovernor.recordEvent(tenantId);
+/** @deprecated Tenant admission is now atomic in the canonical pipeline. */
+export function recordCaptureAccepted(_tenantId) {
+    // Kept as a compatibility no-op for existing instrumentation adapters.
 }
 /**
  * Scrub headers using the SecurityScrubber when available, falling back to
@@ -233,7 +229,15 @@ export function headerString(value) {
  * proxy). With no trusted proxies configured (the default), the socket
  * address is authoritative and forwarding headers are ignored.
  */
-export function resolveClientIp(headers, socketRemoteAddress, trustedProxies) {
+export function resolveClientIp(headers, socketRemoteAddress, trustedProxies, maskIp, preferredIp) {
+    const rawIp = preferredIp ?? resolveRawClientIp(headers, socketRemoteAddress, trustedProxies);
+    if (!rawIp)
+        return undefined;
+    if (maskIp ?? true)
+        return sha256(rawIp).slice(0, 16);
+    return rawIp;
+}
+function resolveRawClientIp(headers, socketRemoteAddress, trustedProxies) {
     if (socketRemoteAddress && isTrustedProxy(socketRemoteAddress, trustedProxies)) {
         const xff = headerString(headers['x-forwarded-for']);
         if (xff) {
@@ -277,6 +281,7 @@ function denied(reason) {
         allowBody: false,
         allowResponse: false,
         allowCookies: false,
+        maskIp: true,
         sampledRate: 0,
     };
 }
@@ -304,6 +309,7 @@ function safeGetTracingConfig() {
                 query: cfg.privacy?.capture?.query ?? true,
                 cookies: cfg.privacy?.capture?.cookies ?? false,
             },
+            maskIp: cfg.privacy?.piiDetection?.maskIPs ?? true,
         };
     }
     catch {
@@ -313,15 +319,19 @@ function safeGetTracingConfig() {
     }
 }
 function fallbackScrubHeaders(headers) {
-    const out = {};
+    const out = Object.create(null);
     for (const [key, value] of Object.entries(headers)) {
+        if (!isSafeKey(key))
+            continue;
         out[key] = FALLBACK_SENSITIVE_HEADER_PATTERN.test(key) ? '[Redacted]' : value;
     }
     return out;
 }
 function fallbackScrubBody(body) {
-    const out = {};
+    const out = Object.create(null);
     for (const [key, value] of Object.entries(body)) {
+        if (!isSafeKey(key))
+            continue;
         if (FALLBACK_SENSITIVE_BODY_PATTERN.test(key)) {
             out[key] = '[Redacted]';
             continue;
@@ -334,6 +344,9 @@ function fallbackScrubBody(body) {
         }
     }
     return out;
+}
+function isSafeKey(key) {
+    return key !== '__proto__' && key !== 'constructor' && key !== 'prototype';
 }
 function computeBodySize(rawBody) {
     if (rawBody == null)

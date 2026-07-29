@@ -26,7 +26,9 @@ export function normalizeEvent(event: SDKEvent, metadata: EventMetadata): SDKEve
     timestamp: typeof existingTimestamp === 'number' && existingTimestamp > 0
       ? existingTimestamp
       : epochMs(),
-    metadata: event.metadata ?? metadata,
+    // SDK-controlled identity is authoritative. User processors may enrich
+    // events, but cannot forge package or SDK versions on the wire.
+    metadata,
   }
 
   switch (base.type) {

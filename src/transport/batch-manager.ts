@@ -1,4 +1,5 @@
 import type { SDKEvent, Event } from '../types/event.js'
+import type { TransportRetryConfig } from '../types/config.js'
 import { getLogger } from '../utils/logger.js'
 import { TransportEventQueue, type QueueDropInfo } from './transport-event-queue.js'
 import { ConnectionManager } from './connection-manager.js'
@@ -25,6 +26,7 @@ export interface BatchManagerOptions {
   readonly maxWaitTimeMs: number
   readonly maxPayloadBytes: number
   readonly socketTimeoutMs: number
+  readonly retry: TransportRetryConfig
   readonly onDrop?: (info: QueueDropInfo) => void
   readonly fetchImpl?: typeof fetch
 }
@@ -37,6 +39,7 @@ export interface BatchManagerStats {
   readonly totalSent: number
   readonly totalDropped: number
   readonly totalFailed: number
+  readonly totalRetries: number
   readonly totalRequests: number
   readonly avgBatchSize: number
 }
@@ -44,10 +47,18 @@ export interface BatchManagerStats {
 export class BatchManager {
   private timer: ReturnType<typeof setTimeout> | null = null
   private activeSends = 0
+  private readonly activeSendPromises = new Set<Promise<void>>()
+  private readonly activeBatches = new Set<readonly SDKEvent[]>()
+  private readonly activeAbortControllers = new Set<AbortController>()
+  private readonly handedOffEvents = new WeakSet<object>()
+  private readonly pendingRetryPromises = new Set<Promise<void>>()
+  private readonly pendingRetryTimers = new Map<ReturnType<typeof setTimeout>, { events: SDKEvent[]; resolve: () => void }>()
+  private readonly retryAttempts = new Map<string, number>()
   private batched = 0
   private totalSent = 0
   private totalDropped = 0
   private totalFailed = 0
+  private totalRetries = 0
   private totalRequests = 0
   private totalBatchEvents = 0
   private destroyed = false
@@ -76,42 +87,44 @@ export class BatchManager {
     return true
   }
 
-  /**
-   * Drain the queue. Bounded so a permanently-unreachable endpoint cannot
-   * keep flush() spinning forever — re-queued failures eventually exhaust
-   * the retry budget and the residual events are surrendered to the queue
-   * for the upstream lifecycle/persistence layer to handle.
-   */
+  /** Drain without event-loop polling; waits only on tracked work promises. */
   async flush(): Promise<void> {
     this.clearTimer()
-    const FLUSH_DEADLINE_MS = 4_000  // Bounded so caller's outer timeout wins
-    const FLUSH_MAX_FAILED_REQUESTS = 5
-    const startedAt = Date.now()
+    const deadline = Date.now() + 4_000
     const failedAtStart = this.totalFailed
     const droppedAtStart = this.totalDropped
 
-    while (!this.options.queue.isEmpty() || this.activeSends > 0) {
+    while (!this.options.queue.isEmpty() || this.activeSendPromises.size > 0 || this.pendingRetryPromises.size > 0) {
       this.pump(true)
-      if (this.activeSends === 0 && this.options.queue.isEmpty()) break
-
-      // Bail if the deadline has passed — the outer shutdown timeout will
-      // surface this via stepErrors. Better than spinning forever.
-      if (Date.now() - startedAt > FLUSH_DEADLINE_MS) break
-
-      // Bail if we've accumulated too many failures during this single flush
-      // cycle — the endpoint is unreachable and re-queuing is making the
-      // problem worse. Surrender residual events to the caller (which
-      // typically persists them to disk).
+      const work = [...this.activeSendPromises, ...this.pendingRetryPromises]
+      if (work.length === 0) break
+      const remainingMs = deadline - Date.now()
+      if (remainingMs <= 0) break
+      const completed = await settleWithin(work, remainingMs)
+      if (!completed) break
       const newFailures = (this.totalFailed - failedAtStart) + (this.totalDropped - droppedAtStart)
-      if (newFailures >= FLUSH_MAX_FAILED_REQUESTS) break
-
-      await sleep(10)
+      if (newFailures >= Math.max(5, this.options.retry.maxRetries + 1)) break
     }
   }
 
-  async shutdown(): Promise<void> {
+  /**
+   * Stop new work, cancel delayed retries, abort active requests, and return
+   * any batches that could not be quiesced within the bounded wait. The
+   * router persists returned events before dropping manager references.
+   */
+  async shutdown(timeoutMs = 4_000): Promise<SDKEvent[]> {
     this.destroyed = true
-    await this.flush()
+    this.clearTimer()
+    this.cancelPendingRetries()
+    for (const controller of this.activeAbortControllers) controller.abort()
+
+    const completed = await settleWithin([...this.activeSendPromises], Math.max(1, timeoutMs))
+    this.cancelPendingRetries()
+    if (completed) return []
+
+    const residual = [...this.activeBatches].flatMap(events => [...events])
+    for (const event of residual) this.handedOffEvents.add(event)
+    return residual
   }
 
   stats(): BatchManagerStats {
@@ -123,6 +136,7 @@ export class BatchManager {
       totalSent: this.totalSent,
       totalDropped: this.totalDropped + this.options.queue.droppedCount(),
       totalFailed: this.totalFailed,
+      totalRetries: this.totalRetries,
       totalRequests: this.totalRequests,
       avgBatchSize: this.totalRequests > 0 ? this.totalBatchEvents / this.totalRequests : 0,
     }
@@ -146,7 +160,16 @@ export class BatchManager {
       if (!batch) break
       this.activeSends++
       this.batched += batch.events.length
-      void this.sendBatch(batch)
+      this.activeBatches.add(batch.events)
+      const sendPromise = this.sendBatch(batch)
+      this.activeSendPromises.add(sendPromise)
+      void sendPromise.then(
+        () => this.activeSendPromises.delete(sendPromise),
+        error => {
+          this.activeSendPromises.delete(sendPromise)
+          getLogger().warn('[TransportRouter] Unhandled batch send failure', { route: this.options.route, error })
+        },
+      )
     }
   }
 
@@ -204,6 +227,7 @@ export class BatchManager {
     const { events, body } = batch
     const lease = await this.options.connectionManager.acquire(this.options.route)
     if (!lease) {
+      this.activeBatches.delete(events)
       this.activeSends--
       this.batched -= events.length
       this.totalFailed += events.length
@@ -211,8 +235,7 @@ export class BatchManager {
       // socket-saturated). Persist so a process crash before the next pump
       // doesn't lose the batch, then re-queue for the next tick.
       this.persistOnFailure(events, 'connection_acquire_failed')
-      this.options.queue.requeueFront(events)
-      this.ensureTimer(true)
+      this.retryOrRetain(events)
       return
     }
 
@@ -222,6 +245,8 @@ export class BatchManager {
       // backend always expects `Content-Encoding: gzip` on batch sends.
       const compressedBody = await compressGzip(Buffer.from(body, 'utf8'))
       const controller = new AbortController()
+      this.activeAbortControllers.add(controller)
+      if (this.destroyed) controller.abort()
       const timeout = setTimeout(() => controller.abort(), this.options.socketTimeoutMs)
       timeout.unref?.()
 
@@ -245,6 +270,8 @@ export class BatchManager {
               },
               body: new Uint8Array(compressedBody),
               signal: controller.signal,
+              // Never forward the bearer token to a redirected origin.
+              redirect: 'manual',
             }),
         )
 
@@ -254,6 +281,7 @@ export class BatchManager {
           this.totalSent += events.length
           this.totalRequests++
           this.totalBatchEvents += events.length
+          for (const event of events) this.retryAttempts.delete(event.eventId ?? '')
           // Feed the cost governor's bytes budget with the uncompressed
           // payload size — ingestion billing is per event byte, not per
           // compressed wire byte. Without this, shouldReduceTelemetry()
@@ -272,10 +300,11 @@ export class BatchManager {
           // Retry-eligible failure: persist before re-queue so a crash
           // between now and the next attempt doesn't lose the batch.
           this.persistOnFailure(events, `http_${response.status}`)
-          this.options.queue.requeueFront(events)
+          this.retryOrRetain(events)
         } else {
           this.options.healthMonitor.recordFailure(this.options.route)
           this.totalDropped += events.length
+          for (const event of events) this.retryAttempts.delete(event.eventId ?? '')
           // Non-retryable failure (4xx other than 408/429). The backend
           // has rejected the batch and a retry would just be re-rejected.
           // Do NOT persist — replaying a permanent rejection forever is a
@@ -289,6 +318,7 @@ export class BatchManager {
         }
       } finally {
         clearTimeout(timeout)
+        this.activeAbortControllers.delete(controller)
       }
     } catch (error) {
       this.options.healthMonitor.recordFailure(this.options.route)
@@ -297,19 +327,70 @@ export class BatchManager {
       // The backend never saw the request, so retry is safe. Persist so a
       // crash before retry doesn't drop the batch.
       this.persistOnFailure(events, 'network_error')
-      this.options.queue.requeueFront(events)
+      this.retryOrRetain(events)
       getLogger().warn('[TransportRouter] Batch send failed', {
         route: this.options.route,
         error: error instanceof Error ? error.message : String(error),
         eventCount: events.length,
       })
     } finally {
+      this.activeBatches.delete(events)
       lease.release(true)
       this.activeSends--
       this.batched -= events.length
       this.firstQueuedAt = this.options.queue.isEmpty() ? 0 : Date.now()
       this.pump()
     }
+  }
+
+  private retryOrRetain(events: readonly SDKEvent[]): void {
+    if (this.destroyed) {
+      const retained = events.filter(event => !this.handedOffEvents.has(event))
+      this.options.queue.requeueFront(retained)
+      for (const event of events) this.retryAttempts.delete(event.eventId ?? '')
+      return
+    }
+    if (!this.options.retry.enabled || this.options.retry.maxRetries <= 0) return
+
+    const retryable: SDKEvent[] = []
+    let highestAttempt = 0
+    for (const event of events) {
+      const key = event.eventId ?? ''
+      const attempt = (this.retryAttempts.get(key) ?? 0) + 1
+      if (attempt > this.options.retry.maxRetries) {
+        this.retryAttempts.delete(key)
+        continue
+      }
+      this.retryAttempts.set(key, attempt)
+      highestAttempt = Math.max(highestAttempt, attempt)
+      retryable.push(event)
+    }
+    if (retryable.length === 0) return
+
+    this.totalRetries += retryable.length
+    const delayMs = retryDelay(this.options.retry, highestAttempt)
+    let resolveRetry!: () => void
+    const pending = new Promise<void>(resolve => { resolveRetry = resolve })
+    this.pendingRetryPromises.add(pending)
+    const timer = setTimeout(() => {
+      this.pendingRetryTimers.delete(timer)
+      this.pendingRetryPromises.delete(pending)
+      this.options.queue.requeueFront(retryable)
+      if (!this.destroyed) this.ensureTimer(true)
+      resolveRetry()
+    }, delayMs)
+    timer.unref?.()
+    this.pendingRetryTimers.set(timer, { events: retryable, resolve: resolveRetry })
+  }
+
+  private cancelPendingRetries(): void {
+    for (const [timer, pending] of this.pendingRetryTimers) {
+      clearTimeout(timer)
+      this.options.queue.requeueFront(pending.events)
+      pending.resolve()
+    }
+    this.pendingRetryTimers.clear()
+    this.pendingRetryPromises.clear()
   }
 
   /**
@@ -410,6 +491,24 @@ export class BatchManager {
   }
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms))
+async function settleWithin(promises: readonly Promise<void>[], timeoutMs: number): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      Promise.allSettled(promises).then(() => true),
+      new Promise<boolean>(resolve => {
+        timer = setTimeout(() => resolve(false), timeoutMs)
+        timer.unref?.()
+      }),
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
+function retryDelay(config: TransportRetryConfig, attempt: number): number {
+  const base = Math.max(0, config.baseDelayMs)
+  if (config.backoff === 'fixed') return base
+  if (config.backoff === 'linear') return Math.min(30_000, base * attempt)
+  return Math.min(30_000, base * 2 ** Math.max(0, attempt - 1))
 }

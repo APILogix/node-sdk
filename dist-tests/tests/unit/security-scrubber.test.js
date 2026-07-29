@@ -16,6 +16,7 @@
  */
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import fc from 'fast-check';
 import { SecurityScrubber } from '../../src/processors/security-scrubber.js';
 const basePrivacyConfig = {
     capture: { headers: true, body: true, response: false, query: true, cookies: false },
@@ -174,6 +175,43 @@ describe('SecurityScrubber', () => {
             const info = scrubbed.context.userInfo;
             assert.ok(!info.includes('555-123-4567'));
             assert.ok(info.includes('[phone]'));
+        });
+    });
+    describe('IPv6 PII Detection', () => {
+        function ipScrubber() {
+            SecurityScrubber.reset();
+            return SecurityScrubber.initialize({
+                ...basePrivacyConfig,
+                piiDetection: { ...basePrivacyConfig.piiDetection, maskIPs: true },
+            });
+        }
+        it('masks full, compressed, bracketed, link-local, loopback, and IPv4-mapped IPv6', () => {
+            const enabled = ipScrubber();
+            const addresses = [
+                '2001:0db8:0000:0000:0000:ff00:0042:8329',
+                '2001:db8::1',
+                '[2001:db8::1]:443',
+                'fe80::1%eth0',
+                '::1',
+                '::ffff:192.0.2.1',
+            ];
+            const scrubbed = enabled.scrub({ type: 'message', message: addresses.join(' | '), severity: 'info', timestamp: 1 });
+            for (const address of addresses)
+                assert.ok(!scrubbed.message.includes(address), `IPv6 leaked: ${address}`);
+            assert.ok(scrubbed.message.includes('[ip]'));
+        });
+        it('does not corrupt timestamps, MAC addresses, or ordinary colon text', () => {
+            const enabled = ipScrubber();
+            const message = 'at 12:34:56 adapter aa:bb:cc:dd:ee:ff key:value';
+            const scrubbed = enabled.scrub({ type: 'message', message, severity: 'info', timestamp: 1 });
+            assert.equal(scrubbed.message, message);
+        });
+        it('masks arbitrary valid IPv6 strings', () => {
+            const enabled = ipScrubber();
+            fc.assert(fc.property(fc.ipV6(), address => {
+                const result = enabled.scrubValue(`remote=${address}`);
+                assert.ok(!result.includes(address), `generated IPv6 leaked: ${address}`);
+            }), { numRuns: 100 });
         });
     });
     describe('Scrubbing Disabled', () => {

@@ -14,6 +14,7 @@ export class MemoryPressureMonitor extends EventEmitter {
     criticalThreshold;
     pollIntervalMs;
     minHeapTotalMb;
+    maxMemoryMb;
     timer = null;
     lastLevel = 'normal';
     constructor(options = {}) {
@@ -22,6 +23,7 @@ export class MemoryPressureMonitor extends EventEmitter {
         this.criticalThreshold = options.criticalThreshold ?? 0.9;
         this.pollIntervalMs = options.pollIntervalMs ?? 5000;
         this.minHeapTotalMb = options.minHeapTotalMb ?? 100;
+        this.maxMemoryMb = options.maxMemoryMb;
     }
     /** Start monitoring memory pressure. */
     start() {
@@ -59,6 +61,17 @@ export class MemoryPressureMonitor extends EventEmitter {
                 level = 'elevated';
             }
         }
+        // Also enforce an absolute ceiling if configured. This matters in
+        // containers with large heaps where a ratio threshold is too lenient.
+        if (this.maxMemoryMb && this.maxMemoryMb > 0) {
+            const absoluteUtil = heapUsedMb / this.maxMemoryMb;
+            if (absoluteUtil >= this.criticalThreshold) {
+                level = 'critical';
+            }
+            else if (absoluteUtil >= this.elevatedThreshold && level !== 'critical') {
+                level = 'elevated';
+            }
+        }
         return { level, heapUsedMb, heapTotalMb, rssMb, heapUtilization };
     }
     /** Returns true if the system is under elevated or critical memory pressure. */
@@ -85,6 +98,10 @@ export class MemoryPressureMonitor extends EventEmitter {
     /** Convenience method to register a pressure change callback. */
     onPressureChange(callback) {
         this.on('pressure', callback);
+    }
+    /** Update the absolute memory ceiling after construction. */
+    setMaxMemoryMb(maxMemoryMb) {
+        this.maxMemoryMb = maxMemoryMb;
     }
     check() {
         const state = this.getState();

@@ -9,18 +9,54 @@
  * Supports custom fingerprint overrides via event context.
  */
 import { sha256 } from '../utils/hash.js';
+// ─── Fingerprint Cache ──────────────────────────────────────────────────────
+const FINGERPRINT_CACHE_SIZE = 1000;
+const FINGERPRINT_CACHE_TTL_MS = 60_000;
+const fingerprintCache = new Map();
+function getCachedFingerprint(key) {
+    const entry = fingerprintCache.get(key);
+    if (!entry)
+        return undefined;
+    if (Date.now() > entry.expiresAt) {
+        fingerprintCache.delete(key);
+        return undefined;
+    }
+    // Promote to MRU
+    fingerprintCache.delete(key);
+    fingerprintCache.set(key, entry);
+    return entry.value;
+}
+function setCachedFingerprint(key, value) {
+    if (fingerprintCache.size >= FINGERPRINT_CACHE_SIZE) {
+        // Evict the oldest (LRU) entry
+        const oldest = fingerprintCache.keys().next().value;
+        if (oldest !== undefined) {
+            fingerprintCache.delete(oldest);
+        }
+    }
+    fingerprintCache.set(key, { value, expiresAt: Date.now() + FINGERPRINT_CACHE_TTL_MS });
+}
+// ─── Public API ─────────────────────────────────────────────────────────────
 /**
  * Generate a deterministic fingerprint for error grouping.
  * Same error type + same call path = same fingerprint.
+ *
+ * Cached with a bounded LRU to avoid recomputing SHA-256 for repeated
+ * identical errors in high-throughput scenarios.
  *
  * @param error - The normalized error
  * @param stackFrames - Parsed stack frames
  * @param customFingerprint - Optional explicit fingerprint override
  */
 export function generateFingerprint(error, stackFrames, customFingerprint) {
-    // If user provides a custom fingerprint, use it directly
+    // If user provides a custom fingerprint, hash it once and cache.
     if (customFingerprint) {
-        return sha256(customFingerprint);
+        const cached = getCachedFingerprint(customFingerprint);
+        if (cached)
+            return cached;
+        const value = sha256(customFingerprint);
+        setCachedFingerprint(customFingerprint, value);
+        return value;
     }
     // Build fingerprint from error type + in-app stack frames
     const parts = [error.name];
@@ -42,7 +78,13 @@ export function generateFingerprint(error, stackFrames, customFingerprint) {
     }
     // Include normalized error message (strip dynamic values)
     parts.push(normalizeErrorMessage(error.message));
-    return sha256(parts.join('|'));
+    const key = parts.join('|');
+    const cached = getCachedFingerprint(key);
+    if (cached)
+        return cached;
+    const value = sha256(key);
+    setCachedFingerprint(key, value);
+    return value;
 }
 /**
  * Normalize a filename for fingerprinting:

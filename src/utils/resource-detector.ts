@@ -16,6 +16,7 @@
 
 import { hostname, platform, arch, type, release, cpus, totalmem } from 'os'
 import { existsSync, readFileSync } from 'node:fs'
+import { SDK_NAME } from '../constants/version.js'
 import {
   detectResources as detectOtelResources,
   envDetector,
@@ -80,7 +81,7 @@ export function detectResources(sdkVersion: string): ResourceAttributes {
   const containerId = detectContainerId()
   const resource: ResourceAttributes = {
     // SDK identity
-    'telemetry.sdk.name': 'pulse-sdk',
+    'telemetry.sdk.name': SDK_NAME,
     'telemetry.sdk.version': sdkVersion,
     'telemetry.sdk.language': 'nodejs',
 

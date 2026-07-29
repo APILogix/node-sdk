@@ -84,6 +84,7 @@ export interface SamplingConfig {
     readonly errors: number;
     readonly profiles: number;
     readonly replays: number;
+    readonly metrics: number;
     /** Per-route overrides keyed by URL prefix. Longest prefix wins. */
     readonly routes: Readonly<Record<string, RouteSamplingRates>>;
 }
@@ -164,6 +165,14 @@ export interface PiiDetectionConfig {
  * sets the values; the SDK clamps each one to a built-in safety ceiling
  * before applying it (see `SAFETY_CEILINGS` in constants/defaults).
  */
+export interface TenantGovernanceConfig {
+    readonly enabled: boolean;
+    readonly maxTenantsTracked: number;
+    readonly quotaPerWindow: number;
+    readonly windowDurationMs: number;
+    /** Additional high-priority/fatal events accepted after normal quota. */
+    readonly criticalReserve: number;
+}
 export interface LimitsConfig {
     readonly maxSpansPerTrace: number;
     readonly maxSpanAttributes: number;
@@ -172,6 +181,7 @@ export interface LimitsConfig {
     readonly maxQueueSize: number;
     readonly maxMemoryMb: number;
     readonly maxCpuOverheadPercent: number;
+    readonly tenantGovernance?: TenantGovernanceConfig;
 }
 /**
  * Operational fire-extinguishers. Independent of `features.*` — used to
@@ -228,7 +238,7 @@ export interface EntitlementsConfig {
  * Per-event-type ingestion routes. The set of route names is fixed by the
  * SDK contract — adding a new event type requires an SDK release.
  */
-export type TransportRouteName = 'traces' | 'requests' | 'errors' | 'metrics' | 'logs' | 'profiles' | 'events' | 'crons' | 'replays';
+export type TransportRouteName = 'traces' | 'requests' | 'spans' | 'errors' | 'metrics' | 'logs' | 'profiles' | 'events' | 'crons' | 'replays';
 export interface TransportRouteConfig {
     readonly url: string;
     readonly batchSize: number;
@@ -241,8 +251,14 @@ export interface TransportRouteConfig {
 export interface TransportRemoteConfig {
     readonly retry: TransportRetryConfig;
     readonly queue: TransportQueueConfig;
+    readonly connections?: TransportConnectionConfig;
     readonly keepAlive: boolean;
     readonly routes: Readonly<Record<TransportRouteName, TransportRouteConfig>>;
+}
+export interface TransportConnectionConfig {
+    readonly maxTotalConnections: number;
+    readonly maxConnectionsPerRoute?: Partial<Readonly<Record<TransportRouteName, number>>>;
+    readonly acquireTimeoutMs: number;
 }
 export interface TransportRetryConfig {
     readonly enabled: boolean;
@@ -252,6 +268,10 @@ export interface TransportRetryConfig {
 }
 export interface TransportQueueConfig {
     readonly overflowStrategy: 'drop_oldest' | 'drop_newest';
+    /** Per-route queue cap; also bounded by limits.maxQueueSize. */
+    readonly maxSize?: number;
+    /** Slots protected from non-critical telemetry. */
+    readonly criticalReserve?: number;
 }
 export interface RuntimeConfig {
     readonly configTtlSeconds: number;
@@ -345,7 +365,14 @@ export interface SDKInitOptions {
     readonly apiKey: string;
     readonly service?: string;
     readonly environment?: string;
+    /** Deployment release identifier (independent of package.json version). */
     readonly release?: string;
+    /** Explicit consuming package name override. */
+    readonly applicationName?: string;
+    /** Explicit consuming package version override. */
+    readonly applicationVersion?: string;
+    /** package.json file to inspect; relative paths resolve from process.cwd(). */
+    readonly packageJsonPath?: string;
     readonly enableErrors?: boolean;
     readonly enablePerformance?: boolean;
     readonly enableTracing?: boolean;
@@ -406,6 +433,8 @@ export interface ResolvedSDKConfig {
     readonly service: string;
     readonly environment: string;
     readonly release: string;
+    readonly applicationName: string;
+    readonly applicationVersion: string;
     readonly debug: boolean;
     readonly plan: PlanTier;
     readonly planFeatures: PlanFeatures;
@@ -443,6 +472,9 @@ export declare const sdkInitOptionsSchema: z.ZodObject<{
     service: z.ZodOptional<z.ZodString>;
     environment: z.ZodOptional<z.ZodString>;
     release: z.ZodOptional<z.ZodString>;
+    applicationName: z.ZodOptional<z.ZodString>;
+    applicationVersion: z.ZodOptional<z.ZodString>;
+    packageJsonPath: z.ZodOptional<z.ZodString>;
     enableErrors: z.ZodOptional<z.ZodBoolean>;
     enablePerformance: z.ZodOptional<z.ZodBoolean>;
     enableTracing: z.ZodOptional<z.ZodBoolean>;

@@ -34,6 +34,7 @@ import { context as otelContext, createContextKey } from '@opentelemetry/api';
 import { getRequestContext } from './context.js';
 import { RingBuffer } from './ring-buffer.js';
 import { getLogger } from '../utils/logger.js';
+import { SecurityScrubber } from '../processors/security-scrubber.js';
 // ─── OTel Context Key ───────────────────────────────────────────────────────
 /**
  * Context key for scope storage on the OTel context.
@@ -43,16 +44,16 @@ const SCOPE_KEY = createContextKey('pulse-sdk-scope');
 // ─── Scope Manager ──────────────────────────────────────────────────────────
 export class ScopeManager {
     user = null;
-    tags = {};
-    extra = {};
-    contexts = {};
+    tags = Object.create(null);
+    extra = Object.create(null);
+    contexts = Object.create(null);
     // ─── User Identification ──────────────────────────────────────────────
     /**
      * Set the current user. This user will be attached to all subsequent events.
      * Pass null to clear the user.
      */
     setUser(user) {
-        this.user = user ? { ...user } : null;
+        this.user = user ? scrubUser(user) : null;
     }
     /**
      * Get the current user.
@@ -65,6 +66,8 @@ export class ScopeManager {
      * Set a single tag key/value pair. Tags are string-only and used for filtering.
      */
     setTag(key, value) {
+        if (!isSafeKey(key))
+            return;
         this.tags[key] = value;
     }
     /**
@@ -72,7 +75,8 @@ export class ScopeManager {
      */
     setTags(tags) {
         for (const [key, value] of Object.entries(tags)) {
-            this.tags[key] = value;
+            if (isSafeKey(key))
+                this.tags[key] = value;
         }
     }
     /**
@@ -92,6 +96,8 @@ export class ScopeManager {
      * Set a single extra context key/value. Extra can hold arbitrary data.
      */
     setExtra(key, value) {
+        if (!isSafeKey(key))
+            return;
         this.extra[key] = value;
     }
     /**
@@ -99,7 +105,8 @@ export class ScopeManager {
      */
     setExtras(extras) {
         for (const [key, value] of Object.entries(extras)) {
-            this.extra[key] = value;
+            if (isSafeKey(key))
+                this.extra[key] = value;
         }
     }
     /**
@@ -120,6 +127,8 @@ export class ScopeManager {
      * (e.g., 'device', 'os', 'app', 'culture').
      */
     setContext(name, context) {
+        if (!isSafeKey(name))
+            return;
         if (context === null) {
             delete this.contexts[name];
         }
@@ -351,5 +360,44 @@ export function applyScopeToEvent(event) {
         enriched['contexts'] = contexts;
     }
     return enriched;
+}
+// ─── Security Helpers ───────────────────────────────────────────────────────
+const DANGEROUS_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+function isSafeKey(key) {
+    return key !== '__proto__' && key !== 'constructor' && key !== 'prototype';
+}
+function scrubUser(user) {
+    const scrubber = SecurityScrubber.getInstance();
+    const scrub = (value) => {
+        if (!value)
+            return value;
+        if (!scrubber)
+            return value;
+        try {
+            return scrubber.scrubValue(value);
+        }
+        catch {
+            return value;
+        }
+    };
+    return {
+        ...user,
+        email: scrub(user.email),
+        username: scrub(user.username),
+        ipAddress: scrub(user.ipAddress),
+        data: user.data ? scrubObjectValues(user.data) : undefined,
+    };
+}
+function scrubObjectValues(obj) {
+    const scrubber = SecurityScrubber.getInstance();
+    if (!scrubber)
+        return { ...obj };
+    const result = {};
+    for (const [key, value] of Object.entries(obj)) {
+        if (isSafeKey(key)) {
+            result[key] = scrubber.scrubValue(value);
+        }
+    }
+    return result;
 }
 //# sourceMappingURL=scope.js.map

@@ -112,6 +112,11 @@ export function setupGlobalErrorHandlers() {
         stack: err.stack,
       })
 
+      // Installing an uncaughtException listener suppresses Node's default
+      // non-zero termination. Preserve fatal process semantics while still
+      // allowing the bounded crash flush to run.
+      if (!process.exitCode) process.exitCode = 1
+
       // Use the bounded crashFlush() to give the transport a real chance
       // to drain the error event before the process terminates. Unlike the
       // previous fire-and-forget dynamic import, crashFlush() is bounded

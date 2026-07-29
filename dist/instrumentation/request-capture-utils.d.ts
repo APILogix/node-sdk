@@ -52,6 +52,11 @@ export interface CaptureGateDecision {
     readonly allowResponse: boolean;
     readonly allowCookies: boolean;
     /**
+     * Whether resolved client IPs should be hashed before being attached to
+     * events. Driven by `privacy.piiDetection.maskIPs` (defaults to true).
+     */
+    readonly maskIp: boolean;
+    /**
      * The sampling rate that was applied (0..1). Useful for adapters that
      * want to attach `pulse.sampling.rate` as a span attribute so the
      * backend can re-weight aggregates.
@@ -73,11 +78,8 @@ export interface CaptureGateDecision {
  * has decided to actually emit the event so the tenant counter advances.
  */
 export declare function evaluateCaptureGate(input: CaptureGateInput): CaptureGateDecision;
-/**
- * Record that a request capture was admitted for a tenant. Called once the
- * adapter has produced an event and is about to enqueue it.
- */
-export declare function recordCaptureAccepted(tenantId?: string | undefined): void;
+/** @deprecated Tenant admission is now atomic in the canonical pipeline. */
+export declare function recordCaptureAccepted(_tenantId?: string | undefined): void;
 /**
  * Scrub headers using the SecurityScrubber when available, falling back to
  * a conservative deny-list when the scrubber isn't initialized yet (typical
@@ -116,7 +118,7 @@ export declare function headerString(value: string | string[] | undefined): stri
  * proxy). With no trusted proxies configured (the default), the socket
  * address is authoritative and forwarding headers are ignored.
  */
-export declare function resolveClientIp(headers: Record<string, string | string[] | undefined>, socketRemoteAddress?: string | undefined, trustedProxies?: readonly string[] | undefined): string | undefined;
+export declare function resolveClientIp(headers: Record<string, string | string[] | undefined>, socketRemoteAddress?: string | undefined, trustedProxies?: readonly string[] | undefined, maskIp?: boolean | undefined, preferredIp?: string | undefined): string | undefined;
 /** Match a path against either string prefixes or regex patterns. */
 export declare function matchesIgnoredPath(path: string, patterns: readonly (string | RegExp)[] | undefined): boolean;
 //# sourceMappingURL=request-capture-utils.d.ts.map

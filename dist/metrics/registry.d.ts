@@ -89,7 +89,7 @@ declare class MetricsRegistry {
      * even on graceful exit, since the lifecycle moved on before the
      * OTel reader had finished collecting and emitting.
      */
-    flush(): Promise<void>;
+    flush(internalTelemetry?: boolean): Promise<void>;
     getStats(): {
         initialized: boolean;
         registeredMetrics: number;

@@ -61,6 +61,7 @@ let sigTermHandler = null;
 let sigIntHandler = null;
 let shuttingDown = false;
 let shutdownPromise = null;
+let shutdownCompletionPromise = null;
 const beforeShutdownHooks = [];
 // ─── Public API ─────────────────────────────────────────────────────────────
 /**
@@ -97,14 +98,18 @@ export async function shutdown(timeoutMs) {
     shuttingDown = true;
     const promise = runShutdown(timeoutMs);
     shutdownPromise = promise;
-    try {
-        return await promise;
-    }
-    finally {
-        // Reset module flags so a fresh init() can re-arm everything.
-        shuttingDown = false;
-        shutdownPromise = null;
-    }
+    return promise;
+}
+/**
+ * Wait until all teardown work has released SDK-owned resources. A timed-out
+ * public shutdown can finish cleanup in the background; init() uses this
+ * barrier to prevent a new runtime from racing the previous one.
+ * @internal
+ */
+export async function waitForShutdownCompletion() {
+    const completion = shutdownCompletionPromise;
+    if (completion)
+        await completion;
 }
 /**
  * Force-flush pending telemetry without tearing down the SDK.
@@ -215,31 +220,43 @@ async function runShutdown(timeoutMs) {
         timer = setTimeout(() => resolve('timeout'), timeout);
         timer.unref?.();
     });
+    // Cleanup owns SDK resources until it settles. The public deadline may win
+    // the race, but no second cleanup or re-init can begin while this promise is
+    // active (init waits through waitForShutdownCompletion()).
+    const completion = (async () => {
+        try {
+            await runOrchestratedShutdown(stepErrors);
+        }
+        catch (err) {
+            stepErrors.push({ step: 'orchestrator', error: err });
+        }
+        await runUnconditionalCleanup(stepErrors);
+    })();
+    shutdownCompletionPromise = completion;
+    void completion.finally(() => {
+        if (shutdownCompletionPromise === completion) {
+            shutdownCompletionPromise = null;
+            shutdownPromise = null;
+            shuttingDown = false;
+        }
+    }).catch(() => undefined);
     try {
         const outcome = await Promise.race([
-            runOrchestratedShutdown(stepErrors).then(() => 'done'),
+            completion.then(() => 'done'),
             timeoutPromise,
         ]);
         timedOut = outcome === 'timeout';
-    }
-    catch (err) {
-        // Catastrophic failure inside the orchestrator — capture and continue
-        // to the unconditional cleanup phase below.
-        stepErrors.push({ step: 'orchestrator', error: err });
     }
     finally {
         if (timer)
             clearTimeout(timer);
     }
     if (timedOut) {
-        logger.warn('Shutdown timed out — entering unconditional cleanup', {
+        logger.warn('Shutdown deadline reached — cleanup continues under exclusive ownership', {
             remainingEvents: eventQueue.size(),
             durationMs: Date.now() - startedAt,
         });
     }
-    // Unconditional cleanup phase: this MUST run even if the orchestrator
-    // timed out or threw, otherwise singletons leak across reinit cycles.
-    await runUnconditionalCleanup(stepErrors);
     const result = {
         completed: !timedOut && stepErrors.length === 0,
         timedOut,
@@ -273,7 +290,11 @@ async function runOrchestratedShutdown(stepErrors) {
     }
     // 2. Stop accepting new events at the queue boundary.
     eventQueue.setShuttingDown(true);
-    // 3. Tear down active feature subsystems via the FeatureController so each
+    // 3. Flush registry-backed metrics before feature teardown shuts down the
+    //    meter provider. Mark these as internal so shutdown admission accepts
+    //    the final aggregates; the marker is stripped before transport.
+    await runStep('metrics.pre-teardown-flush', () => withTimeout(metricsRegistry.flush(true), SUBSYSTEM_STEP_TIMEOUT_MS, 'metrics pre-teardown flush timed out'), stepErrors);
+    // 4. Tear down active feature subsystems via the FeatureController so each
     //    subsystem gets its own teardown callback before raw resets.
     const featureController = FeatureController.getInstance();
     if (featureController) {
@@ -328,7 +349,9 @@ async function runOrchestratedShutdown(stepErrors) {
     await runStep('persistent-storage.drain', async () => {
         const router = TransportRouter.getInstance();
         if (router) {
-            const residual = router.drainAllQueues();
+            // Quiesce active sends and retry timers before taking the residual
+            // snapshot; queue-only draining can miss batches currently in fetch().
+            const residual = await router.shutdown();
             if (residual.length > 0) {
                 getLogger().warn('Persisting undelivered events from transport queues for replay on next start', {
                     count: residual.length,
@@ -373,6 +396,7 @@ async function runUnconditionalCleanup(stepErrors) {
     runSync('sampling-engine.reset', () => SamplingEngine.reset(), stepErrors);
     runSync('limits-engine.reset', () => LimitsEngine.reset(), stepErrors);
     runSync('security-scrubber.reset', () => SecurityScrubber.reset(), stepErrors);
+    runSync('global-errors.reset', () => resetGlobalErrorHandlers(), stepErrors);
     runSync('logging-subsystem.reset', () => LoggingSubsystem.reset(), stepErrors);
     runSync('cron-subsystem.reset', () => CronSubsystem.reset(), stepErrors);
     runSync('signal-handlers.reset', () => resetSignalHandlers(), stepErrors);

@@ -64,6 +64,7 @@ import { FeatureController } from './feature-controller.js'
 import { ConfigManager } from './config-manager.js'
 import { ERROR_DEFAULTS } from '../constants/internal-defaults.js'
 import { peekSessionManager } from '../session/session-manager.js'
+import { tenantGovernor } from './tenant-isolation.js'
 
 const PLUGIN_TIMEOUT_MS = 50
 const EVENT_PROCESSOR_TIMEOUT_MS = 50
@@ -357,6 +358,14 @@ export async function processEventAsync(rawEvent: SDKEvent | Event, assignedEven
       return false
     }
 
+    // Step 3.25: Per-tenant admission is atomic and central so every event
+    // source (manual APIs, framework instrumentation, crons, replays, spans)
+    // receives identical noisy-neighbour protection.
+    const tenantId = extractTenantId(event)
+    if (!tenantGovernor.admit(tenantId, isHighPriority(event))) {
+      return false
+    }
+
     // Step 3.5: Enforce attribute limits from remote config
     const limitsEngineAsync = LimitsEngine.getInstance()
     if (limitsEngineAsync) {
@@ -517,6 +526,11 @@ export async function processEventAsync(rawEvent: SDKEvent | Event, assignedEven
     // Step 12: Sampling is owned by OTel samplers at root span creation.
     // Child spans inherit OTel's sampled flag. Non-span SDK events follow the
     // active span context rather than making independent random decisions.
+
+    // SDK-owned package identity is reattached after all user/plugin hooks.
+    // This guarantees every transported event has trustworthy immutable
+    // application and SDK versions even if a hook removed/replaced metadata.
+    event = { ...event, metadata: client.metadata } as SDKEvent
 
     // Step 13: Route to the unified transport owner
     const transportRouter = TransportRouter.getInstance()
@@ -688,6 +702,15 @@ function isCriticalMemoryPressure(): boolean {
   // before it expands, causing false-positive drops during startup.
   memoryPressureCachedValue = getMemoryPressureLevel() === 'critical'
   return memoryPressureCachedValue
+}
+
+function extractTenantId(event: SDKEvent): string | undefined {
+  const record = event as unknown as Record<string, any>
+  const value = record['tenantId']
+    ?? record['context']?.['tenantId']
+    ?? record['tags']?.['tenantId']
+    ?? getRequestContext()?.extra?.['tenantId']
+  return typeof value === 'string' && value.trim() ? value : undefined
 }
 
 function isHighPriority(event: SDKEvent | Event): boolean {

@@ -25,7 +25,6 @@ import { KillswitchEngine } from '../core/killswitch-engine.js'
 import { SamplingEngine } from '../core/sampling-engine.js'
 import { SecurityScrubber } from '../processors/security-scrubber.js'
 import { sha256 } from '../utils/hash.js'
-import { tenantGovernor } from '../core/tenant-isolation.js'
 import { getLogger } from '../utils/logger.js'
 
 // Headers we always redact even when the SecurityScrubber isn't initialized.
@@ -148,10 +147,8 @@ export function evaluateCaptureGate(input: CaptureGateInput): CaptureGateDecisio
     }
   }
 
-  // 5. Tenant admission. Only check; do not record yet.
-  if (!tenantGovernor.canAcceptEvent(input.tenantId)) {
-    return denied('tenant_quota')
-  }
+  // 5. Tenant admission is performed atomically by the canonical event
+  // pipeline so manual and automatic request capture share one quota.
 
   // 6. Sampling — `sampling.routes["/path"].requests` lets the backend
   //    silence noisy paths or boost critical ones without a redeploy.
@@ -178,12 +175,9 @@ export function evaluateCaptureGate(input: CaptureGateInput): CaptureGateDecisio
   }
 }
 
-/**
- * Record that a request capture was admitted for a tenant. Called once the
- * adapter has produced an event and is about to enqueue it.
- */
-export function recordCaptureAccepted(tenantId?: string | undefined): void {
-  tenantGovernor.recordEvent(tenantId)
+/** @deprecated Tenant admission is now atomic in the canonical pipeline. */
+export function recordCaptureAccepted(_tenantId?: string | undefined): void {
+  // Kept as a compatibility no-op for existing instrumentation adapters.
 }
 
 /**

@@ -28,6 +28,7 @@ import { SamplingEngine } from '../core/sampling-engine.js';
 import { ConfigManager } from '../core/config-manager.js';
 import { ERROR_DEFAULTS } from '../constants/internal-defaults.js';
 import { SpanStatusCode, trace } from '@opentelemetry/api';
+import { SecurityScrubber } from '../processors/security-scrubber.js';
 /**
  * Capture an error/exception.
  *
@@ -112,11 +113,17 @@ export function captureError(error, options = {}) {
         }
         // Generate fingerprint from potentially normalized frames
         const fingerprint = generateFingerprint(normalized, normalizedFrames, customFingerprint);
+        // Scrub free-form error message before it leaves the process
+        const scrubber = SecurityScrubber.getInstance();
+        const safeMessage = scrubber ? scrubber.scrubValue(normalized.message) : normalized.message;
         const ctx = getRequestContext();
-        const breadcrumbs = ctx?.breadcrumbs.toArray() ?? [];
+        const rawBreadcrumbs = ctx?.breadcrumbs.toArray() ?? [];
+        const breadcrumbs = rawBreadcrumbs.length > 0
+            ? (scrubber ? rawBreadcrumbs.map(b => scrubBreadcrumb(b, scrubber)) : rawBreadcrumbs)
+            : undefined;
         const event = {
             type: 'error',
-            message: normalized.message,
+            message: safeMessage,
             name: normalized.name,
             stack: stackFrames, // Keep original stack for display
             fingerprint,
@@ -124,7 +131,7 @@ export function captureError(error, options = {}) {
             timestamp: epochMs(),
             context,
             mechanism,
-            breadcrumbs: breadcrumbs.length > 0 ? breadcrumbs : undefined,
+            breadcrumbs,
             requestId: ctx?.requestId,
             traceId: getTraceId(),
             spanId: getSpanId(),
@@ -139,5 +146,18 @@ function isOptionsObject(value) {
     if (!value || typeof value !== 'object')
         return false;
     return 'severity' in value || 'fingerprint' in value || 'context' in value || 'mechanism' in value;
+}
+function scrubBreadcrumb(breadcrumb, scrubber) {
+    const safeMessage = breadcrumb.message !== undefined
+        ? scrubber.scrubValue(breadcrumb.message)
+        : undefined;
+    const safeData = breadcrumb.data !== undefined
+        ? scrubber.scrubValue(breadcrumb.data)
+        : undefined;
+    return {
+        ...breadcrumb,
+        message: safeMessage,
+        data: safeData,
+    };
 }
 //# sourceMappingURL=captureError.js.map

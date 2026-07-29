@@ -15,6 +15,7 @@
  */
 import { hostname, platform, arch, type, release, cpus, totalmem } from 'os';
 import { existsSync, readFileSync } from 'node:fs';
+import { SDK_NAME } from '../constants/version.js';
 import { detectResources as detectOtelResources, envDetector, hostDetector, osDetector, processDetector, resourceFromAttributes, serviceInstanceIdDetector, } from '@opentelemetry/resources';
 import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION, ATTR_DEPLOYMENT_ENVIRONMENT_NAME, } from '@opentelemetry/semantic-conventions';
 let cachedResource = null;
@@ -30,7 +31,7 @@ export function detectResources(sdkVersion) {
     const containerId = detectContainerId();
     const resource = {
         // SDK identity
-        'telemetry.sdk.name': 'pulse-sdk',
+        'telemetry.sdk.name': SDK_NAME,
         'telemetry.sdk.version': sdkVersion,
         'telemetry.sdk.language': 'nodejs',
         // Process runtime

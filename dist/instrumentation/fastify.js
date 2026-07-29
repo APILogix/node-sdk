@@ -49,7 +49,7 @@ export function fastifyPulsePlugin(fastify, opts, done) {
             const sessionId = headerString(request.headers['x-session-id']);
             const userAgent = headerString(request.headers['user-agent']);
             const referer = headerString(request.headers['referer'] ?? request.headers['referrer']);
-            const clientIp = request.ip ?? resolveClientIp(request.headers, request.socket?.remoteAddress, options.trustedProxies);
+            const clientIp = resolveClientIp(request.headers, request.socket?.remoteAddress, options.trustedProxies, decision.maskIp, request.ip);
             const store = createContextStore(requestId, options.maxBreadcrumbs ?? client.config?.maxBreadcrumbs ?? 100, {
                 userId,
                 sessionId,

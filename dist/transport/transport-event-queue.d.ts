@@ -8,6 +8,8 @@ export interface QueueDropInfo {
     readonly reason: QueueDropReason;
     readonly count: number;
     readonly eventType?: string | undefined;
+    readonly eventId?: string | undefined;
+    readonly critical?: boolean | undefined;
 }
 export interface TransportEventQueueOptions {
     readonly route: EnterpriseRoute;
@@ -54,6 +56,10 @@ export declare class TransportEventQueue {
      * per-event `unshift` loop, but O(batch) total instead of O(n²).
      */
     requeueFront(events: readonly SDKEvent[]): void;
+    private append;
+    private findOldestNonCritical;
+    private removeAt;
+    private notifyDrop;
     size(): number;
     isEmpty(): boolean;
     clear(): void;

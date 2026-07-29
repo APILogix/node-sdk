@@ -19,6 +19,7 @@
  *     but the wire schema is a hot path and the tradeoff goes the other way.
  */
 import { REMOTE_CONFIG_SCHEMA_VERSION } from '../types/config.js';
+const REQUIRED_ROUTES = ['traces', 'requests', 'spans', 'errors', 'metrics', 'logs', 'profiles', 'events', 'crons', 'replays'];
 /**
  * Validate a deserialized JSON payload as a `RemoteConfigResponse`.
  *
@@ -70,14 +71,23 @@ export function validateRemoteConfig(payload) {
             errors.push('transport.routes is missing or not an object');
         }
         else {
-            for (const [name, route] of Object.entries(routes)) {
+            for (const name of REQUIRED_ROUTES) {
+                const route = routes[name];
                 if (!isPlainObject(route)) {
-                    errors.push(`transport.routes.${name} is not an object`);
+                    errors.push(`transport.routes.${name} is missing or not an object`);
                     continue;
                 }
                 const r = route;
-                if (typeof r['url'] !== 'string' || r['url'].length === 0) {
-                    errors.push(`transport.routes.${name}.url is missing or empty`);
+                if (typeof r['url'] !== 'string' || r['url'].length === 0 || !isAllowedTransportUrl(r['url'])) {
+                    errors.push(`transport.routes.${name}.url is missing or not an allowed HTTP(S) URL`);
+                }
+                for (const field of ['batchSize', 'flushIntervalMs', 'timeoutMs']) {
+                    if (typeof r[field] !== 'number' || !Number.isInteger(r[field]) || (field === 'flushIntervalMs' ? r[field] < 0 : r[field] <= 0)) {
+                        errors.push(`transport.routes.${name}.${field} is invalid`);
+                    }
+                }
+                if (r['compression'] !== 'gzip' && r['compression'] !== 'none') {
+                    errors.push(`transport.routes.${name}.compression is invalid`);
                 }
             }
         }
@@ -134,6 +144,17 @@ export function validateRemoteConfig(payload) {
 }
 function isPlainObject(v) {
     return v !== null && typeof v === 'object' && !Array.isArray(v);
+}
+function isAllowedTransportUrl(value) {
+    try {
+        const url = new URL(value);
+        if (url.protocol === 'https:')
+            return true;
+        return url.protocol === 'http:' && (url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '::1');
+    }
+    catch {
+        return false;
+    }
 }
 function isProbability(v) {
     return typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 1;

@@ -1,6 +1,7 @@
 import { ProfilingSubsystem } from '../subsystems/profiling-subsystem.js';
 import { client } from '../core/client.js';
 import { EntitlementGate } from '../core/entitlement-gate.js';
+import { SamplingEngine } from '../core/sampling-engine.js';
 /**
  * Manually start a CPU profile.
  * Note: The SDK automatically profiles traces if `features.profiling` is enabled
@@ -21,6 +22,15 @@ export async function startProfile(profileId) {
     const subsystem = ProfilingSubsystem.getInstance();
     if (!subsystem)
         return false;
+    // Deterministic sampling for manual profiles. The backend can throttle
+    // profile ingestion via `sampling.profiles` without disabling the
+    // profiling subsystem entirely.
+    const samplingEngine = SamplingEngine.getInstance();
+    if (samplingEngine) {
+        const decision = samplingEngine.shouldSampleProfile(profileId);
+        if (!decision.sampled)
+            return false;
+    }
     return subsystem.startCpuProfile(profileId);
 }
 /**

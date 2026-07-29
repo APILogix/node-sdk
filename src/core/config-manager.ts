@@ -20,6 +20,7 @@ import {
   CONFIG_RETRY_INTERVAL_MS,
   SAFETY_CEILINGS,
   SAFETY_FLOORS,
+  resolveApiBaseUrl,
 } from '../constants/defaults.js'
 import { REMOTE_CONFIG_SCHEMA_VERSION } from '../types/config.js'
 import type { RemoteConfigResponse, SDKInitOptions, ConfigDiff } from '../types/config.js'
@@ -28,6 +29,7 @@ import { validateRemoteConfig } from './config-validator.js'
 import { getLogger } from '../utils/logger.js'
 import { context as otelContext } from '@opentelemetry/api'
 import { suppressTracing } from '@opentelemetry/core'
+import { client } from './client.js'
 
 /**
  * Bootstrap state machine. Subsystems can read this to decide whether
@@ -69,7 +71,7 @@ function clampProbability(value: unknown): number {
   return value
 }
 
-type ConfigChangeListener = (diff: ConfigDiff, newConfig: Readonly<RemoteConfigResponse>) => void
+type ConfigChangeListener = (diff: ConfigDiff, newConfig: Readonly<RemoteConfigResponse>) => void | Promise<void>
 
 export class ConfigManager {
   private static instance: ConfigManager | null = null
@@ -136,14 +138,7 @@ export class ConfigManager {
   async initialize(options: SDKInitOptions): Promise<Readonly<RemoteConfigResponse>> {
     const logger = getLogger()
     this.initOptions = options
-    this.configUrl = options.configUrl ?? (options.baseUrl ? `${options.baseUrl}/v1/sdk-config` : '')
-
-    if (!this.configUrl) {
-      logger.warn('ConfigManager: No config URL configured, using baked-in defaults')
-      this.currentConfig = this.applyUserOverrides(BAKED_IN_REMOTE_CONFIG, options)
-      this.state = ConfigState.SafeDefaults
-      return this.currentConfig
-    }
+    this.configUrl = options.configUrl ?? `${resolveApiBaseUrl(options.baseUrl).replace(/\/+$/, '')}/v1/sdk-config`
 
     try {
       // Race fetch against 3-second timeout
@@ -298,7 +293,7 @@ export class ConfigManager {
         for (const listener of snapshot) {
           if (this.destroyed) break
           try {
-            listener(diff, frozen)
+            await listener(diff, frozen)
           } catch (listenerErr) {
             logger.error(
               `ConfigManager: Listener error: ${listenerErr instanceof Error ? listenerErr.message : String(listenerErr)}`
@@ -326,7 +321,7 @@ export class ConfigManager {
         for (const listener of snapshot) {
           if (this.destroyed) break
           try {
-            listener(diff, fresh)
+            await listener(diff, fresh)
           } catch (listenerErr) {
             logger.error(
               `ConfigManager: Listener error during stale-fallback: ${listenerErr instanceof Error ? listenerErr.message : String(listenerErr)}`,
@@ -403,6 +398,8 @@ export class ConfigManager {
     const body = JSON.stringify({
       sdkVersion: SDK_VERSION,
       sdkName: SDK_NAME,
+      applicationName: client.metadata.applicationName,
+      applicationVersion: client.metadata.applicationVersion,
       schemaVersion: REMOTE_CONFIG_SCHEMA_VERSION,
       service: this.initOptions?.service ?? 'unknown-service',
       environment: this.initOptions?.environment ?? 'production',
@@ -428,6 +425,7 @@ export class ConfigManager {
               'Content-Type': 'application/json',
               'X-SDK-Version': SDK_VERSION,
               'X-SDK-Name': SDK_NAME,
+              'X-Application-Version': client.metadata.applicationVersion,
               ...(this.initOptions?.apiKey ? { Authorization: `Bearer ${this.initOptions.apiKey}` } : {}),
             },
             body,
@@ -540,6 +538,17 @@ export class ConfigManager {
       maxCpuOverheadPercent: clampMax(limits['maxCpuOverheadPercent'], SAFETY_CEILINGS.maxCpuOverheadPercent),
     }
 
+    const tenant = limits['tenantGovernance'] as unknown as Record<string, unknown> | undefined
+    if (tenant && typeof tenant === 'object') {
+      ;(c['limits'] as Record<string, unknown>)['tenantGovernance'] = {
+        enabled: tenant['enabled'] === true,
+        maxTenantsTracked: clampRange(tenant['maxTenantsTracked'] as number | undefined, 1, 100_000),
+        quotaPerWindow: clampRange(tenant['quotaPerWindow'] as number | undefined, 1, 1_000_000),
+        windowDurationMs: clampRange(tenant['windowDurationMs'] as number | undefined, 1_000, 3_600_000),
+        criticalReserve: clampRange(tenant['criticalReserve'] as number | undefined, 0, 100_000),
+      }
+    }
+
     // runtime — clamp ttl and floor it so refresh never hammers the backend.
     const runtime = (c['runtime'] ?? {}) as Record<string, unknown>
     const ttl = runtime['configTtlSeconds']
@@ -582,6 +591,24 @@ export class ConfigManager {
       retry['baseDelayMs'] = clampMax(retry['baseDelayMs'] as number, SAFETY_CEILINGS.retryBaseDelayMs)
     }
     transport['retry'] = retry
+
+    const queue = (transport['queue'] ?? {}) as Record<string, unknown>
+    if (typeof queue['maxSize'] === 'number') {
+      queue['maxSize'] = clampRange(queue['maxSize'], 1, SAFETY_CEILINGS.maxQueueSize)
+    }
+    if (typeof queue['criticalReserve'] === 'number') {
+      queue['criticalReserve'] = clampRange(queue['criticalReserve'], 0, SAFETY_CEILINGS.maxQueueSize)
+    }
+    transport['queue'] = queue
+
+    const connections = (transport['connections'] ?? {}) as Record<string, unknown>
+    if (typeof connections['maxTotalConnections'] === 'number') {
+      connections['maxTotalConnections'] = clampRange(connections['maxTotalConnections'], 1, 500)
+    }
+    if (typeof connections['acquireTimeoutMs'] === 'number') {
+      connections['acquireTimeoutMs'] = clampRange(connections['acquireTimeoutMs'], 100, 60_000)
+    }
+    transport['connections'] = connections
 
     c['transport'] = transport
 
@@ -660,6 +687,31 @@ export class ConfigManager {
         }
         hasOverrides = true
       }
+    }
+
+    if (options.transport) {
+      const transport = options.transport
+      const routeOverrides = Object.fromEntries(
+        Object.keys(BAKED_IN_REMOTE_CONFIG.transport.routes).map(route => [route, {
+          ...(transport.batchSize !== undefined ? { batchSize: transport.batchSize } : {}),
+          ...(transport.flushIntervalMs !== undefined ? { flushIntervalMs: transport.flushIntervalMs } : {}),
+          ...(transport.timeoutMs !== undefined ? { timeoutMs: transport.timeoutMs } : {}),
+          ...(transport.compression === 'none' || transport.compression === 'gzip'
+            ? { compression: transport.compression }
+            : {}),
+        }]),
+      )
+      overrides['transport'] = {
+        ...(transport.maxRetries !== undefined ? { retry: { maxRetries: transport.maxRetries } } : {}),
+        ...(transport.maxConcurrentSends !== undefined
+          ? { connections: { maxTotalConnections: transport.maxConcurrentSends } }
+          : {}),
+        routes: routeOverrides,
+      }
+      if (transport.maxPayloadBytes !== undefined) {
+        overrides['limits'] = { maxPayloadSize: transport.maxPayloadBytes }
+      }
+      hasOverrides = true
     }
 
     if (options.environment) {

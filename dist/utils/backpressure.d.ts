@@ -19,6 +19,8 @@ export interface MemoryPressureOptions {
     readonly pollIntervalMs?: number;
     /** Minimum heap total (MB) before utilization thresholds apply. Default: 100 */
     readonly minHeapTotalMb?: number;
+    /** Optional absolute ceiling (MB). When set, pressure is also computed against this limit. */
+    readonly maxMemoryMb?: number | undefined;
 }
 /**
  * Monitors process memory and emits events when pressure levels change.
@@ -35,6 +37,7 @@ export declare class MemoryPressureMonitor extends EventEmitter {
     private readonly criticalThreshold;
     private readonly pollIntervalMs;
     private readonly minHeapTotalMb;
+    private maxMemoryMb;
     private timer;
     private lastLevel;
     constructor(options?: MemoryPressureOptions);
@@ -55,6 +58,8 @@ export declare class MemoryPressureMonitor extends EventEmitter {
     shouldAcceptEvent(priority: EventPriority): boolean;
     /** Convenience method to register a pressure change callback. */
     onPressureChange(callback: (state: MemoryPressureState) => void): void;
+    /** Update the absolute memory ceiling after construction. */
+    setMaxMemoryMb(maxMemoryMb: number): void;
     private check;
 }
 export type EventPriority = 'critical' | 'high' | 'normal';

@@ -136,10 +136,10 @@ class MetricsRegistry {
      * even on graceful exit, since the lifecycle moved on before the
      * OTel reader had finished collecting and emitting.
      */
-    async flush() {
+    async flush(internalTelemetry = false) {
         if (otelMetrics.isInitialized()) {
             try {
-                await otelMetrics.flush();
+                await otelMetrics.flush(internalTelemetry);
             }
             catch {
                 // Best-effort: the next normal flush cycle will retry.

@@ -23,27 +23,8 @@ import { SamplingEngine } from '../core/sampling-engine.js';
 export function captureMetric(name, value, type = 'gauge', options) {
     const logger = getLogger();
     try {
-        // ─── Entitlement Gate ─────────────────────────────────────────────
-        if (!EntitlementGate.isAllowed('customMetrics')) {
-            return; // Plan does not include custom metrics — silently no-op
-        }
-        // ─── Killswitch Gate ──────────────────────────────────────────────
-        const killswitch = KillswitchEngine.getInstance();
-        if (killswitch?.isKilled('disableMetrics')) {
-            return; // Silently no-op when metrics are killed
-        }
-        // ─── Sampling Gate ────────────────────────────────────────────────
-        // Deterministic sampling per metric id (name + tags fingerprint). The
-        // `metrics` sampling rate is independent of `traces`/`requests` so a
-        // backend can throttle high-volume custom metrics without affecting
-        // error or trace capture.
-        const samplingEngine = SamplingEngine.getInstance();
-        if (samplingEngine) {
-            const metricId = `${name}:${serializeTags(options?.tags)}`;
-            const decision = samplingEngine.shouldSampleMetric(metricId);
-            if (!decision.sampled)
-                return;
-        }
+        if (!admitMetric(name, options?.tags))
+            return;
         const labels = options?.tags ?? {};
         if (type === 'histogram') {
             metricsRegistry.recordHistogram(name, value, { labels });
@@ -72,6 +53,16 @@ export function captureMetric(name, value, type = 'gauge', options) {
         logger.error('captureMetric failed', { error: err, metricName: name });
     }
 }
+function admitMetric(name, tags) {
+    if (!EntitlementGate.isAllowed('customMetrics'))
+        return false;
+    if (KillswitchEngine.getInstance()?.isKilled('disableMetrics'))
+        return false;
+    const samplingEngine = SamplingEngine.getInstance();
+    if (!samplingEngine)
+        return true;
+    return samplingEngine.shouldSampleMetric(`${name}:${serializeTags(tags)}`).sampled;
+}
 function serializeTags(tags) {
     if (!tags || Object.keys(tags).length === 0)
         return '';
@@ -83,19 +74,19 @@ function serializeTags(tags) {
 // ─── Convenience Methods ────────────────────────────────────────────────────
 /** Increment a counter metric by the given value (default: 1). */
 export function incrementCounter(name, value = 1, tags) {
-    if (!EntitlementGate.isAllowed('customMetrics'))
+    if (!admitMetric(name, tags))
         return;
     metricsRegistry.incrementCounter(name, value, { labels: tags ?? {} });
 }
 /** Set a gauge metric to the given value. */
 export function setGauge(name, value, tags) {
-    if (!EntitlementGate.isAllowed('customMetrics'))
+    if (!admitMetric(name, tags))
         return;
     metricsRegistry.setGauge(name, value, { labels: tags ?? {} });
 }
 /** Record a histogram value (e.g., latency, size) using OTel exponential histogram. */
 export function recordHistogram(name, value, tags, unit) {
-    if (!EntitlementGate.isAllowed('customMetrics'))
+    if (!admitMetric(name, tags))
         return;
     metricsRegistry.recordHistogram(name, value, { labels: tags ?? {} });
 }
@@ -104,7 +95,7 @@ export function recordHistogram(name, value, tags, unit) {
  * Used for tracking active connections, queue depth, etc.
  */
 export function addUpDownCounter(name, value, tags) {
-    if (!EntitlementGate.isAllowed('customMetrics'))
+    if (!admitMetric(name, tags))
         return;
     metricsRegistry.addUpDownCounter(name, value, { labels: tags ?? {} });
 }

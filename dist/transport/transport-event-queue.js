@@ -31,24 +31,26 @@ export class TransportEventQueue {
     }
     enqueue(event) {
         if (this.count >= this.capacity) {
-            if (this.overflowStrategy === 'drop_oldest') {
-                // Ring is full: tail == head. Read the evicted event for the drop
-                // notification, overwrite its slot with the new event, advance head.
-                const tail = this.head;
-                const evicted = this.buffer[tail];
-                this.buffer[tail] = event;
-                this.head = (this.head + 1) % this.capacity;
-                this.dropped++;
-                this.onDrop?.({ route: this.route, reason: 'queue_full', count: 1, eventType: evicted?.type ?? event.type });
+            const incomingCritical = isCritical(event);
+            const evictOffset = this.findOldestNonCritical();
+            // Critical telemetry may evict ordinary telemetry under either
+            // overflow policy. Ordinary telemetry can never evict a critical item.
+            if (incomingCritical && evictOffset >= 0) {
+                const evicted = this.removeAt(evictOffset);
+                this.append(event);
+                this.notifyDrop(evicted ?? event);
                 return true;
             }
-            this.dropped++;
-            this.onDrop?.({ route: this.route, reason: 'queue_full', count: 1, eventType: event.type });
+            if (this.overflowStrategy === 'drop_oldest' && evictOffset >= 0) {
+                const evicted = this.removeAt(evictOffset);
+                this.append(event);
+                this.notifyDrop(evicted ?? event);
+                return true;
+            }
+            this.notifyDrop(event);
             return false;
         }
-        const tail = (this.head + this.count) % this.capacity;
-        this.buffer[tail] = event;
-        this.count++;
+        this.append(event);
         return true;
     }
     drain(maxEvents) {
@@ -75,23 +77,80 @@ export class TransportEventQueue {
     requeueFront(events) {
         if (events.length === 0)
             return;
-        const available = Math.max(0, this.capacity - this.count);
-        const acceptedCount = Math.min(events.length, available);
-        const droppedCount = events.length - acceptedCount;
-        if (droppedCount > 0) {
-            for (let i = 0; i < droppedCount; i++) {
-                const event = events[i];
-                this.dropped++;
-                this.onDrop?.({ route: this.route, reason: 'queue_full', count: 1, eventType: event?.type });
+        // Insert in reverse to preserve original batch order at the front.
+        // On saturation, retrying ordinary events never displaces critical data;
+        // retrying critical events may evict the oldest ordinary item.
+        for (let i = events.length - 1; i >= 0; i--) {
+            const event = events[i];
+            if (!event)
+                continue;
+            if (this.count >= this.capacity) {
+                if (isCritical(event)) {
+                    const offset = this.findOldestNonCritical();
+                    if (offset >= 0) {
+                        const evicted = this.removeAt(offset);
+                        if (evicted)
+                            this.notifyDrop(evicted);
+                    }
+                    else {
+                        this.notifyDrop(event);
+                        continue;
+                    }
+                }
+                else {
+                    this.notifyDrop(event);
+                    continue;
+                }
             }
-        }
-        // Prepend the accepted tail of the batch in reverse so its oldest
-        // event lands exactly at the new head.
-        for (let i = events.length - 1; i >= droppedCount; i--) {
             this.head = (this.head - 1 + this.capacity) % this.capacity;
-            this.buffer[this.head] = events[i];
+            this.buffer[this.head] = event;
             this.count++;
         }
+    }
+    append(event) {
+        const tail = (this.head + this.count) % this.capacity;
+        this.buffer[tail] = event;
+        this.count++;
+    }
+    findOldestNonCritical() {
+        for (let offset = 0; offset < this.count; offset++) {
+            const event = this.buffer[(this.head + offset) % this.capacity];
+            if (event && !isCritical(event))
+                return offset;
+        }
+        return -1;
+    }
+    removeAt(offset) {
+        if (offset < 0 || offset >= this.count)
+            return undefined;
+        if (offset === 0) {
+            const removed = this.buffer[this.head];
+            this.buffer[this.head] = undefined;
+            this.head = (this.head + 1) % this.capacity;
+            this.count--;
+            return removed;
+        }
+        const removed = this.buffer[(this.head + offset) % this.capacity];
+        for (let i = offset; i < this.count - 1; i++) {
+            const to = (this.head + i) % this.capacity;
+            const from = (this.head + i + 1) % this.capacity;
+            this.buffer[to] = this.buffer[from];
+        }
+        const tail = (this.head + this.count - 1) % this.capacity;
+        this.buffer[tail] = undefined;
+        this.count--;
+        return removed;
+    }
+    notifyDrop(event) {
+        this.dropped++;
+        this.onDrop?.({
+            route: this.route,
+            reason: 'queue_full',
+            count: 1,
+            eventType: event.type,
+            eventId: event.eventId,
+            critical: isCritical(event),
+        });
     }
     size() {
         return this.count;
@@ -107,5 +166,12 @@ export class TransportEventQueue {
     droppedCount() {
         return this.dropped;
     }
+}
+function isCritical(event) {
+    if (event.type === 'error')
+        return event.severity === 'fatal';
+    if (event.type === 'log')
+        return event.level === 'fatal';
+    return event.type === 'cron_checkin' && event.status === 'error';
 }
 //# sourceMappingURL=transport-event-queue.js.map
