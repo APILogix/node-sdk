@@ -27,7 +27,7 @@ import { captureMessage } from '../../src/capture/captureMessage.js';
 import { captureError } from '../../src/capture/captureError.js';
 import { captureMetric } from '../../src/capture/captureMetric.js';
 import { TransportRouter } from '../../src/transport/transport-router.js';
-import { BAKED_IN_REMOTE_CONFIG } from '../../src/constants/defaults.js';
+import { TEST_REMOTE_CONFIG as BAKED_IN_REMOTE_CONFIG } from '../fixtures/remote-config.js';
 async function startMockBackend() {
     const http = await import('node:http');
     let receivedBatches = 0;
@@ -42,7 +42,7 @@ async function startMockBackend() {
             const port = server.address().port;
             const localUrl = `http://127.0.0.1:${port}`;
             // Init endpoint
-            if (req.url === '/api/v1/init') {
+            if (req.url === '/v1/init') {
                 const routePaths = {
                     errors: '/api/v1/errors', events: '/api/v1/events', traces: '/api/v1/traces',
                     spans: '/api/v1/spans', requests: '/api/v1/requests', metrics: '/api/v1/metrics',
@@ -58,103 +58,62 @@ async function startMockBackend() {
                     success: true,
                     projectId: 'load-test',
                     environment: 'test',
+                    release: '1.0.0',
                     config: {
                         ...BAKED_IN_REMOTE_CONFIG,
-                        sdk: { projectId: 'load-test', environment: 'test', release: '1.0.0' },
+                        sdk: { projectId: 'load-test', service: 'load-test', environment: 'test', release: '1.0.0' },
                         features: { ...BAKED_IN_REMOTE_CONFIG.features, tracing: true, requestCapture: true, errors: true, metrics: true },
                         sampling: { ...BAKED_IN_REMOTE_CONFIG.sampling, traces: 1, requests: 1, errors: 1, metrics: 1 },
                         killswitches: { ...BAKED_IN_REMOTE_CONFIG.killswitches, disableTransport: false },
-                        limits: { ...BAKED_IN_REMOTE_CONFIG.limits, maxPayloadSize: 5_242_880, maxQueueSize: 100_000 },
+                        limits: { ...BAKED_IN_REMOTE_CONFIG.limits, maxPayloadSize: 4_194_304, maxQueueSize: 100_000 },
                         transport: { ...BAKED_IN_REMOTE_CONFIG.transport, routes },
                         meta: { generatedAt: new Date().toISOString(), generatedBy: 'load-test-init' },
                     },
                 }));
                 return;
             }
-            // Remote config — points all routes at this server. v3 schema.
+            // Complete event-triggered refresh response. Startup never calls it.
             if (req.url === '/v1/sdk-config') {
-                const route = (path) => ({
-                    url: `${localUrl}${path}`,
-                    batchSize: 500,
-                    flushIntervalMs: 250,
-                    compression: 'none',
-                    timeoutMs: 3_000,
-                });
+                const routePaths = {
+                    errors: '/api/v1/errors', events: '/api/v1/events', traces: '/api/v1/traces',
+                    spans: '/api/v1/spans', requests: '/api/v1/requests', metrics: '/api/v1/metrics',
+                    logs: '/api/v1/logs', profiles: '/api/v1/profiles', crons: '/api/v1/checkins',
+                    replays: '/api/v1/replays',
+                };
+                const refreshRoutes = Object.fromEntries(Object.entries(BAKED_IN_REMOTE_CONFIG.transport.routes).map(([name, route]) => [
+                    name,
+                    { ...route, url: `${localUrl}${routePaths[name]}`, batchSize: 500, flushIntervalMs: 250, timeoutMs: 3_000 },
+                ]));
                 res.writeHead(200, { 'content-type': 'application/json' });
                 res.end(JSON.stringify({
-                    schemaVersion: 1,
-                    sdk: { projectId: 'load-test', environment: 'test', release: '1.0.0' },
+                    ...BAKED_IN_REMOTE_CONFIG,
+                    sdk: { projectId: 'load-test', service: 'load-test', environment: 'test', release: '1.0.0' },
                     features: {
+                        ...BAKED_IN_REMOTE_CONFIG.features,
                         tracing: true,
                         requestCapture: true,
                         errors: true,
                         metrics: true,
                         logging: true,
-                        profiling: false,
-                        crons: false,
-                        sessionReplay: false,
-                        runtimeMetrics: false,
-                        eventLoopMonitoring: false,
-                        gcMonitoring: false,
                     },
                     sampling: {
+                        ...BAKED_IN_REMOTE_CONFIG.sampling,
                         traces: 1,
                         requests: 1,
                         errors: 1,
-                        profiles: 0,
-                        replays: 0,
-                        routes: {},
-                    },
-                    instrumentation: {
-                        http: true, https: true, fetch: true, axios: false,
-                        fastify: { enabled: false, captureHooks: false, captureValidationErrors: false },
-                        express: { enabled: false },
-                        graphql: { enabled: false, captureResolvers: false },
-                        prisma: { enabled: false, captureQueries: false, captureParams: false },
-                        mongodb: false, redis: false, bullmq: false,
-                    },
-                    privacy: {
-                        capture: { headers: false, body: false, response: false, query: false, cookies: false },
-                        scrubbing: { enabled: true, headers: ['authorization'], fields: ['password', 'token'] },
-                        piiDetection: { enabled: false, maskEmails: false, maskPhones: false, maskIPs: false },
+                        metrics: 1,
                     },
                     limits: {
-                        maxSpansPerTrace: 5000,
-                        maxSpanAttributes: 128,
-                        maxAttributeLength: 2048,
-                        maxPayloadSize: 5_242_880,
+                        ...BAKED_IN_REMOTE_CONFIG.limits,
+                        maxPayloadSize: 4_194_304,
                         maxQueueSize: 100_000,
-                        maxMemoryMb: 256,
-                        maxCpuOverheadPercent: 5,
-                    },
-                    killswitches: {
-                        disableSDK: false,
-                        disableTracing: false,
-                        disableMetrics: false,
-                        disableTransport: false,
-                        disableProfiling: false,
-                        disableErrors: false,
-                        disableLogs: false,
                     },
                     transport: {
-                        retry: { enabled: true, maxRetries: 3, backoff: 'exponential', baseDelayMs: 200 },
-                        queue: { overflowStrategy: 'drop_oldest' },
-                        keepAlive: true,
-                        routes: {
-                            traces: route('/api/v1/traces'),
-                            requests: route('/api/v1/requests'),
-                            spans: route('/api/v1/spans'),
-                            errors: route('/api/v1/errors'),
-                            metrics: route('/api/v1/metrics'),
-                            logs: route('/api/v1/logs'),
-                            profiles: route('/api/v1/profiles'),
-                            events: route('/api/v1/events'),
-                            crons: route('/api/v1/checkins'),
-                            replays: route('/api/v1/replays'),
-                        },
+                        ...BAKED_IN_REMOTE_CONFIG.transport,
+                        retry: { ...BAKED_IN_REMOTE_CONFIG.transport.retry, baseDelayMs: 200 },
+                        routes: refreshRoutes,
                     },
-                    runtime: { configTtlSeconds: 300, staleWhileRevalidate: true },
-                    meta: { generatedAt: new Date().toISOString(), generatedBy: 'load-test-mock' },
+                    meta: { generatedAt: new Date().toISOString(), generatedBy: 'load-test-refresh' },
                 }));
                 return;
             }
@@ -202,10 +161,6 @@ describe('SDK load test', { timeout: 120_000 }, () => {
         await init({
             apiKey: 'load-test-key',
             baseUrl: backend.url,
-            configUrl: `${backend.url}/v1/sdk-config`,
-            service: 'load-test',
-            environment: 'test',
-            release: '1.0.0',
             debug: false,
         });
         const baselineHeap = process.memoryUsage().heapUsed;
@@ -266,10 +221,6 @@ describe('SDK load test', { timeout: 120_000 }, () => {
         await init({
             apiKey: 'saturation-test-key',
             baseUrl: backend.url,
-            configUrl: `${backend.url}/v1/sdk-config`,
-            service: 'load-test',
-            environment: 'test',
-            release: '1.0.0',
             debug: false,
         });
         // Push more events than any single per-route queue can hold (queues

@@ -1,0 +1,36 @@
+{
+  "type": "metric",
+  "eventId": "880fb733-h50e-74g7-d049-779988773333",
+  "metricName": "http.request.duration",
+  "metricType": "histogram",
+  "value": 245.5,
+  "unit": "milliseconds",
+  "tags": {
+    "method": "GET",
+    "route": "/api/users",
+    "status": "200",
+    "region": "us-east-1",
+    "environment": "production"
+  },
+  "timestamp": 1722528000000,
+  "count": 150,
+  "sum": 36825,
+  "min": 12.3,
+  "max": 987.6,
+  "avg": 245.5,
+  "p50": 215.4,
+  "p75": 310.2,
+  "p90": 456.8,
+  "p95": 621.3,
+  "p99": 875.1,
+  "rate": 2.5,
+  "metadata": {
+    "sdkName": "@pulse/sdk-node",
+    "sdkVersion": "1.0.0",
+    "applicationName": "my-app",
+    "applicationVersion": "2.3.1",
+    "projectId": "proj_abc123",
+    "environment": "production",
+    "release": "v2.3.1"
+  }
+}

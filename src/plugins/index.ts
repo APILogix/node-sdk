@@ -9,7 +9,7 @@
  */
 
 import type { SDKPlugin, PluginContext } from '../types/plugin.js'
-import type { ResolvedSDKConfig } from '../types/config.js'
+import type { RemoteConfigResponse } from '../types/config.js'
 import type { EventMetadata } from '../types/event.js'
 import { client } from '../core/client.js'
 import { getLogger } from '../utils/logger.js'
@@ -20,7 +20,7 @@ import { getLogger } from '../utils/logger.js'
  */
 export async function initializePlugins(
   plugins: readonly SDKPlugin[],
-  config: ResolvedSDKConfig,
+  config: Readonly<RemoteConfigResponse>,
   metadata: EventMetadata,
 ): Promise<void> {
   const logger = getLogger()
@@ -52,7 +52,7 @@ export async function initializePlugins(
   const context: PluginContext = {
     config,
     metadata: {
-      service: metadata.service,
+      projectId: metadata.projectId,
       environment: metadata.environment,
       release: metadata.release,
       sdkVersion: metadata.sdkVersion,

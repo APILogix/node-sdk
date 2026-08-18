@@ -21,27 +21,11 @@ import { MongoDBInstrumentation } from '@opentelemetry/instrumentation-mongodb';
 import { RedisInstrumentation } from '@opentelemetry/instrumentation-redis-4';
 import { PrismaInstrumentation } from '@prisma/instrumentation';
 import { BullMQInstrumentation } from 'opentelemetry-instrumentation-bullmq';
-export interface AutoInstrumentOptions {
-    http?: boolean;
-    express?: boolean;
-    fastify?: boolean;
-    undici?: boolean;
-    graphql?: boolean;
-    prisma?: boolean;
-    mongodb?: boolean;
-    redis?: boolean;
-    bullmq?: boolean;
-    axios?: boolean;
-    pg?: boolean;
-    mysql2?: boolean;
-    /** Automatically bind EventEmitter listeners to the active OTel context. Default: true. */
-    eventEmitterPatch?: boolean;
-}
 /**
  * Register all configured auto-instrumentations.
  * Idempotent: a second call without an intervening reset is a no-op.
  */
-export declare function registerAutoInstrumentations(options?: AutoInstrumentOptions): void;
+export declare function registerAutoInstrumentations(): void;
 /**
  * Fully reset auto-instrumentation state.
  *
@@ -50,6 +34,7 @@ export declare function registerAutoInstrumentations(options?: AutoInstrumentOpt
  *   2. Call the OTel unregister handle to disable every instrumentation.
  *   3. Clear the global guard so the next register call rebuilds from scratch.
  *
+
  * Errors in any single teardown are logged but never thrown — reset must
  * always succeed so a failed instrumentation cannot block SDK reinit.
  */

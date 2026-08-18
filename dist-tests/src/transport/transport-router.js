@@ -9,21 +9,9 @@ import { getLogger } from '../utils/logger.js';
 import { BatchManager } from './batch-manager.js';
 import { ConnectionManager } from './connection-manager.js';
 import { HealthMonitor } from './health-monitor.js';
-import { RouteRegistry, TransportConfigurationError, isRouteConfigured } from './route-registry.js';
+import { RouteRegistry, TransportConfigurationError } from './route-registry.js';
 import { TransportEventQueue } from './transport-event-queue.js';
-import { MultiplexedTransport } from './multiplexed-transport.js';
-import { SAFE_DEFAULTS_LIMITS, SAFETY_CEILINGS, SAFETY_FLOORS } from '../constants/defaults.js';
-import { validateApiKey } from './sender.js';
-/**
- * Clamp a remote-config number into a safe range. The config manager already
- * clamps during merge; this is defence-in-depth for direct construction
- * (tests, warm-start replays, hand-built configs).
- */
-function clampInt(value, min, max, fallback) {
-    if (!Number.isFinite(value))
-        return fallback;
-    return Math.min(max, Math.max(min, Math.floor(value)));
-}
+import { validateApiKey } from '../core/api-key.js';
 /** Map the wire priority onto the queue's three-tier priority. */
 function toQueuePriority(priority) {
     if (priority === 'critical' || priority === 'high')
@@ -34,41 +22,17 @@ function toQueuePriority(priority) {
         return 'low';
     return undefined;
 }
-const QUEUE_CONFIG = Object.freeze({
-    errors: Object.freeze({ maxSize: 10_000, priority: 'high' }),
-    events: Object.freeze({ maxSize: 10_000, priority: 'high' }),
-    traces: Object.freeze({ maxSize: 50_000, priority: 'normal' }),
-    spans: Object.freeze({ maxSize: 50_000, priority: 'normal' }),
-    metrics: Object.freeze({ maxSize: 25_000, priority: 'low' }),
-    logs: Object.freeze({ maxSize: 25_000, priority: 'normal' }),
-    profiles: Object.freeze({ maxSize: 5_000, priority: 'low' }),
-    crons: Object.freeze({ maxSize: 1_000, priority: 'high' }),
-    requests: Object.freeze({ maxSize: 50_000, priority: 'normal' }),
-    replays: Object.freeze({ maxSize: 5_000, priority: 'low' }),
-});
-const BATCH_CONFIG = Object.freeze({
-    errors: Object.freeze({ maxBatchSize: 100, maxWaitTimeMs: 1_000, minBatchSize: 1 }),
-    events: Object.freeze({ maxBatchSize: 100, maxWaitTimeMs: 1_000, minBatchSize: 1 }),
-    traces: Object.freeze({ maxBatchSize: 500, maxWaitTimeMs: 5_000, minBatchSize: 10 }),
-    spans: Object.freeze({ maxBatchSize: 500, maxWaitTimeMs: 5_000, minBatchSize: 10 }),
-    metrics: Object.freeze({ maxBatchSize: 1_000, maxWaitTimeMs: 10_000, minBatchSize: 50 }),
-    logs: Object.freeze({ maxBatchSize: 200, maxWaitTimeMs: 10_000, minBatchSize: 10 }),
-    profiles: Object.freeze({ maxBatchSize: 5, maxWaitTimeMs: 30_000, minBatchSize: 1 }),
-    crons: Object.freeze({ maxBatchSize: 1, maxWaitTimeMs: 0, minBatchSize: 1 }),
-    requests: Object.freeze({ maxBatchSize: 500, maxWaitTimeMs: 5_000, minBatchSize: 10 }),
-    replays: Object.freeze({ maxBatchSize: 5, maxWaitTimeMs: 10_000, minBatchSize: 1 }),
-});
-const CONNECTION_LIMITS = Object.freeze({
-    errors: 30,
-    events: 30,
-    traces: 50,
-    spans: 50,
-    metrics: 20,
-    logs: 20,
-    profiles: 5,
-    crons: 5,
-    requests: 50,
-    replays: 10,
+const MIN_BATCH_SIZE = Object.freeze({
+    errors: 1,
+    events: 1,
+    traces: 10,
+    spans: 10,
+    metrics: 50,
+    logs: 10,
+    profiles: 1,
+    crons: 1,
+    requests: 10,
+    replays: 1,
 });
 export class TransportRouter {
     transportConfig;
@@ -80,19 +44,15 @@ export class TransportRouter {
     healthMonitor;
     batchManagers;
     queues;
-    limitsConfig;
     reconfiguration = Promise.resolve();
     disabled = false;
     destroyed = false;
     dropped = [];
     dropLogCount = 0;
-    multiplexed = null;
-    useMultiplexedTransport = false;
-    constructor(transportConfig, apiKey, fetchImpl = fetch, limitsConfig = SAFE_DEFAULTS_LIMITS) {
+    constructor(transportConfig, apiKey, fetchImpl, limitsConfig) {
         this.transportConfig = transportConfig;
         this.apiKey = apiKey;
         this.fetchImpl = fetchImpl;
-        this.limitsConfig = limitsConfig;
         const runtime = this.buildRuntime(transportConfig, limitsConfig);
         this.registry = runtime.registry;
         this.healthMonitor = runtime.healthMonitor;
@@ -111,11 +71,11 @@ export class TransportRouter {
      * NOTE: This method is async because shutdown drains in-flight batches.
      * Callers must await the returned promise before sending events.
      */
-    static async initialize(config, apiKey, fetchImpl, useMultiplexedTransport = false, limitsConfig = SAFE_DEFAULTS_LIMITS) {
-        // The apiKey is interpolated into an `Authorization` HTTP header on
-        // every batch send — reject control characters before they can smuggle
-        // header lines. Throws SDKError on an illegal key.
+    static async initialize(config, apiKey, fetchImpl, limitsConfig) {
         validateApiKey(apiKey);
+        if (!limitsConfig) {
+            throw new TransportConfigurationError('Complete limits config is required');
+        }
         let residual = [];
         if (TransportRouter.instance) {
             try {
@@ -126,14 +86,8 @@ export class TransportRouter {
             }
             TransportRouter.instance = null;
         }
-        const router = new TransportRouter(config, apiKey, fetchImpl, limitsConfig);
+        const router = new TransportRouter(config, apiKey, fetchImpl ?? fetch, limitsConfig);
         router.sendBatch(residual);
-        router.useMultiplexedTransport = useMultiplexedTransport;
-        if (useMultiplexedTransport) {
-            const baseUrl = new URL(router.registry.get('traces').url).origin;
-            const flushIntervalMs = clampInt(router.transportConfig.routes.traces?.flushIntervalMs ?? NaN, SAFETY_FLOORS.flushIntervalMs, SAFETY_CEILINGS.flushIntervalMs, 2000);
-            router.multiplexed = new MultiplexedTransport(baseUrl, apiKey, flushIntervalMs);
-        }
         TransportRouter.instance = router;
         return router;
     }
@@ -142,8 +96,13 @@ export class TransportRouter {
     }
     send(event) {
         if (this.destroyed || this.disabled) {
+            let route = 'events';
+            try {
+                route = this.registry.resolve(event).route;
+            }
+            catch { }
             this.recordDrop({
-                route: 'errors',
+                route,
                 reason: 'transport_disabled',
                 count: 1,
                 eventType: event.type,
@@ -152,22 +111,6 @@ export class TransportRouter {
         }
         try {
             const definition = this.registry.resolve(event);
-            if (!isRouteConfigured(definition)) {
-                // No real endpoint for this route yet (baked-in defaults or a
-                // partial remote config). Drop locally with a visible reason
-                // instead of leaking traffic to the placeholder origin.
-                this.recordDrop({
-                    route: definition.route,
-                    reason: 'route_unconfigured',
-                    count: 1,
-                    eventType: event.type,
-                });
-                return false;
-            }
-            if (this.useMultiplexedTransport && this.multiplexed) {
-                this.multiplexed.enqueue(definition.route, [event]);
-                return true;
-            }
             const manager = this.batchManagers.get(definition.route);
             if (!manager) {
                 throw new TransportConfigurationError('Route has no batch manager', {
@@ -206,7 +149,7 @@ export class TransportRouter {
         return this.updateTransport(newConfig.transport, newConfig.limits);
     }
     /** Build-then-swap transport reconfiguration serialized across refreshes. */
-    updateTransport(transport, limits = this.limitsConfig) {
+    updateTransport(transport, limits) {
         if (this.destroyed)
             return Promise.resolve();
         const operation = this.reconfiguration.then(async () => {
@@ -222,7 +165,6 @@ export class TransportRouter {
                 queued.push(...queue.drain(queue.size()));
             // One synchronous commit point: send() observes either complete runtime.
             this.transportConfig = transport;
-            this.limitsConfig = limits;
             this.registry = candidate.registry;
             this.connectionManager = candidate.connectionManager;
             this.healthMonitor = candidate.healthMonitor;
@@ -231,8 +173,14 @@ export class TransportRouter {
             this.sendBatch(queued);
             // Quiesce detached managers. Failed/in-flight batches are returned to
             // their old queues by BatchManager.shutdown(), then migrated exactly once.
-            await Promise.allSettled([...oldManagers.values()].map(manager => manager.shutdown()));
+            const shutdownResults = await Promise.allSettled([...oldManagers.values()].map(manager => manager.shutdown()));
             const residual = [];
+            for (const result of shutdownResults) {
+                if (result.status === 'fulfilled')
+                    residual.push(...result.value);
+                else
+                    getLogger().warn('[TransportRouter] Detached manager shutdown failed', { error: result.reason });
+            }
             for (const queue of oldQueues.values())
                 residual.push(...queue.drain(queue.size()));
             this.sendBatch(residual);
@@ -274,12 +222,7 @@ export class TransportRouter {
     }
     async flushAll() {
         await this.reconfiguration;
-        if (this.useMultiplexedTransport && this.multiplexed) {
-            await this.multiplexed.flush();
-        }
-        else {
-            await Promise.allSettled([...this.batchManagers.values()].map(manager => manager.flush()));
-        }
+        await Promise.allSettled([...this.batchManagers.values()].map(manager => manager.flush()));
     }
     /**
      * Drain every per-route queue and return the residual events.
@@ -313,23 +256,13 @@ export class TransportRouter {
         // Phase 1: shut down each batch manager so in-flight HTTP sends complete.
         // We use shutdown (not flush) so the manager rejects new enqueues during
         // its own drain.
-        if (this.useMultiplexedTransport && this.multiplexed) {
-            try {
-                await this.multiplexed.shutdown();
+        const shutdownResults = await Promise.allSettled([...this.batchManagers.values()].map(manager => manager.shutdown()));
+        for (const result of shutdownResults) {
+            if (result.status === 'rejected') {
+                getLogger().warn('[TransportRouter] BatchManager shutdown failed', { error: result.reason });
             }
-            catch (err) {
-                getLogger().warn('[TransportRouter] MultiplexedTransport shutdown failed', { error: err });
-            }
-        }
-        else {
-            const shutdownResults = await Promise.allSettled([...this.batchManagers.values()].map(manager => manager.shutdown()));
-            for (const result of shutdownResults) {
-                if (result.status === 'rejected') {
-                    getLogger().warn('[TransportRouter] BatchManager shutdown failed', { error: result.reason });
-                }
-                else {
-                    residual.push(...result.value);
-                }
+            else {
+                residual.push(...result.value);
             }
         }
         // Phase 2: collect every undelivered item after active sends/retries have
@@ -366,18 +299,25 @@ export class TransportRouter {
         const batchManagers = new Map();
         const overflowStrategy = config.queue.overflowStrategy;
         for (const route of registry.routes()) {
-            const queueConfig = QUEUE_CONFIG[route];
-            const batchConfig = BATCH_CONFIG[route];
             const routeRemote = config.routes[route];
-            const maxBatchSize = clampInt(routeRemote?.batchSize ?? NaN, 1, SAFETY_CEILINGS.batchSize, batchConfig.maxBatchSize);
-            const maxWaitTimeMs = clampInt(routeRemote?.flushIntervalMs ?? NaN, 0, SAFETY_CEILINGS.flushIntervalMs, batchConfig.maxWaitTimeMs);
-            const socketTimeoutMs = clampInt(routeRemote?.timeoutMs ?? NaN, SAFETY_FLOORS.timeoutMs, SAFETY_CEILINGS.timeoutMs, 30_000);
-            const priority = toQueuePriority(routeRemote?.priority) ?? queueConfig.priority;
-            const requestedQueueSize = config.queue.maxSize ?? limits.maxQueueSize;
-            const maxSize = clampInt(Math.min(queueConfig.maxSize, requestedQueueSize, limits.maxQueueSize), 1, SAFETY_CEILINGS.maxQueueSize, Math.min(queueConfig.maxSize, SAFE_DEFAULTS_LIMITS.maxQueueSize));
+            const priority = toQueuePriority(routeRemote.priority);
+            if (!priority)
+                throw new TransportConfigurationError('Route priority is invalid', { route });
+            const maxSize = config.queue.maxSize;
+            getLogger().info('[TransportRouter] Configured route', {
+                route,
+                url: routeRemote.url,
+                batchSize: routeRemote.batchSize,
+                flushIntervalMs: routeRemote.flushIntervalMs,
+                timeoutMs: routeRemote.timeoutMs,
+                configuredCompression: routeRemote.compression,
+                effectiveCompression: 'gzip',
+                priority: routeRemote.priority,
+            });
             const queue = new TransportEventQueue({
                 route,
                 maxSize,
+                criticalReserve: config.queue.criticalReserve,
                 priority,
                 overflowStrategy,
                 onDrop: info => this.recordDrop(info),
@@ -389,11 +329,13 @@ export class TransportRouter {
                 queue,
                 connectionManager,
                 healthMonitor,
-                maxBatchSize,
-                minBatchSize: Math.min(batchConfig.minBatchSize, maxBatchSize),
-                maxWaitTimeMs,
-                maxPayloadBytes: clampInt(limits.maxPayloadSize, 1_024, SAFETY_CEILINGS.maxPayloadSize, SAFE_DEFAULTS_LIMITS.maxPayloadSize),
-                socketTimeoutMs,
+                maxBatchSize: routeRemote.batchSize,
+                minBatchSize: Math.min(MIN_BATCH_SIZE[route], routeRemote.batchSize),
+                maxWaitTimeMs: routeRemote.flushIntervalMs,
+                maxPayloadBytes: limits.maxPayloadSize,
+                socketTimeoutMs: routeRemote.timeoutMs,
+                compression: routeRemote.compression,
+                keepAlive: config.keepAlive,
                 retry: config.retry,
                 onDrop: info => this.recordDrop(info),
                 fetchImpl: this.fetchImpl,
@@ -404,17 +346,12 @@ export class TransportRouter {
         return { registry, healthMonitor, connectionManager, queues, batchManagers };
     }
     createConnectionManager(config) {
-        const requested = config.connections?.maxConnectionsPerRoute;
-        const perRoute = { ...CONNECTION_LIMITS };
-        for (const route of Object.keys(perRoute)) {
-            const value = requested?.[route];
-            if (typeof value === 'number')
-                perRoute[route] = clampInt(value, 1, 100, CONNECTION_LIMITS[route]);
-        }
+        const requested = config.connections.maxConnectionsPerRoute;
+        const perRoute = Object.fromEntries(Object.keys(config.routes).map(route => [route, requested?.[route] ?? config.connections.maxTotalConnections]));
         return new ConnectionManager({
-            maxTotalConnections: clampInt(config.connections?.maxTotalConnections ?? NaN, 1, 500, 100),
+            maxTotalConnections: config.connections.maxTotalConnections,
             maxConnectionsPerRoute: perRoute,
-            connectionTimeoutMs: clampInt(config.connections?.acquireTimeoutMs ?? NaN, 100, 60_000, 5_000),
+            connectionTimeoutMs: config.connections.acquireTimeoutMs,
             socketTimeoutMs: 30_000,
             connectionTTLMs: 60_000,
             idleConnectionTimeoutMs: 30_000,
@@ -424,7 +361,9 @@ export class TransportRouter {
         const definition = this.registry.get(route);
         const stats = this.batchManagers.get(route)?.stats() ?? emptyStats(route);
         const health = this.healthMonitor.snapshot(route);
-        const priority = toQueuePriority(this.transportConfig.routes[route]?.priority) ?? QUEUE_CONFIG[route].priority;
+        const priority = toQueuePriority(this.transportConfig.routes[route].priority);
+        if (!priority)
+            throw new TransportConfigurationError('Route priority is invalid', { route });
         return {
             route,
             url: definition.url,

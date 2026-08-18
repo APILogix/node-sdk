@@ -40,7 +40,7 @@ export async function initializePlugins(plugins, config, metadata) {
     const context = {
         config,
         metadata: {
-            service: metadata.service,
+            projectId: metadata.projectId,
             environment: metadata.environment,
             release: metadata.release,
             sdkVersion: metadata.sdkVersion,

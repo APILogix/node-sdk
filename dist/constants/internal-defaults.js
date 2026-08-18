@@ -35,7 +35,7 @@ export const LOGGING_DEFAULTS = Object.freeze({
     enabled: true,
     captureConsole: true,
     /** Log levels to forward to telemetry. Anything outside this list is ignored. */
-    levels: ['error', 'warn', 'info'],
+    levels: ['debug', 'info', 'warning', 'warn', 'error', 'fatal'],
     /** Truncate log messages above this many bytes. */
     maxLogSize: 32 * 1024,
 });
@@ -47,12 +47,6 @@ export const LOGGING_DEFAULTS = Object.freeze({
 export const PROFILING_DEFAULTS = Object.freeze({
     cpu: true,
     heap: true,
-    /**
-     * Fraction of traces that produce a CPU profile. Independent of
-     * `sampling.profiles` — the backend sampling rate gates ingestion;
-     * this gates capture.
-     */
-    sampleRate: 0.02,
     /** Hard upper bound on a single profile's duration. */
     maxDurationMs: 30_000,
 });
@@ -80,17 +74,5 @@ export const TRACING_DEFAULTS = Object.freeze({
         baggage: true,
         b3: false,
     }),
-});
-/**
- * Default capture flags for tracing instrumentations. Mirrors the new
- * `privacy.capture.*` shape so callers that previously passed the legacy
- * `TracingCaptureConfig` keep working without code changes.
- */
-export const DEFAULT_TRACE_CAPTURE = Object.freeze({
-    headers: false,
-    body: false,
-    response: false,
-    query: true,
-    cookies: false,
 });
 //# sourceMappingURL=internal-defaults.js.map

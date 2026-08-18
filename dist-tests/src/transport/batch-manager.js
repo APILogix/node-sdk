@@ -10,6 +10,8 @@ import { persistentStorage } from '../storage/persistent-storage.js';
 import { persistenceGovernor } from '../storage/persistence-governor.js';
 import { costGovernor } from '../utils/cost-governor.js';
 import { compressGzip } from '../utils/compression.js';
+import { inspectTelemetryResponse } from '../core/config-manager.js';
+import { sdkConsoleDebug } from '../utils/console-debug.js';
 export class BatchManager {
     options;
     timer = null;
@@ -39,10 +41,16 @@ export class BatchManager {
         if (this.destroyed)
             return false;
         const accepted = this.options.queue.enqueue(event);
-        if (!accepted) {
-            this.totalDropped++;
+        if (!accepted)
             return false;
-        }
+        sdkConsoleDebug('batch enqueue', {
+            route: this.options.route,
+            eventType: event.type,
+            eventId: event.eventId,
+            queueSize: this.options.queue.size(),
+            minBatchSize: this.options.minBatchSize,
+            maxBatchSize: this.options.maxBatchSize,
+        });
         if (!this.firstQueuedAt)
             this.firstQueuedAt = Date.now();
         if (this.options.queue.size() >= this.effectiveMaxBatchSize()) {
@@ -163,6 +171,14 @@ export class BatchManager {
                 return null;
             }
             if (payloadBytes <= this.options.maxPayloadBytes) {
+                sdkConsoleDebug('batch built', {
+                    route: this.options.route,
+                    eventCount: safeBatch.length,
+                    eventTypes: [...new Set(safeBatch.map(event => event.type))],
+                    eventIds: safeBatch.slice(0, 10).map(event => event.eventId).filter(Boolean),
+                    payloadBytes,
+                    maxPayloadBytes: this.options.maxPayloadBytes,
+                });
                 return { events: safeBatch, body };
             }
             if (batch.length === 1) {
@@ -198,10 +214,16 @@ export class BatchManager {
             return;
         }
         try {
-            // Every batch is gzip-compressed before it leaves the process. This is
-            // an SDK-level transport contract, NOT a remote-config knob: the
-            // backend always expects `Content-Encoding: gzip` on batch sends.
-            const compressedBody = await compressGzip(Buffer.from(body, 'utf8'));
+            const rawBody = Buffer.from(body, 'utf8');
+            const wireBody = await compressGzip(rawBody);
+            const headers = {
+                'Content-Type': this.options.definition.contentType,
+                Authorization: `Bearer ${this.options.apiKey}`,
+                'X-Route': this.options.route,
+                'x-pulse-internal': '1',
+                Connection: this.options.keepAlive ? 'keep-alive' : 'close',
+                'Content-Encoding': 'gzip',
+            };
             const controller = new AbortController();
             this.activeAbortControllers.add(controller);
             if (this.destroyed)
@@ -209,6 +231,58 @@ export class BatchManager {
             const timeout = setTimeout(() => controller.abort(), this.options.socketTimeoutMs);
             timeout.unref?.();
             try {
+                const requestBody = new ArrayBuffer(wireBody.byteLength);
+                new Uint8Array(requestBody).set(wireBody);
+                getLogger().info('[TransportRouter] Sending batch', {
+                    route: this.options.route,
+                    url: this.options.definition.url,
+                    method: this.options.definition.method,
+                    eventCount: events.length,
+                    eventTypes: [...new Set(events.map(event => event.type))],
+                    eventIds: events.slice(0, 5).map(event => event.eventId).filter(Boolean),
+                    compression: 'gzip',
+                    configuredCompression: this.options.compression,
+                    originalBytes: rawBody.length,
+                    compressedBytes: wireBody.length,
+                });
+                logTransportConsole('request', {
+                    route: this.options.route,
+                    url: this.options.definition.url,
+                    method: this.options.definition.method,
+                    eventCount: events.length,
+                    eventTypes: [...new Set(events.map(event => event.type))],
+                    eventIds: events.slice(0, 5).map(event => event.eventId).filter(Boolean),
+                    headers: {
+                        'Content-Type': headers['Content-Type'],
+                        Authorization: 'Bearer [redacted]',
+                        'X-Route': headers['X-Route'],
+                        'x-pulse-internal': headers['x-pulse-internal'],
+                        Connection: headers['Connection'],
+                        'Content-Encoding': headers['Content-Encoding'],
+                    },
+                    compression: 'gzip',
+                    originalBytes: rawBody.length,
+                    compressedBytes: wireBody.length,
+                });
+                sdkConsoleDebug('batch send request', {
+                    route: this.options.route,
+                    url: this.options.definition.url,
+                    method: this.options.definition.method,
+                    eventCount: events.length,
+                    eventTypes: [...new Set(events.map(event => event.type))],
+                    eventIds: events.slice(0, 10).map(event => event.eventId).filter(Boolean),
+                    headers: {
+                        'Content-Type': headers['Content-Type'],
+                        Authorization: 'Bearer [redacted]',
+                        'X-Route': headers['X-Route'],
+                        'x-pulse-internal': headers['x-pulse-internal'],
+                        Connection: headers['Connection'],
+                        'Content-Encoding': headers['Content-Encoding'],
+                    },
+                    compression: 'gzip',
+                    originalBytes: rawBody.length,
+                    compressedBytes: wireBody.length,
+                });
                 // suppressTracing prevents OTel HttpInstrumentation from creating a
                 // span for our own batch send. Without this, every export of N
                 // events produces N+1 spans, which themselves export, causing
@@ -216,19 +290,31 @@ export class BatchManager {
                 // auto-instrument.ts is defense-in-depth for the same problem.
                 const response = await otelContext.with(suppressTracing(otelContext.active()), () => this.fetchImpl(this.options.definition.url, {
                     method: this.options.definition.method,
-                    headers: {
-                        'Content-Type': this.options.definition.contentType,
-                        'Content-Encoding': 'gzip',
-                        Authorization: `Bearer ${this.options.apiKey}`,
-                        'X-Route': this.options.route,
-                        'x-pulse-internal': '1',
-                    },
-                    body: new Uint8Array(compressedBody),
+                    headers,
+                    body: requestBody,
                     signal: controller.signal,
                     // Never forward the bearer token to a redirected origin.
                     redirect: 'manual',
                 }));
                 const latency = Date.now() - startedAt;
+                logTransportConsole('response', {
+                    route: this.options.route,
+                    url: this.options.definition.url,
+                    statusCode: response.status,
+                    ok: response.ok,
+                    latencyMs: latency,
+                    eventCount: events.length,
+                    contentType: response.headers.get('content-type') ?? undefined,
+                });
+                sdkConsoleDebug('batch send response', {
+                    route: this.options.route,
+                    url: this.options.definition.url,
+                    statusCode: response.status,
+                    ok: response.ok,
+                    latencyMs: latency,
+                    eventCount: events.length,
+                    contentType: response.headers.get('content-type') ?? undefined,
+                });
                 if (response.ok) {
                     this.options.healthMonitor.recordSuccess(this.options.route, latency);
                     this.totalSent += events.length;
@@ -248,8 +334,20 @@ export class BatchManager {
                     // The write chain inside persistentStorage serializes discards
                     // safely.
                     this.discardOnSuccess(events);
+                    // The telemetry ACK is fully accounted for before config refresh is
+                    // considered. Inspection is non-blocking and ConfigManager enforces
+                    // single-flight refreshes.
+                    inspectTelemetryResponse(response);
                 }
                 else if (response.status >= 500 || response.status === 429 || response.status === 408) {
+                    const responseBody = await readResponseSnippet(response);
+                    getLogger().warn('[TransportRouter] Retryable batch response', {
+                        route: this.options.route,
+                        url: this.options.definition.url,
+                        statusCode: response.status,
+                        eventCount: events.length,
+                        responseBody,
+                    });
                     this.options.healthMonitor.recordFailure(this.options.route);
                     this.totalFailed += events.length;
                     // Retry-eligible failure: persist before re-queue so a crash
@@ -258,6 +356,14 @@ export class BatchManager {
                     this.retryOrRetain(events);
                 }
                 else {
+                    const responseBody = await readResponseSnippet(response);
+                    getLogger().warn('[TransportRouter] Non-retryable batch response', {
+                        route: this.options.route,
+                        url: this.options.definition.url,
+                        statusCode: response.status,
+                        eventCount: events.length,
+                        responseBody,
+                    });
                     this.options.healthMonitor.recordFailure(this.options.route);
                     this.totalDropped += events.length;
                     for (const event of events)
@@ -289,6 +395,7 @@ export class BatchManager {
             this.retryOrRetain(events);
             getLogger().warn('[TransportRouter] Batch send failed', {
                 route: this.options.route,
+                url: this.options.definition.url,
                 error: error instanceof Error ? error.message : String(error),
                 eventCount: events.length,
             });
@@ -463,6 +570,22 @@ async function settleWithin(promises, timeoutMs) {
         if (timer)
             clearTimeout(timer);
     }
+}
+async function readResponseSnippet(response) {
+    try {
+        const text = await response.clone().text();
+        if (!text)
+            return undefined;
+        return text.length > 500 ? `${text.slice(0, 500)}...` : text;
+    }
+    catch {
+        return undefined;
+    }
+}
+function logTransportConsole(direction, details) {
+    if (process.env['PULSE_TRANSPORT_CONSOLE'] !== 'true')
+        return;
+    console.log(`[Pulse SDK ${direction === 'request' ? '->' : '<-'} backend] ${direction}`, details);
 }
 function retryDelay(config, attempt) {
     const base = Math.max(0, config.baseDelayMs);

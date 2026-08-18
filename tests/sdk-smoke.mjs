@@ -72,10 +72,14 @@ function schemaConfig(config = {}) {
     limits: {
       ...BAKED_IN_REMOTE_CONFIG.limits,
       maxPayloadSize,
-      maxQueueSize: config.ingestion?.maxQueueSize ?? 100,
+      maxQueueSize: config.ingestion?.maxQueueSize ?? 10000,
     },
     transport: {
       ...BAKED_IN_REMOTE_CONFIG.transport,
+      queue: {
+        ...BAKED_IN_REMOTE_CONFIG.transport.queue,
+        maxSize: config.ingestion?.maxQueueSize ?? 10000,
+      },
       retry: { ...BAKED_IN_REMOTE_CONFIG.transport.retry, maxRetries: config.config?.maxRetries ?? 0 },
       routes,
     },

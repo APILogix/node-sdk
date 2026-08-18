@@ -1,0 +1,97 @@
+{
+  "type": "error",
+  "eventId": "660f9511-f39c-52e5-b827-557766551111",
+  "requestId": "req_7f8d9e0a1b2c",
+  "message": "Cannot read property 'name' of undefined",
+  "name": "TypeError",
+  "stack": [
+    {
+      "filename": "/app/src/handlers/user.js",
+      "function": "getUserName",
+      "lineno": 42,
+      "colno": 15,
+      "inApp": true,
+      "module": "handlers/user",
+      "sourceContext": {
+        "pre": [
+          "function getUserName(user) {",
+          "  try {"
+        ],
+        "line": "    return user.profile.name;",
+        "post": [
+          "  } catch (err) {",
+          "    throw err;"
+        ]
+      }
+    },
+    {
+      "filename": "/app/src/routes/api.js",
+      "function": "handleRequest",
+      "lineno": 128,
+      "colno": 8,
+      "inApp": true
+    },
+    {
+      "filename": "/app/node_modules/express/lib/router/index.js",
+      "function": "next",
+      "lineno": 280,
+      "colno": 14,
+      "inApp": false
+    }
+  ],
+  "fingerprint": "TypeError:getUserName:user.js:42",
+  "timestamp": 1722528000000,
+  "severity": "error",
+  "context": {
+    "userId": "user_123",
+    "endpoint": "/api/users/123",
+    "custom": {
+      "feature": "user-profile",
+      "experimentId": "exp_456"
+    }
+  },
+  "breadcrumbs": [
+    {
+      "type": "http",
+      "category": "request",
+      "message": "GET /api/users/123",
+      "level": "info",
+      "timestamp": 1722527999500,
+      "data": {
+        "method": "GET",
+        "url": "/api/users/123",
+        "statusCode": 200
+      }
+    },
+    {
+      "type": "query",
+      "category": "database",
+      "message": "SELECT * FROM users WHERE id = $1",
+      "level": "info",
+      "timestamp": 1722527999800,
+      "data": {
+        "query": "SELECT * FROM users WHERE id = $1",
+        "duration": 45
+      }
+    },
+    {
+      "type": "navigation",
+      "category": "user",
+      "message": "User clicked profile link",
+      "level": "info",
+      "timestamp": 1722527999900
+    }
+  ],
+  "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
+  "spanId": "00f067aa0ba902b7",
+  "mechanism": "manual",
+  "metadata": {
+    "sdkName": "@pulse/sdk-node",
+    "sdkVersion": "1.0.0",
+    "applicationName": "my-app",
+    "applicationVersion": "2.3.1",
+    "projectId": "proj_abc123",
+    "environment": "production",
+    "release": "v2.3.1"
+  }
+}

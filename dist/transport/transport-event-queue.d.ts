@@ -14,49 +14,33 @@ export interface QueueDropInfo {
 export interface TransportEventQueueOptions {
     readonly route: EnterpriseRoute;
     readonly maxSize: number;
+    /** Slots unavailable to ordinary telemetry and reserved for critical events. */
+    readonly criticalReserve: number;
     readonly priority: QueuePriority;
     readonly onDrop?: (info: QueueDropInfo) => void;
-    /**
-     * What to do when the queue is full. Driven by remote config
-     * (`transport.queue.overflowStrategy`). Defaults to 'drop_newest'
-     * (reject the incoming event) to preserve pre-existing behaviour.
-     */
-    readonly overflowStrategy?: QueueOverflowStrategy;
+    readonly overflowStrategy: QueueOverflowStrategy;
 }
-/**
- * Bounded event queue backed by a ring buffer.
- *
- * Every hot-path operation is O(1): `enqueue` writes at the tail,
- * `drain` advances the head index, and `drop_oldest` eviction just moves
- * the head forward. The previous array-based implementation used
- * `Array.shift()` for drop_oldest, which is O(capacity) per evicted event
- * — under sustained overflow (e.g. a backlogged traces route dropping
- * tens of thousands of spans) that quadratic cost froze the event loop
- * and delayed unrelated routes sharing the process.
- */
+/** Bounded ring-buffer queue with backend-controlled critical capacity. */
 export declare class TransportEventQueue {
     readonly route: EnterpriseRoute;
     readonly maxSize: number;
     readonly priority: QueuePriority;
     private readonly overflowStrategy;
+    private readonly criticalReserve;
     private buffer;
     private readonly capacity;
     private head;
     private count;
+    private criticalCount;
     private readonly onDrop;
     private dropped;
     constructor(options: TransportEventQueueOptions);
     enqueue(event: SDKEvent): boolean;
     drain(maxEvents: number): SDKEvent[];
-    /**
-     * Put a failed batch back at the front of the queue, preserving order.
-     *
-     * When capacity is short, the HEAD of the requeued batch (its oldest
-     * events) is dropped — identical semantics to the previous
-     * per-event `unshift` loop, but O(batch) total instead of O(n²).
-     */
+    /** Requeue failed events at the front while preserving critical reserve. */
     requeueFront(events: readonly SDKEvent[]): void;
     private append;
+    private prepend;
     private findOldestNonCritical;
     private removeAt;
     private notifyDrop;

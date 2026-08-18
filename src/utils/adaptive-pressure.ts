@@ -59,7 +59,7 @@ const SCORE_HIGH_MAX = 75
 
 export class AdaptivePressureMonitor {
     private readonly pollIntervalMs: number
-    private readonly getQueueUtilization: () => number
+    private getQueueUtilization: () => number
     private readonly memoryMonitor: MemoryPressureMonitor
     private readonly options: AdaptivePressureFeatureFlags
 
@@ -138,6 +138,9 @@ export class AdaptivePressureMonitor {
      * monitoring families without restarting the process.
      */
     configure(options: AdaptivePressureOptions): void {
+        if (options.getQueueUtilization !== undefined) {
+            this.getQueueUtilization = options.getQueueUtilization
+        }
         if (options.runtimeMetrics !== undefined) {
             this.options.runtimeMetrics = options.runtimeMetrics
         }

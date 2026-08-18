@@ -47,12 +47,6 @@ export declare const LOGGING_DEFAULTS: Readonly<{
 export declare const PROFILING_DEFAULTS: Readonly<{
     readonly cpu: true;
     readonly heap: true;
-    /**
-     * Fraction of traces that produce a CPU profile. Independent of
-     * `sampling.profiles` — the backend sampling rate gates ingestion;
-     * this gates capture.
-     */
-    readonly sampleRate: 0.02;
     /** Hard upper bound on a single profile's duration. */
     readonly maxDurationMs: 30000;
 }>;
@@ -80,17 +74,5 @@ export declare const TRACING_DEFAULTS: Readonly<{
         baggage: true;
         b3: false;
     }>;
-}>;
-/**
- * Default capture flags for tracing instrumentations. Mirrors the new
- * `privacy.capture.*` shape so callers that previously passed the legacy
- * `TracingCaptureConfig` keep working without code changes.
- */
-export declare const DEFAULT_TRACE_CAPTURE: Readonly<{
-    readonly headers: false;
-    readonly body: false;
-    readonly response: false;
-    readonly query: true;
-    readonly cookies: false;
 }>;
 //# sourceMappingURL=internal-defaults.d.ts.map

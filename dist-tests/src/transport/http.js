@@ -113,6 +113,14 @@ export async function postJson(url, body, headers, timeoutMs, options = {}) {
                 requestId,
             });
         }
+        if (options.onResponse) {
+            try {
+                options.onResponse(response.status, parsed);
+            }
+            catch (error) {
+                logger.debug('HTTP response observer failed', { endpoint: url, error });
+            }
+        }
         return parsed;
     }
     catch (error) {

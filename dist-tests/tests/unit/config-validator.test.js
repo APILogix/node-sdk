@@ -11,13 +11,17 @@ import assert from 'node:assert/strict';
 import { validateRemoteConfig } from '../../src/core/config-validator.js';
 const validBase = {
     schemaVersion: 1,
-    sdk: { projectId: 'p_test', environment: 'production' },
+    sdk: { projectId: 'p_test', environment: 'production', release: '1.0.0' },
     features: {
         tracing: true, requestCapture: true, errors: true, metrics: true,
         logging: true, profiling: false, crons: false, sessionReplay: false,
         runtimeMetrics: false, eventLoopMonitoring: false, gcMonitoring: false,
     },
-    sampling: { traces: 0.1, requests: 1, errors: 1, profiles: 0.01, replays: 0, routes: {} },
+    sampling: {
+        traces: 0.1, requests: 1, spans: 1, errors: 1, messages: 1,
+        profiles: 0.01, replays: 0, metrics: 1, logs: 1, events: 1, crons: 1,
+        routes: {},
+    },
     instrumentation: {
         http: true, https: true, fetch: true, axios: true,
         fastify: { enabled: true, captureHooks: true, captureValidationErrors: true },
@@ -25,6 +29,7 @@ const validBase = {
         graphql: { enabled: false, captureResolvers: false },
         prisma: { enabled: false, captureQueries: false, captureParams: false },
         mongodb: false, redis: false, bullmq: false,
+        pg: false, mysql2: false, eventEmitterPatch: true,
     },
     privacy: {
         capture: { headers: false, body: false, response: false, query: false, cookies: false },
@@ -33,7 +38,11 @@ const validBase = {
     },
     limits: {
         maxSpansPerTrace: 500, maxSpanAttributes: 100, maxAttributeLength: 2048,
-        maxPayloadSize: 262144, maxQueueSize: 10000, maxMemoryMb: 256, maxCpuOverheadPercent: 5,
+        maxPayloadSize: 262144, maxQueueSize: 10000, maxMemoryMb: 256,
+        tenantGovernance: {
+            enabled: false, maxTenantsTracked: 1000, quotaPerWindow: 10000,
+            windowDurationMs: 60000, criticalReserve: 100,
+        },
     },
     killswitches: {
         disableSDK: false, disableTracing: false, disableMetrics: false,
@@ -41,23 +50,28 @@ const validBase = {
     },
     transport: {
         retry: { enabled: true, maxRetries: 3, backoff: 'exponential', baseDelayMs: 500 },
-        queue: { overflowStrategy: 'drop_oldest' },
+        queue: { overflowStrategy: 'drop_oldest', maxSize: 10000, criticalReserve: 100 },
+        connections: { maxTotalConnections: 20, acquireTimeoutMs: 5000 },
         keepAlive: true,
         routes: {
-            traces: { url: 'https://t.example/v1', batchSize: 100, flushIntervalMs: 5000, timeoutMs: 5000, compression: 'gzip' },
-            requests: { url: 'https://r.example/v1', batchSize: 200, flushIntervalMs: 2000, timeoutMs: 3000, compression: 'gzip' },
-            spans: { url: 'https://s.example/v1', batchSize: 100, flushIntervalMs: 5000, timeoutMs: 5000, compression: 'gzip' },
-            errors: { url: 'https://e.example/v1', batchSize: 10, flushIntervalMs: 1000, timeoutMs: 3000, compression: 'gzip' },
-            metrics: { url: 'https://m.example/v1', batchSize: 100, flushIntervalMs: 10000, timeoutMs: 5000, compression: 'gzip' },
-            logs: { url: 'https://l.example/v1', batchSize: 50, flushIntervalMs: 10000, timeoutMs: 5000, compression: 'gzip' },
-            profiles: { url: 'https://p.example/v1', batchSize: 5, flushIntervalMs: 30000, timeoutMs: 15000, compression: 'gzip' },
-            events: { url: 'https://ev.example/v1', batchSize: 50, flushIntervalMs: 5000, timeoutMs: 5000, compression: 'gzip' },
-            crons: { url: 'https://c.example/v1', batchSize: 1, flushIntervalMs: 0, timeoutMs: 5000, compression: 'none' },
-            replays: { url: 'https://rp.example/v1', batchSize: 1, flushIntervalMs: 5000, timeoutMs: 30000, compression: 'gzip' },
+            traces: { url: 'https://t.example/v1', batchSize: 100, flushIntervalMs: 5000, timeoutMs: 5000, compression: 'gzip', priority: 'normal' },
+            requests: { url: 'https://r.example/v1', batchSize: 200, flushIntervalMs: 2000, timeoutMs: 3000, compression: 'gzip', priority: 'normal' },
+            spans: { url: 'https://s.example/v1', batchSize: 100, flushIntervalMs: 5000, timeoutMs: 5000, compression: 'gzip', priority: 'normal' },
+            errors: { url: 'https://e.example/v1', batchSize: 10, flushIntervalMs: 1000, timeoutMs: 3000, compression: 'gzip', priority: 'normal' },
+            metrics: { url: 'https://m.example/v1', batchSize: 100, flushIntervalMs: 10000, timeoutMs: 5000, compression: 'gzip', priority: 'normal' },
+            logs: { url: 'https://l.example/v1', batchSize: 50, flushIntervalMs: 10000, timeoutMs: 5000, compression: 'gzip', priority: 'normal' },
+            profiles: { url: 'https://p.example/v1', batchSize: 5, flushIntervalMs: 30000, timeoutMs: 15000, compression: 'gzip', priority: 'normal' },
+            events: { url: 'https://ev.example/v1', batchSize: 50, flushIntervalMs: 5000, timeoutMs: 5000, compression: 'gzip', priority: 'normal' },
+            crons: { url: 'https://c.example/v1', batchSize: 1, flushIntervalMs: 0, timeoutMs: 5000, compression: 'none', priority: 'high' },
+            replays: { url: 'https://rp.example/v1', batchSize: 1, flushIntervalMs: 5000, timeoutMs: 30000, compression: 'gzip', priority: 'normal' },
         },
     },
-    runtime: { configTtlSeconds: 300, staleWhileRevalidate: true },
     meta: { generatedAt: '2026-05-25T10:00:00Z', generatedBy: 'pulse-control-plane' },
+    entitlements: {
+        customSpans: true, customMetrics: true, profiling: true, logging: true,
+        sessionReplay: true, crons: true, requestCapture: true, tracing: true,
+        errors: true, metrics: true,
+    },
 };
 test('valid config passes', () => {
     const result = validateRemoteConfig(validBase);
@@ -126,11 +140,64 @@ test('missing transport route URL is rejected', () => {
     assert.equal(result.valid, false);
     assert.match(result.errors.join(' '), /transport\.routes\.errors\.url/);
 });
+test('transport route URLs with embedded credentials are rejected', () => {
+    const bad = {
+        ...validBase,
+        transport: {
+            ...validBase.transport,
+            routes: {
+                ...validBase.transport.routes,
+                errors: { ...validBase.transport.routes.errors, url: 'https://user:secret@e.example/v1' },
+            },
+        },
+    };
+    const result = validateRemoteConfig(bad);
+    assert.equal(result.valid, false);
+    assert.match(result.errors.join(' '), /transport\.routes\.errors\.url/);
+});
 test('missing sdk.projectId is rejected', () => {
     const bad = { ...validBase, sdk: { projectId: '', environment: 'production' } };
     const result = validateRemoteConfig(bad);
     assert.equal(result.valid, false);
     assert.match(result.errors.join(' '), /projectId/);
+});
+test('retired maxCpuOverheadPercent policy is rejected rather than ignored', () => {
+    const limits = { ...validBase.limits, maxCpuOverheadPercent: 5 };
+    const result = validateRemoteConfig({ ...validBase, limits });
+    assert.equal(result.valid, false);
+    assert.match(result.errors.join(' '), /maxCpuOverheadPercent is no longer supported/);
+});
+test('auto maxMemoryMb is accepted', () => {
+    const limits = { ...validBase.limits, maxMemoryMb: 'auto' };
+    const result = validateRemoteConfig({ ...validBase, limits });
+    assert.equal(result.valid, true, `expected valid, got errors: ${result.errors.join(', ')}`);
+});
+test('missing tenant governance is rejected', () => {
+    const { tenantGovernance: _tenantGovernance, ...limits } = validBase.limits;
+    const result = validateRemoteConfig({ ...validBase, limits });
+    assert.equal(result.valid, false);
+    assert.match(result.errors.join(' '), /limits\.tenantGovernance/);
+});
+test('missing PostgreSQL, MySQL2, or EventEmitter selectors is rejected', () => {
+    for (const key of ['pg', 'mysql2', 'eventEmitterPatch']) {
+        const instrumentation = { ...validBase.instrumentation };
+        delete instrumentation[key];
+        const result = validateRemoteConfig({ ...validBase, instrumentation });
+        assert.equal(result.valid, false, `expected missing instrumentation.${key} to be rejected`);
+        assert.match(result.errors.join(' '), new RegExp(`instrumentation\\.${key}`));
+    }
+});
+test('transport queue size above the complete limits cap is rejected', () => {
+    const bad = {
+        ...validBase,
+        transport: {
+            ...validBase.transport,
+            queue: { ...validBase.transport.queue, maxSize: validBase.limits.maxQueueSize + 1 },
+        },
+    };
+    const result = validateRemoteConfig(bad);
+    assert.equal(result.valid, false);
+    assert.match(result.errors.join(' '), /transport\.queue\.maxSize cannot exceed limits\.maxQueueSize/);
 });
 test('extra unknown top-level fields are tolerated (forward compat)', () => {
     const result = validateRemoteConfig({ ...validBase, futureField: 'something' });

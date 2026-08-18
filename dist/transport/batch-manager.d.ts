@@ -16,6 +16,9 @@ export interface BatchManagerOptions {
     readonly maxWaitTimeMs: number;
     readonly maxPayloadBytes: number;
     readonly socketTimeoutMs: number;
+    /** Retained for config compatibility; telemetry batches are always sent gzip-compressed. */
+    readonly compression: 'gzip' | 'none';
+    readonly keepAlive: boolean;
     readonly retry: TransportRetryConfig;
     readonly onDrop?: (info: QueueDropInfo) => void;
     readonly fetchImpl?: typeof fetch;

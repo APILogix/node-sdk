@@ -15,9 +15,8 @@ import { KillswitchEngine } from '../../src/core/killswitch-engine.js'
 import { FeatureController } from '../../src/core/feature-controller.js'
 import { LimitsEngine } from '../../src/core/limits-engine.js'
 import { SecurityScrubber } from '../../src/processors/security-scrubber.js'
-import { VersionPolicy } from '../../src/core/version-policy.js'
 import { diffConfigs } from '../../src/core/config-differ.js'
-import { BAKED_IN_REMOTE_CONFIG } from '../../src/constants/defaults.js'
+import { TEST_REMOTE_CONFIG as BAKED_IN_REMOTE_CONFIG } from '../fixtures/remote-config.js'
 import type { FeaturesConfig, RemoteConfigResponse } from '../../src/types/config.js'
 
 function makeRemoteConfig(overrides: Partial<RemoteConfigResponse> = {}): RemoteConfigResponse {
@@ -132,10 +131,15 @@ describe('Remote Config Integration', () => {
       const sampling = SamplingEngine.initialize({
         traces: 1.0,
         requests: 1.0,
+        spans: 1.0,
         errors: 1.0,
+        messages: 1.0,
         profiles: 0,
         replays: 0,
         metrics: 1.0,
+        logs: 1.0,
+        events: 1.0,
+        crons: 1.0,
         routes: {},
       })
 
@@ -171,13 +175,9 @@ describe('Remote Config Integration', () => {
   describe('LimitsEngine Attribute Pipeline', () => {
     it('should enforce attribute count and length on events', () => {
       const limits = LimitsEngine.initialize({
-        maxSpansPerTrace: 500,
+        ...BAKED_IN_REMOTE_CONFIG.limits,
         maxSpanAttributes: 3,
         maxAttributeLength: 50,
-        maxPayloadSize: 262144,
-        maxQueueSize: 10000,
-        maxMemoryMb: 256,
-        maxCpuOverheadPercent: 5,
       })
 
       const event: any = {
@@ -222,32 +222,6 @@ describe('Remote Config Integration', () => {
 
       assert.equal(killswitch.isKilled('disableTracing'), true)
       assert.equal(sampling.getConfig().traces, 0.1)
-    })
-  })
-
-  describe('Version Policy', () => {
-    it('always returns ok in v3 (stub)', () => {
-      // The wire schema dropped versionPolicy. The `enforce()` API is kept
-      // as a stub that always returns "ok" so legacy callsites compile.
-      const result = VersionPolicy.enforce()
-      assert.equal(result.status, 'ok')
-    })
-  })
-
-  describe('Degraded Mode', () => {
-    it('should only allow errors and logging features in degraded mode', () => {
-      const features = FeatureController.initialize(defaultFeatures)
-      features.setDegradedMode(true)
-
-      assert.equal(features.isEnabled('errors'), true)
-      assert.equal(features.isEnabled('logging'), true)
-
-      assert.equal(features.isEnabled('tracing'), false)
-      assert.equal(features.isEnabled('metrics'), false)
-      assert.equal(features.isEnabled('profiling'), false)
-      assert.equal(features.isEnabled('crons'), false)
-      assert.equal(features.isEnabled('sessionReplay'), false)
-      assert.equal(features.isEnabled('requestCapture'), false)
     })
   })
 })

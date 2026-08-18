@@ -13,7 +13,6 @@ import { epochMs } from '../utils/time.js'
 import { metricsRegistry } from '../metrics/registry.js'
 import { KillswitchEngine } from '../core/killswitch-engine.js'
 import { EntitlementGate } from '../core/entitlement-gate.js'
-import { SamplingEngine } from '../core/sampling-engine.js'
 
 /**
  * Capture a metric sample.
@@ -64,20 +63,9 @@ export function captureMetric(
   }
 }
 
-function admitMetric(name: string, tags?: Record<string, string>): boolean {
+function admitMetric(_name: string, _tags?: Record<string, string>): boolean {
   if (!EntitlementGate.isAllowed('customMetrics')) return false
-  if (KillswitchEngine.getInstance()?.isKilled('disableMetrics')) return false
-  const samplingEngine = SamplingEngine.getInstance()
-  if (!samplingEngine) return true
-  return samplingEngine.shouldSampleMetric(`${name}:${serializeTags(tags)}`).sampled
-}
-
-function serializeTags(tags: Record<string, string> | undefined): string {
-  if (!tags || Object.keys(tags).length === 0) return ''
-  return Object.entries(tags)
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([k, v]) => `${k}=${v}`)
-    .join('&')
+  return !KillswitchEngine.getInstance()?.isKilled('disableMetrics')
 }
 
 // ─── Convenience Methods ────────────────────────────────────────────────────

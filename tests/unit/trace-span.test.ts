@@ -19,9 +19,6 @@ describe('Pulse SDK Trace/Span Consistency', () => {
     // to reach a real backend; the offline-fallback config kicks in.
     await init({
       apiKey: 'test-key',
-      service: 'pulse-trace-span-test',
-      environment: 'test',
-      release: '0.0.0-test',
       baseUrl: 'http://127.0.0.1:1',
     })
 

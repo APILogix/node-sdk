@@ -11,7 +11,6 @@ import { epochMs } from '../utils/time.js';
 import { metricsRegistry } from '../metrics/registry.js';
 import { KillswitchEngine } from '../core/killswitch-engine.js';
 import { EntitlementGate } from '../core/entitlement-gate.js';
-import { SamplingEngine } from '../core/sampling-engine.js';
 /**
  * Capture a metric sample.
  *
@@ -53,23 +52,10 @@ export function captureMetric(name, value, type = 'gauge', options) {
         logger.error('captureMetric failed', { error: err, metricName: name });
     }
 }
-function admitMetric(name, tags) {
+function admitMetric(_name, _tags) {
     if (!EntitlementGate.isAllowed('customMetrics'))
         return false;
-    if (KillswitchEngine.getInstance()?.isKilled('disableMetrics'))
-        return false;
-    const samplingEngine = SamplingEngine.getInstance();
-    if (!samplingEngine)
-        return true;
-    return samplingEngine.shouldSampleMetric(`${name}:${serializeTags(tags)}`).sampled;
-}
-function serializeTags(tags) {
-    if (!tags || Object.keys(tags).length === 0)
-        return '';
-    return Object.entries(tags)
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([k, v]) => `${k}=${v}`)
-        .join('&');
+    return !KillswitchEngine.getInstance()?.isKilled('disableMetrics');
 }
 // ─── Convenience Methods ────────────────────────────────────────────────────
 /** Increment a counter metric by the given value (default: 1). */

@@ -1,36 +1,32 @@
 /**
- * EntitlementGate — billing/plan gate for developer-facing optional
- * telemetry APIs.
+ * EntitlementGate — backend billing/capability gates.
  *
- * Distinct from the KillswitchEngine and FeatureController:
+ * Distinct from operational features and killswitches:
  *
- *   - `features.*` decides whether a subsystem is instantiated at all
- *     (operational concern).
- *   - `killswitches.*` instantly silences a subsystem in an emergency
- *     (operational concern).
- *   - `entitlements.*` decides whether the *custom developer API surface*
- *     for an optional telemetry family is active (billing/plan concern).
+ *   - `features.*` decides whether a subsystem exists.
+ *   - `killswitches.*` is an emergency operational stop.
+ *   - `entitlements.*` gates optional developer APIs and the explicitly
+ *     modeled automatic request/tracing/error/metrics paths.
  *
  * Semantics:
  *
- *   - **Fail-open.** When no remote config has arrived yet, or the backend
- *     omits the `entitlements` block entirely, every entitlement is `true`.
- *     Only an explicit `false` from the control plane turns an API into a
- *     no-op.
- *   - **No-op, never throw.** A gated API returns a noop implementation
- *     (non-recording span) or silently drops the call (metrics, logs,
- *     profiles, replays, cron check-ins). Application code keeps running.
+ *   - **Complete after init.** Every validated snapshot contains every
+ *     entitlement boolean. No defaults or partial entitlement merge exists.
+ *   - **Pre-init buffering only.** Static checks allow bootstrap telemetry
+ *     before a snapshot exists; the validated backend section becomes
+ *     authoritative as soon as initialization completes.
+ *   - **No-op, never throw.** A denied API returns a noop implementation
+ *     or silently drops the call so application code keeps running.
  *   - **Core APIs are never gated.** `captureError()`, `captureMessage()`,
  *     `setUser()`, `setTag()`, `setContext()`, `addBreadcrumb()`, `flush()`
  *     and `shutdown()` do not consult this gate — they are fundamental to
  *     any SDK integration regardless of plan.
  *
- * The gate is consulted on hot paths (every `startSpan`, every metric
- * call), so reads are a plain object lookup — no logging, no allocation.
+ * The gate is consulted on hot paths (custom APIs and automatic capture), so
+ * reads are a plain object lookup with no logging or allocation.
  */
 
 import type { EntitlementsConfig, ConfigDiff, RemoteConfigResponse } from '../types/config.js'
-import { SAFE_DEFAULTS_ENTITLEMENTS } from '../constants/defaults.js'
 import { getLogger } from '../utils/logger.js'
 
 export class EntitlementGate {
@@ -39,11 +35,11 @@ export class EntitlementGate {
   private currentState: EntitlementsConfig
   private destroyed: boolean = false
 
-  private constructor(initialState: EntitlementsConfig | undefined) {
-    this.currentState = EntitlementGate.resolve(initialState)
+  private constructor(initialState: EntitlementsConfig) {
+    this.currentState = { ...initialState }
   }
 
-  static initialize(entitlements: EntitlementsConfig | undefined): EntitlementGate {
+  static initialize(entitlements: EntitlementsConfig): EntitlementGate {
     if (EntitlementGate.instance) {
       EntitlementGate.instance.destroy()
     }
@@ -56,15 +52,6 @@ export class EntitlementGate {
   }
 
   /**
-   * Merge a wire entitlements block over the fail-open defaults. Missing
-   * keys keep their default (`true`); only explicit `false` narrows.
-   */
-  private static resolve(entitlements: EntitlementsConfig | undefined): EntitlementsConfig {
-    if (!entitlements) return { ...SAFE_DEFAULTS_ENTITLEMENTS }
-    return { ...SAFE_DEFAULTS_ENTITLEMENTS, ...entitlements }
-  }
-
-  /**
    * Check whether an optional telemetry API family is entitled.
    * Instance method — hot path, allocation-free.
    */
@@ -74,8 +61,8 @@ export class EntitlementGate {
 
   /**
    * Static convenience for call sites that may run before `initialize()`
-   * (e.g. spans created during application bootstrap). Fail-open: with no
-   * gate instance, everything is allowed.
+   * (for bootstrap capture before a validated snapshot exists). This temporary
+   * pre-init behavior preserves buffering; it is not a wire-schema default.
    */
   static isAllowed(entitlement: keyof EntitlementsConfig): boolean {
     const gate = EntitlementGate.instance
@@ -96,7 +83,7 @@ export class EntitlementGate {
   async handleConfigChange(_diff: ConfigDiff, newConfig: Readonly<RemoteConfigResponse>): Promise<void> {
     if (this.destroyed) return
 
-    const next = EntitlementGate.resolve(newConfig.entitlements)
+    const next = { ...newConfig.entitlements }
     const logger = getLogger()
 
     for (const key of Object.keys(next) as (keyof EntitlementsConfig)[]) {

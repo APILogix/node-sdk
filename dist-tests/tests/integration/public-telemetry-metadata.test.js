@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { gunzipSync } from 'node:zlib';
 import { captureCronCheckIn, captureError, captureEvent, captureLog, captureMessage, captureMetric, captureReplay, captureRequest, flushTracer, incrementCounter, init, shutdown, startProfile, startSpan, stopProfile, } from '../../src/index.js';
-import { BAKED_IN_REMOTE_CONFIG } from '../../src/constants/defaults.js';
+import { TEST_REMOTE_CONFIG as BAKED_IN_REMOTE_CONFIG } from '../fixtures/remote-config.js';
 const ROUTE_PATHS = {
     errors: '/api/v1/errors',
     events: '/api/v1/events',
@@ -30,14 +30,15 @@ async function startMockBackend() {
             const path = req.url ?? '';
             requests.push({ path, contentEncoding: encoding, body });
             res.writeHead(200, { 'content-type': 'application/json' });
-            if (path === '/api/v1/init') {
+            if (path === '/v1/init') {
                 res.end(JSON.stringify({
                     success: true,
                     projectId: 'integration-project',
                     environment: 'integration',
+                    release: 'remote-release',
                     config: {
                         ...BAKED_IN_REMOTE_CONFIG,
-                        sdk: { projectId: 'integration-project', environment: 'integration', release: 'remote-release' },
+                        sdk: { projectId: 'integration-project', service: 'public-telemetry-test', environment: 'integration', release: 'remote-release' },
                         features: {
                             ...BAKED_IN_REMOTE_CONFIG.features,
                             tracing: true,
@@ -73,7 +74,6 @@ async function startMockBackend() {
                                 },
                             ])),
                         },
-                        runtime: { configTtlSeconds: 3_600, staleWhileRevalidate: true },
                         meta: { generatedAt: new Date().toISOString(), generatedBy: 'public-telemetry-init-test' },
                     },
                 }));
@@ -92,7 +92,7 @@ async function startMockBackend() {
                 ]));
                 res.end(JSON.stringify({
                     ...BAKED_IN_REMOTE_CONFIG,
-                    sdk: { projectId: 'integration-project', environment: 'integration', release: 'remote-release' },
+                    sdk: { projectId: 'integration-project', service: 'public-telemetry-test', environment: 'integration', release: 'remote-release' },
                     features: {
                         ...BAKED_IN_REMOTE_CONFIG.features,
                         tracing: true,
@@ -122,7 +122,6 @@ async function startMockBackend() {
                         retry: { ...BAKED_IN_REMOTE_CONFIG.transport.retry, enabled: false, maxRetries: 0 },
                         routes,
                     },
-                    runtime: { configTtlSeconds: 3_600, staleWhileRevalidate: true },
                     meta: {
                         generatedAt: new Date().toISOString(),
                         generatedBy: 'public-telemetry-integration-test',
@@ -182,23 +181,14 @@ test('public telemetry adapters serialize authoritative application and SDK meta
     const initialize = () => init({
         apiKey: 'integration-api-key',
         baseUrl: backend.url,
-        configUrl: `${backend.url}/v1/sdk-config`,
-        service: 'integration-service',
-        environment: 'integration',
-        release: 'deployment-release',
         applicationName: 'integration-app-override',
         applicationVersion: '9.8.7-test',
-        enableErrors: true,
-        enablePerformance: true,
-        enableTracing: true,
-        enableMetrics: true,
         debug: false,
-        transport: { flushIntervalMs: 100, maxRetries: 0, timeoutMs: 2_000 },
     });
     try {
         await initialize();
         initialized = true;
-        captureError(new Error('integration error'), { context: { adapter: 'captureError' } });
+        captureError(new Error('integration error'), 'error');
         captureMessage('integration message', 'info', { adapter: 'captureMessage' });
         // captureEvent has no separate custom discriminator/route. A custom event
         // therefore uses a supported wire type and carries custom data in context.
@@ -252,7 +242,8 @@ test('public telemetry adapters serialize authoritative application and SDK meta
         const received = telemetryRequests(backend.requests);
         assert.ok(received.length > 0, 'mock backend should receive telemetry');
         for (const request of received) {
-            assert.equal(request.contentEncoding, 'gzip', `${request.path} should be gzip encoded`);
+            const expected = request.path === '/api/v1/checkins' ? undefined : 'gzip';
+            assert.equal(request.contentEncoding, expected, `${request.path} compression should follow remote config`);
         }
         const routedEvents = received.flatMap(request => eventsFrom(request).map(event => ({ path: request.path, event })));
         assert.ok(routedEvents.length > 0);
@@ -261,6 +252,7 @@ test('public telemetry adapters serialize authoritative application and SDK meta
             applicationVersion: '9.8.7-test',
             sdkName: '@vikasbaplawat1/pulse-sdk',
             sdkVersion: '3.0.0',
+            projectId: 'integration-project',
         };
         for (const { path, event } of routedEvents) {
             assert.ok(event.metadata, `${event.type} on ${path} should have metadata`);

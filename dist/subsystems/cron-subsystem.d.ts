@@ -12,7 +12,7 @@
  * - Emits CronCheckInEvent to the 'crons' transport route.
  * - Three check-in statuses: 'in_progress', 'ok', 'error'.
  * - Tracks in-flight monitors for timeout detection.
- * - Transport route is 'crons' with batchSize=1, flushIntervalMs=0 (immediate).
+ * - Batching and flush timing come from the active `crons` transport route.
  */
 import type { ConfigDiff, RemoteConfigResponse } from '../types/config.js';
 import type { CronCheckInEvent, EventMetadata } from '../types/event.js';
@@ -27,6 +27,7 @@ export declare class CronSubsystem {
     private constructor();
     static initialize(emitter: CronEmitter, metadata: EventMetadata): CronSubsystem;
     static getInstance(): CronSubsystem | null;
+    updateMetadata(metadata: EventMetadata): void;
     /**
      * Send a cron check-in event.
      *

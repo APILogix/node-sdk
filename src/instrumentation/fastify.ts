@@ -5,7 +5,7 @@
  *   - Killswitch + FeatureController gates
  *   - Tenant admission control
  *   - Centralized scrubbing via SecurityScrubber
- *   - Remote-config driven ignored routes / methods / capture toggles
+ *   - Backend-authoritative sampling and privacy capture policy
  *
  * The plugin is intentionally fail-open. If any hook throws, the host
  * application continues serving traffic and the SDK logs the failure.
@@ -29,7 +29,6 @@ import {
   evaluateCaptureGate,
   headerString,
   matchesIgnoredPath,
-  recordCaptureAccepted,
   resolveClientIp,
   scrubHeaders,
   scrubQuery,
@@ -38,9 +37,6 @@ import {
 export interface PulseFastifyOptions {
   readonly ignorePaths?: readonly (string | RegExp)[]
   readonly ignoreMethods?: readonly string[]
-  readonly captureHeaders?: boolean
-  readonly captureQuery?: boolean
-  readonly captureBody?: boolean
   readonly maxBreadcrumbs?: number
   /**
    * IPs of trusted reverse proxies (exact match, or `*` to trust any peer).
@@ -98,8 +94,6 @@ interface PulseFastifyState {
   captureBody: boolean
 }
 
-const SENSITIVE_HEADER_FALLBACK = /authorization|cookie|token|secret|password/i
-
 export function fastifyPulsePlugin(
   fastify: FastifyInstance,
   opts: PulseFastifyOptions,
@@ -108,6 +102,7 @@ export function fastifyPulsePlugin(
   const options = opts ?? {}
 
   fastify.addHook('onRequest', (request, _reply, hookDone) => {
+    console.log('[DEBUG] fastify onRequest:', request.url)
     try {
       const path = request.url.split('?')[0] || '/'
 
@@ -127,7 +122,6 @@ export function fastifyPulsePlugin(
         path,
         method: request.method,
         sampleKey: requestId,
-        tenantId,
         localIgnorePaths: options.ignorePaths,
         localIgnoreMethods: options.ignoreMethods,
       })
@@ -145,11 +139,17 @@ export function fastifyPulsePlugin(
 
       const store = createContextStore(
         requestId,
-        options.maxBreadcrumbs ?? client.config?.maxBreadcrumbs ?? 100,
+        options.maxBreadcrumbs ?? client.options?.maxBreadcrumbs ?? 100,
         {
           userId,
           sessionId,
-          extra: tenantId ? { tenantId } : undefined,
+          extra: {
+            ...(tenantId ? { tenantId } : {}),
+            getStatusCode: () => (request as any).raw?.statusCode ?? (request as any).reply?.statusCode,
+            getMethod: () => request.method,
+            getUrl: () => request.url,
+            getRoute: () => normalizedRoute(request),
+          },
           tags: { framework: 'fastify' },
         },
       )
@@ -165,9 +165,9 @@ export function fastifyPulsePlugin(
         clientIp,
         userAgent,
         referer,
-        captureHeaders: options.captureHeaders ?? decision.allowHeaders,
-        captureQuery: options.captureQuery ?? decision.allowQuery,
-        captureBody: options.captureBody ?? decision.allowBody,
+        captureHeaders: decision.allowHeaders,
+        captureQuery: decision.allowQuery,
+        captureBody: decision.allowBody,
       }
 
       withContext(store, () => {
@@ -210,24 +210,23 @@ export function fastifyPulsePlugin(
     })
   })
 
-  fastify.addHook('onError', (request, _reply, error, hookDone) => {
+  fastify.addHook('onError', (request, reply, error, hookDone) => {
+    console.log('[DEBUG] fastify onError triggered!', error.message, 'reply.statusCode=', reply.statusCode, 'reply.raw.statusCode=', reply.raw?.statusCode)
     const state = request.pulse
     if (!state) {
+      console.log('[DEBUG] no state in request.pulse!')
       hookDone()
       return
     }
 
     withContext(state.store, () => {
       try {
+        if (state.store.extra) {
+          ;(state.store.extra as Record<string, unknown>).mechanism = 'fastify.onError'
+          ;(state.store.extra as Record<string, unknown>).handled = true
+        }
         attachRequestContextToActiveSpan(state.store)
-        captureError(error, {
-          context: {
-            requestId: state.requestId,
-            route: normalizedRoute(request),
-            framework: 'fastify',
-            ...(state.tenantId ? { tenantId: state.tenantId } : {}),
-          },
-        })
+        captureError(error)
       } catch (err) {
         getLogger().error('fastifyPulsePlugin error capture failed', { error: err })
       }
@@ -249,8 +248,6 @@ function captureFastifyCompletion(
   const statusCode = reply.statusCode ?? reply.raw?.statusCode ?? 0
   const bodySnapshot = captureBodySnapshot(request.body, state.captureBody)
   const responseSize = readContentLength(reply.getHeader?.('content-length'))
-
-  recordCaptureAccepted(state.tenantId)
 
   captureRequest({
     type: 'request',
@@ -289,21 +286,11 @@ function readUserId(request: FastifyRequest): string | undefined {
 function scrubHeadersSafe(headers: FastifyRequest['headers']): Record<string, unknown> {
   try {
     const clone: Record<string, unknown> = {}
-    for (const [key, value] of Object.entries(headers)) {
-      clone[key] = value
-    }
-    return scrubHeaders(clone) ?? defensiveHeaderRedact(clone)
+    for (const [key, value] of Object.entries(headers)) clone[key] = value
+    return scrubHeaders(clone) ?? {}
   } catch {
-    return defensiveHeaderRedact(headers as unknown as Record<string, unknown>)
+    return {}
   }
-}
-
-function defensiveHeaderRedact(headers: Record<string, unknown>): Record<string, unknown> {
-  const out: Record<string, unknown> = {}
-  for (const [key, value] of Object.entries(headers)) {
-    out[key] = SENSITIVE_HEADER_FALLBACK.test(key) ? '[Redacted]' : value
-  }
-  return out
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

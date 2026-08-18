@@ -1,13 +1,13 @@
 import type { SDKEvent } from '../types/event.js'
-import type { TransportRemoteConfig, TransportRouteName } from '../types/config.js'
+import type { TransportRemoteConfig } from '../types/config.js'
 
 export type EnterpriseRoute = 'errors' | 'events' | 'traces' | 'spans' | 'metrics' | 'logs' | 'profiles' | 'crons' | 'requests' | 'replays'
 
 export interface RouteDefinition {
   readonly route: EnterpriseRoute
-  readonly endpoint: '/api/v1/errors' | '/api/v1/events' | '/api/v1/traces' | '/api/v1/spans' | '/api/v1/metrics' | '/api/v1/logs' | '/api/v1/profiles' | '/api/v1/checkins' | '/api/v1/requests' | '/api/v1/replays'
   readonly method: 'POST'
   readonly contentType: 'application/json'
+  /** Exact validated URL supplied by the active remote snapshot. */
   readonly url: string
 }
 
@@ -18,23 +18,6 @@ export class TransportConfigurationError extends Error {
     super(message)
     this.name = 'TransportConfigurationError'
   }
-}
-
-/**
- * Origin used for routes whose URL is not configured yet. The baked-in
- * defaults ship `url: ''` for every route (transport stays off until the
- * first remote config delivers real endpoints), so the router must still
- * construct cleanly with placeholder URLs — a monitoring SDK must never
- * throw during init just because the control plane hasn't provided
- * endpoints yet. `.invalid` is reserved by RFC 2606: even if a bug
- * bypassed every guard and attempted a send, DNS resolution fails
- * instantly instead of leaking telemetry to a real host.
- */
-export const UNCONFIGURED_ROUTE_ORIGIN = 'https://unconfigured.invalid'
-
-/** True when a route definition carries a real, backend-supplied URL. */
-export function isRouteConfigured(definition: RouteDefinition): boolean {
-  return !definition.url.startsWith(UNCONFIGURED_ROUTE_ORIGIN)
 }
 
 const EVENT_TYPE_TO_ROUTE: Readonly<Record<string, EnterpriseRoute>> = Object.freeze({
@@ -48,19 +31,6 @@ const EVENT_TYPE_TO_ROUTE: Readonly<Record<string, EnterpriseRoute>> = Object.fr
   profile: 'profiles',
   cron_checkin: 'crons',
   replay: 'replays',
-})
-
-const ROUTE_ENDPOINTS: Readonly<Record<EnterpriseRoute, RouteDefinition['endpoint']>> = Object.freeze({
-  errors: '/api/v1/errors',
-  events: '/api/v1/events',
-  traces: '/api/v1/traces',
-  spans: '/api/v1/spans',
-  metrics: '/api/v1/metrics',
-  logs: '/api/v1/logs',
-  profiles: '/api/v1/profiles',
-  crons: '/api/v1/checkins',
-  requests: '/api/v1/requests',
-  replays: '/api/v1/replays',
 })
 
 export class RouteRegistry {
@@ -101,46 +71,10 @@ export class RouteRegistry {
 }
 
 function createDefinition(route: EnterpriseRoute, config: TransportRemoteConfig): RouteDefinition {
-  const endpoint = ROUTE_ENDPOINTS[route]
-  // Map EnterpriseRoute to TransportRouteName for config lookup
-  const configRouteName = route as TransportRouteName
-  // Wire schema renamed `endpoints` → `routes` in v3.
-  let configured = config.routes[configRouteName]?.url
-
-  // Fallback for missing routes in older configs
-  if (!configured) {
-    if (route === 'events') {
-      configured = config.routes['errors']?.url
-    } else if (route === 'requests') {
-      configured = config.routes['traces']?.url
-    } else if (route === 'spans') {
-      configured = config.routes['traces']?.url
-    } else if (route === 'replays') {
-      configured = config.routes['logs']?.url
-    }
-  }
-
-  if (!configured) {
-    // Route not configured yet (baked-in defaults or a partial remote
-    // config). Keep the router constructible — the send path checks
-    // isRouteConfigured() and drops with 'route_unconfigured' instead of
-    // touching the network.
-    configured = UNCONFIGURED_ROUTE_ORIGIN
-  }
-
   return {
     route,
-    endpoint,
     method: 'POST',
     contentType: 'application/json',
-    url: forcePath(configured, endpoint),
+    url: config.routes[route].url,
   }
-}
-
-function forcePath(rawUrl: string, endpoint: RouteDefinition['endpoint']): string {
-  const url = new URL(rawUrl)
-  url.pathname = endpoint
-  url.search = ''
-  url.hash = ''
-  return url.toString()
 }

@@ -3,13 +3,11 @@
  * instrumentation (Express, Fastify, and any future framework adapters).
  *
  * Responsibilities:
- *   1. Single decision point for whether a request should be captured at all
- *      (killswitch, feature controller, ignored routes/methods from remote
- *      config, framework-level overrides).
- *   2. Per-tenant admission control via TenantGovernor.
- *   3. Header / query / body scrubbing aligned with the central
- *      SecurityScrubber (with safe local fallback when not yet initialized).
- *   4. Common metadata extraction (request id, tenant, user, session,
+ *   1. Single decision point for killswitches, feature flags, backend route
+ *      sampling, and local framework integration ignores.
+ *   2. Fail-closed header/query/body capture through the active backend-owned
+ *      privacy policy and SecurityScrubber.
+ *   3. Common metadata extraction (request id, tenant, user, session,
  *      client IP, user agent, referer, content length).
  *
  * Every middleware in the SDK should funnel through this module rather than
@@ -30,8 +28,6 @@ export interface CaptureGateInput {
      * headers or generated upstream.
      */
     readonly sampleKey?: string | undefined;
-    /** Tenant id resolved from headers / context, if any. */
-    readonly tenantId?: string | undefined;
     /** Framework-level ignore list (string prefix or regex). */
     readonly localIgnorePaths?: readonly (string | RegExp)[] | undefined;
     /** Framework-level ignored methods (strings, case-insensitive). */
@@ -70,20 +66,14 @@ export interface CaptureGateDecision {
  *     plus the FeatureController gate on `tracing` since request capture
  *     is treated as part of the tracing surface).
  *   - Framework-level ignore paths/methods (cheapest, evaluated first).
- *   - Remote-config ignored routes / methods.
- *   - Tenant admission control.
+ *   - Backend route sampling using longest-prefix rules.
  *
- * The function is deliberately pure with respect to the SDK state — it never
- * mutates engines. `recordCaptureAccepted` should be called once the adapter
- * has decided to actually emit the event so the tenant counter advances.
+ * Tenant admission remains atomic in the canonical event pipeline.
  */
 export declare function evaluateCaptureGate(input: CaptureGateInput): CaptureGateDecision;
-/** @deprecated Tenant admission is now atomic in the canonical pipeline. */
-export declare function recordCaptureAccepted(_tenantId?: string | undefined): void;
 /**
- * Scrub headers using the SecurityScrubber when available, falling back to
- * a conservative deny-list when the scrubber isn't initialized yet (typical
- * during the first few milliseconds after `init()`).
+ * Scrub headers using the active SecurityScrubber. If it is unavailable or
+ * fails, omit headers rather than inventing local privacy policy.
  */
 export declare function scrubHeaders(headers: Record<string, unknown> | undefined): Record<string, unknown> | undefined;
 /**

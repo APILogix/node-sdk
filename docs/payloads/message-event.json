@@ -1,0 +1,44 @@
+{
+  "type": "message",
+  "eventId": "770fa622-g49d-63f6-c938-668877662222",
+  "message": "User login successful",
+  "severity": "info",
+  "timestamp": 1722528000000,
+  "context": {
+    "userId": "user_123",
+    "ipAddress": "192.168.1.100",
+    "action": "login",
+    "authMethod": "oauth2"
+  },
+  "breadcrumbs": [
+    {
+      "type": "navigation",
+      "category": "user",
+      "message": "User navigated to login page",
+      "level": "info",
+      "timestamp": 1722527999000
+    },
+    {
+      "type": "http",
+      "category": "request",
+      "message": "POST /auth/login",
+      "level": "info",
+      "timestamp": 1722527999500,
+      "data": {
+        "method": "POST",
+        "url": "/auth/login"
+      }
+    }
+  ],
+  "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
+  "spanId": "00f067aa0ba902b7",
+  "metadata": {
+    "sdkName": "@pulse/sdk-node",
+    "sdkVersion": "1.0.0",
+    "applicationName": "my-app",
+    "applicationVersion": "2.3.1",
+    "projectId": "proj_abc123",
+    "environment": "production",
+    "release": "v2.3.1"
+  }
+}

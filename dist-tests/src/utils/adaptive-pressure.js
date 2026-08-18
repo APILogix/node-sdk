@@ -91,6 +91,9 @@ export class AdaptivePressureMonitor {
      * monitoring families without restarting the process.
      */
     configure(options) {
+        if (options.getQueueUtilization !== undefined) {
+            this.getQueueUtilization = options.getQueueUtilization;
+        }
         if (options.runtimeMetrics !== undefined) {
             this.options.runtimeMetrics = options.runtimeMetrics;
         }

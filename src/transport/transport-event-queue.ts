@@ -17,125 +17,127 @@ export interface QueueDropInfo {
 export interface TransportEventQueueOptions {
   readonly route: EnterpriseRoute
   readonly maxSize: number
+  /** Slots unavailable to ordinary telemetry and reserved for critical events. */
+  readonly criticalReserve: number
   readonly priority: QueuePriority
   readonly onDrop?: (info: QueueDropInfo) => void
-  /**
-   * What to do when the queue is full. Driven by remote config
-   * (`transport.queue.overflowStrategy`). Defaults to 'drop_newest'
-   * (reject the incoming event) to preserve pre-existing behaviour.
-   */
-  readonly overflowStrategy?: QueueOverflowStrategy
+  readonly overflowStrategy: QueueOverflowStrategy
 }
 
-/**
- * Bounded event queue backed by a ring buffer.
- *
- * Every hot-path operation is O(1): `enqueue` writes at the tail,
- * `drain` advances the head index, and `drop_oldest` eviction just moves
- * the head forward. The previous array-based implementation used
- * `Array.shift()` for drop_oldest, which is O(capacity) per evicted event
- * — under sustained overflow (e.g. a backlogged traces route dropping
- * tens of thousands of spans) that quadratic cost froze the event loop
- * and delayed unrelated routes sharing the process.
- */
+/** Bounded ring-buffer queue with backend-controlled critical capacity. */
 export class TransportEventQueue {
   readonly route: EnterpriseRoute
   readonly maxSize: number
   readonly priority: QueuePriority
   private readonly overflowStrategy: QueueOverflowStrategy
+  private readonly criticalReserve: number
   private buffer: (SDKEvent | undefined)[]
   private readonly capacity: number
   private head = 0
   private count = 0
+  private criticalCount = 0
   private readonly onDrop: ((info: QueueDropInfo) => void) | undefined
   private dropped = 0
 
   constructor(options: TransportEventQueueOptions) {
+    if (!Number.isInteger(options.maxSize) || options.maxSize < 1) {
+      throw new RangeError('Transport queue maxSize must be a positive integer')
+    }
+    if (!Number.isInteger(options.criticalReserve)
+      || options.criticalReserve < 0
+      || options.criticalReserve > options.maxSize) {
+      throw new RangeError('Transport queue criticalReserve must be an integer within queue capacity')
+    }
+
     this.route = options.route
     this.maxSize = options.maxSize
     this.priority = options.priority
     this.onDrop = options.onDrop
-    this.overflowStrategy = options.overflowStrategy ?? 'drop_newest'
-    this.capacity = Math.max(1, options.maxSize)
+    this.overflowStrategy = options.overflowStrategy
+    this.capacity = options.maxSize
+    this.criticalReserve = options.criticalReserve
     this.buffer = new Array<SDKEvent | undefined>(this.capacity)
   }
 
   enqueue(event: SDKEvent): boolean {
-    if (this.count >= this.capacity) {
-      const incomingCritical = isCritical(event)
-      const evictOffset = this.findOldestNonCritical()
+    const incomingCritical = isCritical(event)
+    const ordinaryCount = this.count - this.criticalCount
+    const ordinaryCapacity = this.capacity - this.criticalReserve
 
-      // Critical telemetry may evict ordinary telemetry under either
-      // overflow policy. Ordinary telemetry can never evict a critical item.
-      if (incomingCritical && evictOffset >= 0) {
-        const evicted = this.removeAt(evictOffset)
-        this.append(event)
-        this.notifyDrop(evicted ?? event)
-        return true
+    // Preserve the configured reserve even while the ring still has free slots.
+    if (!incomingCritical && ordinaryCount >= ordinaryCapacity) {
+      if (this.overflowStrategy === 'drop_oldest' && ordinaryCapacity > 0) {
+        const offset = this.findOldestNonCritical()
+        if (offset >= 0) {
+          const evicted = this.removeAt(offset)
+          this.append(event)
+          this.notifyDrop(evicted ?? event)
+          return true
+        }
       }
-
-      if (this.overflowStrategy === 'drop_oldest' && evictOffset >= 0) {
-        const evicted = this.removeAt(evictOffset)
-        this.append(event)
-        this.notifyDrop(evicted ?? event)
-        return true
-      }
-
       this.notifyDrop(event)
       return false
     }
+
+    if (this.count >= this.capacity) {
+      const evictOffset = this.findOldestNonCritical()
+      if ((incomingCritical || this.overflowStrategy === 'drop_oldest') && evictOffset >= 0) {
+        const evicted = this.removeAt(evictOffset)
+        this.append(event)
+        this.notifyDrop(evicted ?? event)
+        return true
+      }
+      this.notifyDrop(event)
+      return false
+    }
+
     this.append(event)
     return true
   }
 
   drain(maxEvents: number): SDKEvent[] {
-    const n = Math.min(maxEvents, this.count)
-    if (n <= 0) return []
-    const out: SDKEvent[] = new Array(n)
-    for (let i = 0; i < n; i++) {
-      const idx = (this.head + i) % this.capacity
-      out[i] = this.buffer[idx] as SDKEvent
-      this.buffer[idx] = undefined // release the reference for GC
+    const amount = Math.min(maxEvents, this.count)
+    if (amount <= 0) return []
+    const events: SDKEvent[] = new Array(amount)
+    for (let index = 0; index < amount; index++) {
+      const slot = (this.head + index) % this.capacity
+      const event = this.buffer[slot] as SDKEvent
+      events[index] = event
+      if (isCritical(event)) this.criticalCount--
+      this.buffer[slot] = undefined
     }
-    this.head = (this.head + n) % this.capacity
-    this.count -= n
-    return out
+    this.head = (this.head + amount) % this.capacity
+    this.count -= amount
+    return events
   }
 
-  /**
-   * Put a failed batch back at the front of the queue, preserving order.
-   *
-   * When capacity is short, the HEAD of the requeued batch (its oldest
-   * events) is dropped — identical semantics to the previous
-   * per-event `unshift` loop, but O(batch) total instead of O(n²).
-   */
+  /** Requeue failed events at the front while preserving critical reserve. */
   requeueFront(events: readonly SDKEvent[]): void {
-    if (events.length === 0) return
-
-    // Insert in reverse to preserve original batch order at the front.
-    // On saturation, retrying ordinary events never displaces critical data;
-    // retrying critical events may evict the oldest ordinary item.
-    for (let i = events.length - 1; i >= 0; i--) {
-      const event = events[i]
+    for (let index = events.length - 1; index >= 0; index--) {
+      const event = events[index]
       if (!event) continue
+      const critical = isCritical(event)
+      const ordinaryCount = this.count - this.criticalCount
+      const ordinaryCapacity = this.capacity - this.criticalReserve
+
+      if (!critical && ordinaryCount >= ordinaryCapacity) {
+        this.notifyDrop(event)
+        continue
+      }
       if (this.count >= this.capacity) {
-        if (isCritical(event)) {
-          const offset = this.findOldestNonCritical()
-          if (offset >= 0) {
-            const evicted = this.removeAt(offset)
-            if (evicted) this.notifyDrop(evicted)
-          } else {
-            this.notifyDrop(event)
-            continue
-          }
-        } else {
+        if (!critical) {
           this.notifyDrop(event)
           continue
         }
+        const offset = this.findOldestNonCritical()
+        if (offset < 0) {
+          this.notifyDrop(event)
+          continue
+        }
+        const evicted = this.removeAt(offset)
+        if (evicted) this.notifyDrop(evicted)
       }
-      this.head = (this.head - 1 + this.capacity) % this.capacity
-      this.buffer[this.head] = event
-      this.count++
+      this.prepend(event)
     }
   }
 
@@ -143,6 +145,14 @@ export class TransportEventQueue {
     const tail = (this.head + this.count) % this.capacity
     this.buffer[tail] = event
     this.count++
+    if (isCritical(event)) this.criticalCount++
+  }
+
+  private prepend(event: SDKEvent): void {
+    this.head = (this.head - 1 + this.capacity) % this.capacity
+    this.buffer[this.head] = event
+    this.count++
+    if (isCritical(event)) this.criticalCount++
   }
 
   private findOldestNonCritical(): number {
@@ -155,22 +165,20 @@ export class TransportEventQueue {
 
   private removeAt(offset: number): SDKEvent | undefined {
     if (offset < 0 || offset >= this.count) return undefined
+    const removed = this.buffer[(this.head + offset) % this.capacity]
     if (offset === 0) {
-      const removed = this.buffer[this.head]
       this.buffer[this.head] = undefined
       this.head = (this.head + 1) % this.capacity
-      this.count--
-      return removed
+    } else {
+      for (let index = offset; index < this.count - 1; index++) {
+        const destination = (this.head + index) % this.capacity
+        const source = (this.head + index + 1) % this.capacity
+        this.buffer[destination] = this.buffer[source]
+      }
+      this.buffer[(this.head + this.count - 1) % this.capacity] = undefined
     }
-    const removed = this.buffer[(this.head + offset) % this.capacity]
-    for (let i = offset; i < this.count - 1; i++) {
-      const to = (this.head + i) % this.capacity
-      const from = (this.head + i + 1) % this.capacity
-      this.buffer[to] = this.buffer[from]
-    }
-    const tail = (this.head + this.count - 1) % this.capacity
-    this.buffer[tail] = undefined
     this.count--
+    if (removed && isCritical(removed)) this.criticalCount--
     return removed
   }
 
@@ -198,6 +206,7 @@ export class TransportEventQueue {
     this.buffer = new Array<SDKEvent | undefined>(this.capacity)
     this.head = 0
     this.count = 0
+    this.criticalCount = 0
   }
 
   droppedCount(): number {

@@ -1,0 +1,89 @@
+{
+  "type": "profile",
+  "eventId": "cc3gf177-l94i-18k1-h48d-11dd22117777",
+  "profileType": "cpu",
+  "startTime": 1722528000000,
+  "endTime": 1722528030000,
+  "duration": 30000,
+  "timestamp": 1722528030000,
+  "profile": {
+    "nodes": [
+      {
+        "id": 1,
+        "callFrame": {
+          "functionName": "main",
+          "scriptId": "123",
+          "url": "file:///app/src/index.js",
+          "lineNumber": 10,
+          "columnNumber": 5
+        },
+        "hitCount": 42,
+        "children": [2, 3]
+      },
+      {
+        "id": 2,
+        "callFrame": {
+          "functionName": "processRequest",
+          "scriptId": "124",
+          "url": "file:///app/src/handlers/request.js",
+          "lineNumber": 25,
+          "columnNumber": 10
+        },
+        "hitCount": 125,
+        "children": [4, 5]
+      },
+      {
+        "id": 3,
+        "callFrame": {
+          "functionName": "queryDatabase",
+          "scriptId": "125",
+          "url": "file:///app/src/db/query.js",
+          "lineNumber": 50,
+          "columnNumber": 8
+        },
+        "hitCount": 380,
+        "children": []
+      },
+      {
+        "id": 4,
+        "callFrame": {
+          "functionName": "parseJSON",
+          "scriptId": "126",
+          "url": "file:///app/src/utils/parser.js",
+          "lineNumber": 15,
+          "columnNumber": 3
+        },
+        "hitCount": 95,
+        "children": []
+      },
+      {
+        "id": 5,
+        "callFrame": {
+          "functionName": "validateInput",
+          "scriptId": "127",
+          "url": "file:///app/src/validators/input.js",
+          "lineNumber": 20,
+          "columnNumber": 5
+        },
+        "hitCount": 30,
+        "children": []
+      }
+    ],
+    "startTime": 1722528000000,
+    "endTime": 1722528030000,
+    "samples": [1, 1, 2, 3, 1, 2, 4, 5, 3, 3],
+    "timeDeltas": [0, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000]
+  },
+  "requestId": "req_7f8d9e0a1b2c",
+  "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
+  "spanId": "00f067aa0ba902b7",
+  "metadata": {
+    "sdkName": "@pulse/sdk-node",
+    "sdkVersion": "1.0.0",
+    "applicationName": "my-app",
+    "applicationVersion": "2.3.1",
+    "projectId": "proj_abc123",
+    "environment": "production",
+    "release": "v2.3.1"
+  }
+}

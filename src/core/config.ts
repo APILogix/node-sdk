@@ -1,10 +1,7 @@
-import type { ResolvedSDKConfig } from "../types/config.js"
-import { client } from "./client.js"
+import type { RemoteConfigResponse } from '../types/config.js'
+import { ConfigManager } from './config-manager.js'
 
-/**
- * Get the resolved SDK configuration.
- * Throws if SDK is not initialized.
- */
-export function getConfig(): Readonly<ResolvedSDKConfig> {
-  return client.config
+/** Return the active immutable runtime configuration. */
+export function getConfig(): Readonly<RemoteConfigResponse> {
+  return ConfigManager.getInstance().getConfig()
 }

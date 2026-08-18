@@ -1,7 +1,4 @@
-import type { ResolvedSDKConfig } from "../types/config.js";
-/**
- * Get the resolved SDK configuration.
- * Throws if SDK is not initialized.
- */
-export declare function getConfig(): Readonly<ResolvedSDKConfig>;
+import type { RemoteConfigResponse } from '../types/config.js';
+/** Return the active immutable runtime configuration. */
+export declare function getConfig(): Readonly<RemoteConfigResponse>;
 //# sourceMappingURL=config.d.ts.map

@@ -11,8 +11,8 @@ export interface ApplicationPackageMetadata {
 /** Resolve consuming-app identity once during SDK initialization. Never throws. */
 export function resolveApplicationPackage(options: SDKInitOptions): ApplicationPackageMetadata {
   const discovered = readPackage(options.packageJsonPath)
-  const name = options.applicationName ?? discovered?.name ?? options.service ?? 'unknown-application'
-  const version = options.applicationVersion ?? discovered?.version ?? options.release ?? '0.0.0-unknown'
+  const name = options.applicationName ?? discovered?.name ?? 'unknown-application'
+  const version = options.applicationVersion ?? discovered?.version ?? '0.0.0-unknown'
   return Object.freeze({ name, version, ...(discovered?.path ? { packageJsonPath: discovered.path } : {}) })
 }
 

@@ -12,7 +12,6 @@ import { captureEvent } from './captureEvent.js';
 import { EntitlementGate } from '../core/entitlement-gate.js';
 import { getLogger } from '../utils/logger.js';
 import { epochMs } from '../utils/time.js';
-import { SamplingEngine } from '../core/sampling-engine.js';
 /**
  * Capture a session-replay segment.
  *
@@ -28,14 +27,6 @@ export function captureReplay(sessionId, segmentId, events) {
             return;
         if (!sessionId || events.length === 0)
             return;
-        // Deterministic sampling per session. The backend can throttle replay
-        // ingestion via `sampling.replays` without disabling the subsystem.
-        const samplingEngine = SamplingEngine.getInstance();
-        if (samplingEngine) {
-            const decision = samplingEngine.shouldSampleReplay(sessionId);
-            if (!decision.sampled)
-                return;
-        }
         const event = {
             type: 'replay',
             sessionId,

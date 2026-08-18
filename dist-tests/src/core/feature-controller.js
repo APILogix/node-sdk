@@ -7,15 +7,12 @@
  * On config refresh:
  * - Feature flips true → instantiate via factory()
  * - Feature flips false → teardown and destroy via teardown()
- *
- * Degraded mode: Only 'errors' and 'logging' subsystems are allowed.
  */
 import { getLogger } from '../utils/logger.js';
 export class FeatureController {
     static instance = null;
     currentFeatures;
     subsystems = new Map();
-    degradedMode = false;
     destroyed = false;
     constructor(features) {
         this.currentFeatures = { ...features };
@@ -30,21 +27,8 @@ export class FeatureController {
     static getInstance() {
         return FeatureController.instance;
     }
-    /**
-     * Enable degraded mode — only errors + logs are allowed.
-     * Used when version policy requires degraded operation.
-     */
-    setDegradedMode(degraded) {
-        this.degradedMode = degraded;
-    }
-    /**
-     * Check if a feature is enabled.
-     * In degraded mode, only 'errors' and 'logging' return true.
-     */
+    /** Check whether a backend-owned feature is enabled. */
     isEnabled(feature) {
-        if (this.degradedMode) {
-            return feature === 'errors' || feature === 'logging';
-        }
         return this.currentFeatures[feature];
     }
     /**
@@ -85,9 +69,7 @@ export class FeatureController {
         const oldFeatures = this.currentFeatures;
         for (const [feature, registration] of this.subsystems) {
             const wasEnabled = oldFeatures[feature];
-            const isEnabled = this.degradedMode
-                ? feature === 'errors' || feature === 'logging'
-                : newFeatures[feature];
+            const isEnabled = newFeatures[feature];
             if (!wasEnabled && isEnabled && !registration.alive) {
                 // Feature turned ON — instantiate
                 logger.info(`[FeatureController] Feature enabled, starting: ${feature}`);

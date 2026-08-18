@@ -3,23 +3,11 @@
  */
 
 import type { StackFrame } from './event.js'
-import type { SeverityLevel } from './severity.js'
 
 /**
- * Options for captureError — allows specifying severity, fingerprint, and context.
+ * Public error severity levels.
  */
-export interface CaptureErrorOptions {
-  /** Override the default severity level (defaults to 'error'). */
-  severity?: SeverityLevel
-  /** Custom fingerprint for error grouping. If not provided, auto-generated from stack. */
-  fingerprint?: string
-  /** Additional context data to attach to the error event. */
-  context?: Record<string, unknown>
-  /** Mechanism that caused the error (e.g., 'uncaughtException', 'unhandledRejection'). */
-  mechanism?: string
-  /** Tags to attach to the error event. */
-  tags?: Record<string, string>
-}
+export type ErrorSeverity = 'fatal' | 'error' | 'warning' | 'info' | 'debug'
 
 /**
  * Parsed error with structured stack trace, used internally.

@@ -45,18 +45,19 @@ import { epochMs } from '../utils/time.js';
 import { errorDeduplicator } from '../processors/deduplicator.js';
 import { applyScopeToEvent } from './scope.js';
 import { loadShedder } from '../transport/load-shedder.js';
-import { getMemoryPressureLevel } from '../utils/backpressure.js';
 import { isSDKShuttingDown } from './lifecycle.js';
 import { acceptedReceipt, acceptedSyncReceipt, rejectedReceipt, } from './event-receipt.js';
 // ─── Remote Config Engine Imports ───────────────────────────────────────────
 import { KillswitchEngine } from './killswitch-engine.js';
+import { SamplingEngine } from './sampling-engine.js';
+import { EntitlementGate } from './entitlement-gate.js';
 import { LimitsEngine } from './limits-engine.js';
 import { TransportRouter } from '../transport/transport-router.js';
-import { FeatureController } from './feature-controller.js';
 import { ConfigManager } from './config-manager.js';
 import { ERROR_DEFAULTS } from '../constants/internal-defaults.js';
 import { peekSessionManager } from '../session/session-manager.js';
 import { tenantGovernor } from './tenant-isolation.js';
+import { sdkConsoleDebug } from '../utils/console-debug.js';
 const PLUGIN_TIMEOUT_MS = 50;
 const EVENT_PROCESSOR_TIMEOUT_MS = 50;
 const BEFORE_SEND_TIMEOUT_MS = 100;
@@ -79,13 +80,6 @@ let pendingPipelineDrops = 0;
  * after this flag is set are rejected synchronously by enqueueEvent().
  */
 let pipelineDraining = false;
-// ─── Hot-Path Optimization Caches ───────────────────────────────────────────
-// process.memoryUsage() is a syscall (~10-50µs). At 100k events/s that
-// dominates capture latency. We cache the heap-pressure decision for a short
-// window so the syscall fires at most ~10 times per second under load.
-const MEMORY_PRESSURE_TTL_MS = 100;
-let memoryPressureCachedValue = false;
-let memoryPressureCachedAt = 0;
 // ─── Public API ─────────────────────────────────────────────────────────────
 /**
  * Accept an event into the processing pipeline and return an EventReceipt.
@@ -118,6 +112,12 @@ export function enqueueEvent(rawEvent) {
         ? rawEvent.eventId
         : generateId();
     const internalTelemetry = isInternalTelemetryEvent(rawEvent);
+    sdkConsoleDebug('event accepted', {
+        eventType,
+        eventId,
+        initialized: client.initialized,
+        internalTelemetry,
+    });
     // Gate 1: Reject events during shutdown
     if (isSDKShuttingDown() && !internalTelemetry) {
         logger.debug('Event rejected — SDK is shutting down', { eventType });
@@ -135,23 +135,7 @@ export function enqueueEvent(rawEvent) {
     if (killswitchEngine?.isSDKDisabled()) {
         return rejectedReceipt(eventId, 'sdk_disabled_by_killswitch');
     }
-    // Gate 1.6: Token-bucket rate limiter from limits engine
-    const limitsEngine = LimitsEngine.getInstance();
-    if (limitsEngine && !limitsEngine.admitEvent()) {
-        return rejectedReceipt(eventId, 'rate_limited');
-    }
-    // Gate 2: Critical memory pressure — only high-priority events survive.
-    // The pressure check is cached (see isCriticalMemoryPressure); we only
-    // pay the second process.memoryUsage() syscall to log the actual heap
-    // sizes when an event is actually being dropped.
-    if (isCriticalMemoryPressure() && !isHighPriority(rawEvent)) {
-        logger.warn('Event dropped under critical memory pressure', {
-            eventType,
-            heap: process.memoryUsage(),
-        });
-        return rejectedReceipt(eventId, 'critical_memory_pressure');
-    }
-    // Gate 3: Load shedding under adaptive pressure
+    // Gate 2: Load shedding under remotely configured adaptive pressure
     if (loadShedder.shouldShed(rawEvent)) {
         logger.debug('Event shed by load shedder', { eventType });
         return rejectedReceipt(eventId, 'load_shed');
@@ -268,10 +252,6 @@ export function resetEventPipeline() {
     pipelineDraining = false;
     pendingPipelines.clear();
     pendingPipelineDrops = 0;
-    // Invalidate cached memory pressure so the next event triggers a fresh
-    // syscall — important for tests that rely on deterministic pressure reads.
-    memoryPressureCachedAt = 0;
-    memoryPressureCachedValue = false;
 }
 /**
  * Async pipeline — processes a single event through all pipeline stages.
@@ -311,13 +291,23 @@ export async function processEventAsync(rawEvent, assignedEventId) {
             }
             return true;
         }
-        const config = client.config;
-        // Step 3: Feature flag gate (plan-enforced + remote config FeatureController)
+        const config = ConfigManager.getInstance().getConfig();
+        // Step 3: feature and killswitch gates from the active remote snapshot.
         if (!isFeatureEnabled(event, config)) {
-            logger.debug('Event dropped — feature disabled by config or plan', {
+            logger.debug('Event dropped — feature disabled by remote configuration', {
                 eventType: event.type,
-                plan: config.plan,
             });
+            return false;
+        }
+        if (!isEntitled(event)) {
+            logger.debug('Event dropped — backend entitlement denied', { eventType: event.type });
+            return false;
+        }
+        // Step 3.1: Apply family sampling centrally so manual helpers, universal
+        // capture, pre-init replay, framework adapters, and registry emission all
+        // use the same active snapshot. OTel owns span/trace root sampling.
+        if (!isSampled(event)) {
+            logger.debug('Event dropped — remote sampling decision', { eventType: event.type });
             return false;
         }
         // Step 3.25: Per-tenant admission is atomic and central so every event
@@ -348,9 +338,9 @@ export async function processEventAsync(rawEvent, assignedEventId) {
                 ?? eventRecord['context']?.['route']
                 ?? eventRecord['tags']?.['route']
                 ?? 'unknown';
-            const service = event.metadata?.service ?? client.metadata.service;
+            const projectId = event.metadata?.projectId ?? client.metadata.projectId;
             const release = event.metadata?.release ?? client.metadata.release;
-            const compositeKey = `${event.fingerprint}:${service}:${release}:${tenantId}:${route}`;
+            const compositeKey = `${event.fingerprint}:${projectId}:${release}:${tenantId}:${route}`;
             if (errorDeduplicator.isDuplicate(compositeKey)) {
                 logger.debug('Event dropped — duplicate error within suppression window', {
                     fingerprint: event.fingerprint,
@@ -421,7 +411,7 @@ export async function processEventAsync(rawEvent, assignedEventId) {
             }
         }
         // Step 10: beforeSend hook (user-provided)
-        if (client.options?.beforeSend && config.planFeatures.allowBeforeSend) {
+        if (client.options?.beforeSend) {
             try {
                 const result = await withTimeout(Promise.resolve(client.options.beforeSend(event)), BEFORE_SEND_TIMEOUT_MS, 'beforeSend timed out');
                 if (result === null) {
@@ -439,7 +429,7 @@ export async function processEventAsync(rawEvent, assignedEventId) {
         }
         // Step 11: Plugin beforeSend hooks
         for (const plugin of client.plugins) {
-            if (plugin.beforeSend && config.planFeatures.allowBeforeSend) {
+            if (plugin.beforeSend) {
                 try {
                     const result = await withTimeout(Promise.resolve(plugin.beforeSend(event)), BEFORE_SEND_TIMEOUT_MS, `Plugin beforeSend timed out: ${plugin.meta.name}`);
                     if (result === null) {
@@ -459,9 +449,6 @@ export async function processEventAsync(rawEvent, assignedEventId) {
                 }
             }
         }
-        // Step 12: Sampling is owned by OTel samplers at root span creation.
-        // Child spans inherit OTel's sampled flag. Non-span SDK events follow the
-        // active span context rather than making independent random decisions.
         // SDK-owned package identity is reattached after all user/plugin hooks.
         // This guarantees every transported event has trustworthy immutable
         // application and SDK versions even if a hook removed/replaced metadata.
@@ -491,6 +478,14 @@ export async function processEventAsync(rawEvent, assignedEventId) {
             eventType: event.type,
             eventId: event.eventId,
         });
+        sdkConsoleDebug('event routed', {
+            eventType: event.type,
+            eventId: event.eventId,
+            metadata: event.metadata,
+            traceId: 'traceId' in event ? event.traceId : undefined,
+            spanId: 'spanId' in event ? event.spanId : undefined,
+            requestId: 'requestId' in event ? event.requestId : undefined,
+        });
         return true;
     }
     catch (error) {
@@ -513,62 +508,89 @@ function ensureBaseFields(raw, assignedEventId) {
 function isInternalTelemetryEvent(raw) {
     return raw['__pulseInternal'] === true;
 }
+function isEntitled(event) {
+    switch (event.type) {
+        case 'log': return EntitlementGate.isAllowed('logging');
+        case 'profile': return EntitlementGate.isAllowed('profiling');
+        case 'replay': return EntitlementGate.isAllowed('sessionReplay');
+        case 'cron_checkin': return EntitlementGate.isAllowed('crons');
+        default: return true;
+    }
+}
+function isSampled(event) {
+    const sampling = SamplingEngine.getInstance();
+    if (!sampling)
+        return true;
+    switch (event.type) {
+        case 'request':
+            return sampling.shouldSampleRequest(event.requestId, event.route ?? event.url).sampled;
+        case 'error':
+            return sampling.shouldSampleError(event.eventId ?? event.fingerprint ?? event.message).sampled;
+        case 'message':
+            return sampling.shouldSampleMessage(event.eventId ?? event.message).sampled;
+        case 'metric':
+            return sampling.shouldSampleMetric(event.eventId ?? `${event.metricName}:${serializeMetricTags(event.tags)}`).sampled;
+        case 'log':
+            return sampling.shouldSampleLog(event.eventId ?? `${event.level}:${event.message}`).sampled;
+        case 'span':
+            return sampling.shouldSampleSpan(`${event.traceId}:${event.spanId}`, routeFromAttributes(event.attributes)).sampled;
+        case 'trace':
+            return sampling.shouldSampleTrace(event.traceId, event.rootSpan.attributes ? routeFromAttributes(event.rootSpan.attributes) : undefined).sampled;
+        case 'profile':
+            return sampling.shouldSampleProfile(event.traceId ?? event.eventId ?? event.profileType).sampled;
+        case 'replay':
+            return sampling.shouldSampleReplay(event.sessionId).sampled;
+        case 'cron_checkin':
+            return sampling.shouldSampleCron(event.eventId ?? event.monitorSlug).sampled;
+        default: {
+            const legacyEvent = event;
+            return sampling.shouldSampleEvent(typeof legacyEvent['eventId'] === 'string' ? legacyEvent['eventId'] : 'unknown-event').sampled;
+        }
+    }
+}
+function serializeMetricTags(tags) {
+    if (!tags || Object.keys(tags).length === 0)
+        return '';
+    return Object.entries(tags)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, value]) => `${key}=${value}`)
+        .join('&');
+}
+function routeFromAttributes(attributes) {
+    if (!attributes)
+        return undefined;
+    for (const key of ['http.route', 'http.target', 'http.url', 'url.full', 'url.path']) {
+        const value = attributes[key];
+        if (typeof value === 'string' && value)
+            return value;
+    }
+    return undefined;
+}
 function isFeatureEnabled(event, config) {
-    // Check FeatureController first (remote-config driven)
-    const featureCtrl = FeatureController.getInstance();
-    const killswitchEngine = KillswitchEngine.getInstance();
+    const features = config.features;
+    const killed = config.killswitches;
     switch (event.type) {
         case 'error':
-            if (killswitchEngine?.isKilled('disableErrors'))
-                return false;
-            if (featureCtrl && !featureCtrl.isEnabled('errors'))
-                return false;
-            return config.enableErrors;
+            return features.errors && !killed.disableErrors;
         case 'request':
-            // Request capture is now its own feature flag in v3 (separate from
-            // tracing). The tracing killswitch still kills request events too,
-            // since requests carry trace context.
-            if (killswitchEngine?.isKilled('disableTracing'))
-                return false;
-            if (featureCtrl && !featureCtrl.isEnabled('requestCapture'))
-                return false;
-            return config.enablePerformance;
+            return features.requestCapture && !killed.disableTracing;
         case 'message':
-            return true; // messages are always enabled
+            return !killed.disableSDK;
         case 'metric':
-            if (killswitchEngine?.isKilled('disableMetrics'))
-                return false;
-            if (featureCtrl && !featureCtrl.isEnabled('metrics'))
-                return false;
-            return config.enableMetrics;
+            return features.metrics && !killed.disableMetrics;
         case 'span':
-            if (killswitchEngine?.isKilled('disableTracing'))
-                return false;
-            if (featureCtrl && !featureCtrl.isEnabled('tracing'))
-                return false;
-            return config.enableTracing;
+        case 'trace':
+            return features.tracing && !killed.disableTracing;
         case 'log':
-            if (killswitchEngine?.isKilled('disableLogs'))
-                return false;
-            if (featureCtrl && !featureCtrl.isEnabled('logging'))
-                return false;
-            return true;
+            return features.logging && !killed.disableLogs;
         case 'profile':
-            if (killswitchEngine?.isKilled('disableProfiling'))
-                return false;
-            if (featureCtrl && !featureCtrl.isEnabled('profiling'))
-                return false;
-            return true;
+            return features.profiling && !killed.disableProfiling;
         case 'replay':
-            if (featureCtrl && !featureCtrl.isEnabled('sessionReplay'))
-                return false;
-            return true;
+            return features.sessionReplay;
         case 'cron_checkin':
-            if (featureCtrl && !featureCtrl.isEnabled('crons'))
-                return false;
-            return true;
+            return features.crons;
         default:
-            return true;
+            return !killed.disableSDK;
     }
 }
 function enrichFromContext(event) {
@@ -618,22 +640,6 @@ function enrichFromContext(event) {
     if (Object.keys(enrichment).length === 0)
         return event;
     return { ...event, ...enrichment };
-}
-function isCriticalMemoryPressure() {
-    // Throttle the syscall: once per 100ms is plenty for capture-path
-    // pressure detection, since memory pressure changes on multi-second
-    // timescales. The dedicated MemoryPressureMonitor still polls at its
-    // own cadence for pressure-change events.
-    const now = Date.now();
-    if (now - memoryPressureCachedAt < MEMORY_PRESSURE_TTL_MS) {
-        return memoryPressureCachedValue;
-    }
-    memoryPressureCachedAt = now;
-    // Delegate to the shared utility which correctly guards against small
-    // heaps (< 100 MB) — V8 starts with a tiny heap that's 90%+ utilised
-    // before it expands, causing false-positive drops during startup.
-    memoryPressureCachedValue = getMemoryPressureLevel() === 'critical';
-    return memoryPressureCachedValue;
 }
 function extractTenantId(event) {
     const record = event;

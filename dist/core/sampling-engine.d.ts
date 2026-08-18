@@ -17,7 +17,7 @@
  *   3. Compare against the rate for the event type (route-overridden if any).
  */
 import type { SamplingConfig, ConfigDiff, RemoteConfigResponse } from '../types/config.js';
-export type SamplingEventType = 'traces' | 'requests' | 'errors' | 'profiles' | 'replays' | 'metrics';
+export type SamplingEventType = 'traces' | 'requests' | 'spans' | 'errors' | 'messages' | 'profiles' | 'replays' | 'metrics' | 'logs' | 'events' | 'crons';
 export type SamplingDecision = {
     readonly sampled: boolean;
     readonly rate: number;
@@ -32,10 +32,15 @@ export declare class SamplingEngine {
     static getInstance(): SamplingEngine | null;
     shouldSampleTrace(traceId: string, route?: string): SamplingDecision;
     shouldSampleRequest(requestId: string, route?: string): SamplingDecision;
+    shouldSampleSpan(spanId: string, route?: string): SamplingDecision;
     shouldSampleError(eventId: string, route?: string): SamplingDecision;
+    shouldSampleMessage(messageId: string, route?: string): SamplingDecision;
     shouldSampleProfile(traceId: string, route?: string): SamplingDecision;
     shouldSampleReplay(sessionId: string): SamplingDecision;
     shouldSampleMetric(metricId: string, route?: string): SamplingDecision;
+    shouldSampleLog(logId: string, route?: string): SamplingDecision;
+    shouldSampleEvent(eventId: string, route?: string): SamplingDecision;
+    shouldSampleCron(cronId: string, route?: string): SamplingDecision;
     handleConfigChange(_diff: ConfigDiff, newConfig: Readonly<RemoteConfigResponse>): void;
     getConfig(): Readonly<SamplingConfig>;
     private decide;

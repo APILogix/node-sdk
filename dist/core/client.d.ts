@@ -1,14 +1,13 @@
-import type { RemoteConfig, SDKInitOptions, ResolvedSDKConfig } from '../types/config.js';
+import type { RemoteConfigResponse, SDKInitOptions } from '../types/config.js';
 import type { SDKPlugin, EventProcessor } from '../types/plugin.js';
 import type { EventMetadata } from '../types/event.js';
 import type { Breadcrumb } from '../types/breadcrumb.js';
+import type { InitResponse } from './remote-config-client.js';
 import { RingBuffer } from './ring-buffer.js';
-import type { InitResponse } from '../transport/sender.js';
 declare class SDKClient {
     private static instance;
-    private configValue;
-    private remoteConfigValue;
-    private initResponseValue;
+    private initializedValue;
+    private initMetadataValue;
     private initPromise;
     private apiKeyValue;
     private initIdentityValue;
@@ -21,8 +20,7 @@ declare class SDKClient {
     private constructor();
     static getInstance(): SDKClient;
     get initialized(): boolean;
-    get config(): Readonly<ResolvedSDKConfig>;
-    get remoteConfig(): Readonly<RemoteConfig> | null;
+    get remoteConfig(): Readonly<RemoteConfigResponse> | null;
     get initResponse(): Readonly<InitResponse> | null;
     get projectId(): string | null;
     get options(): Readonly<SDKInitOptions> | null;
@@ -31,11 +29,15 @@ declare class SDKClient {
     get eventProcessors(): readonly EventProcessor[];
     get breadcrumbs(): RingBuffer<Breadcrumb>;
     setOptions(options: SDKInitOptions): void;
-    setResolvedConfig(config: ResolvedSDKConfig): void;
-    setRemoteConfig(config: RemoteConfig): void;
+    /**
+     * Apply the authoritative identity fields from the active remote
+     * configuration snapshot. `projectId` always comes exclusively from
+     * `config.sdk.projectId` — never from init options, local config,
+     * package.json, environment variables, or any other fallback.
+     */
+    applyRemoteIdentity(config: Readonly<RemoteConfigResponse>): void;
+    markInitialized(): void;
     setInitResponse(response: InitResponse): void;
-    /** @deprecated Use setResolvedConfig instead */
-    setConfig(config: RemoteConfig): void;
     clearConfig(): void;
     clear(): void;
     getApiKey(): string;
@@ -43,8 +45,8 @@ declare class SDKClient {
     setPendingIdentity(options: SDKInitOptions): void;
     clearPendingIdentity(): void;
     hasSamePendingIdentity(options: SDKInitOptions): boolean;
-    setInitPromise(promise: Promise<Readonly<RemoteConfig> | undefined> | null): void;
-    getInitPromise(): Promise<Readonly<RemoteConfig> | undefined> | null;
+    setInitPromise(promise: Promise<Readonly<RemoteConfigResponse> | undefined> | null): void;
+    getInitPromise(): Promise<Readonly<RemoteConfigResponse> | undefined> | null;
     registerPlugin(plugin: SDKPlugin): void;
     registerEventProcessor(processor: EventProcessor): void;
     initBreadcrumbs(capacity: number): void;

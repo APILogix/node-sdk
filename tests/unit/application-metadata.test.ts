@@ -35,7 +35,7 @@ describe('application package metadata', () => {
     temporary.push(directory)
     const path = join(directory, 'package.json')
     writeFileSync(path, '{broken')
-    assert.deepEqual(resolveApplicationPackage(options(path, { service: 'orders' })), {
+    assert.deepEqual(resolveApplicationPackage(options(path, { applicationName: 'orders' })), {
       name: 'orders', version: '0.0.0-unknown',
     })
   })
@@ -43,7 +43,7 @@ describe('application package metadata', () => {
     const metadata: EventMetadata = {
       sdkName: SDK_NAME, sdkVersion: SDK_VERSION,
       applicationName: 'consumer-app', applicationVersion: '4.2.1',
-      service: 'orders', environment: 'test', release: 'release-2026-07',
+      projectId: 'proj_123', environment: 'test', release: 'release-2026-07',
     }
     const now = Date.now()
     const events: SDKEvent[] = [

@@ -18,6 +18,8 @@ export interface PostJsonOptions {
   compression?: CompressionAlgorithm
   /** Extra headers to include. */
   extraHeaders?: Record<string, string>
+  /** Observe a successful parsed response after normal response processing. */
+  onResponse?: (statusCode: number, payload: unknown) => void
 }
 
 export interface HttpResponse<T> {
@@ -150,6 +152,14 @@ export async function postJson<T>(
         bodyPreview: text.slice(0, 500),
         requestId,
       })
+    }
+
+    if (options.onResponse) {
+      try {
+        options.onResponse(response.status, parsed)
+      } catch (error) {
+        logger.debug('HTTP response observer failed', { endpoint: url, error })
+      }
     }
 
     return parsed as T

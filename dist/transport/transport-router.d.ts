@@ -20,14 +20,11 @@ export declare class TransportRouter {
     private healthMonitor;
     private batchManagers;
     private queues;
-    private limitsConfig;
     private reconfiguration;
     private disabled;
     private destroyed;
     private readonly dropped;
     private dropLogCount;
-    private multiplexed;
-    private useMultiplexedTransport;
     private constructor();
     /**
      * Initialize the singleton transport router.
@@ -40,7 +37,7 @@ export declare class TransportRouter {
      * NOTE: This method is async because shutdown drains in-flight batches.
      * Callers must await the returned promise before sending events.
      */
-    static initialize(config: TransportRemoteConfig, apiKey: string, fetchImpl?: typeof fetch, useMultiplexedTransport?: boolean, limitsConfig?: LimitsConfig): Promise<TransportRouter>;
+    static initialize(config: TransportRemoteConfig, apiKey: string, fetchImpl?: typeof fetch, limitsConfig?: LimitsConfig): Promise<TransportRouter>;
     static getInstance(): TransportRouter | null;
     send(event: SDKEvent): boolean;
     sendBatch(events: readonly SDKEvent[]): void;
@@ -49,7 +46,7 @@ export declare class TransportRouter {
     isDisabled(): boolean;
     handleConfigChange(_diff: ConfigDiff, newConfig: Readonly<RemoteConfigResponse>): Promise<void>;
     /** Build-then-swap transport reconfiguration serialized across refreshes. */
-    updateTransport(transport: TransportRemoteConfig, limits?: LimitsConfig): Promise<void>;
+    updateTransport(transport: TransportRemoteConfig, limits: LimitsConfig): Promise<void>;
     getHealth(): MultiRouteTransportHealth;
     getDebugState(): {
         inFlightSends: Readonly<Record<EnterpriseRoute, number>>;

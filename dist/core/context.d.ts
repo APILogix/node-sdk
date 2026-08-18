@@ -39,10 +39,14 @@ export declare function getRequestContext(): ContextStore | undefined;
 export declare function getRequestContextFromOtelContext(ctx?: import("@opentelemetry/api").Context): ContextStore | undefined;
 /**
  * Get the current trace ID from context, or undefined.
+ * Synchronizes traceId with ContextStore so correlation is preserved
+ * even after child spans finish and pop off the active context stack.
  */
 export declare function getTraceId(): string | undefined;
 /**
  * Get the current span ID from context, or undefined.
+ * Synchronizes spanId with ContextStore so correlation is preserved
+ * even after child spans finish and pop off the active context stack.
  */
 export declare function getSpanId(): string | undefined;
 export declare function attachRequestContextToActiveSpan(store?: ContextStore | undefined): void;

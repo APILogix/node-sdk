@@ -8,13 +8,13 @@
  * - Error isolation — one plugin failure never blocks others
  */
 import type { SDKPlugin } from '../types/plugin.js';
-import type { ResolvedSDKConfig } from '../types/config.js';
+import type { RemoteConfigResponse } from '../types/config.js';
 import type { EventMetadata } from '../types/event.js';
 /**
  * Register and initialize all plugins from SDK options.
  * Called once during SDK initialization after config is resolved.
  */
-export declare function initializePlugins(plugins: readonly SDKPlugin[], config: ResolvedSDKConfig, metadata: EventMetadata): Promise<void>;
+export declare function initializePlugins(plugins: readonly SDKPlugin[], config: Readonly<RemoteConfigResponse>, metadata: EventMetadata): Promise<void>;
 /**
  * Tear down all registered plugins in reverse order.
  * Called during SDK shutdown.

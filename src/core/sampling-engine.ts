@@ -20,7 +20,23 @@
 import type { SamplingConfig, ConfigDiff, RemoteConfigResponse, RouteSamplingRates } from '../types/config.js'
 import { getLogger } from '../utils/logger.js'
 
-export type SamplingEventType = 'traces' | 'requests' | 'errors' | 'profiles' | 'replays' | 'metrics'
+export type SamplingEventType =
+  | 'traces'
+  | 'requests'
+  | 'spans'
+  | 'errors'
+  | 'messages'
+  | 'profiles'
+  | 'replays'
+  | 'metrics'
+  | 'logs'
+  | 'events'
+  | 'crons'
+
+const SAMPLING_EVENT_TYPES = [
+  'traces', 'requests', 'spans', 'errors', 'messages', 'profiles',
+  'replays', 'metrics', 'logs', 'events', 'crons',
+] as const
 
 export type SamplingDecision = {
   readonly sampled: boolean
@@ -60,8 +76,16 @@ export class SamplingEngine {
     return this.decide(requestId, 'requests', route)
   }
 
+  shouldSampleSpan(spanId: string, route?: string): SamplingDecision {
+    return this.decide(spanId, 'spans', route)
+  }
+
   shouldSampleError(eventId: string, route?: string): SamplingDecision {
     return this.decide(eventId, 'errors', route)
+  }
+
+  shouldSampleMessage(messageId: string, route?: string): SamplingDecision {
+    return this.decide(messageId, 'messages', route)
   }
 
   shouldSampleProfile(traceId: string, route?: string): SamplingDecision {
@@ -76,6 +100,18 @@ export class SamplingEngine {
     return this.decide(metricId, 'metrics', route)
   }
 
+  shouldSampleLog(logId: string, route?: string): SamplingDecision {
+    return this.decide(logId, 'logs', route)
+  }
+
+  shouldSampleEvent(eventId: string, route?: string): SamplingDecision {
+    return this.decide(eventId, 'events', route)
+  }
+
+  shouldSampleCron(cronId: string, route?: string): SamplingDecision {
+    return this.decide(cronId, 'crons', route)
+  }
+
   // ─── Config Change ────────────────────────────────────────────────────────
 
   handleConfigChange(_diff: ConfigDiff, newConfig: Readonly<RemoteConfigResponse>): void {
@@ -83,16 +119,10 @@ export class SamplingEngine {
 
     const newSampling = newConfig.sampling
     const old = this.config
-    if (
-      old.traces !== newSampling.traces ||
-      old.requests !== newSampling.requests ||
-      old.errors !== newSampling.errors ||
-      old.profiles !== newSampling.profiles ||
-      old.replays !== newSampling.replays ||
-      old.metrics !== newSampling.metrics
-    ) {
+    if (SAMPLING_EVENT_TYPES.some(key => old[key] !== newSampling[key])) {
       getLogger().info(
-        `[SamplingEngine] Rates updated — traces: ${newSampling.traces}, requests: ${newSampling.requests}, errors: ${newSampling.errors}, profiles: ${newSampling.profiles}, replays: ${newSampling.replays}, metrics: ${newSampling.metrics}`,
+        '[SamplingEngine] Rates updated',
+        Object.fromEntries(SAMPLING_EVENT_TYPES.map(key => [key, newSampling[key]])),
       )
     }
 

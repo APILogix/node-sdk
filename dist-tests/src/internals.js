@@ -13,11 +13,13 @@
  */
 // ─── Remote-config-driven engines ───────────────────────────────────────────
 export { ConfigManager, ConfigState } from './core/config-manager.js';
+export { RemoteConfigClient } from './core/remote-config-client.js';
+export { ConfigApplier } from './core/config-applier.js';
+export { validateRemoteConfig, assertRemoteConfig } from './core/config-validator.js';
 export { KillswitchEngine } from './core/killswitch-engine.js';
 export { FeatureController } from './core/feature-controller.js';
 export { SamplingEngine } from './core/sampling-engine.js';
 export { LimitsEngine } from './core/limits-engine.js';
-export { VersionPolicy } from './core/version-policy.js';
 export { diffConfigs } from './core/config-differ.js';
 export { SecurityScrubber } from './processors/security-scrubber.js';
 export { TransportRouter } from './transport/transport-router.js';
@@ -29,16 +31,9 @@ export { client } from './core/client.js';
 export { LoggingSubsystem } from './subsystems/logging-subsystem.js';
 export { ProfilingSubsystem } from './subsystems/profiling-subsystem.js';
 export { CronSubsystem } from './subsystems/cron-subsystem.js';
-// ─── Plan gating (legacy / deprecated) ──────────────────────────────────────
-//
-// Kept temporarily for v3 backward-compat only. Both functions are now stubs
-// that always return "unrestricted" — billing decisions live entirely on the
-// backend. Slated for deletion in v5.
-export { getPlanDefaults, isFeatureAllowed } from './core/plan-gate.js';
 // ─── Diagnostics & observability of the SDK itself ──────────────────────────
 export { EventLoopLagMonitor } from './utils/event-loop-lag.js';
 export { detectResources, detectOtelResource } from './utils/resource-detector.js';
-export { RetryBudget, globalRetryBudget } from './transport/retry.js';
 export { otelMetrics } from './metrics/otel-adapter.js';
 export { errorDeduplicator } from './processors/deduplicator.js';
 export { persistentStorage } from './storage/persistent-storage.js';

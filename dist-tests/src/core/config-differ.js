@@ -11,6 +11,7 @@
  */
 export function diffConfigs(oldConfig, newConfig) {
     const changes = new Map();
+    const sdkChanged = !deepEqual(oldConfig.sdk, newConfig.sdk);
     const featuresChanged = !deepEqual(oldConfig.features, newConfig.features);
     const killswitchesChanged = !deepEqual(oldConfig.killswitches, newConfig.killswitches);
     const samplingChanged = !deepEqual(oldConfig.sampling, newConfig.sampling);
@@ -18,8 +19,9 @@ export function diffConfigs(oldConfig, newConfig) {
     const privacyChanged = !deepEqual(oldConfig.privacy, newConfig.privacy);
     const limitsChanged = !deepEqual(oldConfig.limits, newConfig.limits);
     const instrumentationChanged = !deepEqual(oldConfig.instrumentation, newConfig.instrumentation);
-    const runtimeChanged = !deepEqual(oldConfig.runtime, newConfig.runtime);
     const entitlementsChanged = !deepEqual(oldConfig.entitlements, newConfig.entitlements);
+    if (sdkChanged)
+        collectChanges('sdk', oldConfig.sdk, newConfig.sdk, changes);
     if (featuresChanged)
         collectChanges('features', oldConfig.features, newConfig.features, changes);
     if (killswitchesChanged)
@@ -34,11 +36,10 @@ export function diffConfigs(oldConfig, newConfig) {
         collectChanges('limits', oldConfig.limits, newConfig.limits, changes);
     if (instrumentationChanged)
         changes.set('instrumentation', { old: '[complex]', new: '[complex]' });
-    if (runtimeChanged)
-        collectChanges('runtime', oldConfig.runtime, newConfig.runtime, changes);
     if (entitlementsChanged)
         collectChanges('entitlements', oldConfig.entitlements, newConfig.entitlements, changes);
     return {
+        sdkChanged,
         featuresChanged,
         killswitchesChanged,
         samplingChanged,
@@ -46,7 +47,6 @@ export function diffConfigs(oldConfig, newConfig) {
         privacyChanged,
         limitsChanged,
         instrumentationChanged,
-        runtimeChanged,
         entitlementsChanged,
         changes,
     };

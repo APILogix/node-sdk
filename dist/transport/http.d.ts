@@ -9,6 +9,8 @@ export interface PostJsonOptions {
     compression?: CompressionAlgorithm;
     /** Extra headers to include. */
     extraHeaders?: Record<string, string>;
+    /** Observe a successful parsed response after normal response processing. */
+    onResponse?: (statusCode: number, payload: unknown) => void;
 }
 export interface HttpResponse<T> {
     data: T;

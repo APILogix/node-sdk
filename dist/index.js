@@ -15,7 +15,7 @@
  *
  *     import { createSDK, captureError, monitorMiddleware } from '@vikasbaplawat1/pulse-sdk'
  *
- *     await createSDK({ apiKey: process.env.PULSE_API_KEY!, service: 'payments' })
+ *     await createSDK({ apiKey: process.env.PULSE_API_KEY! })
  *     app.use(monitorMiddleware())
  */
 import { init } from './core/init.js';
@@ -32,9 +32,7 @@ export { SDKError } from './core/errors.js';
  * ```ts
  * const sdk = await createSDK({
  *   apiKey: 'pk_live_...',
- *   service: 'payments-service',
- *   environment: 'production',
- *   plugins: [myPlugin()],
+ *   applicationName: 'payments-service',
  * })
  * ```
  */
@@ -59,7 +57,7 @@ export { setUser, setTag, setTags, removeTag, setExtra, setExtras, removeExtra, 
 export { startSpan, withSpan, withSpanSync, getActiveSpan, flushTracer } from './tracing/tracer.js';
 export { extractTraceContext, injectTraceContext } from './tracing/context-propagation.js';
 // ─── Framework instrumentation ──────────────────────────────────────────────
-export { monitorMiddleware } from './instrumentation/express.js';
+export { monitorMiddleware, expressErrorHandler } from './instrumentation/express.js';
 export { fastifyPulsePlugin } from './instrumentation/fastify.js';
 export { registerAutoInstrumentations } from './instrumentation/auto-instrument.js';
 export { createGraphQLInstrumentation } from './instrumentation/graphql.js';

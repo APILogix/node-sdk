@@ -21,7 +21,8 @@ export interface EventMetadata {
     readonly applicationName: string;
     /** Consuming application's package.json version (or an explicit override). */
     readonly applicationVersion: string;
-    readonly service: string;
+    /** Backend project identity. Sourced exclusively from `config.sdk.projectId`. */
+    readonly projectId: string;
     readonly environment: string;
     /** Deployment release; retained separately from applicationVersion for compatibility. */
     readonly release: string;
@@ -62,6 +63,12 @@ export interface ErrorEvent {
     readonly fingerprint: string;
     readonly timestamp: number;
     readonly severity: SeverityLevel;
+    readonly statusCode?: number | undefined;
+    readonly statusText?: string | undefined;
+    readonly handled?: boolean | undefined;
+    readonly method?: string | undefined;
+    readonly route?: string | undefined;
+    readonly url?: string | undefined;
     readonly context: Readonly<Record<string, unknown>>;
     readonly breadcrumbs?: readonly Breadcrumb[] | undefined;
     readonly traceId?: string | undefined;

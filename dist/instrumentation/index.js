@@ -2,7 +2,6 @@
  * Instrumentation Module — exports all framework instrumentations
  */
 export { registerAutoInstrumentations, resetAutoInstrumentations } from './auto-instrument.js';
-export { instrumentHttpClient, resetHttpInstrumentation } from './http.js';
 export { monitorMiddleware } from './express.js';
 export { createGraphQLInstrumentation } from './graphql.js';
 export { createPrismaInstrumentation } from './prisma.js';

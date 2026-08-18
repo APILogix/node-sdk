@@ -16,7 +16,7 @@ import { trace, SpanKind, context as otelContext, } from '@opentelemetry/api';
 import { computeExclusiveDuration, spanDurationTracker, } from './span-duration.js';
 import { getTraceAggregator, resetTraceAggregator } from './trace-aggregator.js';
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
-import { BatchSpanProcessor, ParentBasedSampler, TraceIdRatioBasedSampler, } from '@opentelemetry/sdk-trace-base';
+import { BatchSpanProcessor, ParentBasedSampler, } from '@opentelemetry/sdk-trace-base';
 import { resourceFromAttributes } from '@opentelemetry/resources';
 import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION, ATTR_DEPLOYMENT_ENVIRONMENT_NAME, } from '@opentelemetry/semantic-conventions';
 import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks';
@@ -39,7 +39,6 @@ let tracer = null;
 let noopTracer = null;
 let initialized = false;
 let ownsProvider = false;
-let sdkConfig = null;
 const TRACER_PROVIDER_SYMBOL = Symbol.for('pulse-sdk.otel.tracer-provider');
 const PULSE_INTERNAL_CONTEXT_KEY = Symbol.for('pulse-sdk.internal-context');
 /**
@@ -93,6 +92,7 @@ class PipelineSpanExporter {
                 let allAccepted = true;
                 const traceIdsInBatch = new Set();
                 const rootTraceIds = new Set();
+                const admittedSpans = new Set();
                 // Pass 1: Record all child intervals for the batch first
                 for (const span of spans) {
                     const ctx = span.spanContext();
@@ -106,6 +106,7 @@ class PipelineSpanExporter {
                     if (!costGovernor.canCreateSpan(traceId) || !costGovernor.canContinueTrace(traceId)) {
                         continue;
                     }
+                    admittedSpans.add(span);
                     const parentSpanId = span.parentSpanContext?.spanId;
                     if (parentSpanId) {
                         spanDurationTracker.recordChildInterval(traceId, parentSpanId, hrTimeToMs(span.startTime), hrTimeToMs(span.endTime));
@@ -113,18 +114,11 @@ class PipelineSpanExporter {
                 }
                 // Pass 2: Process spans, convert to events, and send to aggregator
                 for (const span of spans) {
+                    if (!admittedSpans.has(span))
+                        continue;
                     const ctx = span.spanContext();
                     const traceId = ctx.traceId;
                     traceIdsInBatch.add(traceId);
-                    const isSampled = (ctx.traceFlags & 1) === 1;
-                    const hasError = span.status.code === 2
-                        || span.events.some(e => e.name === 'exception');
-                    if (!isSampled && !hasError) {
-                        continue;
-                    }
-                    if (!costGovernor.canCreateSpan(traceId) || !costGovernor.canContinueTrace(traceId)) {
-                        continue;
-                    }
                     const traceEvent = this.spanToEvent(span);
                     if (!processEvent(traceEvent)) {
                         allAccepted = false;
@@ -193,42 +187,40 @@ class PipelineSpanExporter {
         const durationMs = hrTimeToMs(span.duration);
         const parentSpanId = span.parentSpanContext?.spanId;
         const statusLabel = status.code === 0 ? 'unset' : status.code === 1 ? 'ok' : 'error';
-        // Apply privacy.capture.* gates from remote config — these decide
-        // which attribute classes survive into the exported span. Falls
-        // back to SDK defaults if ConfigManager isn't initialised yet.
-        let filteredAttrs = Object.fromEntries(Object.entries(attrs).filter(([, v]) => v !== undefined));
-        try {
-            const capture = ConfigManager.getInstance().getConfig().privacy?.capture
-                ?? { headers: false, body: false, response: false, query: true, cookies: false };
-            if (!capture.headers) {
-                filteredAttrs = Object.fromEntries(Object.entries(filteredAttrs).filter(([k]) => !k.startsWith('http.request.header.') && !k.startsWith('http.response.header.')));
-            }
-            if (!capture.body) {
-                delete filteredAttrs['http.request.body'];
-                delete filteredAttrs['http.response.body'];
-            }
-            if (!capture.cookies) {
-                delete filteredAttrs['http.request.header.cookie'];
-                delete filteredAttrs['http.request.header.set-cookie'];
-            }
-            if (!capture.response) {
-                filteredAttrs = Object.fromEntries(Object.entries(filteredAttrs).filter(([k]) => !k.startsWith('http.response.')));
-            }
-            // Enforce maxSpanAttributes — sourced from remote `limits.maxSpanAttributes`
-            // (the previous `tracing.maxSpanAttributes` block was dropped from
-            // the wire schema in v3). Falls back to the SDK default if the
-            // engine isn't initialised yet.
-            const limitsCfg = ConfigManager.getInstance().getConfig().limits;
-            const maxAttrs = limitsCfg?.maxSpanAttributes ?? 100;
-            const attrEntries = Object.entries(filteredAttrs);
-            if (attrEntries.length > maxAttrs) {
-                filteredAttrs = Object.fromEntries(attrEntries.slice(0, maxAttrs));
-                filteredAttrs['pulse.attributes_truncated'] = true;
-                filteredAttrs['pulse.original_attribute_count'] = attrEntries.length;
+        // Read one immutable snapshot for all policy applied to this span.
+        const activeConfig = ConfigManager.getInstance().getConfig();
+        const capture = activeConfig.privacy.capture;
+        let filteredAttrs = Object.fromEntries(Object.entries(attrs).filter(([, value]) => value !== undefined));
+        if (!capture.headers) {
+            filteredAttrs = Object.fromEntries(Object.entries(filteredAttrs).filter(([key]) => !key.startsWith('http.request.header.') && !key.startsWith('http.response.header.')));
+        }
+        if (!capture.body) {
+            delete filteredAttrs['http.request.body'];
+            delete filteredAttrs['http.response.body'];
+        }
+        if (!capture.query) {
+            for (const key of ['http.url', 'http.target', 'url.full']) {
+                const value = filteredAttrs[key];
+                if (typeof value === 'string')
+                    filteredAttrs[key] = value.split('?')[0] ?? value;
             }
         }
-        catch {
-            // ConfigManager not initialized — use unfiltered attributes
+        if (!capture.cookies) {
+            delete filteredAttrs['http.request.header.cookie'];
+            delete filteredAttrs['http.request.header.set-cookie'];
+        }
+        if (!capture.response) {
+            delete filteredAttrs['http.response.body'];
+        }
+        const maxAttrs = activeConfig.limits.maxSpanAttributes;
+        const attrEntries = Object.entries(filteredAttrs);
+        if (attrEntries.length > maxAttrs) {
+            const retained = Math.max(0, maxAttrs - Math.min(2, maxAttrs));
+            filteredAttrs = Object.fromEntries(attrEntries.slice(0, retained));
+            if (maxAttrs >= 1)
+                filteredAttrs['pulse.attributes_truncated'] = true;
+            if (maxAttrs >= 2)
+                filteredAttrs['pulse.original_attribute_count'] = attrEntries.length;
         }
         const startTimeMs = hrTimeToMs(span.startTime);
         const endTimeMs = hrTimeToMs(span.endTime);
@@ -267,11 +259,11 @@ class PipelineSpanExporter {
             metadata: {
                 sdkName: SDK_NAME,
                 sdkVersion: SDK_VERSION,
-                applicationName: sdkConfig?.applicationName ?? sdkConfig?.service ?? 'unknown-application',
-                applicationVersion: sdkConfig?.applicationVersion ?? sdkConfig?.release ?? '0.0.0-unknown',
-                service: sdkConfig?.service ?? '',
-                environment: sdkConfig?.environment ?? '',
-                release: sdkConfig?.release ?? '',
+                applicationName: activeConfig.sdk.service ?? activeConfig.sdk.projectId,
+                applicationVersion: activeConfig.sdk.release,
+                projectId: activeConfig.sdk.projectId,
+                environment: activeConfig.sdk.environment,
+                release: activeConfig.sdk.release,
             },
             // Internal marker allows shutdown force-flush to route finished spans
             // while rejecting new user-captured events. Stripped by event pipeline.
@@ -294,7 +286,6 @@ export function initTracer(config, customResources) {
     if (initialized)
         return;
     const logger = getLogger();
-    sdkConfig = config;
     try {
         const globalState = globalThis;
         if (globalState[TRACER_PROVIDER_SYMBOL]) {
@@ -314,9 +305,9 @@ export function initTracer(config, customResources) {
         }
         // Build resource descriptor
         const resource = resourceFromAttributes({
-            [ATTR_SERVICE_NAME]: config.service,
-            [ATTR_SERVICE_VERSION]: config.release,
-            [ATTR_DEPLOYMENT_ENVIRONMENT_NAME]: config.environment,
+            [ATTR_SERVICE_NAME]: config.sdk.service ?? config.sdk.projectId,
+            [ATTR_SERVICE_VERSION]: config.sdk.release,
+            [ATTR_DEPLOYMENT_ENVIRONMENT_NAME]: config.sdk.environment,
             'host.name': os.hostname(),
             'host.arch': os.arch(),
             'os.type': os.type(),
@@ -371,9 +362,9 @@ export function initTracer(config, customResources) {
         // spans can flow through the aggregator.
         getTraceAggregator().start();
         logger.info('OpenTelemetry tracer initialized', {
-            service: config.service,
-            environment: config.environment,
-            release: config.release,
+            service: config.sdk.service ?? config.sdk.projectId,
+            environment: config.sdk.environment,
+            release: config.sdk.release,
         });
     }
     catch (err) {
@@ -487,7 +478,8 @@ export function startSpan(name, options) {
  *   `pulseSpan.parentSpanId` returns and what flows into the exported
  *   span event via OTel's own `parentSpanContext`.
  */
-export async function withSpan(name, fn, options) {
+export async function withSpan(name, fnOrOptions, optionsOrFn) {
+    const { fn, options } = resolveWithSpanArgs(fnOrOptions, optionsOrFn);
     if (!tracer || !customSpansAllowed()) {
         const span = startSpan(name, options);
         try {
@@ -587,7 +579,8 @@ export async function withSpan(name, fn, options) {
  * throws. Use this only when you genuinely need synchronous span ownership;
  * `withSpan` is preferred everywhere else.
  */
-export function withSpanSync(name, fn, options) {
+export function withSpanSync(name, fnOrOptions, optionsOrFn) {
+    const { fn, options } = resolveWithSpanSyncArgs(fnOrOptions, optionsOrFn);
     if (!tracer || !customSpansAllowed()) {
         const span = startSpan(name, options);
         try {
@@ -698,7 +691,6 @@ export async function shutdownTracer() {
         // `initialized` flag from a partial init doesn't block reinit.
         initialized = false;
         tracer = null;
-        sdkConfig = null;
         ownsProvider = false;
         // Clear the global guard if we own it — otherwise leave it for
         // whoever registered the provider externally.
@@ -712,7 +704,6 @@ export async function shutdownTracer() {
     // forceFlush/shutdown on the same provider instance.
     provider = null;
     tracer = null;
-    sdkConfig = null;
     ownsProvider = false;
     initialized = false;
     try {
@@ -771,6 +762,24 @@ function spanKindToString(kind) {
         case SpanKind.CONSUMER: return 'consumer';
         default: return 'internal';
     }
+}
+function resolveWithSpanArgs(fnOrOptions, optionsOrFn) {
+    if (typeof fnOrOptions === 'function') {
+        return { fn: fnOrOptions, options: optionsOrFn };
+    }
+    if (typeof optionsOrFn === 'function') {
+        return { fn: optionsOrFn, options: fnOrOptions };
+    }
+    throw new TypeError('withSpan requires a callback function');
+}
+function resolveWithSpanSyncArgs(fnOrOptions, optionsOrFn) {
+    if (typeof fnOrOptions === 'function') {
+        return { fn: fnOrOptions, options: optionsOrFn };
+    }
+    if (typeof optionsOrFn === 'function') {
+        return { fn: optionsOrFn, options: fnOrOptions };
+    }
+    throw new TypeError('withSpanSync requires a callback function');
 }
 function toOtelSpanOptions(options) {
     const otelOptions = {};

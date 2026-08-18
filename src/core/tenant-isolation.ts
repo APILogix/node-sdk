@@ -8,34 +8,16 @@
  * - NO per-tenant SDK instances, exporters, or queues
  *
  * This module provides:
- * - Per-tenant sliding window rate limiting
- * - Fair scheduling across tenants
- * - Starvation prevention
- * - LRU eviction for tenant tracking
+ * - Per-tenant window admission
+ * - Critical-event reserve
+ * - LRU-bounded tenant tracking
  */
 
 import { getLogger } from '../utils/logger.js'
 import { epochMs } from '../utils/time.js'
+import type { TenantGovernanceConfig } from '../types/config.js'
 
 // ─── Types ──────────────────────────────────────────────────────────────────
-
-export interface TenantGovernanceOptions {
-    /** Disabled by default until configured by the control plane. */
-    readonly enabled?: boolean
-    /** Max tenants to track simultaneously. Default: 1000 */
-    readonly maxTenantsTracked?: number
-    /** Legacy quota name. */
-    readonly defaultQuotaPerTenant?: number
-    /** Events accepted per window. */
-    readonly quotaPerWindow?: number
-    /** High-priority events accepted after normal quota. */
-    readonly criticalReserve?: number
-    /** Enable fair scheduling across tenants. Reserved for queue schedulers. */
-    readonly enableFairScheduling?: boolean
-    /** Window duration for rate limiting in ms. Default: 60000 (1 minute) */
-    readonly windowDurationMs?: number
-}
-
 export interface TenantStats {
     readonly activeTenants: number
     readonly throttledTenants: number
@@ -53,29 +35,36 @@ interface TenantWindow {
 // ─── Implementation ─────────────────────────────────────────────────────────
 
 const DEFAULT_TENANT = '_default'
+const PRE_INIT_TENANT_GOVERNANCE: TenantGovernanceConfig = Object.freeze({
+    enabled: false,
+    maxTenantsTracked: 1,
+    quotaPerWindow: 1,
+    criticalReserve: 0,
+    windowDurationMs: 60_000,
+})
 
 export class TenantGovernor {
-    private enabled = false
-    private maxTenantsTracked = 1000
-    private defaultQuota = 100
-    private criticalReserve = 25
-    private windowDurationMs = 60_000
+    private enabled = PRE_INIT_TENANT_GOVERNANCE.enabled
+    private maxTenantsTracked = PRE_INIT_TENANT_GOVERNANCE.maxTenantsTracked
+    private defaultQuota = PRE_INIT_TENANT_GOVERNANCE.quotaPerWindow
+    private criticalReserve = PRE_INIT_TENANT_GOVERNANCE.criticalReserve
+    private windowDurationMs = PRE_INIT_TENANT_GOVERNANCE.windowDurationMs
     private readonly windows = new Map<string, TenantWindow>()
     private totalThrottled = 0
     private cleanupTimer: ReturnType<typeof setInterval> | null = null
 
-    constructor(options: TenantGovernanceOptions = {}) {
+    constructor(options: TenantGovernanceConfig = PRE_INIT_TENANT_GOVERNANCE) {
         this.configure(options)
         this.cleanupTimer = setInterval(() => this.cleanup(), 30_000)
         this.cleanupTimer.unref()
     }
 
-    configure(options: TenantGovernanceOptions | undefined): void {
-        this.enabled = options?.enabled ?? false
-        this.maxTenantsTracked = Math.max(1, Math.floor(options?.maxTenantsTracked ?? 1000))
-        this.defaultQuota = Math.max(1, Math.floor(options?.quotaPerWindow ?? options?.defaultQuotaPerTenant ?? 100))
-        this.criticalReserve = Math.max(0, Math.floor(options?.criticalReserve ?? 25))
-        this.windowDurationMs = Math.max(1000, Math.floor(options?.windowDurationMs ?? 60_000))
+    configure(options: TenantGovernanceConfig): void {
+        this.enabled = options.enabled
+        this.maxTenantsTracked = options.maxTenantsTracked
+        this.defaultQuota = options.quotaPerWindow
+        this.criticalReserve = options.criticalReserve
+        this.windowDurationMs = options.windowDurationMs
         this.reset()
     }
 
@@ -112,73 +101,6 @@ export class TenantGovernor {
             })
         }
         return false
-    }
-
-    /**
-     * Check if a tenant can accept another event.
-     * Returns true if the event should be accepted, false if rate-limited.
-     */
-    canAcceptEvent(tenantId: string | undefined): boolean {
-        if (!this.enabled) return true
-        const id = tenantId ?? DEFAULT_TENANT
-        const now = epochMs()
-        let window = this.windows.get(id)
-
-        if (!window) {
-            // New tenant — check capacity
-            if (this.windows.size >= this.maxTenantsTracked) {
-                this.evictOldest()
-            }
-
-            window = {
-                eventCount: 0,
-                criticalCount: 0,
-                windowStart: now,
-                lastSeen: now,
-                throttledCount: 0,
-            }
-            this.windows.set(id, window)
-        }
-
-        // Reset window if expired
-        if (now - window.windowStart > this.windowDurationMs) {
-            window.eventCount = 0
-            window.windowStart = now
-        }
-
-        window.lastSeen = now
-
-        // Check quota
-        if (window.eventCount >= this.defaultQuota) {
-            window.throttledCount++
-            this.totalThrottled++
-
-            if (window.throttledCount % 50 === 1) {
-                getLogger().warn('Tenant rate limited', {
-                    tenantId: id === DEFAULT_TENANT ? '(default)' : id.slice(0, 8) + '...',
-                    eventCount: window.eventCount,
-                    quota: this.defaultQuota,
-                    windowMs: this.windowDurationMs,
-                })
-            }
-
-            return false
-        }
-
-        return true
-    }
-
-    /**
-     * Record that an event was accepted for a tenant.
-     */
-    recordEvent(tenantId: string | undefined): void {
-        if (!this.enabled) return
-        const id = tenantId ?? DEFAULT_TENANT
-        const window = this.windows.get(id)
-        if (window) {
-            window.eventCount++
-            window.lastSeen = epochMs()
-        }
     }
 
     getStats(): TenantStats {

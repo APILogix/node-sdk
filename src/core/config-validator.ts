@@ -1,28 +1,27 @@
-/**
- * Validates the shape of a `RemoteConfigResponse` received from the
- * control plane.
- *
- * The SDK never trusts the wire payload blindly. Every field that
- * subsystems read is checked here; a missing or wrong-typed field flips
- * the response to "invalid" and the SDK falls back to baked-in safe
- * defaults. The validator is intentionally **lenient on extras** — the
- * backend can add new fields in a forward-compatible way without
- * breaking older SDKs.
- *
- * Why a hand-rolled validator instead of a Zod schema:
- *   - Zero-allocation hot path. Validation runs on every refresh, and
- *     building a Zod schema's parse tree per call is overhead we don't
- *     need.
- *   - Better error messages. We can collect every issue at once instead
- *     of failing at the first bad key.
- *   - No external coupling. The SDK already pulls Zod for `SDKInitOptions`,
- *     but the wire schema is a hot path and the tradeoff goes the other way.
- */
-
 import type { RemoteConfigResponse } from '../types/config.js'
 import { REMOTE_CONFIG_SCHEMA_VERSION } from '../types/config.js'
+import { SAFETY_CEILINGS } from '../constants/defaults.js'
 
-const REQUIRED_ROUTES = ['traces', 'requests', 'spans', 'errors', 'metrics', 'logs', 'profiles', 'events', 'crons', 'replays'] as const
+const FEATURE_KEYS = [
+  'tracing', 'requestCapture', 'errors', 'metrics', 'logging', 'profiling',
+  'crons', 'sessionReplay', 'runtimeMetrics', 'eventLoopMonitoring', 'gcMonitoring',
+] as const
+const SAMPLING_KEYS = [
+  'traces', 'requests', 'spans', 'errors', 'messages', 'profiles',
+  'replays', 'metrics', 'logs', 'events', 'crons',
+] as const
+const KILLSWITCH_KEYS = [
+  'disableSDK', 'disableTracing', 'disableMetrics', 'disableTransport',
+  'disableProfiling', 'disableErrors', 'disableLogs',
+] as const
+const ENTITLEMENT_KEYS = [
+  'customSpans', 'customMetrics', 'profiling', 'logging', 'sessionReplay',
+  'crons', 'requestCapture', 'tracing', 'errors', 'metrics',
+] as const
+const REQUIRED_ROUTES = [
+  'traces', 'requests', 'spans', 'errors', 'metrics', 'logs', 'profiles',
+  'events', 'crons', 'replays',
+] as const
 
 export interface ValidationResult {
   readonly valid: boolean
@@ -30,158 +29,359 @@ export interface ValidationResult {
 }
 
 /**
- * Validate a deserialized JSON payload as a `RemoteConfigResponse`.
- *
- * Returns `valid: true` if every required top-level section is present
- * with a plausible type. The fine-grained per-field shape (e.g. that
- * `limits.maxQueueSize` is a non-negative integer) is the safety
- * clamp's job — the validator only catches "nonsense top-level shape".
+ * Validate a complete replacement snapshot. No defaults, deep merges, or
+ * partial patches are accepted: either every subsystem can consume the
+ * document or the entire document is rejected.
  */
 export function validateRemoteConfig(payload: unknown): ValidationResult {
   const errors: string[] = []
+  if (!isRecord(payload)) return invalid('payload is not a JSON object')
+  const config = payload
 
-  if (payload == null || typeof payload !== 'object' || Array.isArray(payload)) {
-    return { valid: false, errors: ['payload is not a JSON object'] }
-  }
-  const cfg = payload as Record<string, unknown>
-
-  // Schema version — required, must be a positive integer, must not exceed
-  // what this SDK was compiled against.
-  if (typeof cfg['schemaVersion'] !== 'number' || !Number.isInteger(cfg['schemaVersion']) || cfg['schemaVersion'] < 1) {
-    errors.push('schemaVersion is missing or not a positive integer')
-  } else if ((cfg['schemaVersion'] as number) > REMOTE_CONFIG_SCHEMA_VERSION) {
-    errors.push(
-      `schemaVersion ${cfg['schemaVersion']} is newer than SDK-supported ${REMOTE_CONFIG_SCHEMA_VERSION}; SDK upgrade required`,
-    )
+  integer(config, 'schemaVersion', errors, 1, REMOTE_CONFIG_SCHEMA_VERSION)
+  if (typeof config['schemaVersion'] === 'number' && config['schemaVersion'] > REMOTE_CONFIG_SCHEMA_VERSION) {
+    errors.push(`schemaVersion ${config['schemaVersion']} is newer than SDK-supported ${REMOTE_CONFIG_SCHEMA_VERSION}; SDK upgrade required`)
   }
 
-  // Required top-level sections. Each must be a plain object.
-  for (const section of ['features', 'sampling', 'instrumentation', 'privacy', 'limits', 'killswitches', 'transport', 'runtime'] as const) {
-    if (!isPlainObject(cfg[section])) {
-      errors.push(`${section} is missing or not an object`)
-    }
-  }
-
-  // sdk identity — required object with at least projectId + environment.
-  if (!isPlainObject(cfg['sdk'])) {
-    errors.push('sdk is missing or not an object')
-  } else {
-    const sdk = cfg['sdk'] as Record<string, unknown>
-    if (typeof sdk['projectId'] !== 'string' || sdk['projectId'].length === 0) {
-      errors.push('sdk.projectId is missing or empty')
-    }
-    if (typeof sdk['environment'] !== 'string' || sdk['environment'].length === 0) {
-      errors.push('sdk.environment is missing or empty')
-    }
-  }
-
-  // transport.routes — must contain url strings for every route name. The
-  // safety clamp can fix bad numerics, but a missing URL means we have
-  // nowhere to send.
-  const transport = cfg['transport']
-  if (isPlainObject(transport)) {
-    const routes = (transport as Record<string, unknown>)['routes']
-    if (!isPlainObject(routes)) {
-      errors.push('transport.routes is missing or not an object')
-    } else {
-      for (const name of REQUIRED_ROUTES) {
-        const route = (routes as Record<string, unknown>)[name]
-        if (!isPlainObject(route)) {
-          errors.push(`transport.routes.${name} is missing or not an object`)
-          continue
-        }
-        const r = route as Record<string, unknown>
-        if (typeof r['url'] !== 'string' || r['url'].length === 0 || !isAllowedTransportUrl(r['url'])) {
-          errors.push(`transport.routes.${name}.url is missing or not an allowed HTTP(S) URL`)
-        }
-        for (const field of ['batchSize', 'flushIntervalMs', 'timeoutMs'] as const) {
-          if (typeof r[field] !== 'number' || !Number.isInteger(r[field]) || (field === 'flushIntervalMs' ? r[field] < 0 : r[field] <= 0)) {
-            errors.push(`transport.routes.${name}.${field} is invalid`)
-          }
-        }
-        if (r['compression'] !== 'gzip' && r['compression'] !== 'none') {
-          errors.push(`transport.routes.${name}.compression is invalid`)
-        }
-      }
-    }
-  }
-
-  // sampling.* — per-event-type rates must be numbers in [0, 1].
-  const sampling = cfg['sampling']
-  if (isPlainObject(sampling)) {
-    const s = sampling as Record<string, unknown>
-    for (const k of ['traces', 'requests', 'errors', 'profiles', 'replays', 'metrics']) {
-      if (k in s && !isProbability(s[k])) {
-        errors.push(`sampling.${k} is not a number in [0, 1]`)
-      }
-    }
-  }
-
-  // features.* — every value must be boolean (we don't list every key here;
-  // the deep-merge will keep unknown extras). A wrong-typed value is the
-  // dangerous case — `1` for `tracing` would coerce truthy and silently
-  // turn things on.
-  const features = cfg['features']
-  if (isPlainObject(features)) {
-    for (const [k, v] of Object.entries(features as Record<string, unknown>)) {
-      if (typeof v !== 'boolean') {
-        errors.push(`features.${k} is not a boolean`)
-      }
-    }
-  }
-
-  // killswitches.* — same boolean rule.
-  const killswitches = cfg['killswitches']
-  if (isPlainObject(killswitches)) {
-    for (const [k, v] of Object.entries(killswitches as Record<string, unknown>)) {
-      if (typeof v !== 'boolean') {
-        errors.push(`killswitches.${k} is not a boolean`)
-      }
-    }
-  }
-
-  // entitlements.* — OPTIONAL section (backends predating it omit it and
-  // every entitlement fails open). When present, same boolean rule as
-  // features: a wrong-typed value would coerce truthy/falsy and silently
-  // enable or disable paid APIs.
-  const entitlements = cfg['entitlements']
-  if (entitlements !== undefined) {
-    if (!isPlainObject(entitlements)) {
-      errors.push('entitlements is not an object')
-    } else {
-      for (const [k, v] of Object.entries(entitlements as Record<string, unknown>)) {
-        if (typeof v !== 'boolean') {
-          errors.push(`entitlements.${k} is not a boolean`)
-        }
-      }
-    }
-  }
+  validateIdentity(config['sdk'], errors)
+  validateBooleanSection(config['features'], 'features', FEATURE_KEYS, errors)
+  validateSampling(config['sampling'], errors)
+  validateInstrumentation(config['instrumentation'], errors)
+  validatePrivacy(config['privacy'], errors)
+  validateLimits(config['limits'], errors)
+  validateBooleanSection(config['killswitches'], 'killswitches', KILLSWITCH_KEYS, errors)
+  validateTransport(config['transport'], errors)
+  validateMeta(config['meta'], errors)
+  validateBooleanSection(config['entitlements'], 'entitlements', ENTITLEMENT_KEYS, errors)
+  validateCrossSectionInvariants(config, errors)
 
   return { valid: errors.length === 0, errors }
 }
 
-function isPlainObject(v: unknown): v is Record<string, unknown> {
-  return v !== null && typeof v === 'object' && !Array.isArray(v)
+export function assertRemoteConfig(payload: unknown): asserts payload is RemoteConfigResponse {
+  const result = validateRemoteConfig(payload)
+  if (!result.valid) {
+    throw new Error(
+      `Remote config validation failed: ${result.errors.slice(0, 8).join('; ')}`
+      + (result.errors.length > 8 ? ` (+${result.errors.length - 8} more)` : ''),
+    )
+  }
+}
+
+export function isRemoteConfigResponse(value: unknown): value is RemoteConfigResponse {
+  return validateRemoteConfig(value).valid
+}
+
+function validateIdentity(value: unknown, errors: string[]): void {
+  if (!section(value, 'sdk', errors)) return
+  nonEmptyString(value, 'projectId', 'sdk.projectId', errors)
+  optionalNonEmptyString(value, 'service', 'sdk.service', errors)
+  nonEmptyString(value, 'environment', 'sdk.environment', errors)
+  nonEmptyString(value, 'release', 'sdk.release', errors)
+}
+
+function validateSampling(value: unknown, errors: string[]): void {
+  if (!section(value, 'sampling', errors)) return
+  for (const key of SAMPLING_KEYS) probability(value, key, `sampling.${key}`, errors)
+
+  const routes = value['routes']
+  if (!isRecord(routes)) {
+    errors.push('sampling.routes is missing or not an object')
+    return
+  }
+  for (const [prefix, rates] of Object.entries(routes)) {
+    if (!prefix) errors.push('sampling.routes contains an empty route prefix')
+    if (!isRecord(rates)) {
+      errors.push(`sampling.routes.${prefix} is not an object`)
+      continue
+    }
+    for (const [key, rate] of Object.entries(rates)) {
+      if (!(SAMPLING_KEYS as readonly string[]).includes(key)) {
+        errors.push(`sampling.routes.${prefix}.${key} is not a supported sampling family`)
+      } else if (!isProbability(rate)) {
+        errors.push(`sampling.routes.${prefix}.${key} is not a number in [0, 1]`)
+      }
+    }
+  }
+}
+
+function validateInstrumentation(value: unknown, errors: string[]): void {
+  if (!section(value, 'instrumentation', errors)) return
+  for (const key of ['http', 'https', 'fetch', 'axios', 'mongodb', 'redis', 'eventEmitterPatch'] as const) {
+    boolean(value, key, `instrumentation.${key}`, errors)
+  }
+  booleanOrObject(value, 'express', ['enabled'], errors)
+  booleanOrObject(value, 'fastify', ['enabled', 'captureHooks', 'captureValidationErrors'], errors)
+  booleanOrObject(value, 'graphql', ['enabled', 'captureResolvers'], errors)
+  booleanOrObject(value, 'prisma', ['enabled', 'captureQueries', 'captureParams'], errors)
+  booleanOrObject(value, 'pg', ['enabled', 'captureQueries', 'captureParams'], errors)
+  booleanOrObject(value, 'mysql2', ['enabled', 'captureQueries'], errors)
+  booleanOrObject(value, 'bullmq', ['enabled'], errors, [
+    'emitCreateSpansForBulk', 'emitCreateSpansForFlow', 'requireParentSpanForPublish',
+  ])
+}
+
+function validatePrivacy(value: unknown, errors: string[]): void {
+  if (!section(value, 'privacy', errors)) return
+  const capture = value['capture']
+  if (section(capture, 'privacy.capture', errors)) {
+    for (const key of ['headers', 'body', 'response', 'query', 'cookies'] as const) {
+      boolean(capture, key, `privacy.capture.${key}`, errors)
+    }
+  }
+
+  const scrubbing = value['scrubbing']
+  if (section(scrubbing, 'privacy.scrubbing', errors)) {
+    boolean(scrubbing, 'enabled', 'privacy.scrubbing.enabled', errors)
+    stringArray(scrubbing, 'headers', 'privacy.scrubbing.headers', errors)
+    stringArray(scrubbing, 'fields', 'privacy.scrubbing.fields', errors)
+  }
+
+  const pii = value['piiDetection']
+  if (section(pii, 'privacy.piiDetection', errors)) {
+    for (const key of ['enabled', 'maskEmails', 'maskPhones', 'maskIPs'] as const) {
+      boolean(pii, key, `privacy.piiDetection.${key}`, errors)
+    }
+  }
+}
+
+function validateLimits(value: unknown, errors: string[]): void {
+  if (!section(value, 'limits', errors)) return
+  integer(value, 'maxSpansPerTrace', errors, 1, SAFETY_CEILINGS.maxSpansPerTrace, 'limits')
+  integer(value, 'maxSpanAttributes', errors, 1, SAFETY_CEILINGS.maxSpanAttributes, 'limits')
+  integer(value, 'maxAttributeLength', errors, 1, SAFETY_CEILINGS.maxAttributeLength, 'limits')
+  integer(value, 'maxPayloadSize', errors, 1_024, SAFETY_CEILINGS.maxPayloadSize, 'limits')
+  integer(value, 'maxQueueSize', errors, 1, SAFETY_CEILINGS.maxQueueSize, 'limits')
+  memoryLimit(value, 'maxMemoryMb', errors)
+  if ('maxCpuOverheadPercent' in value) {
+    errors.push('limits.maxCpuOverheadPercent is no longer supported because the SDK cannot enforce it')
+  }
+
+  const tenant = value['tenantGovernance']
+  if (section(tenant, 'limits.tenantGovernance', errors)) {
+    boolean(tenant, 'enabled', 'limits.tenantGovernance.enabled', errors)
+    integer(tenant, 'maxTenantsTracked', errors, 1, 100_000, 'limits.tenantGovernance')
+    integer(tenant, 'quotaPerWindow', errors, 1, 1_000_000, 'limits.tenantGovernance')
+    integer(tenant, 'windowDurationMs', errors, 1_000, 3_600_000, 'limits.tenantGovernance')
+    integer(tenant, 'criticalReserve', errors, 0, 100_000, 'limits.tenantGovernance')
+  }
+}
+
+function validateTransport(value: unknown, errors: string[]): void {
+  if (!section(value, 'transport', errors)) return
+
+  const retry = value['retry']
+  if (section(retry, 'transport.retry', errors)) {
+    boolean(retry, 'enabled', 'transport.retry.enabled', errors)
+    integer(retry, 'maxRetries', errors, 0, SAFETY_CEILINGS.retryMaxRetries, 'transport.retry')
+    if (!['exponential', 'linear', 'fixed'].includes(String(retry['backoff']))) {
+      errors.push('transport.retry.backoff is invalid')
+    }
+    integer(retry, 'baseDelayMs', errors, 0, SAFETY_CEILINGS.retryBaseDelayMs, 'transport.retry')
+  }
+
+  const queue = value['queue']
+  if (section(queue, 'transport.queue', errors)) {
+    if (queue['overflowStrategy'] !== 'drop_oldest' && queue['overflowStrategy'] !== 'drop_newest') {
+      errors.push('transport.queue.overflowStrategy is invalid')
+    }
+    integer(queue, 'maxSize', errors, 1, SAFETY_CEILINGS.maxQueueSize, 'transport.queue')
+    integer(queue, 'criticalReserve', errors, 0, SAFETY_CEILINGS.maxQueueSize, 'transport.queue')
+    if (Number.isInteger(queue['maxSize']) && Number.isInteger(queue['criticalReserve'])
+      && (queue['criticalReserve'] as number) > (queue['maxSize'] as number)) {
+      errors.push('transport.queue.criticalReserve cannot exceed transport.queue.maxSize')
+    }
+  }
+
+  boolean(value, 'keepAlive', 'transport.keepAlive', errors)
+
+  const connections = value['connections']
+  if (section(connections, 'transport.connections', errors)) {
+    integer(connections, 'maxTotalConnections', errors, 1, 500, 'transport.connections')
+    integer(connections, 'acquireTimeoutMs', errors, 100, 60_000, 'transport.connections')
+    if (connections['maxConnectionsPerRoute'] !== undefined) {
+      const perRoute = connections['maxConnectionsPerRoute']
+      if (!isRecord(perRoute)) {
+        errors.push('transport.connections.maxConnectionsPerRoute is not an object')
+      } else {
+        for (const [route, count] of Object.entries(perRoute)) {
+          if (!(REQUIRED_ROUTES as readonly string[]).includes(route)) {
+            errors.push(`transport.connections.maxConnectionsPerRoute.${route} is not a supported route`)
+          } else if (!Number.isInteger(count) || (count as number) < 1 || (count as number) > 100) {
+            errors.push(`transport.connections.maxConnectionsPerRoute.${route} is invalid`)
+          }
+        }
+      }
+    }
+  }
+
+  const routes = value['routes']
+  if (!isRecord(routes)) {
+    errors.push('transport.routes is missing or not an object')
+    return
+  }
+  for (const name of REQUIRED_ROUTES) {
+    const route = routes[name]
+    if (!isRecord(route)) {
+      errors.push(`transport.routes.${name} is missing or not an object`)
+      continue
+    }
+    if (typeof route['url'] !== 'string' || !isAllowedTransportUrl(route['url'])) {
+      errors.push(`transport.routes.${name}.url is missing or not an allowed HTTP(S) URL`)
+    }
+    integer(route, 'batchSize', errors, 1, SAFETY_CEILINGS.batchSize, `transport.routes.${name}`)
+    integer(route, 'flushIntervalMs', errors, 0, SAFETY_CEILINGS.flushIntervalMs, `transport.routes.${name}`)
+    integer(route, 'timeoutMs', errors, 250, SAFETY_CEILINGS.timeoutMs, `transport.routes.${name}`)
+    if (route['compression'] !== 'gzip' && route['compression'] !== 'none') {
+      errors.push(`transport.routes.${name}.compression is invalid`)
+    }
+    if (!['critical', 'high', 'normal', 'low'].includes(String(route['priority']))) {
+      errors.push(`transport.routes.${name}.priority is invalid`)
+    }
+  }
+}
+
+function validateCrossSectionInvariants(config: Record<string, unknown>, errors: string[]): void {
+  const limits = config['limits']
+  const transport = config['transport']
+  if (!isRecord(limits) || !isRecord(transport) || !isRecord(transport['queue'])) return
+
+  const maxQueueSize = limits['maxQueueSize']
+  const routeQueueSize = transport['queue']['maxSize']
+  if (Number.isInteger(maxQueueSize) && Number.isInteger(routeQueueSize)
+    && (routeQueueSize as number) > (maxQueueSize as number)) {
+    errors.push('transport.queue.maxSize cannot exceed limits.maxQueueSize')
+  }
+}
+
+function validateMeta(value: unknown, errors: string[]): void {
+  if (!section(value, 'meta', errors)) return
+  nonEmptyString(value, 'generatedAt', 'meta.generatedAt', errors)
+  if (typeof value['generatedAt'] === 'string' && Number.isNaN(Date.parse(value['generatedAt']))) {
+    errors.push('meta.generatedAt is not a valid date')
+  }
+  nonEmptyString(value, 'generatedBy', 'meta.generatedBy', errors)
+  optionalNonEmptyString(value, 'configHash', 'meta.configHash', errors)
+}
+
+function validateBooleanSection(
+  value: unknown,
+  name: string,
+  keys: readonly string[],
+  errors: string[],
+): void {
+  if (!section(value, name, errors)) return
+  for (const key of keys) boolean(value, key, `${name}.${key}`, errors)
+}
+
+function booleanOrObject(
+  value: Record<string, unknown>,
+  key: string,
+  requiredBooleanKeys: readonly string[],
+  errors: string[],
+  optionalBooleanKeys: readonly string[] = [],
+): void {
+  const candidate = value[key]
+  if (typeof candidate === 'boolean') return
+  if (!isRecord(candidate)) {
+    errors.push(`instrumentation.${key} is not a boolean or object`)
+    return
+  }
+  for (const nested of requiredBooleanKeys) boolean(candidate, nested, `instrumentation.${key}.${nested}`, errors)
+  for (const nested of optionalBooleanKeys) {
+    if (candidate[nested] !== undefined) boolean(candidate, nested, `instrumentation.${key}.${nested}`, errors)
+  }
+}
+
+function section(value: unknown, name: string, errors: string[]): value is Record<string, unknown> {
+  if (!isRecord(value)) {
+    errors.push(`${name} is missing or not an object`)
+    return false
+  }
+  return true
+}
+
+function boolean(value: Record<string, unknown>, key: string, path: string, errors: string[]): void {
+  if (typeof value[key] !== 'boolean') errors.push(`${path} is missing or not a boolean`)
+}
+
+function probability(value: Record<string, unknown>, key: string, path: string, errors: string[]): void {
+  if (!isProbability(value[key])) errors.push(`${path} is not a number in [0, 1]`)
+}
+
+function integer(
+  value: Record<string, unknown>,
+  key: string,
+  errors: string[],
+  min: number,
+  max: number,
+  prefix = '',
+): void {
+  const candidate = value[key]
+  const path = prefix ? `${prefix}.${key}` : key
+  if (typeof candidate !== 'number' || !Number.isInteger(candidate) || candidate < min || candidate > max) {
+    errors.push(`${path} is missing or outside [${min}, ${max}]`)
+  }
+}
+
+function finiteNumber(
+  value: Record<string, unknown>,
+  key: string,
+  errors: string[],
+  min: number,
+  max: number,
+  prefix: string,
+): void {
+  const candidate = value[key]
+  if (typeof candidate !== 'number' || !Number.isFinite(candidate) || candidate < min || candidate > max) {
+    errors.push(`${prefix}.${key} is missing or outside [${min}, ${max}]`)
+  }
+}
+
+function memoryLimit(value: Record<string, unknown>, key: string, errors: string[]): void {
+  const candidate = value[key]
+  if (candidate === 'auto') return
+  if (typeof candidate !== 'number' || !Number.isFinite(candidate) || candidate < 1 || candidate > SAFETY_CEILINGS.maxMemoryMb) {
+    errors.push(`limits.${key} must be "auto" or a number in [1, ${SAFETY_CEILINGS.maxMemoryMb}]`)
+  }
+}
+
+function nonEmptyString(value: Record<string, unknown>, key: string, path: string, errors: string[]): void {
+  if (typeof value[key] !== 'string' || value[key].trim().length === 0) errors.push(`${path} is missing or empty`)
+}
+
+function optionalNonEmptyString(value: Record<string, unknown>, key: string, path: string, errors: string[]): void {
+  if (value[key] !== undefined && (typeof value[key] !== 'string' || value[key].trim().length === 0)) {
+    errors.push(`${path} is empty or not a string`)
+  }
+}
+
+function stringArray(value: Record<string, unknown>, key: string, path: string, errors: string[]): void {
+  const candidate = value[key]
+  if (!Array.isArray(candidate) || candidate.some(item => typeof item !== 'string' || item.length === 0)) {
+    errors.push(`${path} is missing or not an array of non-empty strings`)
+  }
 }
 
 function isAllowedTransportUrl(value: string): boolean {
   try {
     const url = new URL(value)
+    if (url.username || url.password || url.hash) return false
     if (url.protocol === 'https:') return true
-    return url.protocol === 'http:' && (url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '::1')
+    return url.protocol === 'http:' && ['localhost', '127.0.0.1', '::1', '[::1]'].includes(url.hostname)
   } catch {
     return false
   }
 }
 
-function isProbability(v: unknown): boolean {
-  return typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 1
+function isProbability(value: unknown): boolean {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1
 }
 
-/**
- * Type guard — narrows `unknown` to `RemoteConfigResponse` after validation.
- * Useful at callsite to satisfy TypeScript without a manual cast.
- */
-export function isRemoteConfigResponse(v: unknown): v is RemoteConfigResponse {
-  return validateRemoteConfig(v).valid
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function invalid(message: string): ValidationResult {
+  return { valid: false, errors: [message] }
 }

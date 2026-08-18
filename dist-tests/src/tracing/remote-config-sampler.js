@@ -19,8 +19,9 @@ export class RemoteConfigSampler {
     shouldSample(_context, traceId, _spanName, _spanKind, attributes, _links) {
         const samplingEngine = SamplingEngine.getInstance();
         if (!samplingEngine) {
-            // Fallback: sample everything if engine not initialized
-            return { decision: SamplingDecision.RECORD_AND_SAMPLED };
+            // Record locally so error-bearing spans remain eligible, but do not
+            // mark ordinary spans sampled without an authoritative snapshot.
+            return { decision: SamplingDecision.RECORD };
         }
         const httpUrl = attributes['http.url'];
         const httpTarget = attributes['http.target'];

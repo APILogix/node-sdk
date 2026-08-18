@@ -36,7 +36,7 @@ export interface AdaptivePressureOptions {
 }
 export declare class AdaptivePressureMonitor {
     private readonly pollIntervalMs;
-    private readonly getQueueUtilization;
+    private getQueueUtilization;
     private readonly memoryMonitor;
     private readonly options;
     private timer;

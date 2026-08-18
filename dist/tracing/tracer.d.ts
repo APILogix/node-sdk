@@ -14,7 +14,7 @@
  */
 import { type Tracer, type Context } from '@opentelemetry/api';
 import { PulseSpan, type SpanOptions } from './span.js';
-import type { ResolvedSDKConfig } from '../types/config.js';
+import type { RemoteConfigResponse } from '../types/config.js';
 import type { ResourceAttributes } from '../utils/resource-detector.js';
 /**
  * Initialize the OpenTelemetry tracer provider.
@@ -22,7 +22,7 @@ import type { ResourceAttributes } from '../utils/resource-detector.js';
  *
  * Idempotent — safe to call multiple times.
  */
-export declare function initTracer(config: ResolvedSDKConfig, customResources?: ResourceAttributes): void;
+export declare function initTracer(config: Readonly<RemoteConfigResponse>, customResources?: ResourceAttributes): void;
 /**
  * Start a new span and return a `PulseSpan` wrapper.
  *
@@ -86,14 +86,14 @@ export declare function startSpan(name: string, options?: SpanOptions): PulseSpa
  *   `pulseSpan.parentSpanId` returns and what flows into the exported
  *   span event via OTel's own `parentSpanContext`.
  */
-export declare function withSpan<T>(name: string, fn: (span: PulseSpan) => T | Promise<T>, options?: SpanOptions): Promise<T>;
+export declare function withSpan<T>(name: string, fnOrOptions: ((span: PulseSpan) => T | Promise<T>) | SpanOptions, optionsOrFn?: SpanOptions | ((span: PulseSpan) => T | Promise<T>)): Promise<T>;
 /**
  * Synchronous version of `withSpan`. Same contract, except `fn` may not
  * return a Promise. The span is ended synchronously when `fn` returns or
  * throws. Use this only when you genuinely need synchronous span ownership;
  * `withSpan` is preferred everywhere else.
  */
-export declare function withSpanSync<T>(name: string, fn: (span: PulseSpan) => T, options?: SpanOptions): T;
+export declare function withSpanSync<T>(name: string, fnOrOptions: ((span: PulseSpan) => T) | SpanOptions, optionsOrFn?: SpanOptions | ((span: PulseSpan) => T)): T;
 /**
  * Get the currently active span (if any).
  */

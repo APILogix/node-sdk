@@ -1,13 +1,12 @@
 import { describe, it, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { gunzipSync } from 'node:zlib'
-import { BAKED_IN_REMOTE_CONFIG } from '../../src/constants/defaults.js'
+import { TEST_REMOTE_CONFIG as BAKED_IN_REMOTE_CONFIG } from '../fixtures/remote-config.js'
 import { TransportRouter } from '../../src/transport/transport-router.js'
 import type { SDKEvent } from '../../src/types/event.js'
 import type { TransportRemoteConfig } from '../../src/types/config.js'
 
-// Every batch leaves the SDK gzip-compressed (always-on transport
-// contract), so fetch stubs must decompress before asserting on payloads.
+// Parse either backend-configured gzip or uncompressed JSON batches.
 function parseBody(body: unknown): any {
   const buf = typeof body === 'string' ? Buffer.from(body, 'utf8') : Buffer.from(body as Uint8Array)
   const isGzip = buf.length >= 2 && buf[0] === 0x1f && buf[1] === 0x8b
@@ -112,7 +111,7 @@ describe('Unified TransportRouter', () => {
       return okResponse()
     }
 
-    const router = await TransportRouter.initialize(config(), 'test-key', fetchImpl)
+    const router = await TransportRouter.initialize(config(), 'test-key', fetchImpl, BAKED_IN_REMOTE_CONFIG.limits)
     router.send(event('error', 1))
     router.send(event('message', 1))
     router.send(event('span', 1))
@@ -121,17 +120,17 @@ describe('Unified TransportRouter', () => {
     await router.flushAll()
 
     const urls = calls.map(call => new URL(call.url).pathname)
-    assert.ok(urls.includes('/api/v1/errors'))
-    assert.ok(urls.includes('/api/v1/events'))
-    assert.ok(urls.includes('/api/v1/spans'))
-    assert.ok(urls.includes('/api/v1/metrics'))
+    assert.ok(urls.includes('/custom-errors'))
+    assert.ok(urls.includes('/custom-events'))
+    assert.ok(urls.includes('/custom-spans'))
+    assert.ok(urls.includes('/custom-metrics'))
 
     // v3 routing: message, span and request events each have dedicated routes.
-    const eventCall = calls.find(call => new URL(call.url).pathname === '/api/v1/events')
+    const eventCall = calls.find(call => new URL(call.url).pathname === '/custom-events')
     assert.deepEqual(eventCall?.body.events.map((e: any) => e.type).sort(), ['message'])
-    const spanCall = calls.find(call => new URL(call.url).pathname === '/api/v1/spans')
+    const spanCall = calls.find(call => new URL(call.url).pathname === '/custom-spans')
     assert.deepEqual(spanCall?.body.events.map((e: any) => e.type).sort(), ['span'])
-    const requestCall = calls.find(call => new URL(call.url).pathname === '/api/v1/requests')
+    const requestCall = calls.find(call => new URL(call.url).pathname === '/custom-requests')
     assert.deepEqual(requestCall?.body.events.map((e: any) => e.type).sort(), ['request'])
   })
 
@@ -150,7 +149,7 @@ describe('Unified TransportRouter', () => {
       return okResponse()
     }
 
-    const router = await TransportRouter.initialize(config(), 'test-key', fetchImpl)
+    const router = await TransportRouter.initialize(config(), 'test-key', fetchImpl, BAKED_IN_REMOTE_CONFIG.limits)
     for (let i = 0; i < 3_000; i++) router.send(event('error', i))
     for (let i = 0; i < 10_000; i++) router.send(event('span', i))
     for (let i = 0; i < 10_000; i++) router.send(event('metric', i))
@@ -167,16 +166,16 @@ describe('Unified TransportRouter', () => {
     const startedAt = Date.now()
     const fetchImpl: typeof fetch = async (url) => {
       const path = new URL(String(url)).pathname
-      if (path === '/api/v1/spans') {
+      if (path === '/custom-spans') {
         await new Promise(resolve => setTimeout(resolve, 100))
       }
-      if (path === '/api/v1/errors' && firstErrorAt === 0) {
+      if (path === '/custom-errors' && firstErrorAt === 0) {
         firstErrorAt = Date.now()
       }
       return okResponse()
     }
 
-    const router = await TransportRouter.initialize(config(), 'test-key', fetchImpl)
+    const router = await TransportRouter.initialize(config(), 'test-key', fetchImpl, BAKED_IN_REMOTE_CONFIG.limits)
     for (let i = 0; i < 76_000; i++) router.send(event('span', i))
     for (let i = 0; i < 100; i++) router.send(event('error', i))
     await router.flushAll()
@@ -191,14 +190,14 @@ describe('Unified TransportRouter', () => {
     let metricRequests = 0
     let metricEvents = 0
     const fetchImpl: typeof fetch = async (url, options) => {
-      if (new URL(String(url)).pathname === '/api/v1/metrics') {
+      if (new URL(String(url)).pathname === '/custom-metrics') {
         metricRequests++
         metricEvents += parseBody(options?.body).events.length
       }
       return okResponse()
     }
 
-    const router = await TransportRouter.initialize(config(), 'test-key', fetchImpl)
+    const router = await TransportRouter.initialize(config(), 'test-key', fetchImpl, BAKED_IN_REMOTE_CONFIG.limits)
     for (let i = 0; i < 2_000; i++) router.send(event('metric', i))
     await router.flushAll()
 
@@ -230,12 +229,15 @@ describe('Unified TransportRouter', () => {
     const router = await TransportRouter.initialize({
       ...oldConfig,
       routes: { ...oldConfig.routes, errors: { ...oldConfig.routes.errors, batchSize: 1 } },
-    }, 'test-key', fetchImpl)
+    }, 'test-key', fetchImpl, BAKED_IN_REMOTE_CONFIG.limits)
 
     router.send(event('error', 1))
     await oldStartedPromise
     router.send(event('error', 2))
-    const updating = router.updateTransport(config('https://new.example.test'))
+    const updating = router.updateTransport(
+      config('https://new.example.test'),
+      BAKED_IN_REMOTE_CONFIG.limits,
+    )
     await new Promise(resolve => setImmediate(resolve))
     router.send(event('error', 3))
     releaseOld()

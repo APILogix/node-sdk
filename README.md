@@ -3,6 +3,7 @@
 `@vikasbaplawat1/pulse-sdk` is an ESM Node.js observability SDK for errors, requests, messages, traces, metrics, structured logs, profiles, replay segments, and cron check-ins. This guide describes the public root export only; examples intentionally do not use the unsupported `internals` subpath.
 
 - [Architecture](docs/ARCHITECTURE.md)
+- [Remote configuration architecture](docs/REMOTE_CONFIGURATION.md)
 - [Feature and gate matrix](docs/FEATURES.md)
 - [Operations and audit status](docs/WORKING.md)
 - [Event wire types](docs/EVENT_TYPES.md)
@@ -22,43 +23,30 @@ The package includes its tracing dependencies. Prisma and BullMQ are optional pe
 
 ## 2. Initialize before application traffic
 
-The API key is the only required initialization option and is **not** read automatically from an environment variable. Reading `PULSE_API_KEY` below is an application convention. The SDK uses the production SaaS endpoint by default; `baseUrl` or `SDK_BASE_URL` are optional overrides for local development, staging, or self-hosted deployments.
+The API key is the only required initialization option and is **not** read automatically from an environment variable. Reading `PULSE_API_KEY` below is an application convention. The SDK uses the production SaaS origin by default; `baseUrl` or `SDK_BASE_URL` may select a local, staging, or self-hosted origin.
 
 ```ts
 import { createSDK } from '@vikasbaplawat1/pulse-sdk'
 
-await createSDK({
+const config = await createSDK({
   apiKey: process.env.PULSE_API_KEY!,
-  service: 'payments-api',
-  environment: process.env.NODE_ENV ?? 'production',
-  release: process.env.GIT_SHA ?? 'local',
 })
 ```
 
-`createSDK(options)` is the recommended name and is equivalent to `init(options)`. Both resolve to the validated legacy `RemoteConfig` when initialization succeeds, or `undefined` when initialization cannot establish a usable runtime. Initialization retries retryable legacy-init failures and otherwise degrades without throwing into the host process. Calls with the same API-key identity share initialization state.
+`createSDK(options)` is equivalent to `init(options)`. Startup performs exactly one configuration request: `POST /v1/init` with `{ "apiKey": "..." }`. The response must contain project identity, environment, release, and a complete `RemoteConfigResponse`. That immutable snapshot becomes the sole runtime configuration; startup does not call `/v1/sdk-config`, merge baked defaults, apply local policy overrides, or retry configuration in the background.
 
-### Application package metadata precedence
+Both functions resolve to the active `RemoteConfigResponse` on success or `undefined` when the one init request or validation fails. Failure never throws into application startup after option validation, and telemetry is not started with invented fallback policy. Calls using the same API-key identity share initialization state.
 
-At initialization the SDK resolves the consuming application's package once:
+### Identity and application package metadata
 
-- `applicationName`: explicit `applicationName` → discovered `package.json.name` → `service` → `unknown-application`.
-- `applicationVersion`: explicit `applicationVersion` → discovered `package.json.version` → `release` → `0.0.0-unknown`.
-- `service`: explicit `service` → resolved application name.
-- `release`: explicit `release` → resolved application version.
-- `environment`: explicit `environment` → `production`.
-
-Without `packageJsonPath`, discovery walks upward from `process.cwd()` to the first readable `package.json`. A relative `packageJsonPath` is resolved from `process.cwd()`. These values become authoritative event metadata; the pipeline reapplies them after processors and `beforeSend`.
+The backend owns runtime `projectId`, `environment`, and `release` through `config.sdk`. Every transported event automatically carries `metadata.projectId`, `metadata.environment`, and `metadata.release` — these values originate exclusively from the active remote configuration and cannot be overridden by user code, plugins, or `beforeSend`. Separately, the SDK resolves the consuming package's `applicationName` and `applicationVersion` once for event metadata: explicit application metadata → discovered `package.json` → safe unknown value. Without `packageJsonPath`, discovery walks upward from `process.cwd()` to the first readable `package.json`; a relative path resolves from `process.cwd()`.
 
 ```ts
-import { createSDK } from '@vikasbaplawat1/pulse-sdk'
-
 await createSDK({
   apiKey: process.env.PULSE_API_KEY!,
   packageJsonPath: './package.json',
   applicationName: 'checkout-worker',
   applicationVersion: '2.7.4',
-  service: 'checkout',
-  release: '2025-03-08.1',
 })
 ```
 
@@ -66,30 +54,27 @@ await createSDK({
 
 | Option | Behavior |
 |---|---|
-| `apiKey` | Required non-empty credential; sent as a bearer token after header validation. |
-| `baseUrl` | Optional API origin override for local development, staging, or self-hosted deployments; defaults to the production SaaS endpoint. |
-| `configUrl` | Optional remote-config URL override. |
-| `service`, `environment`, `release` | Runtime identity; environment defaults to `production`. |
-| `applicationName`, `applicationVersion`, `packageJsonPath` | Consuming-package identity and discovery controls. |
-| `enableErrors`, `enablePerformance`, `enableTracing`, `enableMetrics` | Local convenience overrides merged with backend configuration and plan limits. |
-| `sampleRate` | Legacy rate override in `[0, 1]`; v3 per-family rates come from remote config. |
-| `maxBreadcrumbs` | Local breadcrumb cap, `0..1000`. |
-| `plugins`, `eventProcessors`, `beforeBreadcrumb`, `beforeSend` | Extension hooks described below. |
-| `transport` | Legacy batch, interval, retry, timeout, compression, payload, and concurrent-send overrides. Current multi-route transport is ultimately remote-config driven. |
-| `debug`, `logLevel` | SDK diagnostics. Levels are `debug`, `info`, `warning`, `error`, `fatal`. |
-| `shutdownTimeoutMs` | Graceful-shutdown deadline, `1000..60000` ms. |
-| `sourceMaps` | Local search `paths`, `allowRemote`, and `embedSourceContent`. Remote maps are off unless explicitly allowed. |
-| `dataScrubbing` | Adds sensitive headers/keys and request/response body redaction overrides. |
-| `otelMetrics` | Histogram bucket, percentile, and cardinality bounds. |
+| `apiKey` | Required non-empty credential; the only field sent to `/v1/init` and `/v1/sdk-config`. |
+| `baseUrl` | Optional API origin override; endpoint paths remain fixed. |
+| `applicationName`, `applicationVersion`, `packageJsonPath` | Consuming-package metadata only; never overrides remote SDK policy. |
+| `maxBreadcrumbs` | Local request-context buffer capacity, `0..1000`. |
+| `plugins`, `eventProcessors`, `beforeBreadcrumb`, `beforeSend` | Application extension hooks described below. |
+| `debug`, `logLevel` | Local SDK diagnostics. |
+| `shutdownTimeoutMs` | Local graceful-shutdown deadline, `1000..60000` ms. |
+| `sourceMaps` | Local source-map search controls. |
 
-Use `getConfig()` only after successful initialization; it throws if no resolved configuration exists. `getSDKHealth()` is safe before initialization and reports a degraded snapshot.
+Features, sampling, killswitches, transport, privacy, limits, instrumentation, identity, and entitlements come only from the validated backend snapshot. Legacy config override fields are not part of configuration resolution.
+
+Use `getConfig()` only after successful initialization; it returns the current immutable `RemoteConfigResponse` and throws before one exists. `getSDKHealth()` remains safe before initialization.
 
 ```ts
 import { getConfig, getSDKHealth } from '@vikasbaplawat1/pulse-sdk'
 
-console.log(getConfig().service)
+console.log(getConfig().sdk.projectId)
 console.log(getSDKHealth())
 ```
+
+Runtime refresh is event-driven. After a telemetry acknowledgement containing `{ "status": 202, "change": true }`, the SDK performs one background `POST /v1/sdk-config`, validates the complete response, and atomically swaps it. Concurrent signals are coalesced; `change: false` performs no request. There is no periodic polling or retry loop. See [Remote configuration architecture](docs/REMOTE_CONFIGURATION.md).
 
 ## 3. Capture APIs
 
@@ -261,9 +246,6 @@ app.use(express.json())
 app.use(monitorMiddleware({
   ignorePaths: ['/health', /^\/internal\//],
   ignoreMethods: ['OPTIONS'],
-  captureHeaders: false,
-  captureQuery: true,
-  captureBody: false,
   maxBreadcrumbs: 100,
   trustedProxies: ['10.0.0.10'],
 }))
@@ -279,9 +261,6 @@ import { fastifyPulsePlugin } from '@vikasbaplawat1/pulse-sdk'
 await fastify.register(fastifyPulsePlugin, {
   ignorePaths: ['/health'],
   ignoreMethods: ['OPTIONS'],
-  captureHeaders: false,
-  captureQuery: true,
-  captureBody: false,
   maxBreadcrumbs: 100,
   trustedProxies: ['10.0.0.10'],
 })
@@ -293,7 +272,7 @@ The Fastify plugin installs `onRequest`, `preHandler`, `onResponse`, and `onErro
 
 The auto-instrumentation set includes Node HTTP/HTTPS and Undici/fetch when remote config enables `instrumentation.http`, `instrumentation.https`, and `instrumentation.fetch`. Internal SDK endpoints are excluded and SDK sends suppress tracing to prevent export recursion. HTTP tracing produces spans; discrete `request` events come from Express/Fastify middleware or explicit `captureRequest()`.
 
-`registerAutoInstrumentations(options?)` is public and accepts `http`, `express`, `fastify`, `undici`, `graphql`, `prisma`, `mongodb`, `redis`, `bullmq`, `axios`, `pg`, `mysql2`, and `eventEmitterPatch`. In normal use, let `createSDK()` call it after remote config is available. A second registration without shutdown/reset is a no-op.
+`registerAutoInstrumentations()` is public but takes no policy options. Its HTTP, Express, Fastify, Undici, GraphQL, Prisma, MongoDB, Redis, BullMQ, Axios, PostgreSQL, MySQL2, and EventEmitter selections come from the active backend snapshot. In normal use, let `createSDK()` register them after remote config is available; a second registration without shutdown/reset is a no-op.
 
 ### Optional integrations
 
@@ -447,7 +426,7 @@ import type { SDKPlugin } from '@vikasbaplawat1/pulse-sdk'
 const plugin: SDKPlugin = {
   meta: { name: 'deployment-tags', version: '1.0.0' },
   setup(context) {
-    console.log('Pulse service:', context.metadata.service)
+    console.log('Pulse project:', context.metadata.projectId)
   },
   processEvent(event) {
     return { ...event, deploymentRing: 'canary' } as typeof event
@@ -486,7 +465,7 @@ Remote config is schema-versioned and controls:
 - privacy capture, scrubbing, and PII masking;
 - limits and tenant governance;
 - route URLs, batching, queue overflow, retries, connection concurrency, and timeouts;
-- refresh TTL/stale-while-revalidate behavior;
+- event-signalled atomic configuration replacement;
 - entitlements and emergency killswitches.
 
 Sampling uses a deterministic FNV-1a decision key. Route overrides apply by longest matching string prefix; a rate of zero drops that family for the route. Traces are sampled at root creation with parent-based inheritance. Non-trace helpers use their documented family-specific sampling path.
@@ -529,12 +508,12 @@ SIGTERM and SIGINT handlers are registered after successful initialization and i
 
 ## 11. Privacy and security
 
-Safe defaults disable header, body, response, query, and cookie capture until remote config enables them. Scrubbing defaults redact common authorization, cookie, API-key, password, OAuth token/code, national identifier, and payment fields; optional PII detection masks email, phone, and IP patterns. Payloads are scrubbed again at the transport boundary.
+Backend privacy policy should keep header, body, response, query, and cookie capture disabled unless explicitly required. Scrubbing rules should redact authorization, cookie, API-key, password, OAuth token/code, national identifier, and payment fields; optional PII detection masks email, phone, and IP patterns. Payloads are scrubbed again at the transport boundary.
 
 Operational guidance:
 
-1. Keep body, response, query, and header capture off unless required.
-2. Add organization-specific secrets through `dataScrubbing.sensitiveHeaders` and `sensitiveKeys`.
+1. Keep body, response, query, cookie, and header capture off remotely unless required.
+2. Add organization-specific secrets through remote `privacy.scrubbing.headers` and `privacy.scrubbing.fields`.
 3. Never place credentials in span names, metric names/tags, route names, or monitor slugs.
 4. Configure `trustedProxies` narrowly; never trust forwarded IP headers from arbitrary clients.
 5. Keep `sourceMaps.allowRemote` false unless remote retrieval is required and reviewed.
@@ -546,11 +525,11 @@ Operational guidance:
 
 **No events arrive.** Confirm `createSDK()` completed, the API key is correct, any optional `baseUrl`/`SDK_BASE_URL` override is correct, remote routes are configured, the relevant feature and entitlement are enabled, and no killswitch is active. Inspect `getSDKHealth().circuitState`, queue drops, and SDK debug logs.
 
-**`getConfig()` throws.** Initialization did not establish a resolved client config. Use `getSDKHealth()` before calling `getConfig()`.
+**`getConfig()` throws.** Initialization did not establish a validated remote configuration. Use `getSDKHealth()` before calling `getConfig()`.
 
 **Spans are missing or disconnected.** Initialize before loading instrumented libraries; prefer `withSpan()` over `startSpan()` when child work needs an active parent. Ensure tracing and the relevant integration are enabled. Existing global OpenTelemetry setup is reused rather than replaced.
 
-**Requests lack bodies/headers.** Privacy capture defaults are off. Enable them remotely or with middleware overrides only after reviewing data exposure. Express must parse JSON before middleware for object-body capture.
+**Requests lack bodies/headers.** Privacy capture is backend-controlled. Enable the required `privacy.capture` fields remotely only after reviewing data exposure. Express must parse JSON before middleware for object-body capture.
 
 **Optional APIs silently do nothing.** This is expected when entitlements are explicitly false or the associated feature/subsystem is disabled. Profiles and logs also require completed SDK initialization.
 

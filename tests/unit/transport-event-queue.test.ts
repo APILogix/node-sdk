@@ -16,7 +16,7 @@ function fatal(id: string): SDKEvent {
 
 function queue(strategy: 'drop_oldest' | 'drop_newest', drops: QueueDropInfo[]): TransportEventQueue {
   return new TransportEventQueue({
-    route: 'errors', maxSize: 3, priority: 'high', overflowStrategy: strategy,
+    route: 'errors', maxSize: 3, criticalReserve: 0, priority: 'high', overflowStrategy: strategy,
     onDrop: drop => drops.push(drop),
   })
 }
@@ -71,5 +71,27 @@ describe('TransportEventQueue critical retention', () => {
     assert.ok(ids.includes('fatal-1'))
     assert.ok(!ids.includes('retry-1'))
     assert.ok(!ids.includes('retry-2'))
+  })
+
+  it('reserves configured slots from ordinary telemetry for critical events', () => {
+    const drops: QueueDropInfo[] = []
+    const q = new TransportEventQueue({
+      route: 'errors',
+      maxSize: 4,
+      criticalReserve: 2,
+      priority: 'high',
+      overflowStrategy: 'drop_newest',
+      onDrop: drop => drops.push(drop),
+    })
+
+    assert.equal(q.enqueue(message('normal-1')), true)
+    assert.equal(q.enqueue(message('normal-2')), true)
+    assert.equal(q.enqueue(message('normal-3')), false)
+    assert.equal(q.enqueue(fatal('fatal-1')), true)
+    assert.equal(q.enqueue(fatal('fatal-2')), true)
+    assert.deepEqual(q.drain(4).map(event => event.eventId), [
+      'normal-1', 'normal-2', 'fatal-1', 'fatal-2',
+    ])
+    assert.equal(drops[0]?.eventId, 'normal-3')
   })
 })

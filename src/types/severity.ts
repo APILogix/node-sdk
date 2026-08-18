@@ -29,10 +29,10 @@ const SEVERITY_WEIGHT: ReadonlyMap<SeverityLevel, number> = new Map(
  * Returns the fallback if the string doesn't match any known severity.
  */
 export function severityFromString(
-  value: string | undefined | null,
+  value: unknown,
   fallback: SeverityLevel = Severity.Info
 ): SeverityLevel {
-  if (!value) return fallback
+  if (!value || typeof value !== 'string') return fallback
 
   const normalized = value.trim().toLowerCase()
 

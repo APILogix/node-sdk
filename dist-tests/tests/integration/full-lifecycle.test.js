@@ -27,7 +27,7 @@ import { captureError } from '../../src/capture/captureError.js';
 import { captureMetric } from '../../src/capture/captureMetric.js';
 import { startSpan } from '../../src/tracing/tracer.js';
 import { client } from '../../src/core/client.js';
-import { BAKED_IN_REMOTE_CONFIG } from '../../src/constants/defaults.js';
+import { TEST_REMOTE_CONFIG as BAKED_IN_REMOTE_CONFIG } from '../fixtures/remote-config.js';
 async function startMockBackend() {
     const http = await import('node:http');
     const requests = [];
@@ -46,11 +46,11 @@ async function startMockBackend() {
             catch {
                 requests.push({ path: req.url ?? '', body: decoded });
             }
-            // /api/v1/init returns a minimal valid init response that points all
+            // /v1/init returns a minimal valid init response that points all
             // transport routes at this same mock server. Without per-route URLs,
             // the BatchManager would dispatch to the baked-in production URLs
             // (e.g. https://errors.pulse.dev) and fail every send.
-            if (req.url === '/api/v1/init') {
+            if (req.url === '/v1/init') {
                 const port = server.address().port;
                 const localUrl = `http://127.0.0.1:${port}`;
                 const paths = {
@@ -68,9 +68,10 @@ async function startMockBackend() {
                     success: true,
                     projectId: 'proj-test',
                     environment: 'test',
+                    release: '1.0.0',
                     config: {
                         ...BAKED_IN_REMOTE_CONFIG,
-                        sdk: { projectId: 'proj-test', environment: 'test', release: '1.0.0' },
+                        sdk: { projectId: 'proj-test', service: 'lifecycle-test', environment: 'test', release: '1.0.0' },
                         features: { ...BAKED_IN_REMOTE_CONFIG.features, tracing: true, requestCapture: true, errors: true, metrics: true },
                         sampling: { ...BAKED_IN_REMOTE_CONFIG.sampling, traces: 1, requests: 1, errors: 1, metrics: 1 },
                         killswitches: { ...BAKED_IN_REMOTE_CONFIG.killswitches, disableTransport: false },
@@ -97,7 +98,7 @@ async function startMockBackend() {
                 res.writeHead(200, { 'content-type': 'application/json' });
                 res.end(JSON.stringify({
                     ...BAKED_IN_REMOTE_CONFIG,
-                    sdk: { projectId: 'proj-test', environment: 'test', release: '1.0.0' },
+                    sdk: { projectId: 'proj-test', service: 'lifecycle-test', environment: 'test', release: '1.0.0' },
                     features: { ...BAKED_IN_REMOTE_CONFIG.features, tracing: true, requestCapture: true, errors: true, metrics: true },
                     sampling: { ...BAKED_IN_REMOTE_CONFIG.sampling, traces: 1, requests: 1, errors: 1, metrics: 1 },
                     killswitches: { ...BAKED_IN_REMOTE_CONFIG.killswitches, disableTransport: false },
@@ -157,10 +158,6 @@ describe('Full SDK lifecycle integration', { timeout: 60_000 }, () => {
             await init({
                 apiKey: `cycle-${cycle}-key`,
                 baseUrl: backend.url,
-                configUrl: `${backend.url}/v1/sdk-config`,
-                service: 'integration-test',
-                environment: 'test',
-                release: '1.0.0',
                 debug: false,
             });
             assert.equal(client.initialized, true, `cycle ${cycle}: SDK should be initialized`);
@@ -192,6 +189,8 @@ describe('Full SDK lifecycle integration', { timeout: 60_000 }, () => {
             }
             cycleSnapshots.push(takeSnapshot());
         }
+        assert.equal(backend.requests.filter(request => request.path === '/v1/init').length, NUM_CYCLES, 'each cycle must perform exactly one startup config request');
+        assert.equal(backend.requests.filter(request => request.path === '/v1/sdk-config').length, 0, 'startup must not prefetch /v1/sdk-config');
         // ── ASSERT NO LISTENER LEAK ──────────────────────────────────────
         for (let i = 0; i < cycleSnapshots.length; i++) {
             const snap = cycleSnapshots[i];
@@ -231,10 +230,6 @@ describe('Full SDK lifecycle integration', { timeout: 60_000 }, () => {
         await init({
             apiKey: 'fresh-init-key',
             baseUrl: backend.url,
-            configUrl: `${backend.url}/v1/sdk-config`,
-            service: 'integration-test-fresh',
-            environment: 'test',
-            release: '1.0.0',
             debug: false,
         });
         assert.equal(client.initialized, true);
@@ -247,7 +242,8 @@ describe('Full SDK lifecycle integration', { timeout: 60_000 }, () => {
         const result = await shutdown(5_000);
         assert.equal(result.timedOut, false);
         // The backend should have received init + at least one event payload.
-        const initRequest = backend.requests.find(r => r.path === '/api/v1/init');
-        assert.ok(initRequest, 'mock backend should have received the /api/v1/init call');
+        const initRequests = backend.requests.filter(request => request.path === '/v1/init');
+        assert.equal(initRequests.length, 1, 'fresh initialization must call /v1/init exactly once');
+        assert.equal(backend.requests.filter(request => request.path === '/v1/sdk-config').length, 0, 'fresh initialization must not call /v1/sdk-config');
     });
 });

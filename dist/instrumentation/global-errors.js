@@ -1,12 +1,6 @@
 /**
- * Global error handlers — captures unhandled errors and rejections.
- * Now driven by remote config errors.* section.
- *
- * Reads from ConfigManager to respect:
- *   errors.captureUnhandledRejections — attach unhandledRejection handler
- *   errors.captureUncaughtExceptions — attach uncaughtException handler
- *   errors.captureConsoleErrors — wrap console.error to create error events
- *   errors.stackTraceLimit — override Error.stackTraceLimit
+ * Global error handlers. Remote features/killswitches decide whether the
+ * subsystem runs; implementation mechanics come from internal constants.
  *
  * On uncaughtException: captures the error and attempts to flush pending events.
  * Does NOT call process.exit — the SDK should never force-terminate the host process.
@@ -22,6 +16,7 @@ import { crashFlush } from "../core/lifecycle.js";
 import { isOtelInstrumentationError } from "./http-lifecycle-guard.js";
 import { SecurityScrubber } from "../processors/security-scrubber.js";
 import { Severity } from "../types/severity.js";
+import { createContextStore, withContext, getRequestContext } from "../core/context.js";
 let registered = false;
 // Store handler references for proper cleanup
 let uncaughtHandler = null;
@@ -29,23 +24,9 @@ let rejectionHandler = null;
 let originalConsoleError = null;
 let consoleErrorWrapped = false;
 let originalStackTraceLimit = undefined;
-/**
- * Snapshot of the current error-handling defaults. Returns a fresh object on
- * every call so callers can mutate the result without affecting the frozen
- * source-of-truth in `ERROR_DEFAULTS`.
- *
- * Behaviour used to come from `config.errors`, but the wire schema dropped
- * that block — these knobs are SDK opinions, not tenant-level controls.
- */
+/** Error-handler mechanics are SDK internals; remote config only gates errors. */
 function getErrorsConfig() {
-    return {
-        captureUnhandledRejections: ERROR_DEFAULTS.captureUnhandledRejections,
-        captureUncaughtExceptions: ERROR_DEFAULTS.captureUncaughtExceptions,
-        captureConsoleErrors: ERROR_DEFAULTS.captureConsoleErrors,
-        stackTraceLimit: ERROR_DEFAULTS.stackTraceLimit,
-        attachSourceContext: ERROR_DEFAULTS.attachSourceContext,
-        grouping: { ...ERROR_DEFAULTS.grouping },
-    };
+    return ERROR_DEFAULTS;
 }
 /**
  * Register process-level error handlers based on remote config.
@@ -93,7 +74,12 @@ export function setupGlobalErrorHandlers() {
                 return;
             }
             try {
-                captureError(err, { mechanism: "uncaughtException" });
+                const store = createContextStore('uncaught', 10, {
+                    extra: { mechanism: 'uncaughtException', handled: false },
+                });
+                withContext(store, () => {
+                    captureError(err, 'fatal');
+                });
             }
             catch {
                 // captureError should never throw, but we double-guard here
@@ -122,7 +108,12 @@ export function setupGlobalErrorHandlers() {
     if (errorsConfig.captureUnhandledRejections !== false) {
         rejectionHandler = (reason) => {
             try {
-                captureError(toError(reason), { mechanism: "unhandledRejection" });
+                const store = createContextStore('unhandled', 10, {
+                    extra: { mechanism: 'unhandledRejection', handled: false },
+                });
+                withContext(store, () => {
+                    captureError(toError(reason), 'error');
+                });
             }
             catch {
                 // Isolated — never crash the host
@@ -167,13 +158,13 @@ function wrapConsoleError() {
             // Scrub args before stringifying — `console.error('creds', { password })`
             // must never exfiltrate secrets into the error message. Error instances
             // pass through untouched (scrubValue would strip their non-enumerable
-            // message/stack); their message/stack go through the pipeline-level
-            // scrub before transport. Fail-open when the scrubber isn't
-            // initialized yet for the same reason.
+            // message/stack); their message/stack go through transport scrubbing.
+            // The scrubber exists before handlers are installed; lifecycle races
+            // redact non-Error arguments rather than forwarding them unchanged.
             const scrubber = SecurityScrubber.getInstance();
             const scrubbedArgs = scrubber
                 ? args.map(a => (a instanceof Error ? a : scrubber.scrubValue(a)))
-                : args;
+                : args.map(a => (a instanceof Error ? a : '[Redacted]'));
             const message = scrubbedArgs.map(a => {
                 if (a instanceof Error)
                     return a.message;
@@ -187,10 +178,13 @@ function wrapConsoleError() {
                 }
             }).join(' ');
             const error = scrubbedArgs.find(a => a instanceof Error);
-            captureError(error ?? new Error(message), {
-                mechanism: 'console.error',
-                severity: Severity.Error,
-            });
+            const store = getRequestContext();
+            if (store?.extra) {
+                ;
+                store.extra.mechanism = 'console.error';
+                store.extra.handled = true;
+            }
+            captureError(error ?? new Error(message), 'error');
         }
         catch {
             // Never crash the host from console.error wrapping

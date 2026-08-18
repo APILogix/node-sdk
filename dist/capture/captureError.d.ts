@@ -1,34 +1,9 @@
 /**
  * Error capture — captures exceptions and routes them through the event pipeline.
- * Now integrates with remote-config-driven KillswitchEngine and SamplingEngine.
- *
- * Features:
- * - Pre-init buffering (events captured before SDK is ready are queued)
- * - Killswitch gate: if disableErrors is active, no-op immediately
- * - Sampling gate: uses SamplingEngine.shouldSampleError() for rate control
- * - Automatic breadcrumb attachment from async context
- * - Stack frame parsing and fingerprinting
- * - Severity classification
- * - Plugin processing via event pipeline
- * - Source context attachment when errors.attachSourceContext is true
- *
- * Source map resolution is deferred to the event pipeline to avoid
- * blocking the capture hot path with file I/O.
+ * Features ultra-minimal two-argument signature: captureError(error, severity?).
  */
-import { type SeverityLevel } from '../types/severity.js';
-export interface CaptureErrorOptions {
-    /** Additional context data to attach to the error event. */
-    context?: Record<string, unknown>;
-    /** Severity level override. Default: 'error'. */
-    severity?: SeverityLevel;
-    /** Custom fingerprint string for grouping. */
-    fingerprint?: string;
-    /**
-     * Capture mechanism — e.g. 'uncaughtException', 'unhandledRejection',
-     * 'console.error'. Defaults to 'manual' for direct developer calls.
-     */
-    mechanism?: string;
-}
+import type { ErrorSeverity } from '../types/error.js';
+export type { ErrorSeverity };
 /**
  * Capture an error/exception.
  *
@@ -41,7 +16,7 @@ export interface CaptureErrorOptions {
  *   errors.grouping.normalizePaths → strip absolute paths in fingerprint
  *
  * @param error - The error to capture (Error, string, or unknown)
- * @param options - Optional severity, context, and fingerprint overrides
+ * @param severity - Optional severity level ('fatal' | 'error' | 'warning' | 'info' | 'debug'). Defaults to 'error'.
  */
-export declare function captureError(error: unknown, options?: CaptureErrorOptions | Record<string, unknown>): void;
+export declare function captureError(error: unknown, severity?: ErrorSeverity): void;
 //# sourceMappingURL=captureError.d.ts.map

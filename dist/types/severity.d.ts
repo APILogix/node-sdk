@@ -14,7 +14,7 @@ export type SeverityLevel = (typeof Severity)[keyof typeof Severity];
  * Parses a string into a SeverityLevel.
  * Returns the fallback if the string doesn't match any known severity.
  */
-export declare function severityFromString(value: string | undefined | null, fallback?: SeverityLevel): SeverityLevel;
+export declare function severityFromString(value: unknown, fallback?: SeverityLevel): SeverityLevel;
 /**
  * Returns true if `a` is more severe than or equal to `b`.
  */

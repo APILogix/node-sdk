@@ -30,8 +30,8 @@ import { BullMQInstrumentation } from 'opentelemetry-instrumentation-bullmq'
 import { client } from '../core/client.js'
 import { getLogger } from '../utils/logger.js'
 import { ConfigManager } from '../core/config-manager.js'
+import { EntitlementGate } from '../core/entitlement-gate.js'
 import type { InstrumentationConfig } from '../types/config.js'
-import { DEFAULT_TRACE_CAPTURE } from '../constants/internal-defaults.js'
 import { createAxiosInstrumentation } from './axios.js'
 import { createPgInstrumentation } from './pg.js'
 import { createMySQLInstrumentation } from './mysql.js'
@@ -60,23 +60,6 @@ function getGlobalState(): InstrumentationGlobalState {
 
 // ─── Public Types ───────────────────────────────────────────────────────────
 
-export interface AutoInstrumentOptions {
-  http?: boolean
-  express?: boolean
-  fastify?: boolean
-  undici?: boolean
-  graphql?: boolean
-  prisma?: boolean
-  mongodb?: boolean
-  redis?: boolean
-  bullmq?: boolean
-  axios?: boolean
-  pg?: boolean
-  mysql2?: boolean
-  /** Automatically bind EventEmitter listeners to the active OTel context. Default: true. */
-  eventEmitterPatch?: boolean
-}
-
 interface ResolvedInstrumentation {
   http: boolean
   https: boolean
@@ -103,8 +86,6 @@ interface ResolvedInstrumentation {
   mysql2Config: { enabled: boolean; captureQueries: boolean }
   eventEmitterPatch: boolean
   fastifyConfig: { captureHooks: boolean; captureValidationErrors: boolean }
-  ignoredRoutes: string[]
-  ignoredMethods: string[]
   captureConfig: TraceCaptureConfig
 }
 
@@ -116,58 +97,52 @@ interface TraceCaptureConfig {
   cookies: boolean
 }
 
-function resolveInstrumentationOptions(userOptions: AutoInstrumentOptions): ResolvedInstrumentation {
+function resolveInstrumentationOptions(): ResolvedInstrumentation {
   const configManager = ConfigManager.getInstance()
   const config = configManager.getConfig()
   const instr: InstrumentationConfig = config.instrumentation
 
-  // The wire schema dropped the `tracing.ignoredRoutes` / `tracing.ignoredMethods`
-  // arrays — those concerns are now expressed via `sampling.routes["/path"]`
-  // with all rates set to zero. Auto-instrumentation no longer applies its
-  // own filtering; the sampling engine is the single source of truth.
-  // `capture.*` flags come from `privacy.capture` (decision: capture pre-scrub),
-  // falling back to SDK-internal defaults when remote config hasn't loaded.
-  const captureConfig = config.privacy?.capture ?? DEFAULT_TRACE_CAPTURE
+  const captureConfig = config.privacy.capture
 
-  const httpEnabled = instr.http ?? userOptions.http ?? true
-  const httpsEnabled = instr.https ?? true
+  const httpEnabled = instr.http
+  const httpsEnabled = instr.https
 
   const expressEnabled = typeof instr.express === 'object'
     ? instr.express.enabled
-    : (instr.express ?? userOptions.express ?? true)
+    : instr.express
 
   const fastifyConfig = typeof instr.fastify === 'object'
     ? instr.fastify
-    : { enabled: instr.fastify ?? userOptions.fastify ?? true, captureHooks: true, captureValidationErrors: true }
+    : { enabled: instr.fastify, captureHooks: true, captureValidationErrors: true }
 
-  const fetchEnabled = instr.fetch ?? userOptions.undici ?? true
+  const fetchEnabled = instr.fetch
 
   const graphqlEnabled = typeof instr.graphql === 'object'
     ? instr.graphql.enabled
-    : (instr.graphql ?? userOptions.graphql ?? false)
+    : instr.graphql
 
   const graphqlConfig = typeof instr.graphql === 'object'
-    ? { enabled: graphqlEnabled, captureResolvers: instr.graphql.captureResolvers ?? true }
+    ? { enabled: graphqlEnabled, captureResolvers: instr.graphql.captureResolvers }
     : { enabled: graphqlEnabled, captureResolvers: true }
 
   const prismaEnabled = typeof instr.prisma === 'object'
     ? instr.prisma.enabled
-    : (instr.prisma ?? userOptions.prisma ?? false)
+    : instr.prisma
 
   const prismaConfig = typeof instr.prisma === 'object'
-    ? { enabled: prismaEnabled, captureQueries: instr.prisma.captureQueries ?? true, captureParams: instr.prisma.captureParams ?? false }
+    ? { enabled: prismaEnabled, captureQueries: instr.prisma.captureQueries, captureParams: instr.prisma.captureParams }
     : { enabled: prismaEnabled, captureQueries: true, captureParams: false }
 
-  const mongodbEnabled = instr.mongodb ?? userOptions.mongodb ?? false
-  const redisEnabled = instr.redis ?? userOptions.redis ?? false
-  const axiosEnabled = instr.axios ?? userOptions.axios ?? false
+  const mongodbEnabled = instr.mongodb
+  const redisEnabled = instr.redis
+  const axiosEnabled = instr.axios
 
   // BullMQ accepts an object form in remote config so the control plane can
   // tune span verbosity without a redeploy. Boolean form = enabled with
   // library defaults.
   const bullmqEnabled = typeof instr.bullmq === 'object'
     ? instr.bullmq.enabled
-    : (instr.bullmq ?? userOptions.bullmq ?? false)
+    : instr.bullmq
 
   const bullmqRemote = typeof instr.bullmq === 'object' ? instr.bullmq : undefined
   const bullmqConfig = {
@@ -177,55 +152,48 @@ function resolveInstrumentationOptions(userOptions: AutoInstrumentOptions): Reso
     requireParentSpanForPublish: bullmqRemote?.requireParentSpanForPublish ?? false,
   }
 
-  const instrAny = instr as unknown as Record<string, unknown>
-
-  const pgEnabled = typeof instrAny.pg === 'object'
-    ? (instrAny.pg as { enabled: boolean }).enabled
-    : (instrAny.pg ?? userOptions.pg ?? false) as boolean
-
-  const pgConfig = typeof instrAny.pg === 'object'
-    ? { enabled: pgEnabled, captureQueries: (instrAny.pg as Record<string, boolean>).captureQueries ?? false, captureParams: (instrAny.pg as Record<string, boolean>).captureParams ?? false }
+  const pgEnabled = typeof instr.pg === 'object' ? instr.pg.enabled : instr.pg
+  const pgConfig = typeof instr.pg === 'object'
+    ? {
+        enabled: pgEnabled,
+        captureQueries: instr.pg.captureQueries,
+        captureParams: instr.pg.captureParams,
+      }
     : { enabled: pgEnabled, captureQueries: false, captureParams: false }
 
-  const mysql2Enabled = typeof instrAny.mysql2 === 'object'
-    ? (instrAny.mysql2 as { enabled: boolean }).enabled
-    : (instrAny.mysql2 ?? userOptions.mysql2 ?? false) as boolean
-
-  const mysql2Config = typeof instrAny.mysql2 === 'object'
-    ? { enabled: mysql2Enabled, captureQueries: (instrAny.mysql2 as Record<string, boolean>).captureQueries ?? false }
+  const mysql2Enabled = typeof instr.mysql2 === 'object' ? instr.mysql2.enabled : instr.mysql2
+  const mysql2Config = typeof instr.mysql2 === 'object'
+    ? { enabled: mysql2Enabled, captureQueries: instr.mysql2.captureQueries }
     : { enabled: mysql2Enabled, captureQueries: false }
 
-  const eventEmitterPatchEnabled = userOptions.eventEmitterPatch ?? true
+  const eventEmitterPatchEnabled = instr.eventEmitterPatch
+  const automaticTracingAllowed = EntitlementGate.isAllowed('tracing')
+  const contextBindingAllowed = automaticTracingAllowed || EntitlementGate.isAllowed('customSpans')
 
   return {
-    http: httpEnabled && httpsEnabled,
-    https: httpsEnabled,
-    express: expressEnabled,
-    fastify: fastifyConfig.enabled,
-    undici: fetchEnabled,
-    graphql: graphqlConfig.enabled,
+    http: httpEnabled && automaticTracingAllowed,
+    https: httpsEnabled && automaticTracingAllowed,
+    express: expressEnabled && automaticTracingAllowed,
+    fastify: fastifyConfig.enabled && automaticTracingAllowed,
+    undici: fetchEnabled && automaticTracingAllowed,
+    graphql: graphqlConfig.enabled && automaticTracingAllowed,
     graphqlConfig,
-    prisma: prismaConfig.enabled,
+    prisma: prismaConfig.enabled && automaticTracingAllowed,
     prismaConfig,
-    mongodb: mongodbEnabled,
-    redis: redisEnabled,
-    bullmq: bullmqConfig.enabled,
+    mongodb: mongodbEnabled && automaticTracingAllowed,
+    redis: redisEnabled && automaticTracingAllowed,
+    bullmq: bullmqConfig.enabled && automaticTracingAllowed,
     bullmqConfig,
-    axios: axiosEnabled,
-    pg: pgConfig.enabled,
+    axios: axiosEnabled && automaticTracingAllowed,
+    pg: pgConfig.enabled && automaticTracingAllowed,
     pgConfig,
-    mysql2: mysql2Config.enabled,
+    mysql2: mysql2Config.enabled && automaticTracingAllowed,
     mysql2Config,
-    eventEmitterPatch: eventEmitterPatchEnabled,
+    eventEmitterPatch: eventEmitterPatchEnabled && contextBindingAllowed,
     fastifyConfig: {
-      captureHooks: fastifyConfig.captureHooks ?? true,
-      captureValidationErrors: fastifyConfig.captureValidationErrors ?? true,
+      captureHooks: fastifyConfig.captureHooks,
+      captureValidationErrors: fastifyConfig.captureValidationErrors,
     },
-    // Empty arrays — route/method filtering is sampling-engine territory now.
-    // We still honour them in the OTel `ignoreIncomingRequestHook` below for
-    // any user-provided list, but they're not populated from remote config.
-    ignoredRoutes: [],
-    ignoredMethods: [],
     captureConfig,
   }
 }
@@ -234,22 +202,23 @@ function resolveInstrumentationOptions(userOptions: AutoInstrumentOptions): Reso
  * Register all configured auto-instrumentations.
  * Idempotent: a second call without an intervening reset is a no-op.
  */
-export function registerAutoInstrumentations(options: AutoInstrumentOptions = {}): void {
+export function registerAutoInstrumentations(): void {
   const g = getGlobalState()
   if (g[INSTRUMENTATION_GUARD]) return
   g[INSTRUMENTATION_GUARD] = true
   g[TEARDOWN_REGISTRY] = []
 
   const logger = getLogger()
-  const resolved = resolveInstrumentationOptions(options)
+  const resolved = resolveInstrumentationOptions()
   const instrumentations: unknown[] = []
 
-  if (resolved.http) {
+  if (resolved.http || resolved.https) {
     instrumentations.push(
       new HttpInstrumentation({
         ignoreOutgoingRequestHook: (request: unknown) => {
           if (!client.initialized) return false
           try {
+            if (!isRequestProtocolEnabled(request, resolved.http, resolved.https)) return true
             const reqCheck = request as { getHeader?: (name: string) => string | number | string[] | undefined, headers?: Record<string, string | string[]> }
             if (typeof reqCheck.getHeader === 'function' && reqCheck.getHeader('x-pulse-internal') === '1') {
               return true
@@ -258,8 +227,7 @@ export function registerAutoInstrumentations(options: AutoInstrumentOptions = {}
               return true
             }
 
-            const ingestUrl = client.config.ingestUrl
-            if (!ingestUrl) return false
+            const routes = ConfigManager.getInstance().getConfig().transport.routes
 
             let url = ''
             if (typeof request === 'string') {
@@ -271,42 +239,13 @@ export function registerAutoInstrumentations(options: AutoInstrumentOptions = {}
             if (!url) return false
 
             const target = new URL(url)
-            const ingest = new URL(ingestUrl)
-            return isInternalSdkUrl(target, ingest)
+            return Object.values(routes).some(route => isInternalSdkUrl(target, new URL(route.url)))
           } catch {
             return false
           }
         },
-        ignoreIncomingRequestHook: (request: unknown) => {
-          try {
-            const req = request as Record<string, unknown>
-            const url = String(req.url ?? '')
-            const path = url.split('?')[0] ?? ''
-
-            if (resolved.ignoredRoutes.some(r => path === r || path.startsWith(r))) {
-              return true
-            }
-
-            const method = String(req.method ?? '').toUpperCase()
-            if (resolved.ignoredMethods.includes(method)) {
-              return true
-            }
-
-            const SDK_INGEST_PATHS = new Set([
-              '/v1/events', '/v1/init', '/v1/sdk-config',
-              '/v1/traces', '/v1/spans', '/v1/requests', '/v1/errors',
-              '/v1/metrics', '/v1/logs', '/v1/profiles',
-              '/v1/checkins', '/v1/replays',
-              '/api/v1/events', '/api/v1/init',
-              '/api/v1/traces', '/api/v1/spans', '/api/v1/requests', '/api/v1/errors',
-              '/api/v1/metrics', '/api/v1/logs', '/api/v1/profiles',
-              '/api/v1/checkins', '/api/v1/replays',
-            ])
-            return SDK_INGEST_PATHS.has(path)
-          } catch {
-            return false
-          }
-        },
+        ignoreIncomingRequestHook: (request: unknown) =>
+          !isRequestProtocolEnabled(request, resolved.http, resolved.https),
 
         // ─── Defensive Lifecycle Hooks ───────────────────────────────
         // Guard against the socket destruction race condition in OTel's
@@ -372,14 +311,14 @@ export function registerAutoInstrumentations(options: AutoInstrumentOptions = {}
                }
             }
 
-            const ingest = new URL(client.config.ingestUrl)
+            const routes = ConfigManager.getInstance().getConfig().transport.routes
             const req = request as Record<string, unknown>
             const rawOrigin = req.origin ?? req['origin']
             const rawPath = req.path ?? req['path'] ?? req.pathname
             const url = rawOrigin
               ? new URL(String(rawPath ?? '/'), String(rawOrigin))
               : new URL(String(req.url ?? ''))
-            return isInternalSdkUrl(url, ingest)
+            return Object.values(routes).some(route => isInternalSdkUrl(url, new URL(route.url)))
           } catch {
             return false
           }
@@ -523,8 +462,6 @@ export function registerAutoInstrumentations(options: AutoInstrumentOptions = {}
     prismaCaptureParams: resolved.prismaConfig.captureParams,
     pgCaptureQueries: resolved.pgConfig.captureQueries,
     mysql2CaptureQueries: resolved.mysql2Config.captureQueries,
-    ignoredRoutes: resolved.ignoredRoutes,
-    ignoredMethods: resolved.ignoredMethods,
     count: registeredInstrumentations.length,
   })
 
@@ -547,6 +484,7 @@ export function registerAutoInstrumentations(options: AutoInstrumentOptions = {}
  *   2. Call the OTel unregister handle to disable every instrumentation.
  *   3. Clear the global guard so the next register call rebuilds from scratch.
  *
+
  * Errors in any single teardown are logged but never thrown — reset must
  * always succeed so a failed instrumentation cannot block SDK reinit.
  */
@@ -599,36 +537,31 @@ export function resetAutoInstrumentations(): void {
   }
 }
 
+function isRequestProtocolEnabled(request: unknown, httpEnabled: boolean, httpsEnabled: boolean): boolean {
+  let https = false
+  try {
+    if (typeof request === 'string' || request instanceof URL) {
+      https = new URL(String(request)).protocol === 'https:'
+    } else if (request && typeof request === 'object') {
+      const value = request as Record<string, unknown>
+      const socket = value.socket as Record<string, unknown> | undefined
+      const agent = value.agent as Record<string, unknown> | undefined
+      const protocol = value.protocol ?? agent?.protocol
+      if (typeof protocol === 'string') https = protocol.toLowerCase() === 'https:'
+      else if (socket?.encrypted === true) https = true
+      else {
+        const candidate = value.href ?? value.origin
+        if (typeof candidate === 'string') https = new URL(candidate).protocol === 'https:'
+      }
+    }
+  } catch {
+    // Unknown Node request shapes are treated as HTTP and still follow policy.
+  }
+  return https ? httpsEnabled : httpEnabled
+}
+
 function isInternalSdkUrl(target: URL, ingest: URL): boolean {
-  if (target.origin !== ingest.origin) return false
-  // Every per-event-type route the v3 transport ships to. Any path the
-  // SDK posts to must be listed here, otherwise the OTel HttpInstrumentation
-  // creates a span for our own batch send → that span exports → the export
-  // hits another route → that creates another span → infinite fan-out.
-  return target.pathname === ingest.pathname
-    || target.pathname === '/v1/events'
-    || target.pathname === '/v1/init'
-    || target.pathname === '/v1/sdk-config'
-    || target.pathname === '/v1/traces'
-    || target.pathname === '/v1/spans'
-    || target.pathname === '/v1/requests'
-    || target.pathname === '/v1/errors'
-    || target.pathname === '/v1/metrics'
-    || target.pathname === '/v1/logs'
-    || target.pathname === '/v1/profiles'
-    || target.pathname === '/v1/checkins'
-    || target.pathname === '/v1/replays'
-    || target.pathname === '/api/v1/events'
-    || target.pathname === '/api/v1/init'
-    || target.pathname === '/api/v1/traces'
-    || target.pathname === '/api/v1/spans'
-    || target.pathname === '/api/v1/requests'
-    || target.pathname === '/api/v1/errors'
-    || target.pathname === '/api/v1/metrics'
-    || target.pathname === '/api/v1/logs'
-    || target.pathname === '/api/v1/profiles'
-    || target.pathname === '/api/v1/checkins'
-    || target.pathname === '/api/v1/replays'
+  return target.origin === ingest.origin && target.pathname === ingest.pathname
 }
 
 export { GraphQLInstrumentation, MongoDBInstrumentation, RedisInstrumentation, PrismaInstrumentation, BullMQInstrumentation }

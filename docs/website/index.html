@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pulse SDK for Node.js — Documentation</title>
+  <meta name="description" content="Complete documentation for the Pulse SDK: error tracking, distributed tracing, metrics, logs, and cron monitoring for Node.js.">
+  <meta property="og:title" content="Pulse SDK for Node.js — Documentation">
+  <meta property="og:description" content="Complete documentation for the Pulse SDK: error tracking, distributed tracing, metrics, logs, and cron monitoring for Node.js.">
+  <meta property="og:type" content="website">
+  <link rel="stylesheet" href="styles.css">
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "WebSite",
+  "name": "Pulse SDK for Node.js — Documentation",
+  "description": "Complete documentation for the Pulse SDK: error tracking, distributed tracing, metrics, logs, and cron monitoring for Node.js.",
+  "about": {
+    "@type": "SoftwareSourceCode",
+    "name": "@vikasbaplawat1/pulse-sdk",
+    "programmingLanguage": "TypeScript",
+    "runtimePlatform": "Node.js"
+  }
+}
+  </script>
+
+</head>
+<body>
+  <a href="#main" class="skip-link">Skip to content</a>
+
+  <header class="topbar">
+    <a href="index.html" class="topbar__brand">
+      <img src="assets/logo.svg" alt="">
+      <span>Pulse SDK</span>
+    </a>
+    <nav class="topbar__nav" aria-label="Primary">
+      <a href="sdk.html">SDK Docs</a>
+      <a href="internal.html">Internal Guide</a>
+    </nav>
+    <div class="topbar__spacer"></div>
+    <div class="topbar__actions">
+      <button class="search-trigger" data-search-trigger type="button" aria-label="Search documentation">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3" stroke-linecap="round"/></svg>
+        <span>Search docs…</span>
+        <kbd>Ctrl K</kbd>
+      </button>
+
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="hero">
+      <span class="hero__eyebrow">v3.0.0 · Node.js SDK</span>
+      <h1>Everything your Node.js app tells you about itself</h1>
+      <p>Errors, requests, traces, metrics, logs, profiles, and cron monitoring — one SDK, entirely controlled from the backend, documented straight from source.</p>
+      <div class="hero__actions">
+        <a class="btn btn--primary" href="sdk.html">Read the SDK docs</a>
+        <a class="btn btn--secondary" href="internal.html">Internal engineering guide</a>
+      </div>
+    </section>
+
+    <section class="feature-grid" aria-label="Documentation sections">
+      <a class="feature-card" href="sdk.html#installation">
+        <svg class="feature-card__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <h3>Installation & Quick Start</h3>
+        <p>npm, pnpm, yarn, bun, and framework-specific examples for Express, Fastify, plain Node, serverless, and workers.</p>
+      </a>
+      <a class="feature-card" href="sdk.html#manual-api-reference">
+        <svg class="feature-card__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 3H6a2 2 0 00-2 2v14a2 2 0 002 2h12a2 2 0 002-2V9l-6-6zM14 3v6h6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <h3>Complete API Reference</h3>
+        <p>Every exported function documented with signature, parameters, return value, and real examples.</p>
+      </a>
+      <a class="feature-card" href="sdk.html#faq">
+        <svg class="feature-card__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M9 9a3 3 0 116 0c0 2-3 2.5-3 5m0 4h.01" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="12" r="10"/></svg>
+        <h3>102 FAQ Answers</h3>
+        <p>Direct answers derived from source, plus a full troubleshooting guide for sampling, batching, and transport.</p>
+      </a>
+      <a class="feature-card" href="internal.html#sdk-boot-sequence">
+        <svg class="feature-card__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 12h4l3-8 4 16 3-8h4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <h3>Internal Architecture</h3>
+        <p>Boot sequence, event pipeline, batching, sampling, and shutdown — with sequence diagrams for engineers.</p>
+      </a>
+      <a class="feature-card" href="internal.html#auto-instrumentation">
+        <svg class="feature-card__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+        <h3>Auto Instrumentation</h3>
+        <p>HTTP, Express, Fastify, GraphQL, Prisma, Postgres, Redis, MongoDB, BullMQ, and Axios — how each one patches.</p>
+      </a>
+      <a class="feature-card" href="AUDIT_REPORT.md">
+        <svg class="feature-card__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <h3>Repository Audit</h3>
+        <p>Full exported-API inventory, deprecated/experimental flags, dead code, and unused exports — traced to source.</p>
+      </a>
+    </section>
+
+    <section style="text-align:center;padding:0 20px 80px;color:var(--text-faint);font-size:13px;">
+      Ask the documentation assistant (bottom right) any question — it only answers from what's written on this site.
+    </section>
+  </main>
+
+  <footer class="footer">
+    Documentation generated from source code audit. Nothing here was invented — see the Repository Audit for methodology.
+  </footer>
+
+  <!-- Search overlay -->
+  <div class="search-overlay" role="dialog" aria-modal="true" aria-label="Search documentation">
+    <div class="search-panel">
+      <div class="search-panel__input-row">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3" stroke-linecap="round"/></svg>
+        <input id="search-input" type="text" placeholder="Search documentation…" autocomplete="off" aria-label="Search query">
+        <button data-search-close type="button" class="icon-btn" aria-label="Close search" style="border:none;background:none;">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+      <div class="search-panel__results"></div>
+    </div>
+  </div>
+
+  <!-- Chatbot widget -->
+  <button class="chatbot-toggle" data-chatbot-toggle type="button" aria-expanded="false" aria-label="Open documentation assistant">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </button>
+  <div class="chatbot-panel" role="dialog" aria-label="Documentation assistant">
+    <div class="chatbot-panel__header">
+      <span>Docs Assistant</span>
+      <button data-chatbot-close type="button" class="icon-btn" aria-label="Close assistant" style="border:none;background:none;width:24px;height:24px;">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+    <div class="chatbot-panel__messages"></div>
+    <form class="chatbot-panel__input-row" data-chatbot-form>
+      <input type="text" data-chatbot-input placeholder="Ask about the SDK…" autocomplete="off" aria-label="Ask the documentation assistant">
+      <button type="submit">Ask</button>
+    </form>
+  </div>
+
+  <script type="application/json" id="pulse-doc-index">[]</script>
+
+  <script src="sidebar.js"></script>
+  <script src="search.js"></script>
+  <script src="chatbot.js"></script>
+</body>
+</html>

@@ -3,13 +3,11 @@
  * instrumentation (Express, Fastify, and any future framework adapters).
  *
  * Responsibilities:
- *   1. Single decision point for whether a request should be captured at all
- *      (killswitch, feature controller, ignored routes/methods from remote
- *      config, framework-level overrides).
- *   2. Per-tenant admission control via TenantGovernor.
- *   3. Header / query / body scrubbing aligned with the central
- *      SecurityScrubber (with safe local fallback when not yet initialized).
- *   4. Common metadata extraction (request id, tenant, user, session,
+ *   1. Single decision point for killswitches, feature flags, backend route
+ *      sampling, and local framework integration ignores.
+ *   2. Fail-closed header/query/body capture through the active backend-owned
+ *      privacy policy and SecurityScrubber.
+ *   3. Common metadata extraction (request id, tenant, user, session,
  *      client IP, user agent, referer, content length).
  *
  * Every middleware in the SDK should funnel through this module rather than
@@ -22,15 +20,11 @@ import { ConfigManager } from '../core/config-manager.js';
 import { FeatureController } from '../core/feature-controller.js';
 import { KillswitchEngine } from '../core/killswitch-engine.js';
 import { SamplingEngine } from '../core/sampling-engine.js';
+import { EntitlementGate } from '../core/entitlement-gate.js';
 import { SecurityScrubber } from '../processors/security-scrubber.js';
 import { sha256 } from '../utils/hash.js';
 import { getLogger } from '../utils/logger.js';
-// Headers we always redact even when the SecurityScrubber isn't initialized.
-// Keep this list short and case-insensitive — the scrubber is the source of
-// truth once the SDK has finished bootstrapping.
-const FALLBACK_SENSITIVE_HEADER_PATTERN = /^(authorization|proxy-authorization|cookie|set-cookie|x-api-key|x-auth-token|x-csrf-token|x-session-token|api-key|access-token|refresh-token)$/i;
-const FALLBACK_SENSITIVE_BODY_PATTERN = /(password|passwd|secret|token|api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|credit[_-]?card|cvv|ssn|(^|[_\-\s])code\b|authcode)/i;
-/** Maximum number of bytes of a request body we will look at before bailing. */
+/** Maximum number of bytes of a request body we will inspect. */
 const MAX_BODY_INSPECT_BYTES = 64 * 1024;
 /**
  * Decide whether a request should be captured. Combines:
@@ -39,12 +33,9 @@ const MAX_BODY_INSPECT_BYTES = 64 * 1024;
  *     plus the FeatureController gate on `tracing` since request capture
  *     is treated as part of the tracing surface).
  *   - Framework-level ignore paths/methods (cheapest, evaluated first).
- *   - Remote-config ignored routes / methods.
- *   - Tenant admission control.
+ *   - Backend route sampling using longest-prefix rules.
  *
- * The function is deliberately pure with respect to the SDK state — it never
- * mutates engines. `recordCaptureAccepted` should be called once the adapter
- * has decided to actually emit the event so the tenant counter advances.
+ * Tenant admission remains atomic in the canonical event pipeline.
  */
 export function evaluateCaptureGate(input) {
     const method = (input.method || '').toUpperCase();
@@ -66,6 +57,9 @@ export function evaluateCaptureGate(input) {
     if (killswitch?.isKilled('disableTracing')) {
         return denied('tracing_disabled');
     }
+    if (!EntitlementGate.isAllowed('requestCapture')) {
+        return denied('request_capture_not_entitled');
+    }
     // 3. Feature controller — `requestCapture` is its own remote-config flag
     // in v3. The `tracing` feature controls span emission, not request events.
     // We keep the tracing check as well because requests carry trace context;
@@ -78,26 +72,15 @@ export function evaluateCaptureGate(input) {
         if (!featureCtrl.isEnabled('tracing'))
             return denied('tracing_feature_off');
     }
-    // 4. Remote-config ignored routes & methods. The new schema expresses
-    //    these as per-route sampling rates of 0 (handled in step 6 below),
-    //    but we still honour any local lists provided by callers and any
-    //    legacy fields the gate's tracing-config helper exposes.
-    const cfg = safeGetTracingConfig();
-    if (cfg) {
-        if (cfg.ignoredMethods.some(m => m.toUpperCase() === method)) {
-            return denied('remote_ignored_method');
-        }
-        if (matchesPathList(input.path, cfg.ignoredRoutes)) {
-            return denied('remote_ignored_route');
-        }
-    }
+    // 4. A request adapter must never invent privacy policy. Middleware is
+    // registered only after initialization, but fail closed if lifecycle races
+    // make the active snapshot temporarily unavailable.
+    const privacy = getPrivacyPolicy();
+    if (!privacy)
+        return denied('config_unavailable');
     // 5. Tenant admission is performed atomically by the canonical event
     // pipeline so manual and automatic request capture share one quota.
-    // 6. Sampling — `sampling.routes["/path"].requests` lets the backend
-    //    silence noisy paths or boost critical ones without a redeploy.
-    //    Falls back to the global `sampling.requests` rate. We use a stable
-    //    sample key (callers provide the request id) so the same request
-    //    always lands the same way on retries / idempotent replays.
+    // 6. Backend route sampling uses longest-prefix matching.
     const samplingEngine = SamplingEngine.getInstance();
     let sampledRate = 1;
     if (samplingEngine && input.sampleKey) {
@@ -108,40 +91,33 @@ export function evaluateCaptureGate(input) {
     }
     return {
         capture: true,
-        allowHeaders: cfg?.capture.headers ?? true,
-        allowQuery: cfg?.capture.query ?? true,
-        allowBody: cfg?.capture.body ?? false,
-        allowResponse: cfg?.capture.response ?? false,
-        allowCookies: cfg?.capture.cookies ?? false,
-        maskIp: cfg?.maskIp ?? true,
+        allowHeaders: privacy.capture.headers,
+        allowQuery: privacy.capture.query,
+        allowBody: privacy.capture.body,
+        allowResponse: privacy.capture.response,
+        allowCookies: privacy.capture.cookies,
+        maskIp: privacy.maskIp,
         sampledRate,
     };
 }
-/** @deprecated Tenant admission is now atomic in the canonical pipeline. */
-export function recordCaptureAccepted(_tenantId) {
-    // Kept as a compatibility no-op for existing instrumentation adapters.
-}
 /**
- * Scrub headers using the SecurityScrubber when available, falling back to
- * a conservative deny-list when the scrubber isn't initialized yet (typical
- * during the first few milliseconds after `init()`).
+ * Scrub headers using the active SecurityScrubber. If it is unavailable or
+ * fails, omit headers rather than inventing local privacy policy.
  */
 export function scrubHeaders(headers) {
     if (!headers)
         return undefined;
     const scrubber = SecurityScrubber.getInstance();
-    if (scrubber) {
-        // Run the scrubber on a wrapper event so we reuse its full ruleset.
-        try {
-            const wrapped = scrubber.scrub({ type: 'request', headers });
-            return wrapped.headers ?? fallbackScrubHeaders(headers);
-        }
-        catch (err) {
-            getLogger().debug('SecurityScrubber.scrub(headers) threw; using fallback', { error: err });
-            return fallbackScrubHeaders(headers);
-        }
+    if (!scrubber)
+        return undefined;
+    try {
+        const wrapped = scrubber.scrub({ type: 'request', headers });
+        return wrapped.headers;
     }
-    return fallbackScrubHeaders(headers);
+    catch (error) {
+        getLogger().debug('SecurityScrubber.scrub(headers) failed; omitting headers', { error });
+        return undefined;
+    }
 }
 /**
  * Scrub query parameters. Behaviour mirrors `scrubHeaders` — delegate to the
@@ -150,19 +126,17 @@ export function scrubHeaders(headers) {
 export function scrubQuery(query) {
     if (!query || typeof query !== 'object' || Array.isArray(query))
         return undefined;
-    const obj = query;
     const scrubber = SecurityScrubber.getInstance();
-    if (scrubber) {
-        try {
-            const wrapped = scrubber.scrub({ type: 'request', query: obj });
-            return wrapped.query ?? fallbackScrubBody(obj);
-        }
-        catch (err) {
-            getLogger().debug('SecurityScrubber.scrub(query) threw; using fallback', { error: err });
-            return fallbackScrubBody(obj);
-        }
+    if (!scrubber)
+        return undefined;
+    try {
+        const wrapped = scrubber.scrub({ type: 'request', query });
+        return wrapped.query;
     }
-    return fallbackScrubBody(obj);
+    catch (error) {
+        getLogger().debug('SecurityScrubber.scrub(query) failed; omitting query', { error });
+        return undefined;
+    }
 }
 /**
  * Best-effort body capture. Adapter-supplied raw body is bounded by
@@ -196,16 +170,16 @@ export function captureBodySnapshot(rawBody, allowBody) {
         return { bodySize: size, body: { __truncated: true } };
     }
     const scrubber = SecurityScrubber.getInstance();
-    if (scrubber) {
-        try {
-            const wrapped = scrubber.scrub({ type: 'request', body: obj });
-            return { bodySize: size, body: wrapped.body ?? fallbackScrubBody(obj) };
-        }
-        catch (err) {
-            getLogger().debug('SecurityScrubber.scrub(body) threw; using fallback', { error: err });
-        }
+    if (!scrubber)
+        return { bodySize: size, body: undefined };
+    try {
+        const wrapped = scrubber.scrub({ type: 'request', body: obj });
+        return { bodySize: size, body: wrapped.body };
     }
-    return { bodySize: size, body: fallbackScrubBody(obj) };
+    catch (error) {
+        getLogger().debug('SecurityScrubber.scrub(body) failed; omitting body', { error });
+        return { bodySize: size, body: undefined };
+    }
 }
 /**
  * Extract a header value as a single string. Multi-value headers collapse to
@@ -285,68 +259,17 @@ function denied(reason) {
         sampledRate: 0,
     };
 }
-function matchesPathList(path, list) {
-    if (!list || list.length === 0)
-        return false;
-    return list.some(entry => path === entry || path.startsWith(entry));
-}
-function safeGetTracingConfig() {
+function getPrivacyPolicy() {
     try {
-        const cfg = ConfigManager.getInstance().getConfig();
-        // Route- and method-level ignoring is now expressed via
-        // `sampling.routes["/path"] = { traces: 0, requests: 0, ... }` rather
-        // than a separate `tracing.ignoredRoutes` array. Capture flags moved
-        // to `privacy.capture`. Both are honoured here so the gate result is
-        // a single source of truth for adapters.
+        const privacy = ConfigManager.getInstance().getConfig().privacy;
         return {
-            // Reserved for future use — sampling engine handles per-route drops.
-            ignoredRoutes: [],
-            ignoredMethods: [],
-            capture: {
-                headers: cfg.privacy?.capture?.headers ?? false,
-                body: cfg.privacy?.capture?.body ?? false,
-                response: cfg.privacy?.capture?.response ?? false,
-                query: cfg.privacy?.capture?.query ?? true,
-                cookies: cfg.privacy?.capture?.cookies ?? false,
-            },
-            maskIp: cfg.privacy?.piiDetection?.maskIPs ?? true,
+            capture: privacy.capture,
+            maskIp: privacy.piiDetection.maskIPs,
         };
     }
     catch {
-        // ConfigManager may not be ready during very early bootstrapping; the
-        // adapter's local options remain authoritative in that case.
-        return undefined;
+        return null;
     }
-}
-function fallbackScrubHeaders(headers) {
-    const out = Object.create(null);
-    for (const [key, value] of Object.entries(headers)) {
-        if (!isSafeKey(key))
-            continue;
-        out[key] = FALLBACK_SENSITIVE_HEADER_PATTERN.test(key) ? '[Redacted]' : value;
-    }
-    return out;
-}
-function fallbackScrubBody(body) {
-    const out = Object.create(null);
-    for (const [key, value] of Object.entries(body)) {
-        if (!isSafeKey(key))
-            continue;
-        if (FALLBACK_SENSITIVE_BODY_PATTERN.test(key)) {
-            out[key] = '[Redacted]';
-            continue;
-        }
-        if (value && typeof value === 'object' && !Array.isArray(value)) {
-            out[key] = fallbackScrubBody(value);
-        }
-        else {
-            out[key] = value;
-        }
-    }
-    return out;
-}
-function isSafeKey(key) {
-    return key !== '__proto__' && key !== 'constructor' && key !== 'prototype';
 }
 function computeBodySize(rawBody) {
     if (rawBody == null)

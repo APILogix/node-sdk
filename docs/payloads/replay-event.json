@@ -1,0 +1,75 @@
+{
+  "type": "replay",
+  "eventId": "dd4hg288-m05j-29l2-i59e-22ee33228888",
+  "sessionId": "session_xyz_12345",
+  "segmentId": 1,
+  "timestamp": 1722528000000,
+  "events": [
+    {
+      "type": 3,
+      "data": {
+        "source": 0,
+        "texts": [],
+        "attributes": [],
+        "removes": [],
+        "adds": [
+          {
+            "parentId": 1,
+            "nextId": null,
+            "node": {
+              "type": 2,
+              "tagName": "div",
+              "attributes": {
+                "class": "container",
+                "id": "main-content"
+              },
+              "childNodes": [],
+              "id": 10
+            }
+          }
+        ]
+      },
+      "timestamp": 1722528000050
+    },
+    {
+      "type": 3,
+      "data": {
+        "source": 2,
+        "type": 0,
+        "id": 10,
+        "x": 150,
+        "y": 200
+      },
+      "timestamp": 1722528000100
+    },
+    {
+      "type": 3,
+      "data": {
+        "source": 2,
+        "type": 2,
+        "id": 10,
+        "pointerType": 0
+      },
+      "timestamp": 1722528000150
+    },
+    {
+      "type": 3,
+      "data": {
+        "source": 5,
+        "text": "Hello World",
+        "isChecked": false,
+        "id": 15
+      },
+      "timestamp": 1722528000200
+    }
+  ],
+  "metadata": {
+    "sdkName": "@pulse/sdk-node",
+    "sdkVersion": "1.0.0",
+    "applicationName": "my-app",
+    "applicationVersion": "2.3.1",
+    "projectId": "proj_abc123",
+    "environment": "production",
+    "release": "v2.3.1"
+  }
+}

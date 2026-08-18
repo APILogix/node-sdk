@@ -7,8 +7,6 @@
  * On config refresh:
  * - Feature flips true → instantiate via factory()
  * - Feature flips false → teardown and destroy via teardown()
- *
- * Degraded mode: Only 'errors' and 'logging' subsystems are allowed.
  */
 
 import type { FeaturesConfig, ConfigDiff, RemoteConfigResponse } from '../types/config.js'
@@ -29,7 +27,6 @@ export class FeatureController {
 
   private currentFeatures: FeaturesConfig
   private subsystems: Map<keyof FeaturesConfig, SubsystemRegistration> = new Map()
-  private degradedMode: boolean = false
   private destroyed: boolean = false
 
   private constructor(features: FeaturesConfig) {
@@ -48,22 +45,8 @@ export class FeatureController {
     return FeatureController.instance
   }
 
-  /**
-   * Enable degraded mode — only errors + logs are allowed.
-   * Used when version policy requires degraded operation.
-   */
-  setDegradedMode(degraded: boolean): void {
-    this.degradedMode = degraded
-  }
-
-  /**
-   * Check if a feature is enabled.
-   * In degraded mode, only 'errors' and 'logging' return true.
-   */
+  /** Check whether a backend-owned feature is enabled. */
   isEnabled(feature: keyof FeaturesConfig): boolean {
-    if (this.degradedMode) {
-      return feature === 'errors' || feature === 'logging'
-    }
     return this.currentFeatures[feature]
   }
 
@@ -113,9 +96,7 @@ export class FeatureController {
 
     for (const [feature, registration] of this.subsystems) {
       const wasEnabled = oldFeatures[feature]
-      const isEnabled = this.degradedMode
-        ? feature === 'errors' || feature === 'logging'
-        : newFeatures[feature]
+      const isEnabled = newFeatures[feature]
 
       if (!wasEnabled && isEnabled && !registration.alive) {
         // Feature turned ON — instantiate

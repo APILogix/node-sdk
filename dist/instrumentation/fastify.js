@@ -5,7 +5,7 @@
  *   - Killswitch + FeatureController gates
  *   - Tenant admission control
  *   - Centralized scrubbing via SecurityScrubber
- *   - Remote-config driven ignored routes / methods / capture toggles
+ *   - Backend-authoritative sampling and privacy capture policy
  *
  * The plugin is intentionally fail-open. If any hook throws, the host
  * application continues serving traffic and the SDK logs the failure.
@@ -16,11 +16,11 @@ import { client } from '../core/client.js';
 import { attachRequestContextToActiveSpan, createContextStore, getSpanId, getTraceId, withContext, } from '../core/context.js';
 import { getLogger } from '../utils/logger.js';
 import { generateId } from '../utils/uuid.js';
-import { captureBodySnapshot, evaluateCaptureGate, headerString, matchesIgnoredPath, recordCaptureAccepted, resolveClientIp, scrubHeaders, scrubQuery, } from './request-capture-utils.js';
-const SENSITIVE_HEADER_FALLBACK = /authorization|cookie|token|secret|password/i;
+import { captureBodySnapshot, evaluateCaptureGate, headerString, matchesIgnoredPath, resolveClientIp, scrubHeaders, scrubQuery, } from './request-capture-utils.js';
 export function fastifyPulsePlugin(fastify, opts, done) {
     const options = opts ?? {};
     fastify.addHook('onRequest', (request, _reply, hookDone) => {
+        console.log('[DEBUG] fastify onRequest:', request.url);
         try {
             const path = request.url.split('?')[0] || '/';
             if (matchesIgnoredPath(path, options.ignorePaths)) {
@@ -37,7 +37,6 @@ export function fastifyPulsePlugin(fastify, opts, done) {
                 path,
                 method: request.method,
                 sampleKey: requestId,
-                tenantId,
                 localIgnorePaths: options.ignorePaths,
                 localIgnoreMethods: options.ignoreMethods,
             });
@@ -50,10 +49,16 @@ export function fastifyPulsePlugin(fastify, opts, done) {
             const userAgent = headerString(request.headers['user-agent']);
             const referer = headerString(request.headers['referer'] ?? request.headers['referrer']);
             const clientIp = resolveClientIp(request.headers, request.socket?.remoteAddress, options.trustedProxies, decision.maskIp, request.ip);
-            const store = createContextStore(requestId, options.maxBreadcrumbs ?? client.config?.maxBreadcrumbs ?? 100, {
+            const store = createContextStore(requestId, options.maxBreadcrumbs ?? client.options?.maxBreadcrumbs ?? 100, {
                 userId,
                 sessionId,
-                extra: tenantId ? { tenantId } : undefined,
+                extra: {
+                    ...(tenantId ? { tenantId } : {}),
+                    getStatusCode: () => request.raw?.statusCode ?? request.reply?.statusCode,
+                    getMethod: () => request.method,
+                    getUrl: () => request.url,
+                    getRoute: () => normalizedRoute(request),
+                },
                 tags: { framework: 'fastify' },
             });
             request.pulse = {
@@ -67,9 +72,9 @@ export function fastifyPulsePlugin(fastify, opts, done) {
                 clientIp,
                 userAgent,
                 referer,
-                captureHeaders: options.captureHeaders ?? decision.allowHeaders,
-                captureQuery: options.captureQuery ?? decision.allowQuery,
-                captureBody: options.captureBody ?? decision.allowBody,
+                captureHeaders: decision.allowHeaders,
+                captureQuery: decision.allowQuery,
+                captureBody: decision.allowBody,
             };
             withContext(store, () => {
                 attachRequestContextToActiveSpan(store);
@@ -108,23 +113,23 @@ export function fastifyPulsePlugin(fastify, opts, done) {
             hookDone();
         });
     });
-    fastify.addHook('onError', (request, _reply, error, hookDone) => {
+    fastify.addHook('onError', (request, reply, error, hookDone) => {
+        console.log('[DEBUG] fastify onError triggered!', error.message, 'reply.statusCode=', reply.statusCode, 'reply.raw.statusCode=', reply.raw?.statusCode);
         const state = request.pulse;
         if (!state) {
+            console.log('[DEBUG] no state in request.pulse!');
             hookDone();
             return;
         }
         withContext(state.store, () => {
             try {
+                if (state.store.extra) {
+                    ;
+                    state.store.extra.mechanism = 'fastify.onError';
+                    state.store.extra.handled = true;
+                }
                 attachRequestContextToActiveSpan(state.store);
-                captureError(error, {
-                    context: {
-                        requestId: state.requestId,
-                        route: normalizedRoute(request),
-                        framework: 'fastify',
-                        ...(state.tenantId ? { tenantId: state.tenantId } : {}),
-                    },
-                });
+                captureError(error);
             }
             catch (err) {
                 getLogger().error('fastifyPulsePlugin error capture failed', { error: err });
@@ -141,7 +146,6 @@ function captureFastifyCompletion(request, reply, state) {
     const statusCode = reply.statusCode ?? reply.raw?.statusCode ?? 0;
     const bodySnapshot = captureBodySnapshot(request.body, state.captureBody);
     const responseSize = readContentLength(reply.getHeader?.('content-length'));
-    recordCaptureAccepted(state.tenantId);
     captureRequest({
         type: 'request',
         requestId: state.requestId,
@@ -176,21 +180,13 @@ function readUserId(request) {
 function scrubHeadersSafe(headers) {
     try {
         const clone = {};
-        for (const [key, value] of Object.entries(headers)) {
+        for (const [key, value] of Object.entries(headers))
             clone[key] = value;
-        }
-        return scrubHeaders(clone) ?? defensiveHeaderRedact(clone);
+        return scrubHeaders(clone) ?? {};
     }
     catch {
-        return defensiveHeaderRedact(headers);
+        return {};
     }
-}
-function defensiveHeaderRedact(headers) {
-    const out = {};
-    for (const [key, value] of Object.entries(headers)) {
-        out[key] = SENSITIVE_HEADER_FALLBACK.test(key) ? '[Redacted]' : value;
-    }
-    return out;
 }
 function isRecord(value) {
     return !!value && typeof value === 'object' && !Array.isArray(value);

@@ -1,8 +1,5 @@
-import { client } from "./client.js";
-/**
- * Get the resolved SDK configuration.
- * Throws if SDK is not initialized.
- */
+import { ConfigManager } from './config-manager.js';
+/** Return the active immutable runtime configuration. */
 export function getConfig() {
-    return client.config;
+    return ConfigManager.getInstance().getConfig();
 }

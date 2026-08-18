@@ -22,7 +22,7 @@ const SEVERITY_WEIGHT = new Map(SEVERITY_ORDER.map((level, index) => [level, ind
  * Returns the fallback if the string doesn't match any known severity.
  */
 export function severityFromString(value, fallback = Severity.Info) {
-    if (!value)
+    if (!value || typeof value !== 'string')
         return fallback;
     const normalized = value.trim().toLowerCase();
     // Handle common aliases

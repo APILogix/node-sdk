@@ -257,6 +257,27 @@ describe('SecurityScrubber', () => {
     })
   })
 
+  describe('Failure handling', () => {
+    it('fails closed when event payload traversal throws', () => {
+      const context: Record<string, unknown> = {}
+      Object.defineProperty(context, 'password', {
+        enumerable: true,
+        get() { throw new Error('unreadable payload') },
+      })
+      const scrubbed = scrubber.scrub({ type: 'request', context } as any) as any
+      assert.equal('context' in scrubbed, false)
+    })
+
+    it('redacts an arbitrary value when traversal throws', () => {
+      const value: Record<string, unknown> = {}
+      Object.defineProperty(value, 'token', {
+        enumerable: true,
+        get() { throw new Error('unreadable payload') },
+      })
+      assert.equal(scrubber.scrubValue(value), '[Redacted]')
+    })
+  })
+
   describe('Immutability', () => {
     it('should never mutate the original event', () => {
       const event = {

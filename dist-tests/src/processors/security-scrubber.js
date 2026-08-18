@@ -112,7 +112,7 @@ export class SecurityScrubber {
         }
         catch (err) {
             getLogger().warn(`[SecurityScrubber] Error during scrubbing: ${err instanceof Error ? err.message : String(err)}`);
-            return event; // Return original on error
+            return stripSensitiveSections(event);
         }
     }
     scrubBatch(events) {
@@ -131,7 +131,7 @@ export class SecurityScrubber {
         if (this.destroyed || !this.hasScrubRules)
             return value;
         if (depth > 10)
-            return value;
+            return REDACTED;
         try {
             if (typeof value === 'string') {
                 return this.piiConfig.enabled ? this.scrubPiiInString(value) : value;
@@ -156,7 +156,7 @@ export class SecurityScrubber {
             return value;
         }
         catch {
-            return value;
+            return REDACTED;
         }
     }
     /** Handle config change — hot-swap privacy config. */
@@ -316,4 +316,26 @@ export class SecurityScrubber {
             SecurityScrubber.instance.destroy();
         }
     }
+}
+function stripSensitiveSections(event) {
+    const clone = { ...event };
+    for (const key of [
+        'headers', 'query', 'body', 'response', 'cookies', 'context', 'attributes',
+        'tags', 'extra', 'contexts', 'user', 'breadcrumbs',
+    ]) {
+        delete clone[key];
+    }
+    if ('args' in clone)
+        clone['args'] = [];
+    if ('events' in clone)
+        clone['events'] = [];
+    if ('profile' in clone)
+        clone['profile'] = REDACTED;
+    if ('stack' in clone)
+        clone['stack'] = [];
+    if (typeof clone['message'] === 'string')
+        clone['message'] = REDACTED;
+    if (typeof clone['url'] === 'string')
+        clone['url'] = clone['url'].split('?')[0] ?? '';
+    return clone;
 }

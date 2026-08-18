@@ -4,31 +4,20 @@
  * Enterprise-grade integration points:
  *   - KillswitchEngine: short-circuits when SDK or tracing is disabled.
  *   - FeatureController: respects the remote `tracing` feature flag.
- *   - TenantGovernor: per-tenant admission control before any work.
+ *   - TenantGovernor: atomic per-tenant admission in the canonical pipeline.
  *   - SecurityScrubber: shared scrubbing for headers / query / body.
- *   - ConfigManager: honours `tracing.ignoredRoutes`, `tracing.ignoredMethods`,
- *     and `tracing.capture.*` so a single remote-config flip changes capture
- *     behaviour at runtime — no redeploy.
+ *   - ConfigManager: uses the active backend privacy and sampling policy;
+ *     middleware ignore lists remain local integration filters only.
  *
  * Span ownership model:
- *   When OpenTelemetry's `HttpInstrumentation` is enabled (the default,
- *   registered by `registerAutoInstrumentations`), it creates a SERVER
- *   span automatically for every incoming request. This middleware does
- *   NOT create its own root span in that case — it enriches the OTel span
- *   with Pulse-specific attributes (request id, tenant id, user id, route,
- *   latency) when the response is finished.
+ *   OpenTelemetry HttpInstrumentation owns SERVER span creation when enabled
+ *   by remote configuration. This middleware enriches an active span but
+ *   never creates a fallback span when HTTP instrumentation is disabled.
+ *   It always emits the discrete request event when request capture passes.
  *
- *   When HTTP auto-instrumentation is disabled (deployment opt-out, or the
- *   middleware is exercised in isolation by tests), we create our own
- *   SERVER root span so the request is still fully captured. This keeps
- *   the "exactly one root span per request" invariant regardless of the
- *   OTel topology.
- *
- *   In both cases the AsyncLocalStorage `ContextStore` (request id,
- *   breadcrumbs, user/tenant) is established for the entire request
- *   lifetime via `withContext`, so any descendant code — including all
- *   OTel auto-instrumented child spans (DB, Redis, outbound HTTP) — sees
- *   the same trace context.
+ * The AsyncLocalStorage `ContextStore` (request id, breadcrumbs, user/tenant)
+ * is established for the request lifetime so descendant work sees consistent
+ * SDK context.
  *
  * The middleware is intentionally fail-open: any unexpected error inside
  * the instrumentation path must NEVER take down the host application.
@@ -44,19 +33,6 @@ export interface PulseExpressOptions {
     readonly ignorePaths?: readonly (string | RegExp)[];
     /** HTTP methods to skip (case-insensitive). Useful for `OPTIONS`/`HEAD`. */
     readonly ignoreMethods?: readonly string[];
-    /**
-     * Force-capture request headers regardless of remote config. When
-     * undefined (default), the remote `tracing.capture.headers` flag wins.
-     */
-    readonly captureHeaders?: boolean;
-    /** Force-capture query string regardless of remote config. */
-    readonly captureQuery?: boolean;
-    /**
-     * Force-capture request body. Only applies when the body is a parsed JSON
-     * object (e.g. `express.json()` middleware ran first). Strings and Buffers
-     * report size only. Default: governed by remote config.
-     */
-    readonly captureBody?: boolean;
     /** Maximum number of breadcrumbs retained on the request scope. */
     readonly maxBreadcrumbs?: number;
     /**
@@ -69,4 +45,16 @@ export interface PulseExpressOptions {
     readonly trustedProxies?: readonly string[];
 }
 export declare function monitorMiddleware(options?: PulseExpressOptions): (req: Request, res: Response, next: NextFunction) => void;
+/**
+ * Express error-handling middleware. Place after all routes and before custom error responses.
+ * Automatically captures any error passed to next(err) or thrown in route handlers.
+ *
+ * @example
+ * ```ts
+ * app.use(monitorMiddleware())
+ * // ... routes ...
+ * app.use(expressErrorHandler())
+ * ```
+ */
+export declare function expressErrorHandler(): (err: unknown, req: Request, res: Response, next: NextFunction) => void;
 //# sourceMappingURL=express.d.ts.map

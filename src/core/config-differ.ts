@@ -18,6 +18,7 @@ export function diffConfigs(
 ): ConfigDiff {
   const changes = new Map<string, { old: unknown; new: unknown }>()
 
+  const sdkChanged = !deepEqual(oldConfig.sdk, newConfig.sdk)
   const featuresChanged = !deepEqual(oldConfig.features, newConfig.features)
   const killswitchesChanged = !deepEqual(oldConfig.killswitches, newConfig.killswitches)
   const samplingChanged = !deepEqual(oldConfig.sampling, newConfig.sampling)
@@ -25,9 +26,9 @@ export function diffConfigs(
   const privacyChanged = !deepEqual(oldConfig.privacy, newConfig.privacy)
   const limitsChanged = !deepEqual(oldConfig.limits, newConfig.limits)
   const instrumentationChanged = !deepEqual(oldConfig.instrumentation, newConfig.instrumentation)
-  const runtimeChanged = !deepEqual(oldConfig.runtime, newConfig.runtime)
   const entitlementsChanged = !deepEqual(oldConfig.entitlements, newConfig.entitlements)
 
+  if (sdkChanged) collectChanges('sdk', oldConfig.sdk, newConfig.sdk, changes)
   if (featuresChanged) collectChanges('features', oldConfig.features, newConfig.features, changes)
   if (killswitchesChanged) collectChanges('killswitches', oldConfig.killswitches, newConfig.killswitches, changes)
   if (samplingChanged) collectChanges('sampling', oldConfig.sampling, newConfig.sampling, changes)
@@ -35,10 +36,10 @@ export function diffConfigs(
   if (privacyChanged) changes.set('privacy', { old: '[complex]', new: '[complex]' })
   if (limitsChanged) collectChanges('limits', oldConfig.limits, newConfig.limits, changes)
   if (instrumentationChanged) changes.set('instrumentation', { old: '[complex]', new: '[complex]' })
-  if (runtimeChanged) collectChanges('runtime', oldConfig.runtime, newConfig.runtime, changes)
   if (entitlementsChanged) collectChanges('entitlements', oldConfig.entitlements, newConfig.entitlements, changes)
 
   return {
+    sdkChanged,
     featuresChanged,
     killswitchesChanged,
     samplingChanged,
@@ -46,7 +47,6 @@ export function diffConfigs(
     privacyChanged,
     limitsChanged,
     instrumentationChanged,
-    runtimeChanged,
     entitlementsChanged,
     changes,
   }

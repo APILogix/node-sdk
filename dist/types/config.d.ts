@@ -1,23 +1,6 @@
 import { z } from 'zod';
 import type { SDKPlugin, EventProcessor, BreadcrumbProcessor } from './plugin.js';
 import type { SeverityLevel } from './severity.js';
-export type PlanTier = 'free' | 'pro' | 'enterprise';
-export interface PlanFeatures {
-    readonly tier: PlanTier;
-    readonly allowErrors: boolean;
-    readonly allowPerformance: boolean;
-    readonly allowTracing: boolean;
-    readonly allowMetrics: boolean;
-    readonly allowSessions: boolean;
-    readonly allowCustomPlugins: boolean;
-    readonly allowBeforeSend: boolean;
-    readonly allowSamplingOverride: boolean;
-    readonly maxBreadcrumbs: number;
-    readonly maxPlugins: number;
-    readonly maxBatchSize: number;
-    readonly maxQueueSize: number;
-    readonly allowedCompression: readonly ('gzip' | 'brotli' | 'none')[];
-}
 /** Bumped on incompatible schema changes. SDKs reject configs with a higher major. */
 export declare const REMOTE_CONFIG_SCHEMA_VERSION = 1;
 export interface RemoteConfigResponse {
@@ -31,19 +14,16 @@ export interface RemoteConfigResponse {
     readonly limits: LimitsConfig;
     readonly killswitches: KillswitchesConfig;
     readonly transport: TransportRemoteConfig;
-    readonly runtime: RuntimeConfig;
     readonly meta: ConfigMeta;
-    /**
-     * Billing/plan entitlements. Optional in the wire format — backends that
-     * predate this block simply omit it and every entitlement defaults to
-     * `true` (fail-open), so existing projects keep working unchanged.
-     */
-    readonly entitlements?: EntitlementsConfig;
+    /** Billing and API entitlements resolved by the backend. */
+    readonly entitlements: EntitlementsConfig;
 }
 export interface SdkIdentityConfig {
     readonly projectId: string;
+    /** Backend-owned service identity. Falls back to projectId when omitted. */
+    readonly service?: string | undefined;
     readonly environment: string;
-    readonly release?: string | undefined;
+    readonly release: string;
 }
 /**
  * Top-level feature toggles. When false, the SDK never instantiates the
@@ -73,18 +53,28 @@ export interface FeaturesConfig {
 export interface RouteSamplingRates {
     readonly traces?: number;
     readonly requests?: number;
+    readonly spans?: number;
     readonly errors?: number;
+    readonly messages?: number;
     readonly profiles?: number;
     readonly replays?: number;
     readonly metrics?: number;
+    readonly logs?: number;
+    readonly events?: number;
+    readonly crons?: number;
 }
 export interface SamplingConfig {
     readonly traces: number;
     readonly requests: number;
+    readonly spans: number;
     readonly errors: number;
+    readonly messages: number;
     readonly profiles: number;
     readonly replays: number;
     readonly metrics: number;
+    readonly logs: number;
+    readonly events: number;
+    readonly crons: number;
     /** Per-route overrides keyed by URL prefix. Longest prefix wins. */
     readonly routes: Readonly<Record<string, RouteSamplingRates>>;
 }
@@ -100,6 +90,9 @@ export interface InstrumentationConfig {
     readonly mongodb: boolean;
     readonly redis: boolean;
     readonly bullmq: BullMQInstrumentationConfig | boolean;
+    readonly pg: PgInstrumentationConfig | boolean;
+    readonly mysql2: MySQLInstrumentationConfig | boolean;
+    readonly eventEmitterPatch: boolean;
 }
 export interface FastifyInstrumentationConfig {
     readonly enabled: boolean;
@@ -126,6 +119,15 @@ export interface BullMQInstrumentationConfig {
     readonly emitCreateSpansForFlow?: boolean;
     /** Only create producer spans when a parent span is active. Default: false. */
     readonly requireParentSpanForPublish?: boolean;
+}
+export interface PgInstrumentationConfig {
+    readonly enabled: boolean;
+    readonly captureQueries: boolean;
+    readonly captureParams: boolean;
+}
+export interface MySQLInstrumentationConfig {
+    readonly enabled: boolean;
+    readonly captureQueries: boolean;
 }
 /**
  * Combined PII / scrubbing config. Replaces the older `security` block.
@@ -162,8 +164,8 @@ export interface PiiDetectionConfig {
 }
 /**
  * Hard caps that bound the SDK's resource use and per-event size. Backend
- * sets the values; the SDK clamps each one to a built-in safety ceiling
- * before applying it (see `SAFETY_CEILINGS` in constants/defaults).
+ * sets the values; snapshots outside the SDK safety bounds are rejected as a
+ * whole before any active configuration is replaced.
  */
 export interface TenantGovernanceConfig {
     readonly enabled: boolean;
@@ -179,9 +181,8 @@ export interface LimitsConfig {
     readonly maxAttributeLength: number;
     readonly maxPayloadSize: number;
     readonly maxQueueSize: number;
-    readonly maxMemoryMb: number;
-    readonly maxCpuOverheadPercent: number;
-    readonly tenantGovernance?: TenantGovernanceConfig;
+    readonly maxMemoryMb: number | 'auto';
+    readonly tenantGovernance: TenantGovernanceConfig;
 }
 /**
  * Operational fire-extinguishers. Independent of `features.*` — used to
@@ -198,19 +199,10 @@ export interface KillswitchesConfig {
     readonly disableLogs: boolean;
 }
 /**
- * Billing/plan entitlements sent by the control plane. These gate
- * **developer-facing optional telemetry APIs** — they never gate core SDK
- * behaviour (error capture, context, flush/shutdown), which always works.
- *
- * Semantics when an entitlement is `false`: the corresponding public API
- * becomes a no-op — `startSpan()` returns a non-recording noop span,
- * metric helpers drop the call, `captureLog()`/`captureProfile()`/
- * `captureReplay()` emit nothing. Nothing throws; application code keeps
- * running untouched.
- *
- * Unlike `features.*` (which stops the subsystem from being instantiated
- * at all), entitlements leave automatic instrumentation running and only
- * silence the custom-instrumentation surface the plan doesn't include.
+ * Billing/plan entitlements sent by the control plane. Optional developer APIs
+ * use their family gate, while requestCapture/tracing/errors/metrics govern
+ * corresponding automatic telemetry paths. Core manual error/message capture,
+ * local scope/context, flush, and shutdown remain ungated.
  */
 export interface EntitlementsConfig {
     /** `startSpan()` / `withSpan()` / `withSpanSync()` custom tracing APIs. */
@@ -245,13 +237,13 @@ export interface TransportRouteConfig {
     readonly flushIntervalMs: number;
     readonly timeoutMs: number;
     readonly compression: 'gzip' | 'none';
-    /** Internal scheduling priority. Optional in the wire format. */
-    readonly priority?: 'critical' | 'high' | 'normal' | 'low';
+    /** Internal scheduling priority. */
+    readonly priority: 'critical' | 'high' | 'normal' | 'low';
 }
 export interface TransportRemoteConfig {
     readonly retry: TransportRetryConfig;
     readonly queue: TransportQueueConfig;
-    readonly connections?: TransportConnectionConfig;
+    readonly connections: TransportConnectionConfig;
     readonly keepAlive: boolean;
     readonly routes: Readonly<Record<TransportRouteName, TransportRouteConfig>>;
 }
@@ -269,13 +261,9 @@ export interface TransportRetryConfig {
 export interface TransportQueueConfig {
     readonly overflowStrategy: 'drop_oldest' | 'drop_newest';
     /** Per-route queue cap; also bounded by limits.maxQueueSize. */
-    readonly maxSize?: number;
+    readonly maxSize: number;
     /** Slots protected from non-critical telemetry. */
-    readonly criticalReserve?: number;
-}
-export interface RuntimeConfig {
-    readonly configTtlSeconds: number;
-    readonly staleWhileRevalidate: boolean;
+    readonly criticalReserve: number;
 }
 export interface ConfigMeta {
     readonly generatedAt: string;
@@ -284,6 +272,7 @@ export interface ConfigMeta {
 }
 /** Result of diffing two RemoteConfigResponse objects. */
 export interface ConfigDiff {
+    readonly sdkChanged: boolean;
     readonly featuresChanged: boolean;
     readonly killswitchesChanged: boolean;
     readonly samplingChanged: boolean;
@@ -291,195 +280,42 @@ export interface ConfigDiff {
     readonly privacyChanged: boolean;
     readonly limitsChanged: boolean;
     readonly instrumentationChanged: boolean;
-    readonly runtimeChanged: boolean;
     readonly entitlementsChanged: boolean;
     readonly changes: ReadonlyMap<string, {
         old: unknown;
         new: unknown;
     }>;
 }
-/** @deprecated Use {@link PrivacyCaptureConfig}. */
-export type TracingCaptureConfig = PrivacyCaptureConfig;
-/** @deprecated The `tracing` block is gone; SDK-internal defaults live in `constants/internal-defaults`. */
-export interface TracingRemoteConfig {
-    readonly capture: PrivacyCaptureConfig;
-    readonly maxSpansPerTrace: number;
-    readonly maxSpanAttributes: number;
-    readonly maxTraceDurationMs: number;
-    readonly ignoredRoutes: readonly string[];
-    readonly ignoredMethods: readonly string[];
-    readonly propagation: {
-        readonly w3c: boolean;
-        readonly baggage: boolean;
-        readonly b3: boolean;
-    };
-}
-/** @deprecated The `errors` block is gone. SDK-internal defaults live in `constants/internal-defaults`. */
-export interface ErrorsConfig {
-    readonly captureUnhandledRejections: boolean;
-    readonly captureUncaughtExceptions: boolean;
-    readonly captureConsoleErrors: boolean;
-    readonly stackTraceLimit: number;
-    readonly attachSourceContext: boolean;
-    readonly grouping: {
-        readonly enabled: boolean;
-        readonly normalizePaths: boolean;
-    };
-}
-/** @deprecated The `logging` block is gone. SDK-internal defaults live in `constants/internal-defaults`. */
-export interface LoggingConfig {
-    readonly enabled: boolean;
-    readonly captureConsole: boolean;
-    readonly levels: readonly string[];
-    readonly maxLogSize: number;
-}
-/** @deprecated The `profiling` block is gone. SDK-internal defaults live in `constants/internal-defaults`. */
-export interface ProfilingConfig {
-    readonly enabled: boolean;
-    readonly cpu: boolean;
-    readonly heap: boolean;
-    readonly sampleRate: number;
-    readonly maxDurationMs: number;
-}
-/** @deprecated Use {@link PrivacyConfig}. */
-export type SecurityConfig = PrivacyConfig;
-/** @deprecated `versionPolicy` is no longer in the wire schema. */
-export interface VersionPolicyConfig {
-    readonly minimumVersion: string;
-    readonly latestVersion: string;
-    readonly blockedVersions: readonly string[];
-    readonly forceUpgrade: boolean;
-    readonly upgradeMessage: string;
-}
-/** @deprecated Use {@link RuntimeConfig}. */
-export type CacheConfig = RuntimeConfig;
-/** @deprecated Use {@link TransportRouteConfig}. */
-export type TransportEndpointConfig = TransportRouteConfig;
 /**
- * Options passed to `createSDK()` or `init()`.
- * All fields except `apiKey` are optional. Per-feature toggles and limits
- * live in remote config — these init options are convenience overrides for
- * common cases (sample rate, environment, debug flag).
+ * Local integration options. Runtime telemetry policy is intentionally absent:
+ * identity, features, sampling, privacy, limits, transport, instrumentation,
+ * killswitches, and entitlements come only from remote config.
  */
 export interface SDKInitOptions {
     readonly apiKey: string;
-    readonly service?: string;
-    readonly environment?: string;
-    /** Deployment release identifier (independent of package.json version). */
-    readonly release?: string;
-    /** Explicit consuming package name override. */
     readonly applicationName?: string;
-    /** Explicit consuming package version override. */
     readonly applicationVersion?: string;
-    /** package.json file to inspect; relative paths resolve from process.cwd(). */
     readonly packageJsonPath?: string;
-    readonly enableErrors?: boolean;
-    readonly enablePerformance?: boolean;
-    readonly enableTracing?: boolean;
-    readonly enableMetrics?: boolean;
-    readonly sampleRate?: number;
     readonly maxBreadcrumbs?: number;
     readonly plugins?: readonly SDKPlugin[];
     readonly eventProcessors?: readonly EventProcessor[];
     readonly beforeBreadcrumb?: BreadcrumbProcessor;
     readonly beforeSend?: (event: Record<string, unknown>) => Record<string, unknown> | null | Promise<Record<string, unknown> | null>;
-    readonly transport?: TransportOptions;
     readonly debug?: boolean;
     readonly logLevel?: SeverityLevel;
     readonly baseUrl?: string;
-    readonly configUrl?: string;
     readonly shutdownTimeoutMs?: number;
     readonly sourceMaps?: {
         readonly paths?: readonly string[];
         readonly allowRemote?: boolean;
         readonly embedSourceContent?: boolean;
     };
-    readonly dataScrubbing?: {
-        readonly sensitiveHeaders?: readonly string[];
-        readonly sensitiveKeys?: readonly string[];
-        readonly redactRequestBody?: boolean;
-        readonly redactResponseBody?: boolean;
-    };
-    readonly otelMetrics?: {
-        readonly maxHistogramBuckets?: number;
-        readonly percentiles?: number[];
-        readonly cardinalityLimit?: number;
-    };
-}
-export interface TransportOptions {
-    readonly batchSize?: number;
-    readonly flushIntervalMs?: number;
-    readonly maxRetries?: number;
-    readonly timeoutMs?: number;
-    readonly compression?: 'gzip' | 'brotli' | 'none';
-    readonly maxPayloadBytes?: number;
-    readonly maxConcurrentSends?: number;
-}
-export interface RemoteConfig {
-    readonly ingestUrl: string;
-    readonly samplingRate: number;
-    readonly enableErrors: boolean;
-    readonly enablePerformance: boolean;
-    readonly maxQueueSize: number;
-    readonly batchSize: number;
-    readonly flushIntervalMs: number;
-    readonly maxRetries: number;
-    readonly maxPayloadBytes: number;
-    readonly plan?: PlanTier | undefined;
-    readonly planFeatures?: Partial<PlanFeatures> | undefined;
-}
-export interface ResolvedSDKConfig {
-    readonly apiKey: string;
-    readonly service: string;
-    readonly environment: string;
-    readonly release: string;
-    readonly applicationName: string;
-    readonly applicationVersion: string;
-    readonly debug: boolean;
-    readonly plan: PlanTier;
-    readonly planFeatures: PlanFeatures;
-    readonly enableErrors: boolean;
-    readonly enablePerformance: boolean;
-    readonly enableTracing: boolean;
-    readonly enableMetrics: boolean;
-    readonly samplingRate: number;
-    readonly maxBreadcrumbs: number;
-    readonly maxQueueSize: number;
-    readonly shutdownTimeoutMs: number;
-    readonly ingestUrl: string;
-    readonly batchSize: number;
-    readonly flushIntervalMs: number;
-    readonly maxRetries: number;
-    readonly timeoutMs: number;
-    readonly compression: 'gzip' | 'brotli' | 'none';
-    readonly maxPayloadBytes: number;
-    readonly maxConcurrentSends: number;
-    readonly dataScrubbing: {
-        sensitiveHeaders: string[];
-        sensitiveKeys: string[];
-        redactRequestBody: boolean;
-        redactResponseBody: boolean;
-    };
-    readonly otelMetrics: {
-        maxHistogramBuckets: number;
-        percentiles: number[];
-        cardinalityLimit: number;
-    };
-    readonly remoteConfig?: RemoteConfigResponse | undefined;
 }
 export declare const sdkInitOptionsSchema: z.ZodObject<{
     apiKey: z.ZodString;
-    service: z.ZodOptional<z.ZodString>;
-    environment: z.ZodOptional<z.ZodString>;
-    release: z.ZodOptional<z.ZodString>;
     applicationName: z.ZodOptional<z.ZodString>;
     applicationVersion: z.ZodOptional<z.ZodString>;
     packageJsonPath: z.ZodOptional<z.ZodString>;
-    enableErrors: z.ZodOptional<z.ZodBoolean>;
-    enablePerformance: z.ZodOptional<z.ZodBoolean>;
-    enableTracing: z.ZodOptional<z.ZodBoolean>;
-    enableMetrics: z.ZodOptional<z.ZodBoolean>;
-    sampleRate: z.ZodOptional<z.ZodNumber>;
     maxBreadcrumbs: z.ZodOptional<z.ZodNumber>;
     plugins: z.ZodOptional<z.ZodReadonly<z.ZodArray<z.ZodCustom<SDKPlugin, SDKPlugin>>>>;
     eventProcessors: z.ZodOptional<z.ZodReadonly<z.ZodArray<z.ZodCustom<EventProcessor, EventProcessor>>>>;
@@ -494,31 +330,11 @@ export declare const sdkInitOptionsSchema: z.ZodObject<{
         fatal: "fatal";
     }>>;
     baseUrl: z.ZodOptional<z.ZodString>;
-    configUrl: z.ZodOptional<z.ZodString>;
     shutdownTimeoutMs: z.ZodOptional<z.ZodNumber>;
     sourceMaps: z.ZodOptional<z.ZodObject<{
         paths: z.ZodOptional<z.ZodReadonly<z.ZodArray<z.ZodString>>>;
         allowRemote: z.ZodOptional<z.ZodBoolean>;
         embedSourceContent: z.ZodOptional<z.ZodBoolean>;
-    }, z.core.$strip>>;
-    dataScrubbing: z.ZodOptional<z.ZodObject<{
-        sensitiveHeaders: z.ZodOptional<z.ZodReadonly<z.ZodArray<z.ZodString>>>;
-        sensitiveKeys: z.ZodOptional<z.ZodReadonly<z.ZodArray<z.ZodString>>>;
-        redactRequestBody: z.ZodOptional<z.ZodBoolean>;
-        redactResponseBody: z.ZodOptional<z.ZodBoolean>;
-    }, z.core.$strip>>;
-    transport: z.ZodOptional<z.ZodObject<{
-        batchSize: z.ZodOptional<z.ZodNumber>;
-        flushIntervalMs: z.ZodOptional<z.ZodNumber>;
-        maxRetries: z.ZodOptional<z.ZodNumber>;
-        timeoutMs: z.ZodOptional<z.ZodNumber>;
-        compression: z.ZodOptional<z.ZodEnum<{
-            gzip: "gzip";
-            brotli: "brotli";
-            none: "none";
-        }>>;
-        maxPayloadBytes: z.ZodOptional<z.ZodNumber>;
-        maxConcurrentSends: z.ZodOptional<z.ZodNumber>;
-    }, z.core.$strip>>;
+    }, z.core.$strict>>;
 }, z.core.$strict>;
 //# sourceMappingURL=config.d.ts.map

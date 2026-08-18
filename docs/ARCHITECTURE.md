@@ -13,16 +13,16 @@ The SDK owns an in-process OpenTelemetry tracer provider only when no compatible
 
 Initialization proceeds in phases:
 
-1. Validate options, resolve application package metadata, and install the client options/breadcrumb capacity.
-2. Initialize the schema-versioned remote configuration manager. It can use baked-in safe defaults when the control plane is unavailable.
-3. Initialize killswitch, deterministic sampling, feature, limits, tenant, privacy, and entitlement controllers.
-4. Build the multi-route transport router. Initialization waits for an older router to shut down before publishing the replacement.
-5. Perform the backward-compatible `/v1/init` handshake and merge baked-in, remote, legacy, user, plan, and safety-bound values.
+1. Validate local integration options and resolve consuming-package metadata.
+2. Perform exactly one `POST /v1/init` containing only the API key.
+3. Validate, clone, hash, freeze, and install the complete returned `RemoteConfigResponse` in `ConfigManager`.
+4. Initialize killswitch, deterministic sampling, feature, limits, tenant, privacy, and entitlement controllers from that snapshot.
+5. Build the multi-route transport router. Initialization waits for an older router to shut down before publishing the replacement.
 6. Initialize fallback persistence and replay undelivered events through the full pipeline in batches of 100, yielding between batches.
 7. Register feature-owned tracing, metrics, error, logging, profiling, cron, and session subsystems.
-8. Subscribe controllers and transport to config diffs, then start the refresh loop.
+8. Install `ConfigApplier`; no polling or retry timer is started.
 
-Baked-in transport routes have no real URL and transport is killed by default. A valid remote route set or the compatibility bridge derived from a successful legacy init is required before sending. Numeric remote values are clamped to local safety floors/ceilings.
+The config returned by `/v1/init` is the entire policy. It is not merged with baked defaults or user overrides. Invalid or unavailable init configuration leaves telemetry uninitialized. A telemetry ACK with `status: 202` and `change: true` may trigger one background `POST /v1/sdk-config`; the complete validated result atomically replaces the active immutable reference. Concurrent signals are ignored while refresh/apply is in flight, and refresh failure retains the prior snapshot until another signal arrives.
 
 ## Canonical event pipeline
 
@@ -48,7 +48,7 @@ capture helper
   → TransportRouter route resolution
   → per-route bounded queue and batching
   → transport-boundary sanitize/scrub
-  → JSON serialization and gzip
+  → JSON serialization and route-configured gzip/none encoding
   → HTTP send/retry/health accounting
   → ACK discard or failure persistence
 ```
@@ -65,34 +65,36 @@ The pipeline normalizes required fields and enriches correlation before user ext
 
 Plugin processors and event processors may transform or drop events. User and plugin `beforeSend` hooks run before routing. Each extension call is time-bounded and isolated; a throw or timeout is logged and processing continues with the last event. A `null` result drops it.
 
-The final pipeline stage overwrites `metadata` with the frozen client metadata. This makes `applicationName`, `applicationVersion`, `sdkName`, `sdkVersion`, `service`, `environment`, and `release` authoritative even if an extension changed them. The batch manager then applies the security scrubber/sanitizer again before serialization. This is defense in depth, not a reason to collect unnecessary sensitive data.
+The final pipeline stage overwrites `metadata` with the frozen client metadata. This makes `applicationName`, `applicationVersion`, `sdkName`, `sdkVersion`, `projectId`, `environment`, and `release` authoritative even if an extension changed them. `projectId` is sourced exclusively from the active remote configuration's `config.sdk.projectId` and can never be supplied or overridden by user code or plugins. The batch manager then applies the security scrubber/sanitizer again before serialization. This is defense in depth, not a reason to collect unnecessary sensitive data.
 
 ## Traces and aggregation
 
 Manual and automatic spans are OpenTelemetry spans. `PulseSpan` is a thin safety/ergonomics wrapper; the readable OpenTelemetry span remains the exporter source of truth. Span enrichment, request/tenant/session correlation, exclusive duration, links, events, attributes, and SDK metadata are converted into a Pulse `span` event in `PipelineSpanExporter`.
 
-The trace aggregator also reconstructs a hierarchy and emits `trace` documents when a root completes or a trace is swept as partial. Both `span` and `trace` use the Pulse `traces` route. There is no OTLP network exporter in this implementation; all export goes through Pulse event routing.
+The trace aggregator also reconstructs a hierarchy and emits `trace` documents when a root completes or a trace is swept as partial. Individual `span` events use the `spans` route; aggregate `trace` documents use `traces`. There is no OTLP network exporter in this implementation; all export goes through Pulse event routing.
 
 If the process already has a global OpenTelemetry provider/context setup, the SDK avoids registering a second provider. Built-in propagation uses W3C Trace Context (and baggage according to internal defaults). SDK transport calls suppress tracing and internal URLs are ignored to prevent export recursion.
 
 ## Routing and batching
 
-Ten event types map to eight enterprise routes:
+Each event family has one required backend-supplied route:
 
-| Event types | Route owner | Forced path |
-|---|---|---|
-| `error`, `message` | `errors` | `/v1/errors` |
-| `span`, `trace` | `traces` | `/v1/traces` |
-| `request` | `requests` | `/v1/requests` |
-| `metric` | `metrics` | `/v1/metrics` |
-| `log` | `logs` | `/v1/logs` |
-| `profile` | `profiles` | `/v1/profiles` |
-| `cron_checkin` | `crons` | `/v1/checkins` |
-| `replay` | `replays` | `/v1/replays` |
+| Event type | Route key |
+|---|---|
+| `error` | `errors` |
+| `message` | `events` |
+| `span` | `spans` |
+| `trace` | `traces` |
+| `request` | `requests` |
+| `metric` | `metrics` |
+| `log` | `logs` |
+| `profile` | `profiles` |
+| `cron_checkin` | `crons` |
+| `replay` | `replays` |
 
-The registry forces the endpoint path onto the configured URL and removes search/fragment data. Missing request routes fall back to the traces URL and missing replay routes fall back to the logs URL, but still use their own forced path. Unconfigured routes use a reserved `.invalid` placeholder and are rejected locally.
+`RouteRegistry` uses each validated `transport.routes.*.url` exactly as supplied; it does not force a path, derive one route from another, or install placeholder URLs. All ten routes are required, and any missing or malformed route rejects the complete candidate before it can become active.
 
-Every route owns a bounded ring-buffer queue and `BatchManager`; all routes share one `ConnectionManager` and health monitor. Remote batch sizes, intervals, timeouts, priorities, queue sizes, and concurrency values are clamped against route defaults and SDK safety bounds. Cron intentionally uses batch size one and zero wait.
+Every route owns a bounded ring-buffer queue and `BatchManager`; all routes share one `ConnectionManager` and health monitor. Validated backend values directly control batch sizes, flush intervals, timeouts, priorities, queue capacity, retry behavior, and global/optional per-route concurrency. Hard safety bounds are enforced by rejecting the complete snapshot, not by clamping or merging it. Cron behavior follows its explicit route configuration.
 
 ### Critical retention
 
@@ -102,9 +104,9 @@ The transport queue identifies only these events as critical:
 - `log` with `level: 'fatal'`;
 - `cron_checkin` with `status: 'error'`.
 
-When full, an incoming critical event may evict the oldest non-critical event under either overflow policy. Ordinary events never evict critical events. Under `drop_oldest`, ordinary ingress evicts only a non-critical event. If a queue contains only critical events, a new critical event can still be dropped: this is preferential retention, not losslessness.
+`transport.queue.criticalReserve` carves out capacity that ordinary telemetry cannot consume. Critical events can use those reserved slots and, when the queue is full, may evict the oldest non-critical event under either overflow policy. Ordinary events never evict critical events. Under `drop_oldest`, ordinary ingress replaces only ordinary telemetry while preserving the reserve. If a queue contains only critical events, a new critical event can still be dropped: this is preferential retention, not losslessness.
 
-The wire schema includes `transport.queue.criticalReserve`, but the current `TransportEventQueue` does not carve out that number of dedicated slots. Its actual protection is the critical-eviction rule above. The separate pre-init queue uses broader tiers (`error` critical, request/span high, other normal) and fixed proportional capacities.
+The separate pre-init queue uses broader tiers (`error` critical, request/span high, other normal) and fixed proportional capacities; it is only a bootstrap buffer and all drained events re-enter the canonical pipeline after configuration is live.
 
 ## Atomic transport reconfiguration
 
@@ -131,7 +133,7 @@ No jitter is currently added, so deployments should not describe retry synchroni
 
 Route health tracks recent failures and a bounded latency histogram. Ten failures in a 60-second window, or a failed half-open probe, opens the circuit. Probe backoff begins at one second and doubles to 60 seconds. Degraded routes reduce concurrency and batch size; unavailable routes delay sends and probe half-open. The health snapshot exposes circuit state, failures, latency, queue, sent/failed/dropped/retry totals, and connection concurrency.
 
-`ConnectionManager` is a pair of global/per-route semaphores with timed acquisition. Despite “pool” names in stats, it does not own sockets or implement a true keep-alive agent pool. Actual socket reuse, if any, belongs to runtime `fetch`/Undici behavior. The remote `keepAlive` field is not converted into a dedicated SDK connection pool.
+`ConnectionManager` is a pair of global/per-route semaphores with timed acquisition. Despite “pool” names in stats, it does not own sockets or implement an agent pool. The backend `keepAlive` value is applied as the request `Connection` hint (`keep-alive` or `close`); actual socket reuse remains the responsibility of runtime `fetch`/Undici.
 
 ## Tenant governance
 

@@ -26,15 +26,43 @@ export function getRequestContextFromOtelContext(ctx = otelContext.active()) {
 }
 /**
  * Get the current trace ID from context, or undefined.
+ * Synchronizes traceId with ContextStore so correlation is preserved
+ * even after child spans finish and pop off the active context stack.
  */
 export function getTraceId() {
-    return trace.getActiveSpan()?.spanContext().traceId ?? getRequestContext()?.traceId;
+    const activeSpan = trace.getActiveSpan();
+    if (activeSpan) {
+        const traceId = activeSpan.spanContext().traceId;
+        if (traceId) {
+            const store = getRequestContext();
+            if (store && !store.traceId) {
+                ;
+                store.traceId = traceId;
+            }
+            return traceId;
+        }
+    }
+    return getRequestContext()?.traceId;
 }
 /**
  * Get the current span ID from context, or undefined.
+ * Synchronizes spanId with ContextStore so correlation is preserved
+ * even after child spans finish and pop off the active context stack.
  */
 export function getSpanId() {
-    return trace.getActiveSpan()?.spanContext().spanId ?? getRequestContext()?.spanId;
+    const activeSpan = trace.getActiveSpan();
+    if (activeSpan) {
+        const spanId = activeSpan.spanContext().spanId;
+        if (spanId) {
+            const store = getRequestContext();
+            if (store && !store.spanId) {
+                ;
+                store.spanId = spanId;
+            }
+            return spanId;
+        }
+    }
+    return getRequestContext()?.spanId;
 }
 export function attachRequestContextToActiveSpan(store = getRequestContext()) {
     if (!store)
@@ -42,6 +70,17 @@ export function attachRequestContextToActiveSpan(store = getRequestContext()) {
     const activeSpan = trace.getActiveSpan();
     if (!activeSpan)
         return;
+    const spanContext = activeSpan.spanContext();
+    if (spanContext) {
+        if (!store.traceId && spanContext.traceId) {
+            ;
+            store.traceId = spanContext.traceId;
+        }
+        if (!store.spanId && spanContext.spanId) {
+            ;
+            store.spanId = spanContext.spanId;
+        }
+    }
     const tenantId = store.extra?.['tenantId'];
     const attributes = {
         [PULSE_CONTEXT_ATTRIBUTES.requestId]: store.requestId,

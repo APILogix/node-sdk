@@ -54,7 +54,10 @@ export class EventQueue {
     }
 
     configure(maxSize: number) {
-        this.maxSize = Math.max(1, Math.floor(maxSize))
+        if (!Number.isInteger(maxSize) || maxSize < 1) {
+            throw new RangeError('Bootstrap queue maxSize must be a positive integer')
+        }
+        this.maxSize = maxSize
         this.tiers.critical.maxSize = Math.floor(this.maxSize * 0.4)
         this.tiers.high.maxSize = Math.floor(this.maxSize * 0.4)
         this.tiers.normal.maxSize = Math.max(1, this.maxSize - this.tiers.critical.maxSize - this.tiers.high.maxSize)

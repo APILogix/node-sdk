@@ -6,7 +6,6 @@
  *   - Feature enabled/disabled state management.
  *   - Config change: enabling new features triggers start.
  *   - Config change: disabling features triggers stop.
- *   - Degraded mode: only errors + logging allowed.
  *   - Every flag in v3 `FeaturesConfig` independently controllable.
  *
  * The v3 schema dropped `aiDetection`, `dynamicSampling`, `sourceMaps`,
@@ -116,26 +115,6 @@ describe('FeatureController', () => {
                 features: { ...allFeaturesOn, profiling: false },
             });
             assert.equal(ctrl.isEnabled('profiling'), false);
-        });
-    });
-    describe('Degraded Mode', () => {
-        it('should only allow errors and logging in degraded mode', () => {
-            const ctrl = FeatureController.initialize(allFeaturesOn);
-            ctrl.setDegradedMode(true);
-            assert.equal(ctrl.isEnabled('errors'), true);
-            assert.equal(ctrl.isEnabled('logging'), true);
-            assert.equal(ctrl.isEnabled('tracing'), false);
-            assert.equal(ctrl.isEnabled('metrics'), false);
-            assert.equal(ctrl.isEnabled('profiling'), false);
-            assert.equal(ctrl.isEnabled('sessionReplay'), false);
-            assert.equal(ctrl.isEnabled('requestCapture'), false);
-        });
-        it('should restore full features when degraded mode is turned off', () => {
-            const ctrl = FeatureController.initialize(allFeaturesOn);
-            ctrl.setDegradedMode(true);
-            assert.equal(ctrl.isEnabled('tracing'), false);
-            ctrl.setDegradedMode(false);
-            assert.equal(ctrl.isEnabled('tracing'), true);
         });
     });
 });

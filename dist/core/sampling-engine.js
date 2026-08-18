@@ -17,6 +17,10 @@
  *   3. Compare against the rate for the event type (route-overridden if any).
  */
 import { getLogger } from '../utils/logger.js';
+const SAMPLING_EVENT_TYPES = [
+    'traces', 'requests', 'spans', 'errors', 'messages', 'profiles',
+    'replays', 'metrics', 'logs', 'events', 'crons',
+];
 export class SamplingEngine {
     static instance = null;
     config;
@@ -41,8 +45,14 @@ export class SamplingEngine {
     shouldSampleRequest(requestId, route) {
         return this.decide(requestId, 'requests', route);
     }
+    shouldSampleSpan(spanId, route) {
+        return this.decide(spanId, 'spans', route);
+    }
     shouldSampleError(eventId, route) {
         return this.decide(eventId, 'errors', route);
+    }
+    shouldSampleMessage(messageId, route) {
+        return this.decide(messageId, 'messages', route);
     }
     shouldSampleProfile(traceId, route) {
         return this.decide(traceId, 'profiles', route);
@@ -53,19 +63,23 @@ export class SamplingEngine {
     shouldSampleMetric(metricId, route) {
         return this.decide(metricId, 'metrics', route);
     }
+    shouldSampleLog(logId, route) {
+        return this.decide(logId, 'logs', route);
+    }
+    shouldSampleEvent(eventId, route) {
+        return this.decide(eventId, 'events', route);
+    }
+    shouldSampleCron(cronId, route) {
+        return this.decide(cronId, 'crons', route);
+    }
     // ─── Config Change ────────────────────────────────────────────────────────
     handleConfigChange(_diff, newConfig) {
         if (this.destroyed)
             return;
         const newSampling = newConfig.sampling;
         const old = this.config;
-        if (old.traces !== newSampling.traces ||
-            old.requests !== newSampling.requests ||
-            old.errors !== newSampling.errors ||
-            old.profiles !== newSampling.profiles ||
-            old.replays !== newSampling.replays ||
-            old.metrics !== newSampling.metrics) {
-            getLogger().info(`[SamplingEngine] Rates updated — traces: ${newSampling.traces}, requests: ${newSampling.requests}, errors: ${newSampling.errors}, profiles: ${newSampling.profiles}, replays: ${newSampling.replays}, metrics: ${newSampling.metrics}`);
+        if (SAMPLING_EVENT_TYPES.some(key => old[key] !== newSampling[key])) {
+            getLogger().info('[SamplingEngine] Rates updated', Object.fromEntries(SAMPLING_EVENT_TYPES.map(key => [key, newSampling[key]])));
         }
         this.config = { ...newSampling };
     }

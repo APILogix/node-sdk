@@ -5,7 +5,7 @@
  *   - Killswitch + FeatureController gates
  *   - Tenant admission control
  *   - Centralized scrubbing via SecurityScrubber
- *   - Remote-config driven ignored routes / methods / capture toggles
+ *   - Backend-authoritative sampling and privacy capture policy
  *
  * The plugin is intentionally fail-open. If any hook throws, the host
  * application continues serving traffic and the SDK logs the failure.
@@ -14,9 +14,6 @@ import { type ContextStore } from '../core/context.js';
 export interface PulseFastifyOptions {
     readonly ignorePaths?: readonly (string | RegExp)[];
     readonly ignoreMethods?: readonly string[];
-    readonly captureHeaders?: boolean;
-    readonly captureQuery?: boolean;
-    readonly captureBody?: boolean;
     readonly maxBreadcrumbs?: number;
     /**
      * IPs of trusted reverse proxies (exact match, or `*` to trust any peer).

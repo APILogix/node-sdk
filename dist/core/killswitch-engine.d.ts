@@ -1,8 +1,8 @@
 /**
  * KillswitchEngine — reactive killswitch controller.
  *
- * Each killswitch maps to a subsystem shutdown/startup function pair.
- * When a killswitch flips via config refresh, the engine reacts within 5 seconds.
+ * Each killswitch maps to a subsystem shutdown/startup function pair and is
+ * applied during the event-signalled configuration transition.
  *
  * Killswitch semantics:
  * - disableSDK: Every public method becomes a no-op. Zero data capture, zero network.
@@ -11,7 +11,7 @@
  * - disableErrors: Detach uncaughtException/unhandledRejection listeners, stop console.error.
  * - disableLogs: Stop console interception, drain buffer.
  * - disableProfiling: Stop profiler thread, flush in-flight profiles.
- * - disableTransport: Stop all HTTP outbound. Events queued locally. Auto-resumes on flip.
+ * - disableTransport: Stop all HTTP outbound; router admission rejects new events until resumed.
  */
 import type { KillswitchesConfig, ConfigDiff, RemoteConfigResponse } from '../types/config.js';
 type SubsystemShutdownFn = () => Promise<void> | void;

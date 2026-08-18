@@ -1,11 +1,8 @@
 /**
  * LimitsEngine — enforces payload and resource limits from remote config.
  *
- * Backed by `LimitsConfig`, which is itself clamped to `SAFETY_CEILINGS`
- * before reaching this engine. The wire schema (post v3 migration) only
- * carries the bounds the backend cares about; per-attribute counts and
- * lengths are reused for both span attributes and event-level fields like
- * `context`, `attributes`, and `tags`.
+ * Backed by a complete validated `LimitsConfig`. Out-of-range snapshots are
+ * rejected before this engine sees them; values are not merged or clamped.
  *
  * Responsibilities:
  *   - maxPayloadSize: reject oversized serialized payloads pre-transport.
@@ -27,15 +24,6 @@ export declare class LimitsEngine {
     private constructor();
     static initialize(config: LimitsConfig): LimitsEngine;
     static getInstance(): LimitsEngine | null;
-    /**
-     * Backwards-compatible no-op admission gate.
-     *
-     * Rate limiting moved to `loadShedder` + `tenantGovernor`. We keep this
-     * method so the event pipeline doesn't have to fork by SDK version, but
-     * it always returns `true`. Removed entirely once the pipeline stops
-     * calling it.
-     */
-    admitEvent(): boolean;
     /**
      * Enforce attribute limits on an event. Returns a new event (never mutates).
      */

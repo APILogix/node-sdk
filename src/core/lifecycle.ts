@@ -502,13 +502,6 @@ async function runUnconditionalCleanup(stepErrors: ShutdownStepError[]): Promise
     await withTimeout(SerializationPool.reset(), SUBSYSTEM_STEP_TIMEOUT_MS, 'serialization pool reset timed out')
   }, stepErrors)
 
-  // Reset the batcher (timer + circuit breaker + rate limiter + pressure monitor).
-  // Imported lazily to avoid a circular dependency at module-load time.
-  await runStep('batcher.stop', async () => {
-    const { stopBatcher } = await import('../transport/batcher.js')
-    stopBatcher()
-  }, stepErrors)
-
   // Clear lifecycle-local state last so beforeShutdown hooks added during
   // teardown have already executed before we drop the references.
   beforeShutdownHooks.length = 0

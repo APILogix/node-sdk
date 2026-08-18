@@ -4,31 +4,20 @@
  * Enterprise-grade integration points:
  *   - KillswitchEngine: short-circuits when SDK or tracing is disabled.
  *   - FeatureController: respects the remote `tracing` feature flag.
- *   - TenantGovernor: per-tenant admission control before any work.
+ *   - TenantGovernor: atomic per-tenant admission in the canonical pipeline.
  *   - SecurityScrubber: shared scrubbing for headers / query / body.
- *   - ConfigManager: honours `tracing.ignoredRoutes`, `tracing.ignoredMethods`,
- *     and `tracing.capture.*` so a single remote-config flip changes capture
- *     behaviour at runtime — no redeploy.
+ *   - ConfigManager: uses the active backend privacy and sampling policy;
+ *     middleware ignore lists remain local integration filters only.
  *
  * Span ownership model:
- *   When OpenTelemetry's `HttpInstrumentation` is enabled (the default,
- *   registered by `registerAutoInstrumentations`), it creates a SERVER
- *   span automatically for every incoming request. This middleware does
- *   NOT create its own root span in that case — it enriches the OTel span
- *   with Pulse-specific attributes (request id, tenant id, user id, route,
- *   latency) when the response is finished.
+ *   OpenTelemetry HttpInstrumentation owns SERVER span creation when enabled
+ *   by remote configuration. This middleware enriches an active span but
+ *   never creates a fallback span when HTTP instrumentation is disabled.
+ *   It always emits the discrete request event when request capture passes.
  *
- *   When HTTP auto-instrumentation is disabled (deployment opt-out, or the
- *   middleware is exercised in isolation by tests), we create our own
- *   SERVER root span so the request is still fully captured. This keeps
- *   the "exactly one root span per request" invariant regardless of the
- *   OTel topology.
- *
- *   In both cases the AsyncLocalStorage `ContextStore` (request id,
- *   breadcrumbs, user/tenant) is established for the entire request
- *   lifetime via `withContext`, so any descendant code — including all
- *   OTel auto-instrumented child spans (DB, Redis, outbound HTTP) — sees
- *   the same trace context.
+ * The AsyncLocalStorage `ContextStore` (request id, breadcrumbs, user/tenant)
+ * is established for the request lifetime so descendant work sees consistent
+ * SDK context.
  *
  * The middleware is intentionally fail-open: any unexpected error inside
  * the instrumentation path must NEVER take down the host application.
@@ -38,24 +27,23 @@
 import type { NextFunction, Request, Response } from 'express'
 import { captureError } from '../capture/captureError.js'
 import { captureRequest } from '../capture/captureRequest.js'
-import { trace, context, SpanKind, SpanStatusCode, type Span } from '@opentelemetry/api'
+import { trace, SpanStatusCode } from '@opentelemetry/api'
 import { client } from '../core/client.js'
 import {
   attachRequestContextToActiveSpan,
   createContextStore,
   withContext,
+  getRequestContext,
   getTraceId,
   getSpanId,
 } from '../core/context.js'
 import { getLogger } from '../utils/logger.js'
 import { generateId } from '../utils/uuid.js'
-import { getTracer } from '../tracing/tracer.js'
 import {
   captureBodySnapshot,
   evaluateCaptureGate,
   headerString,
   matchesIgnoredPath,
-  recordCaptureAccepted,
   resolveClientIp,
   scrubHeaders,
   scrubQuery,
@@ -70,19 +58,6 @@ export interface PulseExpressOptions {
   readonly ignorePaths?: readonly (string | RegExp)[]
   /** HTTP methods to skip (case-insensitive). Useful for `OPTIONS`/`HEAD`. */
   readonly ignoreMethods?: readonly string[]
-  /**
-   * Force-capture request headers regardless of remote config. When
-   * undefined (default), the remote `tracing.capture.headers` flag wins.
-   */
-  readonly captureHeaders?: boolean
-  /** Force-capture query string regardless of remote config. */
-  readonly captureQuery?: boolean
-  /**
-   * Force-capture request body. Only applies when the body is a parsed JSON
-   * object (e.g. `express.json()` middleware ran first). Strings and Buffers
-   * report size only. Default: governed by remote config.
-   */
-  readonly captureBody?: boolean
   /** Maximum number of breadcrumbs retained on the request scope. */
   readonly maxBreadcrumbs?: number
   /**
@@ -122,7 +97,6 @@ export function monitorMiddleware(options: PulseExpressOptions = {}) {
       path,
       method: req.method,
       sampleKey: requestId,
-      tenantId,
       localIgnorePaths: options.ignorePaths,
       localIgnoreMethods: options.ignoreMethods,
     })
@@ -144,54 +118,29 @@ export function monitorMiddleware(options: PulseExpressOptions = {}) {
 
     const store = createContextStore(
       requestId,
-      options.maxBreadcrumbs ?? client.config?.maxBreadcrumbs ?? 100,
+      options.maxBreadcrumbs ?? client.options?.maxBreadcrumbs ?? 100,
       {
         userId,
         sessionId,
-        extra: tenantId ? { tenantId } : undefined,
+        extra: {
+          ...(tenantId ? { tenantId } : {}),
+          getStatusCode: () => res.statusCode,
+          getMethod: () => req.method,
+          getUrl: () => req.originalUrl || req.url,
+          getRoute: () => normalizedRoute(req),
+        },
         tags: { framework: 'express' },
       },
     )
 
-    // Local override resolution. `undefined` means "follow remote config".
-    const captureHeaders = options.captureHeaders ?? decision.allowHeaders
-    const captureQuery = options.captureQuery ?? decision.allowQuery
-    const captureBody = options.captureBody ?? decision.allowBody
+    // Privacy capture policy is backend-authoritative.
+    const captureHeaders = decision.allowHeaders
+    const captureQuery = decision.allowQuery
+    const captureBody = decision.allowBody
 
     withContext(store, () => {
-      // Ownership of the SERVER root span:
-      //   1. If OTel HttpInstrumentation is enabled, it has already created
-      //      a SERVER span as the active span before this middleware runs.
-      //      We just enrich it with Pulse attributes on response.
-      //   2. If HttpInstrumentation is disabled, no SERVER span exists. We
-      //      create one ourselves so this request is still represented in
-      //      the trace tree as a root span. We own its lifecycle (end on
-      //      response finish/close/error) and its parent context (it has
-      //      none — it's a root).
-      //
-      // Either way the active span at this point is the SERVER root, so
-      // attaching context attributes here populates the root span (where
-      // backends normally render the request name and URL).
-      let ownedSpan: Span | undefined
-      const existingActive = trace.getActiveSpan()
-      if (!existingActive) {
-        const tracer = getTracer()
-        if (tracer) {
-          ownedSpan = tracer.startSpan(`${req.method} ${path}`, {
-            kind: SpanKind.SERVER,
-            attributes: {
-              'http.method': req.method,
-              'http.target': path,
-              'http.scheme': req.protocol,
-              'http.host': req.headers.host,
-              'pulse.request_id': requestId,
-              'pulse.framework': 'express',
-              'pulse.fallback_root': true,
-            },
-          })
-        }
-      }
-
+      // OpenTelemetry owns SERVER span creation. Middleware only enriches an
+      // active span when backend-selected instrumentation created one.
       attachRequestContextToActiveSpan(store)
 
       let captured = false
@@ -209,15 +158,10 @@ export function monitorMiddleware(options: PulseExpressOptions = {}) {
             const bodySnapshot = captureBodySnapshot((req as Request & { body?: unknown }).body, captureBody)
             const responseSize = readContentLength(res.getHeader('content-length'))
 
-            recordCaptureAccepted(tenantId)
-
-            // Enrich whichever span owns this request — the OTel-created one
-            // or our owned fallback. We must re-resolve the active span here
-            // because by the time `finish` fires, the ALS chain is the one
-            // that flowed through user code, not the original middleware
-            // call frame. `trace.getActiveSpan()` reads from the OTel context
-            // bound to this listener (preserved by `EventEmitter` binding).
-            const activeSpan = ownedSpan ?? trace.getActiveSpan()
+            // Enrich the active backend-selected OpenTelemetry span. Resolve
+            // it at completion because the listener runs in the propagated
+            // request context.
+            const activeSpan = trace.getActiveSpan()
             if (activeSpan) {
               const route = normalizedRoute(req)
               const enrichmentAttrs: Record<string, string | number | boolean> = {
@@ -237,8 +181,7 @@ export function monitorMiddleware(options: PulseExpressOptions = {}) {
               activeSpan.setAttributes(enrichmentAttrs)
             }
 
-            // Emit the discrete request event to the central pipeline.
-            // This is routed to `/v1/requests` (or falls back to `/v1/traces`).
+            // Emit the discrete request event to the canonical requests route.
             captureRequest({
               type: 'request',
               requestId,
@@ -265,13 +208,6 @@ export function monitorMiddleware(options: PulseExpressOptions = {}) {
           } catch (err) {
             // The middleware must NEVER crash the host. Log and move on.
             getLogger().error('monitorMiddleware completion failed', { error: err })
-          } finally {
-            // Always end the owned fallback span — even if enrichment threw,
-            // we must not leak the span. Idempotency is safe: OTel's Span
-            // implementation guards against double-end internally.
-            if (ownedSpan) {
-              try { ownedSpan.end() } catch { /* never throw from response handler */ }
-            }
           }
         })
       }
@@ -285,16 +221,14 @@ export function monitorMiddleware(options: PulseExpressOptions = {}) {
         // undefined and the error event is emitted without enrichment.
         withContext(store, () => {
           try {
-            captureError(error, {
-              context: {
-                requestId,
-                route: normalizedRoute(req),
-                framework: 'express',
-                ...(tenantId ? { tenantId } : {}),
-              },
-            })
-            if (ownedSpan) {
-              try { ownedSpan.recordException(error) } catch { /* fail-open */ }
+            if (store.extra) {
+              ;(store.extra as Record<string, unknown>).mechanism = 'express.res.error'
+              ;(store.extra as Record<string, unknown>).handled = true
+            }
+            captureError(error)
+            const activeSpan = trace.getActiveSpan()
+            if (activeSpan) {
+              try { activeSpan.recordException(error) } catch { /* fail-open */ }
             }
           } catch (err) {
             getLogger().error('monitorMiddleware error capture failed', { error: err })
@@ -311,16 +245,12 @@ export function monitorMiddleware(options: PulseExpressOptions = {}) {
           const error = err instanceof Error ? err : new Error(String(err))
           withContext(store, () => {
             try {
-              captureError(error, {
-                mechanism: 'express.next',
-                context: {
-                  requestId,
-                  route: normalizedRoute(req),
-                  framework: 'express',
-                  ...(tenantId ? { tenantId } : {}),
-                },
-              })
-              const activeSpan = ownedSpan ?? trace.getActiveSpan()
+              if (store.extra) {
+                ;(store.extra as Record<string, unknown>).mechanism = 'express.next'
+                ;(store.extra as Record<string, unknown>).handled = true
+              }
+              captureError(error)
+              const activeSpan = trace.getActiveSpan()
               if (activeSpan) {
                 try {
                   activeSpan.recordException(error)
@@ -335,19 +265,38 @@ export function monitorMiddleware(options: PulseExpressOptions = {}) {
         next(err as Error | undefined)
       }
 
-      // If we own the fallback span, bind it to OTel context so downstream
-      // auto-instrumented operations (Axios, MySQL, Redis, etc.) see it as
-      // their parent. Without this, OTel creates isolated traces for each
-      // outbound call because no active span exists in the propagation context.
-      if (ownedSpan) {
-        const spanContext = trace.setSpan(context.active(), ownedSpan)
-        context.with(spanContext, () => {
-          wrappedNext()
-        })
-      } else {
-        wrappedNext()
-      }
+      wrappedNext()
     })
+  }
+}
+
+/**
+ * Express error-handling middleware. Place after all routes and before custom error responses.
+ * Automatically captures any error passed to next(err) or thrown in route handlers.
+ *
+ * @example
+ * ```ts
+ * app.use(monitorMiddleware())
+ * // ... routes ...
+ * app.use(expressErrorHandler())
+ * ```
+ */
+export function expressErrorHandler() {
+  return function pulseExpressErrorHandler(err: unknown, req: Request, res: Response, next: NextFunction): void {
+    if (err) {
+      try {
+        const store = getRequestContext()
+        if (store && store.extra) {
+          ;(store.extra as Record<string, unknown>).mechanism = 'express.next'
+          ;(store.extra as Record<string, unknown>).handled = true
+        }
+        const error = err instanceof Error ? err : new Error(String(err))
+        captureError(error)
+      } catch {
+        // Error capture must remain fail-open
+      }
+    }
+    next(err as Error | undefined)
   }
 }
 
@@ -388,26 +337,14 @@ function readContentLength(value: number | string | string[] | undefined): numbe
   return undefined
 }
 
-const SENSITIVE_HEADER_FALLBACK = /authorization|cookie|token|secret|password/i
-
 function scrubHeadersSafe(headers: Request['headers']): Record<string, unknown> {
   try {
     const clone: Record<string, unknown> = {}
-    for (const [key, value] of Object.entries(headers)) {
-      clone[key] = value
-    }
-    return scrubHeaders(clone) ?? defensiveHeaderRedact(clone)
+    for (const [key, value] of Object.entries(headers)) clone[key] = value
+    return scrubHeaders(clone) ?? {}
   } catch {
-    return defensiveHeaderRedact(headers as unknown as Record<string, unknown>)
+    return {}
   }
-}
-
-function defensiveHeaderRedact(headers: Record<string, unknown>): Record<string, unknown> {
-  const out: Record<string, unknown> = {}
-  for (const [key, value] of Object.entries(headers)) {
-    out[key] = SENSITIVE_HEADER_FALLBACK.test(key) ? '[Redacted]' : value
-  }
-  return out
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

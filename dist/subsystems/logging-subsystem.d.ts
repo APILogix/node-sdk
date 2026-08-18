@@ -1,61 +1,30 @@
 /**
- * LoggingSubsystem — captures console.log/warn/error/info and explicit log calls.
- *
- * Behavior:
- * - Intercepts console methods based on logging.captureConsole config.
- * - Only captures configured log levels (logging.levels array).
- * - Truncates messages to logging.maxLogSize bytes.
- * - Routes LogEvent objects to the transport layer via the provided emit callback.
- * - Respects killswitch: disableLogs → detach interceptors, drain buffer.
- * - Restores original console methods on teardown.
+ * Structured logging subsystem. Remote config owns whether logging exists;
+ * local constants define implementation-only console and size behavior.
  */
-import type { LoggingConfig, ConfigDiff, RemoteConfigResponse } from '../types/config.js';
+import type { RemoteConfigResponse } from '../types/config.js';
 import type { LogEvent, EventMetadata } from '../types/event.js';
 type LogEmitter = (event: LogEvent) => void;
 export declare class LoggingSubsystem {
     private static instance;
-    /**
-     * Module-local re-entry guard for the console wrapper. Set to true
-     * while we're inside `captureLog` (or its emitter), prevents the
-     * subsystem from recursing if any code in the capture path itself
-     * writes to a wrapped console method.
-     */
     private static captureReentry;
     private config;
-    private emitter;
+    private readonly emitter;
     private metadata;
-    /** Stashed original console methods — restored on teardown. */
-    private originals;
-    private wrappers;
+    private readonly originals;
+    private readonly wrappers;
     private intercepted;
     private destroyed;
     private constructor();
-    static initialize(config: LoggingConfig, emitter: LogEmitter, metadata: EventMetadata): LoggingSubsystem;
+    static initialize(config: Readonly<RemoteConfigResponse>, emitter: LogEmitter, metadata: EventMetadata): LoggingSubsystem;
     static getInstance(): LoggingSubsystem | null;
-    /** Start intercepting console methods. */
+    updateMetadata(metadata: EventMetadata): void;
     start(): void;
-    /** Stop intercepting and restore original console methods. */
     stop(): void;
-    /** Explicitly capture a log event. */
     captureLog(level: string, message: string, args?: readonly unknown[]): void;
-    /**
-     * Scrub log arguments before they are attached to (or stringified into)
-     * a log event. `console.log('creds', { password })` must never exfiltrate
-     * secrets — args go through the same field-redaction + PII rules as
-     * request bodies. Fail-open when the scrubber is not initialized yet:
-     * the pipeline-level scrub still runs before transport.
-     */
+    /** Apply a validated complete snapshot selected by ConfigManager. */
+    handleConfigChange(config: Readonly<RemoteConfigResponse>): void;
     private scrubLogArgs;
-    /**
-     * Handle config change — hot-swap logging config.
-     *
-     * The wire schema no longer contains a `logging` block; init wires a
-     * synthesized config (SDK defaults + `features.logging` mirror) onto
-     * the config object passed here. We cast through `unknown` because the
-     * public `RemoteConfigResponse` type intentionally doesn't expose this
-     * legacy shape.
-     */
-    handleConfigChange(_diff: ConfigDiff, newConfig: Readonly<RemoteConfigResponse>): void;
     private isLevelAllowed;
     private truncateMessage;
     private installInterceptors;

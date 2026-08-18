@@ -64,16 +64,42 @@ export function getRequestContextFromOtelContext(ctx = otelContext.active()): Co
 
 /**
  * Get the current trace ID from context, or undefined.
+ * Synchronizes traceId with ContextStore so correlation is preserved
+ * even after child spans finish and pop off the active context stack.
  */
 export function getTraceId(): string | undefined {
-  return trace.getActiveSpan()?.spanContext().traceId ?? getRequestContext()?.traceId
+  const activeSpan = trace.getActiveSpan()
+  if (activeSpan) {
+    const traceId = activeSpan.spanContext().traceId
+    if (traceId) {
+      const store = getRequestContext()
+      if (store && !store.traceId) {
+        ;(store as { traceId?: string }).traceId = traceId
+      }
+      return traceId
+    }
+  }
+  return getRequestContext()?.traceId
 }
 
 /**
  * Get the current span ID from context, or undefined.
+ * Synchronizes spanId with ContextStore so correlation is preserved
+ * even after child spans finish and pop off the active context stack.
  */
 export function getSpanId(): string | undefined {
-  return trace.getActiveSpan()?.spanContext().spanId ?? getRequestContext()?.spanId
+  const activeSpan = trace.getActiveSpan()
+  if (activeSpan) {
+    const spanId = activeSpan.spanContext().spanId
+    if (spanId) {
+      const store = getRequestContext()
+      if (store && !store.spanId) {
+        ;(store as { spanId?: string }).spanId = spanId
+      }
+      return spanId
+    }
+  }
+  return getRequestContext()?.spanId
 }
 
 export function attachRequestContextToActiveSpan(store = getRequestContext()): void {
@@ -81,6 +107,16 @@ export function attachRequestContextToActiveSpan(store = getRequestContext()): v
 
   const activeSpan = trace.getActiveSpan()
   if (!activeSpan) return
+
+  const spanContext = activeSpan.spanContext()
+  if (spanContext) {
+    if (!store.traceId && spanContext.traceId) {
+      ;(store as { traceId?: string }).traceId = spanContext.traceId
+    }
+    if (!store.spanId && spanContext.spanId) {
+      ;(store as { spanId?: string }).spanId = spanContext.spanId
+    }
+  }
 
   const tenantId = store.extra?.['tenantId']
   const attributes: Record<string, string> = {

@@ -12,7 +12,7 @@
  * - Emits CronCheckInEvent to the 'crons' transport route.
  * - Three check-in statuses: 'in_progress', 'ok', 'error'.
  * - Tracks in-flight monitors for timeout detection.
- * - Transport route is 'crons' with batchSize=1, flushIntervalMs=0 (immediate).
+ * - Batching and flush timing come from the active `crons` transport route.
  */
 
 import type { ConfigDiff, RemoteConfigResponse } from '../types/config.js'
@@ -20,6 +20,7 @@ import type { CronCheckInEvent, EventMetadata } from '../types/event.js'
 import { getLogger } from '../utils/logger.js'
 import { context } from '@opentelemetry/api'
 import { suppressTracing } from '@opentelemetry/core'
+import { EntitlementGate } from '../core/entitlement-gate.js'
 
 type CronEmitter = (event: CronCheckInEvent) => void
 
@@ -58,6 +59,10 @@ export class CronSubsystem {
     return CronSubsystem.instance
   }
 
+  updateMetadata(metadata: EventMetadata): void {
+    this.metadata = metadata
+  }
+
   /**
    * Send a cron check-in event.
    *
@@ -70,7 +75,7 @@ export class CronSubsystem {
     status: 'ok' | 'error' | 'in_progress',
     options?: { duration?: number; environment?: string }
   ): void {
-    if (this.destroyed) return
+    if (this.destroyed || !EntitlementGate.isAllowed('crons')) return
 
     const logger = getLogger()
 
@@ -83,6 +88,10 @@ export class CronSubsystem {
 
       const timeoutHandle = setTimeout(() => {
         context.with(suppressTracing(context.active()), () => {
+          if (!EntitlementGate.isAllowed('crons')) {
+            this.inFlight.delete(monitorSlug)
+            return
+          }
           logger.warn(`[CronSubsystem] Monitor '${monitorSlug}' timed out after ${this.monitorTimeoutMs}ms`)
           this.inFlight.delete(monitorSlug)
 

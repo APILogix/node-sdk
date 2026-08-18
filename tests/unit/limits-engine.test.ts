@@ -7,12 +7,8 @@
  *   - Payload size checking (`maxPayloadSize`).
  *   - Config hot-swap.
  *
- * v3 simplified `LimitsConfig` substantially — `maxEventsPerSecond`,
- * `maxBreadcrumbs`, and `maxAttributesPerEvent` are gone (rate limiting
- * moved to `loadShedder`/`tenantGovernor`; breadcrumbs is an init option;
- * attribute count was renamed to `maxSpanAttributes`). `admitEvent()` is
- * now a no-op shim retained only so the event pipeline doesn't have to
- * fork by SDK version.
+ * `LimitsConfig` carries complete resource, queue, payload, and tenant
+ * governance bounds. Rate limiting is handled by pressure and tenant engines.
  */
 
 import { describe, it, beforeEach, afterEach } from 'node:test'
@@ -27,7 +23,13 @@ const baseLimitsConfig: LimitsConfig = {
   maxPayloadSize: 262144,
   maxQueueSize: 10000,
   maxMemoryMb: 256,
-  maxCpuOverheadPercent: 5,
+  tenantGovernance: {
+    enabled: false,
+    maxTenantsTracked: 1_000,
+    quotaPerWindow: 10_000,
+    windowDurationMs: 60_000,
+    criticalReserve: 100,
+  },
 }
 
 describe('LimitsEngine', () => {
@@ -39,16 +41,6 @@ describe('LimitsEngine', () => {
 
   afterEach(() => {
     LimitsEngine.reset()
-  })
-
-  describe('Admission (legacy shim)', () => {
-    it('admitEvent() always returns true post-v3', () => {
-      // Rate limiting moved out of LimitsEngine; the method is retained as
-      // a no-op so the pipeline doesn't need a version check.
-      for (let i = 0; i < 1_000; i++) {
-        assert.equal(engine.admitEvent(), true)
-      }
-    })
   })
 
   describe('Attribute Limits', () => {

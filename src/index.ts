@@ -15,12 +15,12 @@
  *
  *     import { createSDK, captureError, monitorMiddleware } from '@vikasbaplawat1/pulse-sdk'
  *
- *     await createSDK({ apiKey: process.env.PULSE_API_KEY!, service: 'payments' })
+ *     await createSDK({ apiKey: process.env.PULSE_API_KEY! })
  *     app.use(monitorMiddleware())
  */
 
 import { init } from './core/init.js'
-import type { SDKInitOptions, RemoteConfig } from './types/config.js'
+import type { SDKInitOptions, RemoteConfigResponse } from './types/config.js'
 
 // ─── Lifecycle ──────────────────────────────────────────────────────────────
 
@@ -37,13 +37,11 @@ export { SDKError } from './core/errors.js'
  * ```ts
  * const sdk = await createSDK({
  *   apiKey: 'pk_live_...',
- *   service: 'payments-service',
- *   environment: 'production',
- *   plugins: [myPlugin()],
+ *   applicationName: 'payments-service',
  * })
  * ```
  */
-export async function createSDK(options: SDKInitOptions): Promise<Readonly<RemoteConfig> | undefined> {
+export async function createSDK(options: SDKInitOptions): Promise<Readonly<RemoteConfigResponse> | undefined> {
   return init(options)
 }
 
@@ -98,12 +96,11 @@ export type { SpanStatus, SpanOptions, SpanLink } from './tracing/span.js'
 
 // ─── Framework instrumentation ──────────────────────────────────────────────
 
-export { monitorMiddleware } from './instrumentation/express.js'
+export { monitorMiddleware, expressErrorHandler } from './instrumentation/express.js'
 export type { PulseExpressOptions } from './instrumentation/express.js'
 export { fastifyPulsePlugin } from './instrumentation/fastify.js'
 export type { PulseFastifyOptions } from './instrumentation/fastify.js'
 export { registerAutoInstrumentations } from './instrumentation/auto-instrument.js'
-export type { AutoInstrumentOptions } from './instrumentation/auto-instrument.js'
 export { createGraphQLInstrumentation } from './instrumentation/graphql.js'
 export type { GraphQLInstrumentationOptions } from './instrumentation/graphql.js'
 export { createPrismaInstrumentation } from './instrumentation/prisma.js'
@@ -134,11 +131,7 @@ export type { Logger, LogFormat } from './utils/logger.js'
 
 export type {
   SDKInitOptions,
-  RemoteConfig,
-  ResolvedSDKConfig,
-  TransportOptions,
-  PlanTier,
-  PlanFeatures,
+  RemoteConfigResponse,
   EntitlementsConfig,
 } from './types/config.js'
 
@@ -163,7 +156,7 @@ export type { Breadcrumb, BreadcrumbInput, BreadcrumbHint } from './types/breadc
 export type { SeverityLevel } from './types/severity.js'
 export { Severity, severityFromString } from './types/severity.js'
 export type { SDKPlugin, PluginMeta, PluginContext, EventProcessor, BreadcrumbProcessor } from './types/plugin.js'
-export type { CaptureErrorOptions, ParsedError, ErrorGrouping } from './types/error.js'
+export type { ErrorSeverity, ParsedError, ErrorGrouping } from './types/error.js'
 
 // ─── Health snapshot ────────────────────────────────────────────────────────
 

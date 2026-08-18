@@ -1,6 +1,6 @@
 import type { SDKEvent } from './event.js'
 import type { Breadcrumb, BreadcrumbHint, BreadcrumbInput } from './breadcrumb.js'
-import type { ResolvedSDKConfig } from './config.js'
+import type { RemoteConfigResponse } from './config.js'
 
 /**
  * An EventProcessor transforms or filters events in the processing pipeline.
@@ -32,11 +32,11 @@ export interface PluginMeta {
  * Plugins should NOT mutate SDK state directly.
  */
 export interface PluginContext {
-  /** Resolved SDK configuration (read-only). */
-  readonly config: Readonly<ResolvedSDKConfig>
-  /** SDK metadata — service name, environment, release. */
+  /** Active immutable remote SDK configuration. */
+  readonly config: Readonly<RemoteConfigResponse>
+  /** SDK metadata — project identity, environment, release. */
   readonly metadata: Readonly<{
-    service: string
+    projectId: string
     environment: string
     release: string
     sdkVersion: string

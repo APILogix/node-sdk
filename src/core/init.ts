@@ -1,60 +1,13 @@
-/**
- * SDK Initialization — refactored for remote-config-driven architecture.
- *
- * Flow:
- * 1. Validate user options via Zod schema
- * 2. Initialize ConfigManager (fetches POST /v1/sdk-config with 3s timeout)
- * 3. Enforce VersionPolicy (blocked/force_upgrade/degraded/ok)
- * 4. Initialize KillswitchEngine (reactive per-subsystem control)
- * 5. Initialize SamplingEngine (FNV-1a deterministic)
- * 6. Initialize FeatureController (skip class instantiation for disabled features)
- * 7. Initialize SecurityScrubber (pre-transport PII/header scrubbing)
- * 8. Initialize LimitsEngine (rate limiting, attribute trimming)
- * 9. Initialize unified TransportRouter (shared connection manager, per-type queues)
- * 10. Register subsystems with FeatureController (tracing, metrics, errors, logging, profiling, crons)
- * 11. Wire config change listeners for hot-swap
- * 12. Start ConfigManager refresh loop
- * 13. Backward-compatible legacy init flow preserved
- *
- * Config merge priority: Baked-in SDK defaults → Remote Config → User init() options.
- */
-
-import { createHash } from 'crypto'
-import type { SDKInitOptions, RemoteConfig, ResolvedSDKConfig, PlanTier, RemoteConfigResponse, TransportRemoteConfig, TransportRouteConfig } from '../types/config.js'
+import { createHash } from 'node:crypto'
+import type { RemoteConfigResponse, SDKInitOptions } from '../types/config.js'
 import { sdkInitOptionsSchema } from '../types/config.js'
 import { client } from './client.js'
-import type { InitResponse } from '../transport/sender.js'
-import { sendInitRequest } from '../transport/sender.js'
-import { setupGlobalErrorHandlers, resetGlobalErrorHandlers } from '../instrumentation/global-errors.js'
-import { eventQueue } from '../transport/queue.js'
-import { DEFAULT_MAX_PAYLOAD_BYTES, DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT_MS, SAFE_DEFAULTS_LIMITS, resolveApiBaseUrl } from '../constants/defaults.js'
-import { LOGGING_DEFAULTS, PROFILING_DEFAULTS, TRACING_DEFAULTS } from '../constants/internal-defaults.js'
 import { SDKError } from './errors.js'
+import { waitForShutdownCompletion, registerSignalHandlers } from './lifecycle.js'
 import { getLogger, setDebugMode, setLogLevel } from '../utils/logger.js'
-import { initializePlugins } from '../plugins/index.js'
-import { registerSignalHandlers, waitForShutdownCompletion } from './lifecycle.js'
-import { processEvent } from './event-pipeline.js'
-import { sleep } from '../utils/time.js'
-import { initTracer, shutdownTracer } from '../tracing/tracer.js'
-import { getSessionManager } from '../session/session-manager.js'
-import { resolvePlanFeatures, clampToPlan, getOfflineFallbackPlan } from './plan-gate.js'
-import { detectResources } from '../utils/resource-detector.js'
-import { errorDeduplicator } from '../processors/deduplicator.js'
-import { persistentStorage } from '../storage/persistent-storage.js'
-import { sourceMapResolver } from '../processors/source-map-resolver.js'
-import { metricsRegistry } from '../metrics/registry.js'
-import { adaptivePressure } from '../utils/adaptive-pressure.js'
-import { otelMetrics } from '../metrics/otel-adapter.js'
-import { slowRequestDetector } from '../processors/slow-request-detector.js'
-import { registerAutoInstrumentations, resetAutoInstrumentations } from '../instrumentation/auto-instrument.js'
-import { costGovernor } from '../utils/cost-governor.js'
-
-// ─── New Remote Config Modules ──────────────────────────────────────────────
-
+import { RemoteConfigClient } from './remote-config-client.js'
 import { ConfigManager } from './config-manager.js'
-import { isRemoteConfigResponse } from './config-validator.js'
-import { diffConfigs } from './config-differ.js'
-import { VersionPolicy } from './version-policy.js'
+import { ConfigApplier } from './config-applier.js'
 import { KillswitchEngine } from './killswitch-engine.js'
 import { EntitlementGate } from './entitlement-gate.js'
 import { SamplingEngine } from './sampling-engine.js'
@@ -62,1068 +15,464 @@ import { FeatureController } from './feature-controller.js'
 import { LimitsEngine } from './limits-engine.js'
 import { SecurityScrubber } from '../processors/security-scrubber.js'
 import { TransportRouter } from '../transport/transport-router.js'
+import { tenantGovernor } from './tenant-isolation.js'
+import { adaptivePressure } from '../utils/adaptive-pressure.js'
+import { costGovernor } from '../utils/cost-governor.js'
+import { TRACING_DEFAULTS } from '../constants/internal-defaults.js'
+import { initTracer, shutdownTracer } from '../tracing/tracer.js'
+import { registerAutoInstrumentations, resetAutoInstrumentations } from '../instrumentation/auto-instrument.js'
+import { setupGlobalErrorHandlers, resetGlobalErrorHandlers } from '../instrumentation/global-errors.js'
+import { otelMetrics } from '../metrics/otel-adapter.js'
+import { metricsRegistry } from '../metrics/registry.js'
 import { LoggingSubsystem } from '../subsystems/logging-subsystem.js'
 import { ProfilingSubsystem } from '../subsystems/profiling-subsystem.js'
 import { CronSubsystem } from '../subsystems/cron-subsystem.js'
-import { tenantGovernor } from './tenant-isolation.js'
-
-const INIT_MAX_ATTEMPTS = 5
-const INIT_BASE_RETRY_DELAY_MS = 500
-const INIT_MAX_RETRY_DELAY_MS = 5000
+import { getSessionManager, resetSessionManager } from '../session/session-manager.js'
+import { processEvent } from './event-pipeline.js'
+import { eventQueue } from '../transport/queue.js'
+import { persistentStorage } from '../storage/persistent-storage.js'
+import { initializePlugins } from '../plugins/index.js'
+import { sourceMapResolver } from '../processors/source-map-resolver.js'
+import { slowRequestDetector } from '../processors/slow-request-detector.js'
+import { errorDeduplicator } from '../processors/deduplicator.js'
+import { detectResources } from '../utils/resource-detector.js'
+import { resolveMaxMemoryMb } from '../utils/memory-detector.js'
 
 /**
- * Initialize the SDK.
- *
- * @param options - SDK configuration options
- * @returns The resolved remote config, or undefined if init failed gracefully
+ * Initialize from exactly one complete remote snapshot returned by POST
+ * /v1/init. Failure is fail-open to the host application but does not invent
+ * a runtime configuration or start telemetry with defaults.
  */
-export async function init(options: SDKInitOptions): Promise<Readonly<RemoteConfig> | undefined> {
-  // A caller may re-init immediately after a deadline-bounded shutdown
-  // returns. Wait for the old runtime's exclusive cleanup ownership before
-  // constructing any replacement singleton or instrumentation.
+export async function init(options: SDKInitOptions): Promise<Readonly<RemoteConfigResponse> | undefined> {
   await waitForShutdownCompletion()
-
-  // Enable debug mode first so all init logging is visible if requested
   setDebugMode(options.debug ?? false)
-  if (options.logLevel) {
-    setLogLevel(options.logLevel)
-  }
-
+  if (options.logLevel) setLogLevel(options.logLevel)
   validateInitOptions(options)
 
   if (client.initialized) {
     if (!client.hasSameIdentity(options)) {
       throw new SDKError('SDK already initialized with different options', 'SDK_ALREADY_INITIALIZED')
     }
-    return client.remoteConfig ?? undefined
+    return ConfigManager.getInstance().getConfig()
   }
 
-  const existingInit = client.getInitPromise()
-  if (existingInit) {
+  const existing = client.getInitPromise()
+  if (existing) {
     if (!client.hasSamePendingIdentity(options)) {
       throw new SDKError('SDK initialization already in progress with different options', 'SDK_INIT_IN_PROGRESS')
     }
-    return existingInit
+    return existing
   }
 
   client.setPendingIdentity(options)
-  const initPromise = initialize(options)
-  client.setInitPromise(initPromise)
-
+  const operation = initialize(options)
+  client.setInitPromise(operation)
   try {
-    return await initPromise
+    return await operation
   } finally {
     client.clearPendingIdentity()
     client.setInitPromise(null)
   }
 }
 
-async function initialize(options: SDKInitOptions): Promise<Readonly<RemoteConfig> | undefined> {
+async function initialize(options: SDKInitOptions): Promise<Readonly<RemoteConfigResponse> | undefined> {
   const logger = getLogger()
-  const baseUrl = resolveBaseUrl(options.baseUrl)
-  const endpoint = `${baseUrl.replace(/\/+$/, '')}/api/v1/init`
-
+  const manager = ConfigManager.getInstance()
   client.setOptions(options)
-
-  // Initialize breadcrumb buffer
   client.initBreadcrumbs(options.maxBreadcrumbs ?? 100)
 
-  logger.info('SDK init started', {
-    baseUrl,
-    endpoint,
-    service: options.service,
-    environment: options.environment,
-    release: options.release,
-    debug: options.debug ?? false,
+  logger.info('SDK initialization started', {
+    endpoint: '/v1/init',
+    baseUrl: options.baseUrl,
   })
-
-  // ─── Phase 1: Remote Config Fetch ───────────────────────────────────────
-
-  const configManager = ConfigManager.getInstance()
-  let remoteConfigResponse: Readonly<RemoteConfigResponse> | null = null
 
   try {
-    remoteConfigResponse = await configManager.initialize(options)
-    logger.info('Remote config loaded', {
-      configHash: remoteConfigResponse.meta.configHash,
-      environment: remoteConfigResponse.sdk.environment,
+    // Startup performs one network operation. No config prefetch, retry,
+    // fallback, or immediate /v1/sdk-config request exists.
+    const remoteClient = new RemoteConfigClient({
+      apiKey: options.apiKey,
+      ...(options.baseUrl !== undefined ? { baseUrl: options.baseUrl } : {}),
     })
-  } catch (err) {
-    logger.warn(`Remote config initialization failed: ${err instanceof Error ? err.message : String(err)}`)
-    // ConfigManager falls back to BAKED_IN_REMOTE_CONFIG internally
-    remoteConfigResponse = configManager.getConfig()
-  }
+    const response = await remoteClient.initialize()
+    const config = manager.initialize(remoteClient, response.config)
 
-  // ─── Phase 2: Version Policy Enforcement ────────────────────────────────
-  //
-  // The wire schema no longer carries a `versionPolicy` block — `enforce()`
-  // is now a stub that always returns `ok`. Kept as a phase so that if we
-  // bring version gating back later, the call site is unchanged.
+    client.setInitResponse(response)
+    client.applyRemoteIdentity(config)
 
-  const versionResult = VersionPolicy.enforce()
+    const killswitchEngine = KillswitchEngine.initialize(config.killswitches)
+    const samplingEngine = SamplingEngine.initialize(config.sampling)
+    const featureController = FeatureController.initialize(config.features)
+    const limitsEngine = LimitsEngine.initialize(config.limits)
+    const securityScrubber = SecurityScrubber.initialize(config.privacy)
+    const entitlementGate = EntitlementGate.initialize(config.entitlements)
+    tenantGovernor.configure(config.limits.tenantGovernance)
 
-  if (versionResult.status === 'blocked' || versionResult.status === 'force_upgrade') {
-    logger.error(`[VersionPolicy] ${versionResult.status}: ${versionResult.message}`)
-    client.clear()
-    return undefined
-  }
+    const transportRouter = await TransportRouter.initialize(
+      config.transport,
+      options.apiKey,
+      undefined,
+      config.limits,
+    )
+    if (config.killswitches.disableTransport || config.killswitches.disableSDK) transportRouter.disable()
 
-  const isDegradedMode = versionResult.status === 'degraded'
-  if (isDegradedMode) {
-    logger.warn(`[VersionPolicy] Degraded mode: ${versionResult.message}`)
-  }
+    killswitchEngine.registerSubsystem('disableTransport', {
+      shutdown: () => transportRouter.disable(),
+      startup: () => {
+        if (!manager.getConfig().killswitches.disableSDK) transportRouter.enable()
+      },
+    })
+    killswitchEngine.registerSubsystem('disableSDK', {
+      shutdown: () => transportRouter.disable(),
+      startup: () => {
+        if (!manager.getConfig().killswitches.disableTransport) transportRouter.enable()
+      },
+    })
 
-  // ─── Phase 3: Control Plane Initialization ──────────────────────────────
+    costGovernor.updateFromConfig({
+      maxSpansPerTrace: config.limits.maxSpansPerTrace,
+      maxTraceDurationMs: TRACING_DEFAULTS.maxTraceDurationMs,
+    })
+    eventQueue.configure(config.limits.maxQueueSize)
 
-  const killswitchEngine = KillswitchEngine.initialize(remoteConfigResponse.killswitches)
+    if (options.plugins?.length) await initializePlugins(options.plugins, config, client.metadata)
+    for (const processor of options.eventProcessors ?? []) client.registerEventProcessor(processor)
 
-  // Global SDK killswitch — everything becomes no-op
-  if (killswitchEngine.isSDKDisabled()) {
-    logger.error('[KillswitchEngine] SDK is globally disabled. No telemetry will be captured.')
-    client.clear()
-    return undefined
-  }
+    const apiKeyHash = createHash('sha256').update(options.apiKey).digest('hex')
+    persistentStorage.configure({ apiKeyHash })
+    const persistedEvents = await persistentStorage.init()
 
-  const samplingEngine = SamplingEngine.initialize(remoteConfigResponse.sampling)
-  const featureController = FeatureController.initialize(remoteConfigResponse.features)
-  const limitsEngine = LimitsEngine.initialize(remoteConfigResponse.limits)
-  tenantGovernor.configure(remoteConfigResponse.limits.tenantGovernance)
-  const securityScrubber = SecurityScrubber.initialize(remoteConfigResponse.privacy)
-  const entitlementGate = EntitlementGate.initialize(remoteConfigResponse.entitlements)
-
-  if (isDegradedMode) {
-    featureController.setDegradedMode(true)
-  }
-
-  // ─── Phase 4: Transport Router ──────────────────────────────────────────
-
-  // Awaited so a previous instance fully drains before we send any new event
-  // through the new router. Required for warm-start / hot-reload scenarios.
-  const transportRouter = await TransportRouter.initialize(
-    remoteConfigResponse.transport,
-    options.apiKey,
-    undefined,
-    false,
-    remoteConfigResponse.limits,
-  )
-
-  if (killswitchEngine.isKilled('disableTransport')) {
-    transportRouter.disable()
-  }
-
-  // Register killswitch handler for transport
-  killswitchEngine.registerSubsystem('disableTransport', {
-    shutdown: () => transportRouter.disable(),
-    startup: () => transportRouter.enable(),
-  })
-
-  // Wire cost governor from SDK-internal tracing defaults. These knobs no
-  // longer come from the wire schema — they're SDK opinions about safe
-  // upper bounds for span fan-out and trace duration.
-  costGovernor.updateFromConfig({
-    maxSpansPerTrace: TRACING_DEFAULTS.maxSpansPerTrace,
-    maxTraceDurationMs: TRACING_DEFAULTS.maxTraceDurationMs,
-  })
-
-  // ─── Phase 5: Legacy Init Flow (backward compat) ───────────────────────
-
-  for (let attempt = 1; attempt <= INIT_MAX_ATTEMPTS; attempt += 1) {
-    try {
-      logger.debug('SDK init request sending', {
-        endpoint,
-        attempt,
-        maxAttempts: INIT_MAX_ATTEMPTS,
+    if (options.sourceMaps) {
+      sourceMapResolver.configure({
+        sourceMapPaths: options.sourceMaps.paths ? [...options.sourceMaps.paths] : [],
+        allowRemoteSourceMaps: options.sourceMaps.allowRemote ?? false,
+        embedSourceContent: options.sourceMaps.embedSourceContent ?? false,
       })
-
-      const response = await sendInitRequest(
-        options.apiKey,
-        baseUrl,
-        DEFAULT_TIMEOUT_MS,
-      )
-
-      if (response.success !== true) {
-        throw new SDKError('Init response was not successful', 'INIT_REJECTED')
-      }
-
-      logger.debug('SDK init response received', {
-        endpoint,
-        attempt,
-        projectId: response.projectId,
-        environment: response.environment,
-        configRevision: response.configRevision,
-        hasConfig: isObject(response.config),
-      })
-
-      const remoteConfig = validateRemoteConfig(response)
-      const initControlPlaneConfig = response.config && isRemoteConfigResponse(response.config)
-        ? response.config
-        : null
-      client.setRemoteConfig(remoteConfig)
-      client.setInitResponse(response)
-
-      // Resolve plan features from backend response
-      const planTier: PlanTier = remoteConfig.plan ?? 'free'
-      const planFeatures = resolvePlanFeatures(planTier, remoteConfig.planFeatures)
-
-      logger.info('Plan resolved', {
-        tier: planFeatures.tier,
-        allowTracing: planFeatures.allowTracing,
-        allowMetrics: planFeatures.allowMetrics,
-        allowSessions: planFeatures.allowSessions,
-        maxBreadcrumbs: planFeatures.maxBreadcrumbs,
-      })
-
-      // Merge user options + remote config → raw resolved config (all features ON)
-      const rawConfig = mergeConfig(options, remoteConfig, planFeatures)
-
-      // Attach the full remote config response to the resolved config
-      const rawConfigWithRemote = { ...rawConfig, remoteConfig: remoteConfigResponse ?? undefined }
-
-      // Clamp to plan limits — features above plan are forced OFF with warnings
-      const resolvedConfig = clampToPlan(rawConfigWithRemote, planFeatures)
-      client.setResolvedConfig(resolvedConfig)
-
-      // ─── Fallback Control-Plane Derivation ─────────────────────────────
-      // The v3 control plane (/v1/sdk-config) owns route URLs, feature flags,
-      // sampling rates and killswitches. When it is unreachable, /v1/init now
-      // returns the same schema-v1 document, so use that full config directly.
-      // Explicit /v1/sdk-config delivery still wins when live.
-      if (!configManager.isLive() && remoteConfigResponse && initControlPlaneConfig) {
-        const bridgedConfig = initControlPlaneConfig
-        if (bridgedConfig) {
-          logger.info('Control plane unreachable — using init config snapshot', {
-            ingestUrl: resolvedConfig.ingestUrl,
-            samplingRate: resolvedConfig.samplingRate,
-          })
-          const bridgeDiff = diffConfigs(remoteConfigResponse, bridgedConfig)
-          remoteConfigResponse = bridgedConfig
-          if (bridgeDiff.transportChanged) {
-            await transportRouter.handleConfigChange(bridgeDiff, bridgedConfig)
-          }
-          if (bridgeDiff.killswitchesChanged) {
-            // Flip disableTransport through the engine (not directly on the
-            // router) so killswitch state and router state stay coherent.
-            await killswitchEngine.handleConfigChange(bridgeDiff, bridgedConfig)
-          }
-          if (bridgeDiff.samplingChanged) {
-            samplingEngine.handleConfigChange(bridgeDiff, bridgedConfig)
-          }
-          if (bridgeDiff.featuresChanged) {
-            await featureController.handleConfigChange(bridgeDiff, bridgedConfig)
-          }
-          if (bridgeDiff.limitsChanged) {
-            limitsEngine.handleConfigChange(bridgeDiff, bridgedConfig)
-            tenantGovernor.configure(bridgedConfig.limits.tenantGovernance)
-          }
-          if (bridgeDiff.privacyChanged) {
-            securityScrubber.handleConfigChange(bridgeDiff, bridgedConfig)
-          }
-        }
-      }
-
-      // Configure pre-init buffer and apply feature gates before replaying it into transport.
-      eventQueue.configure(resolvedConfig.maxQueueSize)
-      filterBufferedEvents(resolvedConfig)
-
-      logger.debug('SDK config resolved', {
-        plan: resolvedConfig.plan,
-        ingestUrl: resolvedConfig.ingestUrl,
-        batchSize: resolvedConfig.batchSize,
-        flushIntervalMs: resolvedConfig.flushIntervalMs,
-        compression: resolvedConfig.compression,
-        samplingRate: resolvedConfig.samplingRate,
-        enableErrors: resolvedConfig.enableErrors,
-        enablePerformance: resolvedConfig.enablePerformance,
-        enableTracing: resolvedConfig.enableTracing,
-        enableMetrics: resolvedConfig.enableMetrics,
-      })
-
-      // Validate plugins. Plan-based caps were removed in v3 — every plugin
-      // the user passes is now accepted unless the FeatureController later
-      // refuses it (still TBD; for now plugins always run).
-      let pluginsToInit = options.plugins ?? []
-      if (pluginsToInit.length > 0) {
-        await initializePlugins(pluginsToInit, resolvedConfig, client.metadata)
-      }
-
-      // Register user-provided event processors
-      if (options.eventProcessors) {
-        for (const processor of options.eventProcessors) {
-          client.registerEventProcessor(processor)
-        }
-      }
-
-      // beforeSend used to be a paid-plan feature; v3 makes it always
-      // available. The hook still runs through the event pipeline's
-      // BEFORE_SEND_TIMEOUT_MS guard so a slow user hook can't stall the
-      // pipeline.
-
-      // Initialize persistent storage and replay persisted events.
-      const apiKeyHash = createHash('sha256').update(options.apiKey).digest('hex')
-      persistentStorage.configure({ apiKeyHash })
-      const persistedEvents = await persistentStorage.init()
-
-      // Replay through `processEvent` (the full pipeline) rather than
-      // directly to the transport, so SecurityScrubber, applyScopeToEvent,
-      // dedup, plugin processors, beforeSend, sampling, LimitsEngine, and
-      // loadShedder all see replayed events the same as fresh captures.
-      // Pre-init events were captured before these were configured —
-      // sending them straight to the wire would skip every PII / governance
-      // filter (a request body with an Authorization header captured
-      // pre-init would reach the backend unredacted otherwise).
-      //
-      // Replay is throttled with a setImmediate yield every batch to
-      // prevent a thundering herd: 10k persisted events all in flight at
-      // once would exhaust BatchManager queues, trigger load shedding, and
-      // cause legitimate replays to be dropped. Yielding hands control
-      // back to the event loop so the transport can drain naturally.
-      const REPLAY_BATCH_SIZE = 100
-      const totalReplayCandidates = persistedEvents.length + eventQueue.size()
-      if (totalReplayCandidates > 0) {
-        logger.info('Replaying events from previous session', {
-          persistedEvents: persistedEvents.length,
-          legacyQueueEvents: eventQueue.size(),
-          batchSize: REPLAY_BATCH_SIZE,
-        })
-      }
-
-      for (let i = 0; i < persistedEvents.length; i++) {
-        processEvent(persistedEvents[i] as import('../types/event.js').SDKEvent)
-        if ((i + 1) % REPLAY_BATCH_SIZE === 0) {
-          await new Promise<void>(resolve => setImmediate(resolve))
-        }
-      }
-      const legacyEvents = eventQueue.drainAll()
-      for (let i = 0; i < legacyEvents.length; i++) {
-        processEvent(legacyEvents[i] as import('../types/event.js').SDKEvent)
-        if ((i + 1) % REPLAY_BATCH_SIZE === 0) {
-          await new Promise<void>(resolve => setImmediate(resolve))
-        }
-      }
-
-      // Configure source map resolver if options provided
-      if (options.sourceMaps) {
-        sourceMapResolver.configure({
-          sourceMapPaths: options.sourceMaps.paths ? Array.from(options.sourceMaps.paths) : [],
-          allowRemoteSourceMaps: options.sourceMaps.allowRemote ?? false,
-          embedSourceContent: options.sourceMaps.embedSourceContent ?? false,
-        })
-      }
-
-      // Configure slow request detector
-      slowRequestDetector.configure({})
-
-      // NOTE: setupGlobalErrorHandlers() is intentionally NOT called here.
-      // It runs inside the Phase 6 'errors' feature registration below so
-      // the remote features.errors toggle is authoritative: disabled at the
-      // control plane → no process-level handlers attached at all.
-      registerSignalHandlers()
-      errorDeduplicator.start()
-      metricsRegistry.start()
-      // Start the adaptive pressure monitor — load-shedder and
-      // persistence-governor consult adaptivePressure.getLevel(), so without
-      // start() the singleton never samples memory/GC/event-loop pressure and
-      // load shedding would never engage under stress. Each signal family is
-      // gated by the corresponding remote-config feature flag so a backend can
-      // turn off runtime monitoring without a redeploy.
-      adaptivePressure.configure({
-        maxMemoryMb: resolvedConfig.remoteConfig?.limits?.maxMemoryMb ?? SAFE_DEFAULTS_LIMITS.maxMemoryMb,
-        runtimeMetrics: remoteConfigResponse.features.runtimeMetrics,
-        eventLoopMonitoring: remoteConfigResponse.features.eventLoopMonitoring,
-        gcMonitoring: remoteConfigResponse.features.gcMonitoring,
-      })
-      adaptivePressure.start()
-      
-      const { apiPayloadScrubber } = await import('../processors/sanitizer.js')
-      apiPayloadScrubber.configure(resolvedConfig.dataScrubbing)
-
-      // Detect runtime resources (host, container, cloud metadata)
-      const resources = detectResources(client.metadata.sdkVersion)
-
-      // ─── Phase 6: Feature-Controlled Subsystem Registration ───────────
-
-      const eventMetadata = client.metadata
-
-      // Register tracing subsystem
-      await featureController.register(
-        'tracing',
-        () => {
-          if (!killswitchEngine.isKilled('disableTracing') && resolvedConfig.enableTracing) {
-            initTracer(resolvedConfig, resources)
-            registerAutoInstrumentations({}) // Reads from remote config internally
-          }
-        },
-        async () => {
-          // Real teardown: a remote features.tracing flip to false must stop
-          // span production, not just log. Mirrors the killswitch shutdown.
-          logger.info('[FeatureController] Tracing subsystem stopped')
-          try { await shutdownTracer() } catch (err) {
-            logger.error('[FeatureController] shutdownTracer failed', { error: err })
-          }
-          try { resetAutoInstrumentations() } catch (err) {
-            logger.error('[FeatureController] resetAutoInstrumentations failed', { error: err })
-          }
-        }
-      )
-
-      killswitchEngine.registerSubsystem('disableTracing', {
-        shutdown: async () => {
-          // Real teardown: stop the OTel tracer provider AND uninstall the
-          // auto-instrumentations so no new spans are produced. A bare log
-          // here was a no-op — backend "kill tracing" had no effect.
-          logger.warn('[KillswitchEngine] Tracing killed — shutting down tracer + auto-instrumentation')
-          try { await shutdownTracer() } catch (err) {
-            logger.error('[KillswitchEngine] shutdownTracer failed', { error: err })
-          }
-          try { resetAutoInstrumentations() } catch (err) {
-            logger.error('[KillswitchEngine] resetAutoInstrumentations failed', { error: err })
-          }
-        },
-        startup: () => {
-          // Refuse to re-init if tracing is already alive — protects
-          // against double-init of NodeTracerProvider when the killswitch
-          // toggles rapidly.
-          if (featureController.isEnabled('tracing')) {
-            initTracer(resolvedConfig, resources)
-            registerAutoInstrumentations({})
-          }
-        },
-      })
-
-      // Register metrics subsystem
-      await featureController.register(
-        'metrics',
-        () => {
-          if (!killswitchEngine.isKilled('disableMetrics') && resolvedConfig.enableMetrics) {
-            otelMetrics.init(
-              {
-                service: resolvedConfig.service,
-                environment: resolvedConfig.environment,
-                release: resolvedConfig.release,
-              },
-              resolvedConfig.otelMetrics,
-              resources
-            )
-          }
-        },
-        async () => {
-          // Real teardown: stop the OTel meter provider when the control
-          // plane disables metrics, mirroring the killswitch shutdown.
-          logger.info('[FeatureController] Metrics subsystem stopped')
-          try { await otelMetrics.shutdown() } catch (err) {
-            logger.error('[FeatureController] otelMetrics.shutdown failed', { error: err })
-          }
-        }
-      )
-
-      killswitchEngine.registerSubsystem('disableMetrics', {
-        shutdown: async () => {
-          logger.warn('[KillswitchEngine] Metrics killed — shutting down OTel meter provider')
-          try { await otelMetrics.shutdown() } catch (err) {
-            logger.error('[KillswitchEngine] otelMetrics.shutdown failed', { error: err })
-          }
-        },
-        startup: () => {
-          if (featureController.isEnabled('metrics')) {
-            otelMetrics.init(
-              {
-                service: resolvedConfig.service,
-                environment: resolvedConfig.environment,
-                release: resolvedConfig.release,
-              },
-              resolvedConfig.otelMetrics,
-              resources
-            )
-          }
-        },
-      })
-
-      // Register errors subsystem
-      await featureController.register(
-        'errors',
-        () => {
-          if (!killswitchEngine.isKilled('disableErrors')) {
-            setupGlobalErrorHandlers()
-          }
-        },
-        () => {
-          // Real teardown: detach uncaughtException / unhandledRejection
-          // listeners and restore console.error when the control plane
-          // disables error collection.
-          logger.info('[FeatureController] Errors subsystem stopped')
-          try { resetGlobalErrorHandlers() } catch (err) {
-            logger.error('[FeatureController] resetGlobalErrorHandlers failed', { error: err })
-          }
-        }
-      )
-
-      killswitchEngine.registerSubsystem('disableErrors', {
-        shutdown: () => {
-          // Detach the SDK's process-level uncaughtException /
-          // unhandledRejection listeners and unwrap console.error.
-          logger.warn('[KillswitchEngine] Errors killed — detaching global error handlers')
-          try { resetGlobalErrorHandlers() } catch (err) {
-            logger.error('[KillswitchEngine] resetGlobalErrorHandlers failed', { error: err })
-          }
-        },
-        startup: () => {
-          if (featureController.isEnabled('errors')) {
-            setupGlobalErrorHandlers()
-          }
-        },
-      })
-
-      // Register logging subsystem. The wire schema no longer carries a
-      // `logging` block — we synthesize one from SDK-internal defaults and
-      // the `features.logging` toggle so the subsystem signature stays
-      // unchanged during the migration.
-      await featureController.register(
-        'logging',
-        () => {
-          if (!killswitchEngine.isKilled('disableLogs')) {
-            const loggingSub = LoggingSubsystem.initialize(
-              {
-                ...LOGGING_DEFAULTS,
-                enabled: remoteConfigResponse!.features.logging,
-              },
-              (event) => { processEvent(event) },
-              eventMetadata
-            )
-            loggingSub.start()
-          }
-        },
-        () => {
-          LoggingSubsystem.reset()
-        }
-      )
-
-      killswitchEngine.registerSubsystem('disableLogs', {
-        shutdown: () => {
-          const sub = LoggingSubsystem.getInstance()
-          if (sub) sub.stop()
-        },
-        startup: () => {
-          const sub = LoggingSubsystem.getInstance()
-          if (sub) sub.start()
-        },
-      })
-
-      // Register profiling subsystem. Same pattern as logging: synthesize
-      // the legacy `ProfilingConfig` shape from SDK-internal defaults plus
-      // the remote `features.profiling` flag.
-      await featureController.register(
-        'profiling',
-        async () => {
-          if (!killswitchEngine.isKilled('disableProfiling')) {
-            const profilingSub = ProfilingSubsystem.initialize(
-              {
-                ...PROFILING_DEFAULTS,
-                enabled: remoteConfigResponse!.features.profiling,
-              },
-              (event) => { processEvent(event) },
-              eventMetadata
-            )
-            await profilingSub.start()
-          }
-        },
-        async () => {
-          const sub = ProfilingSubsystem.getInstance()
-          if (sub) await sub.stop()
-        }
-      )
-
-      killswitchEngine.registerSubsystem('disableProfiling', {
-        shutdown: async () => {
-          const sub = ProfilingSubsystem.getInstance()
-          if (sub) await sub.stop()
-        },
-        startup: async () => {
-          const sub = ProfilingSubsystem.getInstance()
-          if (sub) await sub.start()
-        },
-      })
-
-      // Register crons subsystem
-      await featureController.register(
-        'crons',
-        () => {
-          CronSubsystem.initialize(
-            event => { processEvent(event) },
-            eventMetadata
-          )
-        },
-        () => {
-          CronSubsystem.reset()
-        }
-      )
-
-      // Register session replay subsystem
-      await featureController.register(
-        'sessionReplay',
-        () => {
-          if (planFeatures.allowSessions) {
-            getSessionManager()
-          }
-        },
-        () => {
-          logger.info('[FeatureController] Session replay subsystem stopped')
-        }
-      )
-
-      // ─── Phase 7: Wire Config Change Listeners ──────────────────────────
-
-      configManager.onConfigChange(async (diff, newConfig) => {
-        logger.info('[ConfigManager] Config changed, propagating to subsystems')
-
-        if (diff.killswitchesChanged) {
-          await killswitchEngine.handleConfigChange(diff, newConfig)
-        }
-        if (diff.samplingChanged) {
-          samplingEngine.handleConfigChange(diff, newConfig)
-        }
-        if (diff.featuresChanged || diff.limitsChanged) {
-          adaptivePressure.configure({
-            maxMemoryMb: newConfig.limits.maxMemoryMb,
-            runtimeMetrics: newConfig.features.runtimeMetrics,
-            eventLoopMonitoring: newConfig.features.eventLoopMonitoring,
-            gcMonitoring: newConfig.features.gcMonitoring,
-          })
-        }
-        if (diff.featuresChanged) {
-          await featureController.handleConfigChange(diff, newConfig)
-          // The logging/profiling subsystems' config is synthesized from
-          // `features.*` plus SDK defaults. When `features` flips, push a
-          // refreshed shape to whichever subsystem is alive so its `enabled`
-          // mirror matches the new feature flag.
-          const loggingSub = LoggingSubsystem.getInstance()
-          if (loggingSub) {
-            loggingSub.handleConfigChange(diff, {
-              ...newConfig,
-              logging: { ...LOGGING_DEFAULTS, enabled: newConfig.features.logging },
-            } as unknown as Readonly<RemoteConfigResponse>)
-          }
-          const profilingSub = ProfilingSubsystem.getInstance()
-          if (profilingSub) {
-            profilingSub.handleConfigChange(diff, {
-              ...newConfig,
-              profiling: { ...PROFILING_DEFAULTS, enabled: newConfig.features.profiling },
-            } as unknown as Readonly<RemoteConfigResponse>)
-          }
-          const cronSub = CronSubsystem.getInstance()
-          if (cronSub) {
-            cronSub.handleConfigChange(diff, newConfig)
-          }
-        }
-        if (diff.limitsChanged) {
-          limitsEngine.handleConfigChange(diff, newConfig)
-          tenantGovernor.configure(newConfig.limits.tenantGovernance)
-        }
-        if (diff.privacyChanged) {
-          securityScrubber.handleConfigChange(diff, newConfig)
-        }
-        if (diff.transportChanged) {
-          await transportRouter.handleConfigChange(diff, newConfig)
-        }
-        if (diff.entitlementsChanged) {
-          await entitlementGate.handleConfigChange(diff, newConfig)
-        }
-      })
-
-      // ─── Phase 8: Start Config Refresh Loop ────────────────────────────
-
-      configManager.startRefreshLoop()
-
-      // ─── Done ─────────────────────────────────────────────────────────
-
-      logger.info('SDK initialized successfully', {
-        plan: resolvedConfig.plan,
-        service: resolvedConfig.service,
-        environment: resolvedConfig.environment,
-        release: resolvedConfig.release,
-        pluginCount: client.plugins.length,
-        features: {
-          errors: resolvedConfig.enableErrors,
-          performance: resolvedConfig.enablePerformance,
-          tracing: resolvedConfig.enableTracing,
-          metrics: resolvedConfig.enableMetrics,
-        },
-        activeSubsystems: featureController.getActiveSubsystems(),
-        resources: {
-          hostname: resources['host.name'],
-          runtime: resources['process.runtime.version'],
-          os: resources['os.platform'],
-          containerId: resources['container.id'],
-          cloud: resources['cloud.provider'],
-        },
-      })
-
-      return remoteConfig
-    } catch (error) {
-      client.clearConfig()
-
-      if (!isRetryableInitError(error)) {
-        client.clear()
-        logger.error(
-          'SDK initialization failed with a non-retryable error; host application will continue without SDK telemetry',
-          { error, endpoint, attempt, maxAttempts: INIT_MAX_ATTEMPTS }
-        )
-        return undefined
-      }
-
-      if (attempt >= INIT_MAX_ATTEMPTS) {
-        const fallbackConfig = initializeOfflineFallback(options, baseUrl, logger)
-        logger.error(
-          'SDK initialization failed after retry budget exhausted; using offline fallback telemetry config',
-          { error, endpoint, attempt, maxAttempts: INIT_MAX_ATTEMPTS }
-        )
-        return fallbackConfig
-      }
-
-      const nextRetryDelayMs = retryDelayMs(attempt)
-      logger.warn('SDK init attempt failed; retrying', {
-        error,
-        endpoint,
-        attempt,
-        nextAttempt: attempt + 1,
-        maxAttempts: INIT_MAX_ATTEMPTS,
-        nextRetryDelayMs,
-      })
-      await sleep(nextRetryDelayMs)
     }
+    slowRequestDetector.configure({})
+
+    registerSignalHandlers()
+    errorDeduplicator.start()
+    metricsRegistry.start()
+    configureAdaptivePressure(config)
+    adaptivePressure.start()
+    await configurePayloadScrubber(config)
+
+    const resources = detectResources(client.metadata.sdkVersion)
+
+    const startTracing = (): void => {
+      const active = manager.getConfig()
+      if (active.killswitches.disableTracing) return
+      initTracer(active, resources)
+      registerAutoInstrumentations()
+    }
+    const stopTracing = async (): Promise<void> => {
+      await shutdownTracer()
+      resetAutoInstrumentations()
+    }
+
+    await featureController.register('tracing', startTracing, stopTracing)
+    killswitchEngine.registerSubsystem('disableTracing', {
+      shutdown: stopTracing,
+      startup: () => {
+        if (featureController.isEnabled('tracing')) startTracing()
+      },
+    })
+
+    const startMetrics = (): void => {
+      const active = manager.getConfig()
+      if (active.killswitches.disableMetrics) return
+      otelMetrics.init(
+        {
+          service: active.sdk.service ?? active.sdk.projectId,
+          environment: client.metadata.environment,
+          release: client.metadata.release,
+        },
+        {
+          maxHistogramBuckets: 160,
+          percentiles: [50, 75, 90, 95, 99],
+          cardinalityLimit: 2_000,
+        },
+        resources,
+      )
+    }
+    const stopMetrics = async (): Promise<void> => { await otelMetrics.shutdown() }
+    await featureController.register('metrics', startMetrics, stopMetrics)
+    killswitchEngine.registerSubsystem('disableMetrics', {
+      shutdown: stopMetrics,
+      startup: () => {
+        if (featureController.isEnabled('metrics')) startMetrics()
+      },
+    })
+
+    await featureController.register(
+      'errors',
+      () => {
+        const active = manager.getConfig()
+        if (!active.killswitches.disableErrors && EntitlementGate.isAllowed('errors')) setupGlobalErrorHandlers()
+      },
+      () => resetGlobalErrorHandlers(),
+    )
+    killswitchEngine.registerSubsystem('disableErrors', {
+      shutdown: () => resetGlobalErrorHandlers(),
+      startup: () => {
+        if (featureController.isEnabled('errors') && EntitlementGate.isAllowed('errors')) setupGlobalErrorHandlers()
+      },
+    })
+
+    await featureController.register(
+      'logging',
+      () => {
+        const active = manager.getConfig()
+        const subsystem = LoggingSubsystem.initialize(
+          active,
+          event => { processEvent(event) },
+          client.metadata,
+        )
+        if (!killswitchEngine.isKilled('disableLogs') && EntitlementGate.isAllowed('logging')) subsystem.start()
+      },
+      () => LoggingSubsystem.reset(),
+    )
+    killswitchEngine.registerSubsystem('disableLogs', {
+      shutdown: () => LoggingSubsystem.getInstance()?.stop(),
+      startup: () => {
+        if (EntitlementGate.isAllowed('logging')) LoggingSubsystem.getInstance()?.start()
+      },
+    })
+
+    await featureController.register(
+      'profiling',
+      async () => {
+        const active = manager.getConfig()
+        const subsystem = ProfilingSubsystem.initialize(
+          active,
+          event => { processEvent(event) },
+          client.metadata,
+        )
+        if (!killswitchEngine.isKilled('disableProfiling') && EntitlementGate.isAllowed('profiling')) {
+          await subsystem.start()
+        }
+      },
+      async () => {
+        await ProfilingSubsystem.getInstance()?.stop()
+        ProfilingSubsystem.reset()
+      },
+    )
+    killswitchEngine.registerSubsystem('disableProfiling', {
+      shutdown: async () => { await ProfilingSubsystem.getInstance()?.stop() },
+      startup: async () => {
+        if (EntitlementGate.isAllowed('profiling')) await ProfilingSubsystem.getInstance()?.start()
+      },
+    })
+
+    await featureController.register(
+      'crons',
+      () => { CronSubsystem.initialize(event => { processEvent(event) }, client.metadata) },
+      () => CronSubsystem.reset(),
+    )
+    await featureController.register(
+      'sessionReplay',
+      () => { getSessionManager() },
+      () => resetSessionManager(),
+    )
+
+    manager.setApplier(new ConfigApplier({
+      identity: async ({ previous, current }) => {
+        client.applyRemoteIdentity(current)
+        LoggingSubsystem.getInstance()?.updateMetadata(client.metadata)
+        ProfilingSubsystem.getInstance()?.updateMetadata(client.metadata)
+        CronSubsystem.getInstance()?.updateMetadata(client.metadata)
+        // OTel Resource identity is immutable. Restart only providers that
+        // remained active; feature/killswitch transitions own starts/stops.
+        if (previous.features.tracing && current.features.tracing
+          && !previous.killswitches.disableTracing && !current.killswitches.disableTracing) {
+          await stopTracing()
+          startTracing()
+        }
+        if (previous.features.metrics && current.features.metrics
+          && !previous.killswitches.disableMetrics && !current.killswitches.disableMetrics) {
+          await stopMetrics()
+          startMetrics()
+        }
+      },
+      killswitches: async ({ diff, current }) => {
+        await killswitchEngine.handleConfigChange(diff, current)
+      },
+      sampling: ({ diff, current }) => {
+        samplingEngine.handleConfigChange(diff, current)
+        if (diff.changes.has('sampling.profiles')) updateProfilingConfig(current)
+      },
+      features: async ({ diff, current }) => {
+        await featureController.handleConfigChange(diff, current)
+        if (pressureFeaturesChanged(diff)) configureAdaptivePressure(current)
+      },
+      limits: ({ diff, current }) => {
+        limitsEngine.handleConfigChange(diff, current)
+        if (diff.changes.has('limits.tenantGovernance')) {
+          tenantGovernor.configure(current.limits.tenantGovernance)
+        }
+        if (diff.changes.has('limits.maxMemoryMb')) configureAdaptivePressure(current)
+        if (diff.changes.has('limits.maxQueueSize')) eventQueue.configure(current.limits.maxQueueSize)
+        if (diff.changes.has('limits.maxSpansPerTrace')) {
+          costGovernor.updateFromConfig({
+            maxSpansPerTrace: current.limits.maxSpansPerTrace,
+            maxTraceDurationMs: TRACING_DEFAULTS.maxTraceDurationMs,
+          })
+        }
+      },
+      privacy: async ({ diff, current }) => {
+        securityScrubber.handleConfigChange(diff, current)
+        await configurePayloadScrubber(current)
+      },
+      transport: async ({ diff, current }) => {
+        await transportRouter.handleConfigChange(diff, current)
+      },
+      instrumentation: ({ diff, previous, current }) => {
+        const tracingLifecycleChanged = diff.sdkChanged
+          || diff.changes.has('features.tracing')
+          || diff.changes.has('killswitches.disableTracing')
+          || diff.changes.has('entitlements.tracing')
+          || diff.changes.has('entitlements.customSpans')
+        // A lifecycle transition starts/stops instrumentation from the new
+        // snapshot. Rebuild only when tracing remained active throughout.
+        if (!tracingLifecycleChanged
+          && previous.features.tracing && current.features.tracing
+          && !killswitchEngine.isKilled('disableTracing')) {
+          resetAutoInstrumentations()
+          registerAutoInstrumentations()
+        }
+      },
+      entitlements: async ({ diff, current }) => {
+        await entitlementGate.handleConfigChange(diff, current)
+
+        if ((diff.changes.has('entitlements.tracing') || diff.changes.has('entitlements.customSpans'))
+          && current.features.tracing && !current.killswitches.disableTracing) {
+          resetAutoInstrumentations()
+          registerAutoInstrumentations()
+        }
+
+        if (diff.changes.has('entitlements.logging')) {
+          if (current.entitlements.logging && current.features.logging && !current.killswitches.disableLogs) {
+            LoggingSubsystem.getInstance()?.start()
+          } else {
+            LoggingSubsystem.getInstance()?.stop()
+          }
+        }
+
+        if (diff.changes.has('entitlements.profiling')
+          && current.entitlements.profiling && current.features.profiling
+          && !current.killswitches.disableProfiling) {
+          await ProfilingSubsystem.getInstance()?.start()
+        }
+
+        if (diff.changes.has('entitlements.errors')) {
+          if (current.entitlements.errors && current.features.errors && !current.killswitches.disableErrors) {
+            setupGlobalErrorHandlers()
+          } else {
+            resetGlobalErrorHandlers()
+          }
+        }
+      },
+    }))
+
+    // Only now may capture paths leave the pre-init buffer.
+    client.markInitialized()
+    filterBufferedEvents(config)
+    await replayBufferedEvents(persistedEvents)
+
+    logger.info('SDK initialized from /v1/init configuration', {
+      projectId: client.metadata.projectId,
+      environment: client.metadata.environment,
+      release: client.metadata.release,
+      configHash: manager.getConfig().meta.configHash,
+      activeSubsystems: featureController.getActiveSubsystems(),
+    })
+    return manager.getConfig()
+  } catch (error) {
+    logger.error('SDK initialization failed; host application will continue without telemetry', { error })
+    await cleanupFailedInitialization()
+    return undefined
   }
 }
-
-// ─── Config Resolution ──────────────────────────────────────────────────────
-
-/**
- * Merge user options + remote config into ResolvedSDKConfig.
- * ALL features default to ON (true) — plan clamping happens after this.
- */
-function mergeConfig(
-  options: SDKInitOptions,
-  remote: RemoteConfig,
-  planFeatures: import('../types/config.js').PlanFeatures,
-): ResolvedSDKConfig {
-  return {
-    apiKey: options.apiKey,
-    service: options.service ?? client.metadata.applicationName ?? 'unknown-service',
-    environment: options.environment ?? 'production',
-    release: options.release ?? client.metadata.applicationVersion,
-    applicationName: client.metadata.applicationName,
-    applicationVersion: client.metadata.applicationVersion,
-    debug: options.debug ?? false,
-
-    // Plan info
-    plan: planFeatures.tier,
-    planFeatures,
-
-    // Feature flags — ALL default to ON (true)
-    // User can turn OFF; plan clamping (next step) enforces upper limit
-    enableErrors: options.enableErrors ?? true,
-    enablePerformance: options.enablePerformance ?? true,
-    enableTracing: options.enableTracing ?? true,
-    enableMetrics: options.enableMetrics ?? true,
-
-    samplingRate: options.sampleRate ?? remote.samplingRate,
-
-    maxBreadcrumbs: options.maxBreadcrumbs ?? planFeatures.maxBreadcrumbs,
-    maxQueueSize: remote.maxQueueSize,
-    shutdownTimeoutMs: options.shutdownTimeoutMs ?? 10_000,
-
-    ingestUrl: remote.ingestUrl,
-    batchSize: options.transport?.batchSize ?? remote.batchSize,
-    flushIntervalMs: options.transport?.flushIntervalMs ?? remote.flushIntervalMs,
-    maxRetries: options.transport?.maxRetries ?? remote.maxRetries,
-    timeoutMs: options.transport?.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-    compression: options.transport?.compression ?? 'none',
-    maxPayloadBytes: options.transport?.maxPayloadBytes ?? remote.maxPayloadBytes,
-    maxConcurrentSends: options.transport?.maxConcurrentSends ?? 3,
-
-    // OTel Metrics
-    otelMetrics: {
-      maxHistogramBuckets: options.otelMetrics?.maxHistogramBuckets ?? 160,
-      percentiles: options.otelMetrics?.percentiles ?? [50, 75, 90, 95, 99],
-      cardinalityLimit: options.otelMetrics?.cardinalityLimit ?? 2000,
-    },
-
-    // Payload Governance
-    dataScrubbing: {
-      sensitiveHeaders: options.dataScrubbing?.sensitiveHeaders ? Array.from(options.dataScrubbing.sensitiveHeaders) : [],
-      sensitiveKeys: options.dataScrubbing?.sensitiveKeys ? Array.from(options.dataScrubbing.sensitiveKeys) : [],
-      redactRequestBody: options.dataScrubbing?.redactRequestBody ?? false,
-      redactResponseBody: options.dataScrubbing?.redactResponseBody ?? false,
-    },
-  }
-}
-
-// ─── Validation ─────────────────────────────────────────────────────────────
 
 function validateInitOptions(options: SDKInitOptions): void {
   const result = sdkInitOptionsSchema.safeParse(options)
-
-  if (!result.success) {
-    const issues = result.error.issues.map(
-      issue => `${issue.path.join('.')}: ${issue.message}`
-    )
-    throw new SDKError(
-      `Invalid SDK init options: ${issues.join('; ')}`,
-      'INVALID_INIT_OPTIONS',
-      { issues }
-    )
-  }
+  if (result.success) return
+  const issues = result.error.issues.map(issue => `${issue.path.join('.')}: ${issue.message}`)
+  throw new SDKError(`Invalid SDK init options: ${issues.join('; ')}`, 'INVALID_INIT_OPTIONS', { issues })
 }
 
-function resolveBaseUrl(userBaseUrl?: string): string {
-  const baseUrl = resolveApiBaseUrl(userBaseUrl)
-  validateUrl(baseUrl, 'baseUrl')
-  return baseUrl
+function getQueueUtilization(): number {
+  let utilization = eventQueue.getUtilization()
+  const health = TransportRouter.getInstance()?.getHealth()
+  if (!health) return utilization
+
+  for (const route of Object.values(health.routes)) {
+    if (route.queueCapacity > 0) {
+      utilization = Math.max(utilization, route.queueSize / route.queueCapacity)
+    }
+  }
+  return Math.min(1, Math.max(0, utilization))
 }
 
-function validateRemoteConfig(response: InitResponse): RemoteConfig {
-  const config = response.config
-  if (!isRemoteConfigResponse(config)) {
-    throw new SDKError('Init config must be a valid schema-v1 remote config', 'INVALID_INIT_CONFIG')
-  }
-
-  const route =
-    config.transport.routes.events ??
-    config.transport.routes.requests ??
-    config.transport.routes.errors
-  const ingestUrl = route.url
-  validateUrl(ingestUrl, 'ingestUrl')
-
-  return {
-    ingestUrl,
-    samplingRate: config.sampling.requests ?? config.sampling.traces ?? 1,
-    enableErrors: config.features.errors,
-    enablePerformance: config.features.requestCapture || config.features.tracing,
-    maxQueueSize: config.transport.queue.maxSize ?? config.limits.maxQueueSize,
-    batchSize: route.batchSize,
-    flushIntervalMs: route.flushIntervalMs,
-    maxRetries: config.transport.retry.maxRetries ?? DEFAULT_MAX_RETRIES,
-    maxPayloadBytes: config.limits.maxPayloadSize ?? DEFAULT_MAX_PAYLOAD_BYTES,
-  }
+function configureAdaptivePressure(config: Readonly<RemoteConfigResponse>): void {
+  adaptivePressure.configure({
+    maxMemoryMb: resolveMaxMemoryMb(config.limits.maxMemoryMb),
+    getQueueUtilization: getQueueUtilization,
+    runtimeMetrics: config.features.runtimeMetrics,
+    eventLoopMonitoring: config.features.eventLoopMonitoring,
+    gcMonitoring: config.features.gcMonitoring,
+  })
 }
 
-function filterBufferedEvents(config: ResolvedSDKConfig): void {
-  const samplingEngineInstance = SamplingEngine.getInstance()
+async function configurePayloadScrubber(config: Readonly<RemoteConfigResponse>): Promise<void> {
+  const { apiPayloadScrubber } = await import('../processors/sanitizer.js')
+  apiPayloadScrubber.configure({
+    sensitiveHeaders: [...config.privacy.scrubbing.headers],
+    sensitiveKeys: [...config.privacy.scrubbing.fields],
+    redactRequestBody: !config.privacy.capture.body,
+    redactResponseBody: !config.privacy.capture.response,
+  })
+}
 
+function pressureFeaturesChanged(diff: import('../types/config.js').ConfigDiff): boolean {
+  return diff.changes.has('features.runtimeMetrics')
+    || diff.changes.has('features.eventLoopMonitoring')
+    || diff.changes.has('features.gcMonitoring')
+}
+
+function updateProfilingConfig(config: Readonly<RemoteConfigResponse>): void {
+  ProfilingSubsystem.getInstance()?.handleConfigChange(config)
+}
+
+function filterBufferedEvents(config: Readonly<RemoteConfigResponse>): void {
   eventQueue.filter(event => {
-    const e = event as Record<string, unknown>
-    if (e['type'] === 'request') {
-      if (!config.enablePerformance) return false
-      if (config.samplingRate >= 1) return true
-      if (config.samplingRate <= 0) return false
-
-      // Deterministic sampling. The engine is initialized in Phase 3 of
-      // init() so it's always present when filterBufferedEvents runs;
-      // the explicit check is defensive, and falling through means
-      // dropping the event rather than non-deterministic Math.random()
-      // (which would make sampling decisions inconsistent across nodes).
-      if (samplingEngineInstance) {
-        const traceId = (e['traceId'] as string) ?? (e['requestId'] as string) ?? String(e['timestamp'])
-        const decision = samplingEngineInstance.shouldSampleTrace(traceId)
-        return decision.sampled
-      }
-
-      // SamplingEngine not yet up — drop rather than sample non-deterministically.
-      return false
-    }
-    if (e['type'] === 'error') {
-      return config.enableErrors
-    }
+    if (event.type === 'error') return config.features.errors && !config.killswitches.disableErrors
+    if (event.type === 'request') return config.features.requestCapture && !config.killswitches.disableTracing
+    if (event.type === 'metric') return config.features.metrics && !config.killswitches.disableMetrics
     return true
   })
 }
 
-function isObject(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === 'object'
-}
-
-function validateUrl(value: string, fieldName: string): void {
-  try {
-    const url = new URL(value)
-    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-      throw new Error('Unsupported protocol')
-    }
-  } catch (error) {
-    throw new SDKError(`${fieldName} must be a valid HTTP URL`, 'INVALID_URL', { fieldName }, error)
+async function replayBufferedEvents(persisted: readonly unknown[]): Promise<void> {
+  const buffered = eventQueue.drainAll()
+  const events = [...persisted, ...buffered]
+  for (let index = 0; index < events.length; index++) {
+    processEvent(events[index] as import('../types/event.js').SDKEvent)
+    if ((index + 1) % 100 === 0) await new Promise<void>(resolve => setImmediate(resolve))
   }
 }
 
-/**
- * Derive a working control-plane snapshot from the legacy init handshake.
- *
- * Baked-in defaults are deliberately inert: empty route URLs, every
- * feature off, sampling rates 0 and `disableTransport` on — so an SDK
- * pointing at a black hole stays quiet. Once the legacy /v1/init
- * handshake succeeds we know the backend's real intent (ingestUrl,
- * samplingRate, plan-clamped feature flags), so we map it onto the v3
- * config shape. Returns null when there is nothing to derive.
- */
-function deriveFallbackRemoteConfig(
-  remote: Readonly<RemoteConfigResponse>,
-  resolved: ResolvedSDKConfig,
-): RemoteConfigResponse | null {
-  const transport = deriveTransportFromIngestUrl(remote.transport, resolved.ingestUrl)
-
-  const candidate: RemoteConfigResponse = {
-    ...remote,
-    transport: transport ?? remote.transport,
-    killswitches: transport
-      ? { ...remote.killswitches, disableTransport: false }
-      : remote.killswitches,
-    features: {
-      ...remote.features,
-      errors: resolved.enableErrors,
-      requestCapture: resolved.enablePerformance,
-      tracing: resolved.enableTracing,
-      metrics: resolved.enableMetrics,
-      runtimeMetrics: resolved.enableMetrics,
-      eventLoopMonitoring: resolved.enableMetrics,
-      gcMonitoring: resolved.enableMetrics,
-      // No legacy flags exist for these — fail open, mirroring
-      // mergeConfig's "all features default ON" legacy semantics.
-      logging: true,
-      profiling: true,
-      crons: true,
-      sessionReplay: resolved.planFeatures.allowSessions,
-    },
-    sampling: {
-      ...remote.sampling,
-      traces: resolved.samplingRate,
-      requests: resolved.samplingRate,
-      // The legacy rate only ever governed performance data; errors and
-      // replays were all-or-nothing via their enable flags.
-      errors: 1,
-      profiles: resolved.samplingRate,
-      replays: 1,
-    },
-  }
-
-  const diff = diffConfigs(remote, candidate)
-  return diff.transportChanged || diff.killswitchesChanged || diff.featuresChanged || diff.samplingChanged
-    ? candidate
-    : null
-}
-
-/**
- * Derive per-route ingest URLs from a single endpoint (the legacy init
- * handshake's `ingestUrl`). Baked-in defaults ship empty route URLs; this
- * fills every unconfigured route with the given endpoint. RouteRegistry's
- * forcePath() rewrites the path per route, so one base endpoint is enough.
- *
- * Returns null when every route already has a URL (nothing to bridge).
- */
-function deriveTransportFromIngestUrl(
-  transport: TransportRemoteConfig,
-  ingestUrl: string,
-): TransportRemoteConfig | null {
-  if (!ingestUrl) return null
-
-  let missing = 0
-  const routes = {} as Record<string, TransportRouteConfig>
-  for (const [name, route] of Object.entries(transport.routes)) {
-    if (route.url) {
-      routes[name] = route
-    } else {
-      routes[name] = { ...route, url: ingestUrl }
-      missing += 1
-    }
-  }
-
-  if (missing === 0) return null
-  return {
-    ...transport,
-    routes: routes as TransportRemoteConfig['routes'],
-  }
-}
-
-function isRetryableInitError(error: unknown): boolean {  if (!(error instanceof SDKError)) return false
-  if (error.code === 'NETWORK_ERROR') return true
-
-  const status = Number(error.context.statusCode ?? error.context.status)
-  return status === 408 || status === 429 || status >= 500
-}
-
-function retryDelayMs(attempt: number): number {
-  const exponential = Math.min(INIT_MAX_RETRY_DELAY_MS, INIT_BASE_RETRY_DELAY_MS * 2 ** (attempt - 1))
-  return Math.floor(exponential / 2 + Math.random() * (exponential / 2))
-}
-
-function initializeOfflineFallback(
-  options: SDKInitOptions,
-  baseUrl: string,
-  logger: ReturnType<typeof getLogger>,
-): Readonly<RemoteConfig> {
-  const planFeatures = getOfflineFallbackPlan()
-  const ingestUrl = `${baseUrl.replace(/\/+$/, '')}/api/v1/events`
-  const remoteConfig: RemoteConfig = {
-    ingestUrl,
-    samplingRate: 1,
-    enableErrors: true,
-    enablePerformance: false,
-    maxQueueSize: planFeatures.maxQueueSize,
-    batchSize: planFeatures.maxBatchSize,
-    flushIntervalMs: DEFAULT_TIMEOUT_MS,
-    maxRetries: DEFAULT_MAX_RETRIES,
-    maxPayloadBytes: DEFAULT_MAX_PAYLOAD_BYTES,
-    plan: planFeatures.tier,
-    planFeatures,
-  }
-  const resolvedConfig = clampToPlan(mergeConfig(options, remoteConfig, planFeatures), planFeatures)
-
-  client.setRemoteConfig(remoteConfig)
-  client.setResolvedConfig(resolvedConfig)
-  eventQueue.configure(resolvedConfig.maxQueueSize)
-  filterBufferedEvents(resolvedConfig)
-
-  if (options.eventProcessors) {
-    for (const processor of options.eventProcessors) {
-      client.registerEventProcessor(processor)
-    }
-  }
-
-  const transportRouter = TransportRouter.getInstance()
-  if (transportRouter) {
-    // Same fallback derivation as the main init path: the control-plane
-    // modules were built from baked-in defaults (placeholder URLs, features
-    // off, sampling 0, transport killed), so point them at the fallback
-    // config before draining the queue — otherwise every buffered event
-    // would be silently dropped.
-    const currentRemote = ConfigManager.getInstance()?.getConfig()
-    const bridgedConfig = currentRemote
-      ? deriveFallbackRemoteConfig(currentRemote, resolvedConfig)
-      : null
-    if (currentRemote && bridgedConfig) {
-      const bridgeDiff = diffConfigs(currentRemote, bridgedConfig)
-      if (bridgeDiff.transportChanged) {
-        transportRouter.handleConfigChange(bridgeDiff, bridgedConfig)
-      }
-      if (bridgeDiff.killswitchesChanged) {
-        void KillswitchEngine.getInstance()?.handleConfigChange(bridgeDiff, bridgedConfig)
-      }
-      if (bridgeDiff.samplingChanged) {
-        SamplingEngine.getInstance()?.handleConfigChange(bridgeDiff, bridgedConfig)
-      }
-      if (bridgeDiff.featuresChanged) {
-        void FeatureController.getInstance()?.handleConfigChange(bridgeDiff, bridgedConfig)
-      }
-    }
-    for (const event of eventQueue.drainAll()) {
-      transportRouter.send(event as import('../types/event.js').SDKEvent)
-    }
-  }
-  setupGlobalErrorHandlers()
-  registerSignalHandlers()
-  errorDeduplicator.start()
-
-  logger.warn('SDK offline fallback initialized', {
-    plan: resolvedConfig.plan,
-    ingestUrl: resolvedConfig.ingestUrl,
-    enableErrors: resolvedConfig.enableErrors,
-    enablePerformance: resolvedConfig.enablePerformance,
-  })
-
-  return remoteConfig
+async function cleanupFailedInitialization(): Promise<void> {
+  try { await TransportRouter.reset() } catch {}
+  try { await shutdownTracer() } catch {}
+  try { resetAutoInstrumentations() } catch {}
+  try { resetGlobalErrorHandlers() } catch {}
+  try { FeatureController.reset() } catch {}
+  try { KillswitchEngine.reset() } catch {}
+  try { EntitlementGate.reset() } catch {}
+  try { SamplingEngine.reset() } catch {}
+  try { LimitsEngine.reset() } catch {}
+  try { SecurityScrubber.reset() } catch {}
+  ConfigManager.reset()
+  client.clear()
 }

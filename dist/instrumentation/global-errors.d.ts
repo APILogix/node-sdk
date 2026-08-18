@@ -1,12 +1,6 @@
 /**
- * Global error handlers — captures unhandled errors and rejections.
- * Now driven by remote config errors.* section.
- *
- * Reads from ConfigManager to respect:
- *   errors.captureUnhandledRejections — attach unhandledRejection handler
- *   errors.captureUncaughtExceptions — attach uncaughtException handler
- *   errors.captureConsoleErrors — wrap console.error to create error events
- *   errors.stackTraceLimit — override Error.stackTraceLimit
+ * Global error handlers. Remote features/killswitches decide whether the
+ * subsystem runs; implementation mechanics come from internal constants.
  *
  * On uncaughtException: captures the error and attempts to flush pending events.
  * Does NOT call process.exit — the SDK should never force-terminate the host process.

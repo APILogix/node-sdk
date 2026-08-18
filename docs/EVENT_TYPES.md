@@ -12,19 +12,19 @@ Every outgoing event has this SDK-owned metadata snapshot:
 | `applicationVersion` | Consuming package version or explicit init override |
 | `sdkName` | SDK package identity from build constants |
 | `sdkVersion` | SDK version from build constants |
-| `service` | Logical service name |
+| `projectId` | Backend project identity, sourced exclusively from `config.sdk.projectId` |
 | `environment` | Deployment environment |
 | `release` | Deployment release, separate from package version |
 | `serverName` | Optional server identity |
 
-After processors and `beforeSend`, the pipeline replaces `metadata` with the immutable client snapshot. Callers and plugins therefore cannot authoritatively override `applicationName`, `applicationVersion`, `sdkName`, or `sdkVersion` per event.
+After processors and `beforeSend`, the pipeline replaces `metadata` with the immutable client snapshot. Callers and plugins therefore cannot authoritatively override `applicationName`, `applicationVersion`, `sdkName`, `sdkVersion`, or `projectId` per event.
 
 
 Metadata resolution at initialization is:
 
-- `applicationName`: init override → discovered `package.json.name` → `service` → `unknown-application`.
+- `applicationName`: init override → discovered `package.json.name` → `unknown-application`.
 - `applicationVersion`: init override → discovered `package.json.version` → `release` → `0.0.0-unknown`.
-- `service`: init `service` → resolved application name.
+- `projectId`: exclusively `config.sdk.projectId` from the active remote configuration. Never derived from init options, local config, package.json, environment variables, or any fallback. Updated atomically whenever the remote configuration is replaced.
 - `release`: init `release` → resolved application version.
 - `sdkName` and `sdkVersion`: build constants, not caller input.
 
@@ -84,7 +84,7 @@ A captured exception or error-like value.
 | `severity` | `debug \| info \| warning \| error \| fatal` | Severity |
 | `context` | `Record<string, unknown>` | Capture context |
 
-**Optional fields:** `eventId`, `requestId`, `breadcrumbs`, `traceId`, `spanId`, `mechanism`, and `metadata`.
+**Optional fields:** `eventId`, `requestId`, `breadcrumbs`, `traceId`, `spanId`, `mechanism`, `metadata`, `statusCode`, `statusText`, `method`, `url`, and `route`.
 
 A `StackFrame` has required `filename`, `function`, and `inApp`, with optional line/column, module, and source context (`pre`, `line`, `post`). `mechanism` identifies paths such as `manual`, `uncaughtException`, `unhandledRejection`, `console.error`, or framework capture.
 
@@ -247,7 +247,7 @@ applicationName
 applicationVersion
 sdkName
 sdkVersion
-service
+projectId
 environment
 release
 serverName? (when supplied by the client metadata snapshot)

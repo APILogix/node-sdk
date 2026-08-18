@@ -1,14 +1,8 @@
-import type { RemoteConfigResponse } from '../types/config.js';
-import type { Event } from '../types/event.js';
-export interface InitResponse {
-    success: boolean;
-    projectId?: string;
-    environment?: string;
-    configRevision?: number | null;
-    configHash?: string | null;
-    config?: RemoteConfigResponse;
-}
-export declare function sendInitRequest(apiKey: string, baseUrl?: string, timeoutMs?: number): Promise<InitResponse>;
-export declare function sendEvents(events: Event[]): Promise<void>;
-export declare function validateApiKey(apiKey: string): void;
+/**
+ * Legacy direct sender removed.
+ *
+ * Configuration requests are owned exclusively by RemoteConfigClient and
+ * telemetry delivery is owned exclusively by TransportRouter/BatchManager.
+ */
+export {};
 //# sourceMappingURL=sender.d.ts.map
