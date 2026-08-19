@@ -74,6 +74,7 @@ export { computeExclusiveDuration, SpanDurationTracker, spanDurationTracker } fr
 // ─── Logger control (apps wiring SDK into their own logger) ─────────────────
 export { setLogger, setDebugMode, setLogLevel } from './utils/logger.js';
 export { Severity, severityFromString } from './types/severity.js';
+export { classifyError } from './core/error-classifier.js';
 // ─── Health snapshot ────────────────────────────────────────────────────────
 import { eventQueue } from './transport/queue.js';
 import { TransportRouter } from './transport/transport-router.js';

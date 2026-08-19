@@ -48,6 +48,7 @@ function event(type: SDKEvent['type'], index: number): SDKEvent {
         timestamp: Date.now(),
         severity: 'error',
         context: {},
+        classification: { unhandled: false, fatal: false, crash: false },
       }
     case 'span':
       return {

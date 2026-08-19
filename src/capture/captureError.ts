@@ -18,6 +18,7 @@ import { ERROR_DEFAULTS } from '../constants/internal-defaults.js'
 import { SpanStatusCode, trace } from '@opentelemetry/api'
 import { SecurityScrubber } from '../processors/security-scrubber.js'
 import type { ErrorSeverity } from '../types/error.js'
+import { classifyError } from '../core/error-classifier.js'
 
 export type { ErrorSeverity }
 
@@ -33,11 +34,11 @@ export type { ErrorSeverity }
  *   errors.grouping.normalizePaths → strip absolute paths in fingerprint
  *
  * @param error - The error to capture (Error, string, or unknown)
- * @param severity - Optional severity level ('fatal' | 'error' | 'warning' | 'info' | 'debug'). Defaults to 'error'.
+ * @param severity - Optional severity level ('fatal' | 'error' | 'warning' | 'info' | 'debug') or options object with severity. Defaults to 'error'.
  */
 export function captureError(
   error: unknown,
-  severity?: ErrorSeverity
+  severity?: ErrorSeverity | { severity?: ErrorSeverity } | SeverityLevel
 ): void {
   const logger = getLogger()
 
@@ -60,7 +61,11 @@ export function captureError(
       }
     }
 
-    const resolvedSeverity: SeverityLevel = severity ? severityFromString(severity, Severity.Error) : Severity.Error
+    let severityInput = severity
+    if (typeof severity === 'object' && severity !== null && 'severity' in severity) {
+      severityInput = (severity as { severity?: ErrorSeverity }).severity
+    }
+    const resolvedSeverity: SeverityLevel = severityInput ? severityFromString(severityInput, Severity.Error) : Severity.Error
 
     let statusCode: number | undefined = undefined
     let statusText: string | undefined = undefined
@@ -93,6 +98,9 @@ export function captureError(
         handled = ctx.extra.handled
       }
     }
+
+    // Centralized classification derived deterministically from source facts
+    const classification = classifyError(handled, mechanism, resolvedSeverity)
 
     // Parse stack frames synchronously — uses V8 CallSite API when available,
     // falls back to regex for pre-serialized stacks
@@ -138,6 +146,7 @@ export function captureError(
       context: {},
       mechanism,
       handled,
+      classification,
       breadcrumbs,
       requestId: ctx?.requestId,
       traceId: getTraceId(),

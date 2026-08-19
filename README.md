@@ -99,6 +99,23 @@ try {
 
 Signature: `captureError(error, options?)`, where options contain `context`, `severity`, `fingerprint`, and `mechanism`. For compatibility, a plain record without any option keys is treated directly as context. The helper parses the stack, computes a grouping fingerprint, correlates the active trace/span and breadcrumbs, and marks an active span as errored. Error killswitches and deterministic error sampling apply.
 
+#### Error Classification Contract
+
+Every `ErrorEvent` carries a deterministic `classification: { unhandled, fatal, crash }` signal computed from source facts:
+
+| Capture Path / Mechanism | Handled | Mechanism | Severity | Unhandled | Fatal | Crash | Target Fast Lookup Rule |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| `captureError(err)` | `true` | `manual` | `error` | `false` | `false` | `false` | `none` (No alert) |
+| `captureError(err, 'fatal')` | `true` | `manual` | `fatal` | `false` | `true` | `false` | `fatal_exception_fast` |
+| Express `next(err)` | `true` | `express.next` | `error` | `false` | `false` | `false` | `none` (No alert) |
+| Express `res.on('error')` | `true` | `express.res.error` | `error` | `false` | `false` | `false` | `none` (No alert) |
+| Fastify `onError` | `true` | `fastify.onError` | `error` | `false` | `false` | `false` | `none` (No alert) |
+| `uncaughtException` | `false` | `uncaughtException` | `fatal` | `true` | `true` | `true` | `process_crash_fast` |
+| `unhandledRejection` | `false` | `unhandledRejection` | `error` | `true` | `false` | `false` | `unhandled_exception_fast` |
+| `console.error` | `true` | `console.error` | `error` | `false` | `false` | `false` | `none` (No alert) |
+
+See [Error Classification Specification](docs/ERROR_CLASSIFICATION_SPECIFICATION.md) for full architecture details.
+
 ### Messages
 
 ```ts

@@ -31,6 +31,8 @@ export { tenantGovernor, TenantGovernor } from './core/tenant-isolation.js'
 
 export { enqueueEvent } from './core/event-pipeline.js'
 export { client } from './core/client.js'
+export { classifyError } from './core/error-classifier.js'
+
 
 // ─── Subsystems (lifecycles managed by FeatureController) ───────────────────
 

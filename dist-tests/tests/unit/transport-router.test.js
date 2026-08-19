@@ -43,6 +43,7 @@ function event(type, index) {
                 timestamp: Date.now(),
                 severity: 'error',
                 context: {},
+                classification: { unhandled: false, fatal: false, crash: false },
             };
         case 'span':
             return {

@@ -156,7 +156,9 @@ export type { Breadcrumb, BreadcrumbInput, BreadcrumbHint } from './types/breadc
 export type { SeverityLevel } from './types/severity.js'
 export { Severity, severityFromString } from './types/severity.js'
 export type { SDKPlugin, PluginMeta, PluginContext, EventProcessor, BreadcrumbProcessor } from './types/plugin.js'
-export type { ErrorSeverity, ParsedError, ErrorGrouping } from './types/error.js'
+export type { ErrorSeverity, ErrorMechanism, ErrorClassification, ParsedError, ErrorGrouping } from './types/error.js'
+export { classifyError } from './core/error-classifier.js'
+
 
 // ─── Health snapshot ────────────────────────────────────────────────────────
 

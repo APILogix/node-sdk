@@ -2,6 +2,7 @@
  * Error capture — captures exceptions and routes them through the event pipeline.
  * Features ultra-minimal two-argument signature: captureError(error, severity?).
  */
+import { type SeverityLevel } from '../types/severity.js';
 import type { ErrorSeverity } from '../types/error.js';
 export type { ErrorSeverity };
 /**
@@ -16,7 +17,9 @@ export type { ErrorSeverity };
  *   errors.grouping.normalizePaths → strip absolute paths in fingerprint
  *
  * @param error - The error to capture (Error, string, or unknown)
- * @param severity - Optional severity level ('fatal' | 'error' | 'warning' | 'info' | 'debug'). Defaults to 'error'.
+ * @param severity - Optional severity level ('fatal' | 'error' | 'warning' | 'info' | 'debug') or options object with severity. Defaults to 'error'.
  */
-export declare function captureError(error: unknown, severity?: ErrorSeverity): void;
+export declare function captureError(error: unknown, severity?: ErrorSeverity | {
+    severity?: ErrorSeverity;
+} | SeverityLevel): void;
 //# sourceMappingURL=captureError.d.ts.map

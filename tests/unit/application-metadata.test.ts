@@ -48,7 +48,7 @@ describe('application package metadata', () => {
     const now = Date.now()
     const events: SDKEvent[] = [
       { type: 'request', requestId: 'r', url: '/', method: 'get', statusCode: 200, latency: 1, timestamp: now },
-      { type: 'error', message: 'e', name: 'Error', stack: [], fingerprint: 'f', timestamp: now, severity: 'error', context: {} },
+      { type: 'error', message: 'e', name: 'Error', stack: [], fingerprint: 'f', timestamp: now, severity: 'error', context: {}, classification: { unhandled: false, fatal: false, crash: false } },
       { type: 'message', message: 'm', severity: 'info', timestamp: now },
       { type: 'metric', metricName: 'm', metricType: 'gauge', value: 1, timestamp: now },
       { type: 'span', spanId: 's', traceId: 't', name: 'span', startTime: now, endTime: now + 1, duration: 1, status: 'ok' },

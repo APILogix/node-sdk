@@ -14,6 +14,7 @@ import { KillswitchEngine } from '../core/killswitch-engine.js';
 import { ERROR_DEFAULTS } from '../constants/internal-defaults.js';
 import { SpanStatusCode, trace } from '@opentelemetry/api';
 import { SecurityScrubber } from '../processors/security-scrubber.js';
+import { classifyError } from '../core/error-classifier.js';
 /**
  * Capture an error/exception.
  *
@@ -26,7 +27,7 @@ import { SecurityScrubber } from '../processors/security-scrubber.js';
  *   errors.grouping.normalizePaths → strip absolute paths in fingerprint
  *
  * @param error - The error to capture (Error, string, or unknown)
- * @param severity - Optional severity level ('fatal' | 'error' | 'warning' | 'info' | 'debug'). Defaults to 'error'.
+ * @param severity - Optional severity level ('fatal' | 'error' | 'warning' | 'info' | 'debug') or options object with severity. Defaults to 'error'.
  */
 export function captureError(error, severity) {
     const logger = getLogger();
@@ -47,7 +48,11 @@ export function captureError(error, severity) {
                 // Error capture must remain best-effort and never alter host control flow.
             }
         }
-        const resolvedSeverity = severity ? severityFromString(severity, Severity.Error) : Severity.Error;
+        let severityInput = severity;
+        if (typeof severity === 'object' && severity !== null && 'severity' in severity) {
+            severityInput = severity.severity;
+        }
+        const resolvedSeverity = severityInput ? severityFromString(severityInput, Severity.Error) : Severity.Error;
         let statusCode = undefined;
         let statusText = undefined;
         let method = undefined;
@@ -89,6 +94,8 @@ export function captureError(error, severity) {
                 handled = ctx.extra.handled;
             }
         }
+        // Centralized classification derived deterministically from source facts
+        const classification = classifyError(handled, mechanism, resolvedSeverity);
         // Parse stack frames synchronously — uses V8 CallSite API when available,
         // falls back to regex for pre-serialized stacks
         const stackFrames = parseStack(normalized.stack, normalized);
@@ -129,6 +136,7 @@ export function captureError(error, severity) {
             context: {},
             mechanism,
             handled,
+            classification,
             breadcrumbs,
             requestId: ctx?.requestId,
             traceId: getTraceId(),

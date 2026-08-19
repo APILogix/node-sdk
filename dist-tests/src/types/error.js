@@ -1,4 +1,4 @@
 /**
  * Error-related types for structured error representation.
  */
-export {};
+export { classifyError } from '../core/error-classifier.js';

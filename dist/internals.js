@@ -27,6 +27,7 @@ export { tenantGovernor, TenantGovernor } from './core/tenant-isolation.js';
 // ─── Pipeline + low-level capture plumbing ──────────────────────────────────
 export { enqueueEvent } from './core/event-pipeline.js';
 export { client } from './core/client.js';
+export { classifyError } from './core/error-classifier.js';
 // ─── Subsystems (lifecycles managed by FeatureController) ───────────────────
 export { LoggingSubsystem } from './subsystems/logging-subsystem.js';
 export { ProfilingSubsystem } from './subsystems/profiling-subsystem.js';

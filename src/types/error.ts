@@ -10,6 +10,31 @@ import type { StackFrame } from './event.js'
 export type ErrorSeverity = 'fatal' | 'error' | 'warning' | 'info' | 'debug'
 
 /**
+ * Strict error mechanism taxonomy for error capture pathways.
+ */
+export type ErrorMechanism =
+  | 'manual'
+  | 'express.next'
+  | 'express.res.error'
+  | 'fastify.onError'
+  | 'uncaughtException'
+  | 'unhandledRejection'
+  | 'console.error'
+  | 'framework'
+  | 'unknown'
+
+/**
+ * Derived boolean error classification flags.
+ */
+export interface ErrorClassification {
+  readonly unhandled: boolean
+  readonly fatal: boolean
+  readonly crash: boolean
+}
+
+export { classifyError } from '../core/error-classifier.js'
+
+/**
  * Parsed error with structured stack trace, used internally.
  */
 export interface ParsedError {
@@ -30,3 +55,4 @@ export interface ErrorGrouping {
   /** Number of in-app stack frames used for grouping. */
   readonly inAppFrameCount: number
 }
+

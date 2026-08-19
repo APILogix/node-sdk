@@ -11,6 +11,7 @@ function fatal(id: string): SDKEvent {
   return {
     type: 'error', eventId: id, message: id, name: 'Error', stack: [],
     fingerprint: id, timestamp: 1, severity: 'fatal', context: {},
+    classification: { unhandled: false, fatal: true, crash: false },
   }
 }
 

@@ -1,5 +1,6 @@
 import type { SeverityLevel } from './severity.js'
 import type { Breadcrumb } from './breadcrumb.js'
+import type { ErrorClassification, ErrorMechanism } from './error.js'
 
 // ─── Stack Frame ────────────────────────────────────────────────────────────
 
@@ -86,7 +87,11 @@ export interface ErrorEvent {
    * 'unhandledRejection', 'console.error', or 'manual' (developer API).
    * Lets the backend distinguish crash-path errors from explicit captures.
    */
-  readonly mechanism?: string | undefined
+  readonly mechanism?: ErrorMechanism | string | undefined
+  /**
+   * Derived error classification flags for fast lookup and alerting rules.
+   */
+  readonly classification?: ErrorClassification | undefined
   readonly metadata?: EventMetadata | undefined
 }
 
