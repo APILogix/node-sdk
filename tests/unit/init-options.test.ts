@@ -16,12 +16,9 @@ describe('SDK initialization option boundary', () => {
     assert.equal(result.success, true)
   })
 
-  it('rejects caller-provided baseUrl because the control-plane route is fixed', () => {
-    const result = sdkInitOptionsSchema.safeParse({ apiKey: 'test-key', baseUrl: 'https://api.example.test' })
-    assert.equal(result.success, false)
-  })
-
   for (const [name, value] of Object.entries({
+    baseUrl: 'https://api.example.test',
+    timeoutMs: 5_000,
     service: 'orders',
     environment: 'production',
     release: '1.2.3',

@@ -89,15 +89,6 @@ class OtelMetricsManager {
         return
       }
 
-      const existingGlobal = getOtelGlobalApi()
-      if (existingGlobal?.metrics) {
-        this.meter = metrics.getMeter('@vikasbaplawat1/pulse-sdk', '2.0.0')
-        this.initialized = true
-        this.ownsProvider = false
-        logger.info('Existing OpenTelemetry meter provider detected; Pulse telemetry will not register another meter provider')
-        return
-      }
-
       const maxBuckets = options.maxHistogramBuckets ?? 160
       const percentiles = options.percentiles ?? [50, 75, 90, 95, 99]
       const cardinalityLimit = options.cardinalityLimit ?? 2000
@@ -338,9 +329,3 @@ class OtelMetricsManager {
 
 export const otelMetrics = new OtelMetricsManager()
 export { OtelMetricsManager }
-
-
-function getOtelGlobalApi(): { metrics?: unknown } | undefined {
-  const key = Symbol.for('opentelemetry.js.api.1')
-  return (globalThis as typeof globalThis & { [key]?: { metrics?: unknown } })[key]
-}

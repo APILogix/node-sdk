@@ -22,6 +22,9 @@ export function createBullMQInstrumentation(enabled, mergedOptions, captureConfi
         captureWorkerEvents: mergedOptions?.captureWorkerEvents ?? true,
         captureQueueEvents: mergedOptions?.captureQueueEvents ?? false,
         maxJobDataSize: mergedOptions?.maxJobDataSize ?? 1024,
+        ...(mergedOptions?.emitCreateSpansForBulk !== undefined ? { emitCreateSpansForBulk: mergedOptions.emitCreateSpansForBulk } : {}),
+        ...(mergedOptions?.emitCreateSpansForFlow !== undefined ? { emitCreateSpansForFlow: mergedOptions.emitCreateSpansForFlow } : {}),
+        ...(mergedOptions?.requireParentSpanForPublish !== undefined ? { requireParentSpanForPublish: mergedOptions.requireParentSpanForPublish } : {}),
     };
     return new OTelBullMQInstrumentation(instrumentationOptions);
 }

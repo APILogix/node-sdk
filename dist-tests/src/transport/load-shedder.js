@@ -7,19 +7,21 @@
  * Priority levels:
  *   P0 (never drop): uncaughtException, unhandledRejection, OOM
  *   P1 (drop last): errors with stack traces
- *   P2 (drop early): request events, spans
+ *   P2 (brownout): request events, spans
  *   P3 (drop first): messages, metrics, breadcrumbs
  *
  * Shedding behavior by pressure level:
  *   normal:   shed nothing
  *   elevated: shed nothing (warning logged)
  *   high:     shed P3 events
- *   critical: shed P3 + P2, only P0 + P1 survive
+ *   critical: shed P3, keep a deterministic P2 sample, P0 + P1 survive
  */
 import { getLogger } from '../utils/logger.js';
 import { adaptivePressure } from '../utils/adaptive-pressure.js';
+const CRITICAL_P2_KEEP_RATE = 0.1;
 // ─── Implementation ─────────────────────────────────────────────────────────
 export class LoadShedder {
+    getPressureLevel;
     droppedCounts = {
         p0_critical: 0,
         p1_error: 0,
@@ -27,6 +29,9 @@ export class LoadShedder {
         p3_low: 0,
     };
     totalShed = 0;
+    constructor(getPressureLevel = () => adaptivePressure.getLevel()) {
+        this.getPressureLevel = getPressureLevel;
+    }
     /**
      * Classify an event into a telemetry priority tier.
      */
@@ -57,7 +62,7 @@ export class LoadShedder {
      */
     shouldShed(event) {
         const priority = this.classifyEvent(event);
-        const pressureLevel = adaptivePressure.getLevel();
+        const pressureLevel = this.getPressureLevel();
         let shed = false;
         switch (pressureLevel) {
             case 'normal':
@@ -72,8 +77,10 @@ export class LoadShedder {
                 shed = priority === 'p3_low';
                 break;
             case 'critical':
-                // Only P0 and P1 survive
-                shed = priority === 'p3_low' || priority === 'p2_request';
+                // Low-value telemetry is dropped, but request/span telemetry
+                // keeps a deterministic trickle so visibility never goes dark.
+                shed = priority === 'p3_low'
+                    || (priority === 'p2_request' && !keepDeterministicSample(event, CRITICAL_P2_KEEP_RATE));
                 break;
         }
         if (shed) {
@@ -92,7 +99,7 @@ export class LoadShedder {
     getStats() {
         return {
             droppedByPriority: { ...this.droppedCounts },
-            currentLevel: adaptivePressure.getLevel(),
+            currentLevel: this.getPressureLevel(),
             totalShed: this.totalShed,
         };
     }
@@ -108,3 +115,29 @@ export class LoadShedder {
 }
 // ─── Singleton ──────────────────────────────────────────────────────────────
 export const loadShedder = new LoadShedder();
+function keepDeterministicSample(event, rate) {
+    if (rate >= 1)
+        return true;
+    if (rate <= 0)
+        return false;
+    const key = stableEventKey(event);
+    return hashToUnitInterval(key) < rate;
+}
+function stableEventKey(event) {
+    for (const field of ['eventId', 'traceId', 'spanId']) {
+        const value = event[field];
+        if (typeof value === 'string' && value.length > 0)
+            return value;
+    }
+    const type = event['type'];
+    const timestamp = event['timestamp'];
+    return `${typeof type === 'string' ? type : 'unknown'}:${typeof timestamp === 'number' ? timestamp : Date.now()}`;
+}
+function hashToUnitInterval(value) {
+    let hash = 0x811c9dc5;
+    for (let index = 0; index < value.length; index++) {
+        hash ^= value.charCodeAt(index);
+        hash = Math.imul(hash, 0x01000193);
+    }
+    return (hash >>> 0) / 0x100000000;
+}

@@ -88,7 +88,7 @@ class RouteHealth {
 
   batchScale(): number {
     if (this.state === 'DEGRADED') return 0.5
-    if (this.state === 'UNAVAILABLE') return 2
+    if (this.state === 'UNAVAILABLE') return 0.25
     return 1
   }
 

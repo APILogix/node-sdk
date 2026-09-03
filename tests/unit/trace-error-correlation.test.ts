@@ -11,6 +11,8 @@ describe('Trace/Span Error Correlation - Automated Scenarios', () => {
   const originalFetch = globalThis.fetch
 
   beforeEach(async () => {
+    delete process.env.SDK_BASE_URL
+    delete process.env.PULSE_BASE_URL
     capturedEvents = []
 
     // Mock fetch so SDK init succeeds without network calls

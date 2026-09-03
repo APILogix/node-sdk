@@ -71,7 +71,7 @@ class RouteHealth {
         if (this.state === 'DEGRADED')
             return 0.5;
         if (this.state === 'UNAVAILABLE')
-            return 2;
+            return 0.25;
         return 1;
     }
     snapshot() {

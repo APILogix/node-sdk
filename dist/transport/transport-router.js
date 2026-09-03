@@ -20,20 +20,7 @@ function toQueuePriority(priority) {
         return 'normal';
     if (priority === 'low')
         return 'low';
-    return undefined;
 }
-const MIN_BATCH_SIZE = Object.freeze({
-    errors: 1,
-    events: 1,
-    traces: 10,
-    spans: 10,
-    metrics: 50,
-    logs: 10,
-    profiles: 1,
-    crons: 1,
-    requests: 10,
-    replays: 1,
-});
 export class TransportRouter {
     transportConfig;
     apiKey;
@@ -329,10 +316,10 @@ export class TransportRouter {
                 connectionManager,
                 healthMonitor,
                 maxBatchSize: routeRemote.batchSize,
-                minBatchSize: Math.min(MIN_BATCH_SIZE[route], routeRemote.batchSize),
+                minBatchSize: 1,
                 maxWaitTimeMs: routeRemote.flushIntervalMs,
                 maxPayloadBytes: limits.maxPayloadSize,
-                socketTimeoutMs: routeRemote.timeoutMs,
+                socketTimeoutMs: Math.max(15_000, routeRemote.timeoutMs ?? 15_000),
                 compression: routeRemote.compression,
                 keepAlive: config.keepAlive,
                 retry: config.retry,

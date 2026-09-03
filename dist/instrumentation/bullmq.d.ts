@@ -18,6 +18,9 @@ export interface BullMQInstrumentationOptions {
     captureWorkerEvents?: boolean;
     captureQueueEvents?: boolean;
     maxJobDataSize?: number;
+    emitCreateSpansForBulk?: boolean;
+    emitCreateSpansForFlow?: boolean;
+    requireParentSpanForPublish?: boolean;
 }
 export declare function createBullMQInstrumentation(enabled: boolean, mergedOptions?: Partial<BullMQInstrumentationOptions>, captureConfig?: PrivacyCaptureConfig): OTelBullMQInstrumentation | null;
 export interface BullMQSpanAttributes {

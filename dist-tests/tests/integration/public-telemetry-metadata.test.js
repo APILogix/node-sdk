@@ -155,10 +155,12 @@ async function startMockBackend() {
     const address = server.address();
     assert.ok(address && typeof address === 'object');
     origin = `http://127.0.0.1:${address.port}`;
+    process.env.SDK_BASE_URL = origin;
     return {
         url: origin,
         requests,
         async close() {
+            delete process.env.SDK_BASE_URL;
             closeServerConnections(server);
             await new Promise(resolve => server.close(() => resolve()));
         },

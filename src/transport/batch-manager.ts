@@ -51,6 +51,8 @@ export interface BatchManagerStats {
   readonly avgBatchSize: number
 }
 
+const WARMUP_SUCCESS_THRESHOLD = 5
+
 export class BatchManager {
   private timer: ReturnType<typeof setTimeout> | null = null
   private activeSends = 0
@@ -606,7 +608,10 @@ export class BatchManager {
   private effectiveConcurrency(): number {
     const limit = this.options.connectionManager.maxForRoute(this.options.route)
     const scaled = Math.floor(limit * this.options.healthMonitor.concurrencyScale(this.options.route))
-    return Math.max(1, scaled)
+    const warmed = this.totalRequests >= WARMUP_SUCCESS_THRESHOLD
+      ? scaled
+      : Math.min(scaled, this.totalRequests + 1)
+    return Math.max(1, warmed)
   }
 
   private maxWaitElapsed(): boolean {

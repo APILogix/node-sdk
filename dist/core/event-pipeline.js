@@ -136,7 +136,7 @@ export function enqueueEvent(rawEvent) {
         return rejectedReceipt(eventId, 'sdk_disabled_by_killswitch');
     }
     // Gate 2: Load shedding under remotely configured adaptive pressure
-    if (loadShedder.shouldShed(rawEvent)) {
+    if (loadShedder.shouldShed({ ...rawEvent, eventId })) {
         logger.debug('Event shed by load shedder', { eventType });
         return rejectedReceipt(eventId, 'load_shed');
     }

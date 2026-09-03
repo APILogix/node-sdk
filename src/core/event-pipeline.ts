@@ -153,7 +153,7 @@ export function enqueueEvent(rawEvent: SDKEvent | Event): EventReceipt {
   }
 
   // Gate 2: Load shedding under remotely configured adaptive pressure
-  if (loadShedder.shouldShed(rawEvent as Record<string, unknown>)) {
+  if (loadShedder.shouldShed({ ...(rawEvent as Record<string, unknown>), eventId })) {
     logger.debug('Event shed by load shedder', { eventType })
     return rejectedReceipt(eventId, 'load_shed')
   }

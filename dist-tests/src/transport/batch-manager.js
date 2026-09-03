@@ -14,6 +14,7 @@ import { inspectTelemetryResponse } from '../core/config-manager.js';
 import { toError } from '../core/errors.js';
 import { sdkConsoleDebug } from '../utils/console-debug.js';
 import { sdkConsoleLog } from '../utils/sdk-console.js';
+const WARMUP_SUCCESS_THRESHOLD = 5;
 export class BatchManager {
     options;
     timer = null;
@@ -559,7 +560,10 @@ export class BatchManager {
     effectiveConcurrency() {
         const limit = this.options.connectionManager.maxForRoute(this.options.route);
         const scaled = Math.floor(limit * this.options.healthMonitor.concurrencyScale(this.options.route));
-        return Math.max(1, scaled);
+        const warmed = this.totalRequests >= WARMUP_SUCCESS_THRESHOLD
+            ? scaled
+            : Math.min(scaled, this.totalRequests + 1);
+        return Math.max(1, warmed);
     }
     maxWaitElapsed() {
         if (!this.firstQueuedAt)

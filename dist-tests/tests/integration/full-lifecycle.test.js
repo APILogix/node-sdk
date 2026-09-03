@@ -127,13 +127,16 @@ async function startMockBackend() {
     });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const port = server.address().port;
+    const url = `http://127.0.0.1:${port}`;
+    process.env.SDK_BASE_URL = url;
     return {
-        url: `http://127.0.0.1:${port}`,
+        url,
         requests,
         reset() {
             requests.length = 0;
         },
         async close() {
+            delete process.env.SDK_BASE_URL;
             await new Promise(resolve => server.close(() => resolve()));
         },
     };

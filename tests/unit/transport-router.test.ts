@@ -82,6 +82,14 @@ function event(type: SDKEvent['type'], index: number): SDKEvent {
         value: index,
         timestamp: Date.now(),
       }
+    case 'log':
+      return {
+        type,
+        eventId: `log-${index}`,
+        level: 'info',
+        message: `log ${index}`,
+        timestamp: Date.now(),
+      }
     default:
       return {
         type: 'message',
@@ -185,6 +193,42 @@ describe('Unified TransportRouter', () => {
     assert.ok(firstErrorAt > 0)
     assert.ok(firstErrorAt - startedAt < 2_000, `error delivery took ${firstErrorAt - startedAt}ms`)
     assert.ok(debug.droppedEvents.some((drop) => drop.route === 'spans' && drop.reason === 'queue_full'))
+  })
+
+  it('warms up route concurrency before sending a full transport burst', async () => {
+    let activeLogs = 0
+    let maxActiveLogs = 0
+    const fetchImpl: typeof fetch = async (url) => {
+      if (new URL(String(url)).pathname === '/custom-logs') {
+        activeLogs++
+        maxActiveLogs = Math.max(maxActiveLogs, activeLogs)
+        await new Promise(resolve => setTimeout(resolve, 25))
+        activeLogs--
+      }
+      return okResponse()
+    }
+
+    const baseConfig = config()
+    const router = await TransportRouter.initialize({
+      ...baseConfig,
+      connections: {
+        ...baseConfig.connections,
+        maxConnectionsPerRoute: {
+          ...baseConfig.connections.maxConnectionsPerRoute,
+          logs: 10,
+        },
+      },
+      routes: {
+        ...baseConfig.routes,
+        logs: { ...baseConfig.routes.logs, batchSize: 100 },
+      },
+    }, 'test-key', fetchImpl, BAKED_IN_REMOTE_CONFIG.limits)
+
+    for (let i = 0; i < 700; i++) router.send(event('log', i))
+    await router.flushAll()
+
+    assert.equal(router.getHealth().routes.logs?.totalSent, 700)
+    assert.ok(maxActiveLogs <= 6, `logs warmed up too aggressively: ${maxActiveLogs}`)
   })
 
   it('batches steady-state metrics efficiently', async () => {

@@ -15,7 +15,12 @@ export function createPrismaInstrumentation(config, mergedOptions) {
     if (!enabled) {
         return null;
     }
-    return new OTelPrismaInstrumentation();
+    const captureQueries = typeof config === 'object'
+        ? (config.captureQueries ?? true)
+        : (mergedOptions?.captureQueries ?? true);
+    return new OTelPrismaInstrumentation({
+        ...(captureQueries ? {} : { ignoreSpanTypes: [/^prisma:engine:/] }),
+    });
 }
 export { OTelPrismaInstrumentation };
 export default createPrismaInstrumentation;

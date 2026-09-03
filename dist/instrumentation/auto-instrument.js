@@ -33,6 +33,11 @@ import { EntitlementGate } from '../core/entitlement-gate.js';
 import { createAxiosInstrumentation } from './axios.js';
 import { createPgInstrumentation } from './pg.js';
 import { createMySQLInstrumentation } from './mysql.js';
+import { createMongoDBInstrumentation } from './mongodb.js';
+import { createRedisInstrumentation } from './redis.js';
+import { createBullMQInstrumentation } from './bullmq.js';
+import { createGraphQLInstrumentation } from './graphql.js';
+import { createPrismaInstrumentation } from './prisma.js';
 import { patchEventEmitter, unpatchEventEmitter } from './event-emitter-patch.js';
 import { installHttpLifecycleGuard, uninstallHttpLifecycleGuard } from './http-lifecycle-guard.js';
 // ─── Global Guard + Teardown Registry ───────────────────────────────────────
@@ -159,17 +164,34 @@ export function registerAutoInstrumentations() {
                         return true;
                     }
                     const routes = ConfigManager.getInstance().getConfig().transport.routes;
-                    let url = '';
+                    let target = null;
                     if (typeof request === 'string') {
-                        url = request;
+                        try {
+                            target = new URL(request);
+                        }
+                        catch { }
                     }
                     else if (request && typeof request === 'object') {
                         const req = request;
-                        url = String(req.href ?? req.url ?? '');
+                        const candidate = String(req.href ?? req.url ?? '');
+                        if (candidate.startsWith('http://') || candidate.startsWith('https://')) {
+                            try {
+                                target = new URL(candidate);
+                            }
+                            catch { }
+                        }
+                        else {
+                            const host = String(req.host ?? req.hostname ?? 'localhost');
+                            const protocol = String(req.protocol ?? 'http:');
+                            const path = String(req.path ?? req.pathname ?? '/');
+                            try {
+                                target = new URL(`${protocol.endsWith(':') ? protocol : protocol + ':'}//${host}${path}`);
+                            }
+                            catch { }
+                        }
                     }
-                    if (!url)
+                    if (!target)
                         return false;
-                    const target = new URL(url);
                     return Object.values(routes).some(route => isInternalSdkUrl(target, new URL(route.url)));
                 }
                 catch {
@@ -256,50 +278,34 @@ export function registerAutoInstrumentations() {
         }));
     }
     if (resolved.graphql) {
-        instrumentations.push(new GraphQLInstrumentation({
-            enabled: true,
-            ignoreResolveSpans: !resolved.graphqlConfig.captureResolvers,
-        }));
+        const graphqlInstrumentation = createGraphQLInstrumentation(resolved.graphqlConfig, resolved.graphqlConfig);
+        if (graphqlInstrumentation) {
+            instrumentations.push(graphqlInstrumentation);
+        }
     }
     if (resolved.prisma) {
-        instrumentations.push(new PrismaInstrumentation({
-            enabled: true,
-            // captureQueries: false → drop every engine-level span (`prisma:engine:*`
-            // is the version-stable name prefix for query/connection spans) so raw
-            // SQL never leaves the process. Client-level operation spans
-            // (`prisma:client:*`) are kept. captureParams is enforced downstream by
-            // the pipeline scrubber — the underlying library has no param hook.
-            ...(resolved.prismaConfig.captureQueries ? {} : { ignoreSpanTypes: [/^prisma:engine:/] }),
-        }));
+        const prismaInstrumentation = createPrismaInstrumentation(resolved.prismaConfig, resolved.prismaConfig);
+        if (prismaInstrumentation) {
+            instrumentations.push(prismaInstrumentation);
+        }
     }
     if (resolved.mongodb) {
-        instrumentations.push(new MongoDBInstrumentation({
-            enabled: true,
-            enhancedDatabaseReporting: resolved.captureConfig.body,
-        }));
+        const mongoInstrumentation = createMongoDBInstrumentation(true, { enhancedDatabaseReporting: resolved.captureConfig.body }, resolved.captureConfig);
+        if (mongoInstrumentation) {
+            instrumentations.push(mongoInstrumentation);
+        }
     }
     if (resolved.redis) {
-        instrumentations.push(new RedisInstrumentation({
-            enabled: true,
-            dbStatementSerializer: (cmdName, cmdArgs) => {
-                const sensitiveCommands = ['AUTH', 'CONFIG SET', 'CONFIG GET', 'DEL', 'EXPIRE', 'EXPIREAT', 'GET', 'SET', 'HSET', 'HGET', 'HGETALL'];
-                if (sensitiveCommands.includes(cmdName.toUpperCase())) {
-                    return `${cmdName} [REDACTED]`;
-                }
-                if (!resolved.captureConfig.body) {
-                    return cmdName;
-                }
-                return `${cmdName} ${cmdArgs.join(' ')}`;
-            },
-        }));
+        const redisInstrumentation = createRedisInstrumentation(true, {}, resolved.captureConfig);
+        if (redisInstrumentation) {
+            instrumentations.push(redisInstrumentation);
+        }
     }
     if (resolved.bullmq) {
-        instrumentations.push(new BullMQInstrumentation({
-            enabled: true,
-            emitCreateSpansForBulk: resolved.bullmqConfig.emitCreateSpansForBulk,
-            emitCreateSpansForFlow: resolved.bullmqConfig.emitCreateSpansForFlow,
-            requireParentSpanForPublish: resolved.bullmqConfig.requireParentSpanForPublish,
-        }));
+        const bullmqInstrumentation = createBullMQInstrumentation(true, resolved.bullmqConfig, resolved.captureConfig);
+        if (bullmqInstrumentation) {
+            instrumentations.push(bullmqInstrumentation);
+        }
     }
     if (resolved.axios) {
         const axiosInstrumentation = createAxiosInstrumentation(true, {

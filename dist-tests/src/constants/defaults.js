@@ -1,8 +1,14 @@
 import { SAFETY_CEILINGS } from './limits.js';
 /** Local Pulse backend origin used by the SDK control plane. */
 export const DEFAULT_API_BASE_URL = 'http://127.0.0.1:5000';
-/** Resolve the fixed control-plane origin; callers cannot override this. */
+/** Resolve the control-plane origin with support for environment overrides. */
 export function resolveApiBaseUrl() {
+    if (typeof process !== 'undefined' && process.env) {
+        const customUrl = process.env['SDK_BASE_URL'] || process.env['PULSE_BASE_URL'];
+        if (customUrl && typeof customUrl === 'string' && customUrl.trim().length > 0) {
+            return customUrl.trim();
+        }
+    }
     return DEFAULT_API_BASE_URL;
 }
 export { SAFETY_CEILINGS };

@@ -7,14 +7,14 @@
  * Priority levels:
  *   P0 (never drop): uncaughtException, unhandledRejection, OOM
  *   P1 (drop last): errors with stack traces
- *   P2 (drop early): request events, spans
+ *   P2 (brownout): request events, spans
  *   P3 (drop first): messages, metrics, breadcrumbs
  *
  * Shedding behavior by pressure level:
  *   normal:   shed nothing
  *   elevated: shed nothing (warning logged)
  *   high:     shed P3 events
- *   critical: shed P3 + P2, only P0 + P1 survive
+ *   critical: shed P3, keep a deterministic P2 sample, P0 + P1 survive
  */
 import { type CompositePressureLevel } from '../utils/adaptive-pressure.js';
 export type TelemetryPriority = 'p0_critical' | 'p1_error' | 'p2_request' | 'p3_low';
@@ -24,8 +24,10 @@ export interface LoadShedderStats {
     readonly totalShed: number;
 }
 export declare class LoadShedder {
+    private readonly getPressureLevel;
     private droppedCounts;
     private totalShed;
+    constructor(getPressureLevel?: () => CompositePressureLevel);
     /**
      * Classify an event into a telemetry priority tier.
      */
