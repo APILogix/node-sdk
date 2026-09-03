@@ -25,4 +25,3 @@ export interface MySQLSpanAttributes {
 }
 export { OTelMySQL2Instrumentation };
 export default createMySQLInstrumentation;
-//# sourceMappingURL=mysql.d.ts.map

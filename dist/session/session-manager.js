@@ -196,4 +196,3 @@ export function resetSessionManager() {
         sessionManager = null;
     }
 }
-//# sourceMappingURL=session-manager.js.map

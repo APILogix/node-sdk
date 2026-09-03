@@ -134,7 +134,7 @@ export function enqueueEvent(rawEvent: SDKEvent | Event): EventReceipt {
 
   // Gate 1: Reject events during shutdown
   if (isSDKShuttingDown() && !internalTelemetry) {
-    logger.debug('Event rejected — SDK is shutting down', { eventType })
+    logger.debug('Event rejected — telemetry is shutting down', { eventType })
     return rejectedReceipt(eventId, 'sdk_shutting_down')
   }
 
@@ -375,13 +375,16 @@ export async function processEventAsync(rawEvent: SDKEvent | Event, assignedEven
         ?? getRequestContext()?.extra?.['tenantId']
         ?? eventRecord['tags']?.['tenantId']
         ?? 'global'
-      const route = eventRecord['transaction']
+      const route = eventRecord['route']
+        ?? eventRecord['transaction']
         ?? eventRecord['context']?.['route']
         ?? eventRecord['tags']?.['route']
+        ?? eventRecord['url']
         ?? 'unknown'
+      const statusCode = eventRecord['statusCode'] ?? ''
       const projectId = event.metadata?.projectId ?? client.metadata.projectId
       const release = event.metadata?.release ?? client.metadata.release
-      const compositeKey = `${event.fingerprint}:${projectId}:${release}:${tenantId}:${route}`
+      const compositeKey = `${event.fingerprint}:${projectId}:${release}:${tenantId}:${route}:${statusCode}`
       if (errorDeduplicator.isDuplicate(compositeKey)) {
         logger.debug('Event dropped — duplicate error within suppression window', {
           fingerprint: event.fingerprint,

@@ -82,7 +82,7 @@ async function startMockBackend() {
                 return;
             }
             // Complete schema-v1 control-plane response with localhost routes.
-            if (req.url === '/v1/sdk-config') {
+            if (req.url?.includes('init') || req.url?.includes('sdk-config')) {
                 const port = server.address().port;
                 const localUrl = `http://127.0.0.1:${port}`;
                 const paths = {
@@ -95,8 +95,7 @@ async function startMockBackend() {
                     name,
                     { ...route, url: `${localUrl}${paths[name]}`, batchSize: 50, flushIntervalMs: 250, timeoutMs: 2_000 },
                 ]));
-                res.writeHead(200, { 'content-type': 'application/json' });
-                res.end(JSON.stringify({
+                const configSnapshot = {
                     ...BAKED_IN_REMOTE_CONFIG,
                     sdk: { projectId: 'proj-test', service: 'lifecycle-test', environment: 'test', release: '1.0.0' },
                     features: { ...BAKED_IN_REMOTE_CONFIG.features, tracing: true, requestCapture: true, errors: true, metrics: true },
@@ -104,7 +103,21 @@ async function startMockBackend() {
                     killswitches: { ...BAKED_IN_REMOTE_CONFIG.killswitches, disableTransport: false },
                     transport: { ...BAKED_IN_REMOTE_CONFIG.transport, routes },
                     meta: { generatedAt: new Date().toISOString(), generatedBy: 'integration-test', configHash: 'integration-test' },
-                }));
+                    entitlements: { ...BAKED_IN_REMOTE_CONFIG.entitlements, tracing: true, errors: true, metrics: true, requestCapture: true, customSpans: true },
+                };
+                res.writeHead(200, { 'content-type': 'application/json' });
+                if (req.url?.includes('init')) {
+                    res.end(JSON.stringify({
+                        success: true,
+                        projectId: 'proj-test',
+                        environment: 'test',
+                        release: '1.0.0',
+                        config: configSnapshot,
+                    }));
+                }
+                else {
+                    res.end(JSON.stringify(configSnapshot));
+                }
                 return;
             }
             // Default: accept and ack.
@@ -157,7 +170,6 @@ describe('Full SDK lifecycle integration', { timeout: 60_000 }, () => {
             // ── INIT ─────────────────────────────────────────────────────────
             await init({
                 apiKey: `cycle-${cycle}-key`,
-                baseUrl: backend.url,
                 debug: false,
             });
             assert.equal(client.initialized, true, `cycle ${cycle}: SDK should be initialized`);
@@ -189,8 +201,8 @@ describe('Full SDK lifecycle integration', { timeout: 60_000 }, () => {
             }
             cycleSnapshots.push(takeSnapshot());
         }
-        assert.equal(backend.requests.filter(request => request.path === '/v1/init').length, NUM_CYCLES, 'each cycle must perform exactly one startup config request');
-        assert.equal(backend.requests.filter(request => request.path === '/v1/sdk-config').length, 0, 'startup must not prefetch /v1/sdk-config');
+        assert.equal(backend.requests.filter(request => request.path.includes('/v1/init')).length, NUM_CYCLES, 'each cycle must perform exactly one startup config request');
+        assert.equal(backend.requests.filter(request => request.path.includes('/v1/sdk-config')).length, 0, 'startup must not prefetch /v1/sdk-config');
         // ── ASSERT NO LISTENER LEAK ──────────────────────────────────────
         for (let i = 0; i < cycleSnapshots.length; i++) {
             const snap = cycleSnapshots[i];
@@ -229,7 +241,6 @@ describe('Full SDK lifecycle integration', { timeout: 60_000 }, () => {
         // events actually reach the mock backend.
         await init({
             apiKey: 'fresh-init-key',
-            baseUrl: backend.url,
             debug: false,
         });
         assert.equal(client.initialized, true);
@@ -242,8 +253,8 @@ describe('Full SDK lifecycle integration', { timeout: 60_000 }, () => {
         const result = await shutdown(5_000);
         assert.equal(result.timedOut, false);
         // The backend should have received init + at least one event payload.
-        const initRequests = backend.requests.filter(request => request.path === '/v1/init');
+        const initRequests = backend.requests.filter(request => request.path.includes('/v1/init'));
         assert.equal(initRequests.length, 1, 'fresh initialization must call /v1/init exactly once');
-        assert.equal(backend.requests.filter(request => request.path === '/v1/sdk-config').length, 0, 'fresh initialization must not call /v1/sdk-config');
+        assert.equal(backend.requests.filter(request => request.path.includes('/v1/sdk-config')).length, 0, 'fresh initialization must not call /v1/sdk-config');
     });
 });

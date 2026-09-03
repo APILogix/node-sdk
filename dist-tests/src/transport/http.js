@@ -8,7 +8,6 @@ import { generateId } from '../utils/uuid.js';
 import { context } from '@opentelemetry/api';
 import { suppressTracing } from '@opentelemetry/core';
 import { SerializationPool } from './serialization-pool.js';
-import { SecurityScrubber } from '../processors/security-scrubber.js';
 export async function postJson(url, body, headers, timeoutMs, options = {}) {
     const logger = getLogger();
     const controller = new AbortController();
@@ -16,9 +15,7 @@ export async function postJson(url, body, headers, timeoutMs, options = {}) {
     const startedAt = Date.now();
     const requestId = generateId();
     logger.debug('HTTP request started', {
-        endpoint: url,
         method: 'POST',
-        timeoutMs,
         requestId,
         compression: options.compression ?? 'none',
     });
@@ -50,8 +47,6 @@ export async function postJson(url, body, headers, timeoutMs, options = {}) {
                         encoding = contentEncoding(compressed.algorithm);
                         logger.debug('Payload compressed', {
                             algorithm: compressed.algorithm,
-                            originalSize: compressed.originalSize,
-                            compressedSize: compressed.compressedSize,
                             ratio: (compressed.compressedSize / compressed.originalSize).toFixed(2),
                         });
                     }
@@ -80,36 +75,22 @@ export async function postJson(url, body, headers, timeoutMs, options = {}) {
         const text = await response.text();
         const parsed = text ? tryParseJson(text) : null;
         const durationMs = Date.now() - startedAt;
-        // Parse rate-limit headers
-        const retryAfterMs = parseRetryAfter(response.headers.get('Retry-After'));
-        const rateLimitRemaining = parseNumber(response.headers.get('X-RateLimit-Remaining'));
         logger.debug('HTTP response received', {
-            endpoint: url,
             statusCode: response.status,
             durationMs,
             requestId,
-            retryAfterMs,
-            rateLimitRemaining,
         });
         if (!response.ok) {
             throw new SDKError('HTTP request failed', 'HTTP_ERROR', {
-                url,
-                endpoint: url,
                 status: response.status,
                 statusCode: response.status,
-                body: previewBody(parsed ?? text),
-                retryAfterMs,
-                rateLimitRemaining,
                 requestId,
             });
         }
         if (text && parsed === undefined) {
             throw new SDKError('Invalid JSON response', 'INVALID_JSON', {
-                url,
-                endpoint: url,
                 status: response.status,
                 statusCode: response.status,
-                bodyPreview: text.slice(0, 500),
                 requestId,
             });
         }
@@ -118,24 +99,22 @@ export async function postJson(url, body, headers, timeoutMs, options = {}) {
                 options.onResponse(response.status, parsed);
             }
             catch (error) {
-                logger.debug('HTTP response observer failed', { endpoint: url, error });
+                logger.debug('HTTP response observer failed', { error });
             }
         }
         return parsed;
     }
     catch (error) {
         if (error instanceof SDKError) {
-            logFailure(logger, error, url, startedAt, requestId, options);
+            logFailure(logger, error, startedAt, requestId, options);
             throw error;
         }
         const normalized = toError(error);
         const sdkError = new SDKError('Network request failed', 'NETWORK_ERROR', {
-            url,
-            endpoint: url,
             reason: normalized.name === 'AbortError' ? 'timeout' : normalized.message,
             requestId,
         }, normalized);
-        logFailure(logger, sdkError, url, startedAt, requestId, options);
+        logFailure(logger, sdkError, startedAt, requestId, options);
         throw sdkError;
     }
     finally {
@@ -143,12 +122,11 @@ export async function postJson(url, body, headers, timeoutMs, options = {}) {
     }
 }
 // ─── Helpers ────────────────────────────────────────────────────────────────
-function logFailure(logger, error, endpoint, startedAt, requestId, options) {
+function logFailure(logger, error, startedAt, requestId, options) {
     if (options.logFailures === false)
         return;
     logger.error('HTTP request failed', {
         error,
-        endpoint,
         method: 'POST',
         statusCode: error.context['statusCode'],
         durationMs: Date.now() - startedAt,
@@ -162,58 +140,4 @@ function tryParseJson(text) {
     catch {
         return undefined;
     }
-}
-function previewBody(body) {
-    if (typeof body === 'string') {
-        const text = body.slice(0, 500);
-        return scrubPreview(text);
-    }
-    if (body && typeof body === 'object') {
-        const scrubber = SecurityScrubber.getInstance();
-        if (scrubber) {
-            try {
-                return scrubber.scrubValue(body);
-            }
-            catch {
-                // fall through to raw preview below
-            }
-        }
-    }
-    return body;
-}
-function scrubPreview(text) {
-    const scrubber = SecurityScrubber.getInstance();
-    if (!scrubber)
-        return text;
-    try {
-        return scrubber.scrubValue(text);
-    }
-    catch {
-        return text;
-    }
-}
-/**
- * Parse Retry-After header (seconds or HTTP-date format).
- */
-function parseRetryAfter(value) {
-    if (!value)
-        return undefined;
-    // Try as seconds
-    const seconds = parseInt(value, 10);
-    if (!isNaN(seconds) && seconds > 0) {
-        return seconds * 1000;
-    }
-    // Try as HTTP-date
-    const date = new Date(value);
-    if (!isNaN(date.getTime())) {
-        const ms = date.getTime() - Date.now();
-        return ms > 0 ? ms : undefined;
-    }
-    return undefined;
-}
-function parseNumber(value) {
-    if (!value)
-        return undefined;
-    const num = parseInt(value, 10);
-    return isNaN(num) ? undefined : num;
 }

@@ -109,4 +109,3 @@ declare class MetricsRegistry {
 export declare const metricsRegistry: MetricsRegistry;
 export { MetricsRegistry };
 export type { AggregatedMetric as AggregatedMetricLegacy };
-//# sourceMappingURL=registry.d.ts.map

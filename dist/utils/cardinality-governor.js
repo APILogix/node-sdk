@@ -244,4 +244,3 @@ function isRouteAttribute(key) {
 }
 // ─── Singleton ──────────────────────────────────────────────────────────────
 export const cardinalityGovernor = new CardinalityGovernor();
-//# sourceMappingURL=cardinality-governor.js.map

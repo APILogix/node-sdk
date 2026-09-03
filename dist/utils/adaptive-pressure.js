@@ -294,4 +294,3 @@ function scoreToLevel(score) {
 }
 // ─── Singleton ──────────────────────────────────────────────────────────────
 export const adaptivePressure = new AdaptivePressureMonitor();
-//# sourceMappingURL=adaptive-pressure.js.map

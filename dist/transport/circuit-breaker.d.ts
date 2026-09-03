@@ -53,4 +53,3 @@ export declare class CircuitBreaker {
     reset(): void;
     private transitionTo;
 }
-//# sourceMappingURL=circuit-breaker.d.ts.map

@@ -81,4 +81,3 @@ export declare function installHttpLifecycleGuard(): void;
  * Idempotent — safe to call before install or multiple times.
  */
 export declare function uninstallHttpLifecycleGuard(): void;
-//# sourceMappingURL=http-lifecycle-guard.d.ts.map

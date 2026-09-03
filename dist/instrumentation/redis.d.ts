@@ -9,8 +9,8 @@
  * - Error tracking with command context
  * - Stream operations support (XADD, XRANGE, etc.)
  */
-import { RedisInstrumentation as OTelRedisInstrumentation } from '@opentelemetry/instrumentation-redis-4';
-import type { DbStatementSerializer, RedisResponseCustomAttributeFunction } from '@opentelemetry/instrumentation-redis-4';
+import { RedisInstrumentation as OTelRedisInstrumentation } from '@opentelemetry/instrumentation-redis';
+import type { DbStatementSerializer, RedisResponseCustomAttributeFunction } from '@opentelemetry/instrumentation-redis';
 import type { PrivacyCaptureConfig } from '../types/config.js';
 export interface RedisInstrumentationOptions {
     enabled: boolean;
@@ -27,4 +27,3 @@ export interface RedisSpanAttributes {
 }
 export { OTelRedisInstrumentation };
 export default createRedisInstrumentation;
-//# sourceMappingURL=redis.d.ts.map

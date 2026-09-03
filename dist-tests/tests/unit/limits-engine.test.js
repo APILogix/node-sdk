@@ -27,6 +27,11 @@ const baseLimitsConfig = {
         windowDurationMs: 60_000,
         criticalReserve: 100,
     },
+    persistenceGovernance: {
+        maxPersistPerMinute: 20_000,
+        adaptive: true,
+        budgetExceededLogIntervalMs: 60_000,
+    },
 };
 describe('LimitsEngine', () => {
     let engine;

@@ -27,4 +27,3 @@ export function createGraphQLInstrumentation(config, mergedOptions) {
 }
 export { OTelGraphQLInstrumentation };
 export default createGraphQLInstrumentation;
-//# sourceMappingURL=graphql.js.map

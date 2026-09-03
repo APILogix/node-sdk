@@ -27,4 +27,3 @@ import type { EventReceipt } from '../core/event-receipt.js';
  * ```
  */
 export declare function captureEvent(event: SDKEvent | Event): EventReceipt;
-//# sourceMappingURL=captureEvent.d.ts.map

@@ -54,7 +54,7 @@ export class LimitsEngine {
     /** Returns true if the payload is within the configured size limit. */
     checkPayloadSize(serializedBytes) {
         if (serializedBytes > this.config.maxPayloadSize) {
-            getLogger().warn(`[LimitsEngine] Payload size ${serializedBytes} exceeds limit ${this.config.maxPayloadSize}`);
+            getLogger().warn('[LimitsEngine] Payload size exceeds configured limit');
             return false;
         }
         return true;

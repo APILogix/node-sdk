@@ -40,4 +40,3 @@ export declare class TenantGovernor {
     private cleanup;
 }
 export declare const tenantGovernor: TenantGovernor;
-//# sourceMappingURL=tenant-isolation.d.ts.map

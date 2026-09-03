@@ -363,7 +363,7 @@ export function initTracer(config: Readonly<RemoteConfigResponse>, customResourc
             tracer = trace.getTracer(SDK_NAME, SDK_VERSION)
             initialized = true
             ownsProvider = false
-            logger.info('OpenTelemetry tracer provider already registered by Pulse SDK; reusing global provider')
+            logger.info('OpenTelemetry tracer provider already registered by Pulse telemetry; reusing global provider')
             return
         }
 
@@ -372,7 +372,7 @@ export function initTracer(config: Readonly<RemoteConfigResponse>, customResourc
             tracer = trace.getTracer(SDK_NAME, SDK_VERSION)
             initialized = true
             ownsProvider = false
-            logger.info('Existing OpenTelemetry provider/context manager detected; Pulse SDK will not register another provider')
+            logger.info('Existing OpenTelemetry provider/context manager detected; Pulse telemetry will not register another provider')
             return
         }
 

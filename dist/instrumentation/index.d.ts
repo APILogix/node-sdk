@@ -15,4 +15,3 @@ export type { MongoDBInstrumentationOptions } from './mongodb.js';
 export type { RedisInstrumentationOptions } from './redis.js';
 export type { BullMQInstrumentationOptions } from './bullmq.js';
 export type { AxiosInstrumentationOptions } from './axios.js';
-//# sourceMappingURL=index.d.ts.map

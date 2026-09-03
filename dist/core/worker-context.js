@@ -56,4 +56,3 @@ export function extractWorkerContext(workerData) {
         return null;
     return ctx;
 }
-//# sourceMappingURL=worker-context.js.map

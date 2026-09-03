@@ -75,4 +75,3 @@ export const TRACING_DEFAULTS = Object.freeze({
         b3: false,
     }),
 });
-//# sourceMappingURL=internal-defaults.js.map

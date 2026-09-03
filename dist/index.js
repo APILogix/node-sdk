@@ -149,4 +149,3 @@ export function getSDKHealth() {
         },
     };
 }
-//# sourceMappingURL=index.js.map

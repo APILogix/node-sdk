@@ -46,4 +46,3 @@ export function captureEvent(event) {
         };
     }
 }
-//# sourceMappingURL=captureEvent.js.map

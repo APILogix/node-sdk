@@ -19,4 +19,3 @@ export function createPrismaInstrumentation(config, mergedOptions) {
 }
 export { OTelPrismaInstrumentation };
 export default createPrismaInstrumentation;
-//# sourceMappingURL=prisma.js.map

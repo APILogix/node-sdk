@@ -2,7 +2,7 @@ import { z } from 'zod'
 import type { SDKPlugin, EventProcessor, BreadcrumbProcessor } from './plugin.js'
 import type { SeverityLevel } from './severity.js'
 
-// ─── Remote Config Response (the wire shape) ────────────────────────────────
+// ─── Remote Config Response (the wire shape & runtime snapshot) ──────────────
 //
 // Every behaviour-affecting knob is in this object. The SDK never invents
 // policy — it executes whatever the backend sends. Schema is versioned so
@@ -11,7 +11,11 @@ import type { SeverityLevel } from './severity.js'
 /** Bumped on incompatible schema changes. SDKs reject configs with a higher major. */
 export const REMOTE_CONFIG_SCHEMA_VERSION = 1
 
-export interface RemoteConfigResponse {
+/**
+ * Top-level normalized remote configuration snapshot.
+ * Represents the authoritative, fully validated, and deep-frozen state of the SDK.
+ */
+export interface NormalizedRemoteConfig {
   /** Schema version. Must equal REMOTE_CONFIG_SCHEMA_VERSION on the SDK. */
   readonly schemaVersion: number
 
@@ -27,7 +31,25 @@ export interface RemoteConfigResponse {
 
   /** Billing and API entitlements resolved by the backend. */
   readonly entitlements: EntitlementsConfig
+
+  // Subsystem-specific configurations
+  readonly offlineQueue?: OfflineQueueConfig | undefined
+  readonly profiling?: ProfilingConfig | undefined
+  readonly replay?: SessionReplayConfig | undefined
+  readonly errors?: ErrorsConfig | undefined
+  readonly tracing?: TracingConfig | undefined
+  readonly metrics?: MetricsConfig | undefined
+  readonly logs?: LogsConfig | undefined
+  readonly crons?: CronsConfig | undefined
 }
+
+/** Backward-compatibility alias */
+export type RemoteConfigResponse = NormalizedRemoteConfig
+
+/** Wire shape prior to validation and normalization */
+export type RawRemoteConfig = Record<string, unknown>
+
+// ─── SDK Identity ───────────────────────────────────────────────────────────
 
 export interface SdkIdentityConfig {
   readonly projectId: string
@@ -68,17 +90,17 @@ export interface FeaturesConfig {
  * separate `ignoredRoutes` list).
  */
 export interface RouteSamplingRates {
-  readonly traces?: number
-  readonly requests?: number
-  readonly spans?: number
-  readonly errors?: number
-  readonly messages?: number
-  readonly profiles?: number
-  readonly replays?: number
-  readonly metrics?: number
-  readonly logs?: number
-  readonly events?: number
-  readonly crons?: number
+  readonly traces?: number | undefined
+  readonly requests?: number | undefined
+  readonly spans?: number | undefined
+  readonly errors?: number | undefined
+  readonly messages?: number | undefined
+  readonly profiles?: number | undefined
+  readonly replays?: number | undefined
+  readonly metrics?: number | undefined
+  readonly logs?: number | undefined
+  readonly events?: number | undefined
+  readonly crons?: number | undefined
 }
 
 export interface SamplingConfig {
@@ -140,11 +162,11 @@ export interface PrismaInstrumentationConfig {
 export interface BullMQInstrumentationConfig {
   readonly enabled: boolean
   /** Emit per-job spans for `Queue.addBulk` / `FlowProducer.addBulk`. Default: true. */
-  readonly emitCreateSpansForBulk?: boolean
+  readonly emitCreateSpansForBulk?: boolean | undefined
   /** Emit per-job spans for `FlowProducer.add` / `addBulk`. Default: true. */
-  readonly emitCreateSpansForFlow?: boolean
+  readonly emitCreateSpansForFlow?: boolean | undefined
   /** Only create producer spans when a parent span is active. Default: false. */
-  readonly requireParentSpanForPublish?: boolean
+  readonly requireParentSpanForPublish?: boolean | undefined
 }
 
 export interface PgInstrumentationConfig {
@@ -199,6 +221,8 @@ export interface PiiDetectionConfig {
 
 // ─── Limits ─────────────────────────────────────────────────────────────────
 
+export type MemoryLimit = number | 'auto'
+
 /**
  * Hard caps that bound the SDK's resource use and per-event size. Backend
  * sets the values; snapshots outside the SDK safety bounds are rejected as a
@@ -213,14 +237,24 @@ export interface TenantGovernanceConfig {
   readonly criticalReserve: number
 }
 
+export interface PersistenceGovernanceConfig {
+  /** Maximum non-critical events persisted to disk per rolling minute. */
+  readonly maxPersistPerMinute: number
+  /** Whether memory/queue/GC/event-loop pressure should reduce non-critical persistence. */
+  readonly adaptive: boolean
+  /** Minimum interval between aggregated budget-exceeded SDK warnings. */
+  readonly budgetExceededLogIntervalMs: number
+}
+
 export interface LimitsConfig {
   readonly maxSpansPerTrace: number
   readonly maxSpanAttributes: number
   readonly maxAttributeLength: number
   readonly maxPayloadSize: number
   readonly maxQueueSize: number
-  readonly maxMemoryMb: number | 'auto'
+  readonly maxMemoryMb: MemoryLimit
   readonly tenantGovernance: TenantGovernanceConfig
+  readonly persistenceGovernance: PersistenceGovernanceConfig
 }
 
 // ─── Killswitches ───────────────────────────────────────────────────────────
@@ -271,6 +305,79 @@ export interface EntitlementsConfig {
   readonly metrics: boolean
 }
 
+// ─── Subsystem Config Interfaces ───────────────────────────────────────────
+
+export interface OfflineQueueConfig {
+  readonly enabled: boolean
+  readonly maxFileSizeBytes: number
+  readonly maxEvents: number
+  readonly eventTtlMs: number
+  readonly ioTimeoutMs: number
+  readonly flushDebounceMs?: number | undefined
+}
+
+export interface ProfilingConfig {
+  readonly enabled: boolean
+  readonly cpu: boolean
+  readonly heap: boolean
+  readonly sampleRate: number
+  readonly maxDurationMs: number
+  readonly sampleIntervalMicroseconds?: number | undefined
+}
+
+export interface SessionReplayConfig {
+  readonly enabled: boolean
+  readonly sampleRate: number
+  readonly idleTimeoutMs: number
+  readonly maxDurationMs: number
+  readonly maxBufferSize?: number | undefined
+  readonly maskAllInputs?: boolean | undefined
+}
+
+export interface ErrorsConfig {
+  readonly captureUnhandledRejections: boolean
+  readonly captureUncaughtExceptions: boolean
+  readonly captureConsoleErrors: boolean
+  readonly stackTraceLimit: number
+  readonly attachSourceContext: boolean
+  readonly grouping: {
+    readonly enabled: boolean
+    readonly normalizePaths: boolean
+  }
+}
+
+export interface TracingConfig {
+  readonly maxSpansPerTrace: number
+  readonly maxSpanAttributes: number
+  readonly maxTraceDurationMs: number
+  readonly propagation: {
+    readonly w3c: boolean
+    readonly baggage: boolean
+    readonly b3: boolean
+  }
+}
+
+export interface MetricsConfig {
+  readonly runtimeMetrics: boolean
+  readonly eventLoopMonitoring: boolean
+  readonly gcMonitoring: boolean
+  readonly pushIntervalMs: number
+  readonly cardinalityLimit: number
+}
+
+export interface LogsConfig {
+  readonly enabled: boolean
+  readonly captureConsole: boolean
+  readonly levels: readonly string[]
+  readonly maxLogSize: number
+}
+
+export interface CronsConfig {
+  readonly enabled: boolean
+  readonly checkInMarginMs: number
+  readonly timeoutMs: number
+}
+
 // ─── Transport ──────────────────────────────────────────────────────────────
 
 /**
@@ -289,14 +396,26 @@ export type TransportRouteName =
   | 'crons'
   | 'replays'
 
+export type CompressionType = 'gzip' | 'none'
+export type RoutePriority = 'critical' | 'high' | 'normal' | 'low'
+export type OverflowStrategy = 'drop_oldest' | 'drop_newest'
+export type BackoffStrategy = 'exponential' | 'linear' | 'fixed'
+
+export enum ConfigState {
+  Pending = 'pending',
+  Live = 'live',
+  Fallback = 'fallback',
+  Destroyed = 'destroyed',
+}
+
 export interface TransportRouteConfig {
   readonly url: string
   readonly batchSize: number
   readonly flushIntervalMs: number
   readonly timeoutMs: number
-  readonly compression: 'gzip' | 'none'
+  readonly compression: CompressionType
   /** Internal scheduling priority. */
-  readonly priority: 'critical' | 'high' | 'normal' | 'low'
+  readonly priority: RoutePriority
 }
 
 export interface TransportRemoteConfig {
@@ -309,19 +428,19 @@ export interface TransportRemoteConfig {
 
 export interface TransportConnectionConfig {
   readonly maxTotalConnections: number
-  readonly maxConnectionsPerRoute?: Partial<Readonly<Record<TransportRouteName, number>>>
+  readonly maxConnectionsPerRoute?: Partial<Readonly<Record<TransportRouteName, number>>> | undefined
   readonly acquireTimeoutMs: number
 }
 
 export interface TransportRetryConfig {
   readonly enabled: boolean
   readonly maxRetries: number
-  readonly backoff: 'exponential' | 'linear' | 'fixed'
+  readonly backoff: BackoffStrategy
   readonly baseDelayMs: number
 }
 
 export interface TransportQueueConfig {
-  readonly overflowStrategy: 'drop_oldest' | 'drop_newest'
+  readonly overflowStrategy: OverflowStrategy
   /** Per-route queue cap; also bounded by limits.maxQueueSize. */
   readonly maxSize: number
   /** Slots protected from non-critical telemetry. */
@@ -333,13 +452,33 @@ export interface TransportQueueConfig {
 export interface ConfigMeta {
   readonly generatedAt: string
   readonly generatedBy: string
-  readonly configHash?: string
+  readonly configHash?: string | undefined
 }
 
 // ─── Config Diff ────────────────────────────────────────────────────────────
 
-/** Result of diffing two RemoteConfigResponse objects. */
+/**
+ * Detailed descriptor for a single leaf or structured property mutation.
+ */
+export interface FieldChange {
+  /** Dot-delimited canonical path, e.g. "features.profiling", "transport.routes.errors.batchSize" */
+  readonly path: string
+  /** Value in the previous configuration snapshot (undefined if newly added) */
+  readonly previousValue: unknown
+  /** Value in the incoming configuration snapshot (undefined if removed) */
+  readonly nextValue: unknown
+  /** Classification of the mutation */
+  readonly type: 'added' | 'removed' | 'modified'
+}
+
+/**
+ * Result of diffing two NormalizedRemoteConfig (or RemoteConfigResponse) snapshots.
+ */
 export interface ConfigDiff {
+  /** True if any semantic configuration change exists (ignoring benign meta timestamp updates) */
+  readonly hasChanges: boolean
+
+  // Top-Level Section Flags
   readonly sdkChanged: boolean
   readonly featuresChanged: boolean
   readonly killswitchesChanged: boolean
@@ -349,7 +488,85 @@ export interface ConfigDiff {
   readonly limitsChanged: boolean
   readonly instrumentationChanged: boolean
   readonly entitlementsChanged: boolean
-  readonly changes: ReadonlyMap<string, { old: unknown; new: unknown }>
+
+  // Subsystem Fast-Flags for Direct Dispatch
+  readonly profilingChanged: boolean
+  readonly replayChanged: boolean
+  readonly tracingChanged: boolean
+  readonly metricsChanged: boolean
+  readonly loggingChanged: boolean
+  readonly errorsChanged: boolean
+
+  // Optional subsystem section flags
+  readonly offlineQueueChanged?: boolean | undefined
+  readonly logsChanged?: boolean | undefined
+  readonly cronsChanged?: boolean | undefined
+  readonly errorsSectionChanged?: boolean | undefined
+  readonly tracingSectionChanged?: boolean | undefined
+  readonly metricsSectionChanged?: boolean | undefined
+
+  // Map Representation (for backward compatibility)
+  readonly changes: ReadonlyMap<string, { old: unknown; new: unknown; changeType?: 'added' | 'removed' | 'modified' | undefined }>
+
+  // Structured Change Collections
+  readonly addedKeys: readonly string[]
+  readonly removedKeys: readonly string[]
+  readonly modifiedKeys: readonly string[]
+  readonly fieldChanges: readonly FieldChange[]
+}
+
+// ─── Type Guards ────────────────────────────────────────────────────────────
+
+const VALID_ROUTE_NAMES = new Set<string>([
+  'traces', 'requests', 'spans', 'errors', 'metrics',
+  'logs', 'profiles', 'events', 'crons', 'replays',
+])
+
+export function isNormalizedRemoteConfig(value: unknown): value is NormalizedRemoteConfig {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false
+  const c = value as Record<string, unknown>
+  return (
+    typeof c['schemaVersion'] === 'number' &&
+    c['schemaVersion'] >= 1 &&
+    c['sdk'] !== null && typeof c['sdk'] === 'object' &&
+    c['features'] !== null && typeof c['features'] === 'object' &&
+    c['sampling'] !== null && typeof c['sampling'] === 'object' &&
+    c['transport'] !== null && typeof c['transport'] === 'object' &&
+    c['limits'] !== null && typeof c['limits'] === 'object' &&
+    c['killswitches'] !== null && typeof c['killswitches'] === 'object' &&
+    c['privacy'] !== null && typeof c['privacy'] === 'object' &&
+    c['instrumentation'] !== null && typeof c['instrumentation'] === 'object' &&
+    c['entitlements'] !== null && typeof c['entitlements'] === 'object' &&
+    c['meta'] !== null && typeof c['meta'] === 'object'
+  )
+}
+
+export function isRawRemoteConfig(value: unknown): value is RawRemoteConfig {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+export function isTransportRouteName(name: string): name is TransportRouteName {
+  return VALID_ROUTE_NAMES.has(name)
+}
+
+export function isCompressionType(comp: string): comp is CompressionType {
+  return comp === 'gzip' || comp === 'none'
+}
+
+export function isRoutePriority(prio: string): prio is RoutePriority {
+  return prio === 'critical' || prio === 'high' || prio === 'normal' || prio === 'low'
+}
+
+export function isOverflowStrategy(strat: string): strat is OverflowStrategy {
+  return strat === 'drop_oldest' || strat === 'drop_newest'
+}
+
+export function isBackoffStrategy(strat: string): strat is BackoffStrategy {
+  return strat === 'exponential' || strat === 'linear' || strat === 'fixed'
+}
+
+export function isMemoryLimit(mem: unknown): mem is MemoryLimit {
+  return mem === 'auto' || (typeof mem === 'number' && Number.isFinite(mem) && mem > 0)
 }
 
 // ─── SDK Init Options (user-facing) ─────────────────────────────────────────
@@ -361,23 +578,22 @@ export interface ConfigDiff {
  */
 export interface SDKInitOptions {
   readonly apiKey: string
-  readonly applicationName?: string
-  readonly applicationVersion?: string
-  readonly packageJsonPath?: string
-  readonly maxBreadcrumbs?: number
-  readonly plugins?: readonly SDKPlugin[]
-  readonly eventProcessors?: readonly EventProcessor[]
-  readonly beforeBreadcrumb?: BreadcrumbProcessor
-  readonly beforeSend?: (event: Record<string, unknown>) => Record<string, unknown> | null | Promise<Record<string, unknown> | null>
-  readonly debug?: boolean
-  readonly logLevel?: SeverityLevel
-  readonly baseUrl?: string
-  readonly shutdownTimeoutMs?: number
+  readonly applicationName?: string | undefined
+  readonly applicationVersion?: string | undefined
+  readonly packageJsonPath?: string | undefined
+  readonly maxBreadcrumbs?: number | undefined
+  readonly plugins?: readonly SDKPlugin[] | undefined
+  readonly eventProcessors?: readonly EventProcessor[] | undefined
+  readonly beforeBreadcrumb?: BreadcrumbProcessor | undefined
+  readonly beforeSend?: ((event: Record<string, unknown>) => Record<string, unknown> | null | Promise<Record<string, unknown> | null>) | undefined
+  readonly debug?: boolean | undefined
+  readonly logLevel?: SeverityLevel | undefined
+  readonly shutdownTimeoutMs?: number | undefined
   readonly sourceMaps?: {
-    readonly paths?: readonly string[]
-    readonly allowRemote?: boolean
-    readonly embedSourceContent?: boolean
-  }
+    readonly paths?: readonly string[] | undefined
+    readonly allowRemote?: boolean | undefined
+    readonly embedSourceContent?: boolean | undefined
+  } | undefined
 }
 
 // ─── Zod Schema ─────────────────────────────────────────────────────────────
@@ -398,7 +614,6 @@ export const sdkInitOptionsSchema = z.object({
     .optional(),
   debug: z.boolean().optional(),
   logLevel: z.enum(['debug', 'info', 'warning', 'error', 'fatal']).optional(),
-  baseUrl: z.string().url().refine(isHttpOrigin, 'baseUrl must be an HTTP(S) origin').optional(),
   shutdownTimeoutMs: z.number().int().min(1000).max(60000).optional(),
   sourceMaps: z
     .object({
@@ -409,17 +624,3 @@ export const sdkInitOptionsSchema = z.object({
     .strict()
     .optional(),
 }).strict()
-
-function isHttpOrigin(value: string): boolean {
-  try {
-    const url = new URL(value)
-    return (url.protocol === 'https:' || url.protocol === 'http:')
-      && !url.username
-      && !url.password
-      && !url.search
-      && !url.hash
-      && (url.pathname === '' || url.pathname === '/')
-  } catch {
-    return false
-  }
-}

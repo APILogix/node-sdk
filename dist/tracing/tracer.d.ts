@@ -127,4 +127,3 @@ export declare function shutdownTracer(): Promise<void>;
  * Force-flush pending spans without shutting down.
  */
 export declare function flushTracer(): Promise<void>;
-//# sourceMappingURL=tracer.d.ts.map

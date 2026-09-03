@@ -136,4 +136,3 @@ export declare class PulseSpan implements OTelSpan {
      */
     static toOTelLinks(links: SpanLink[]): Link[];
 }
-//# sourceMappingURL=span.d.ts.map

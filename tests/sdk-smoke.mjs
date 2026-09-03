@@ -65,7 +65,7 @@ function schemaConfig(config = {}) {
 
   return {
     ...BAKED_IN_REMOTE_CONFIG,
-    sdk: { projectId: "test-project-id", environment: "test" },
+    sdk: { projectId: "test-project-id", environment: "test", release: "1.0.0" },
     features: { ...BAKED_IN_REMOTE_CONFIG.features, errors: true, requestCapture: true, tracing: true },
     sampling: { ...BAKED_IN_REMOTE_CONFIG.sampling, requests: 1, traces: 1, errors: 1 },
     killswitches: { ...BAKED_IN_REMOTE_CONFIG.killswitches, disableTransport: false },
@@ -92,6 +92,7 @@ function initResponse(config = {}) {
     success: true,
     projectId: "test-project-id",
     environment: "test",
+    release: "1.0.0",
     config: schemaConfig(config),
   }), { status: 200, headers: { "content-type": "application/json" } })
 }
@@ -116,7 +117,7 @@ function findRouteCall(calls, path) {
       body: options.body,
     })
 
-    if (String(url).endsWith("/api/v1/init")) {
+    if (String(url).endsWith("/v1/init")) {
       return initResponse()
     }
 
@@ -129,8 +130,8 @@ function findRouteCall(calls, path) {
   await init({ apiKey: "test-key" })
   await sendEvents([{ type: "manual", timestamp: Date.now() }])
 
-  const initCall = findRouteCall(calls, "/api/v1/init")
-  assert.equal(initCall.url, "https://api.example.test/api/v1/init")
+  const initCall = findRouteCall(calls, "/v1/init")
+  assert.equal(initCall.url, "https://api.example.test/v1/init")
   assert.deepEqual(parseBody(initCall.body), {})
   assert.equal(initCall.headers.Authorization, "Bearer test-key")
   assert.equal(initCall.headers["x-api-key"], undefined)
@@ -160,7 +161,7 @@ function findRouteCall(calls, path) {
   globalThis.fetch = async (url, options) => {
     calls.push({ url: String(url), body: options.body })
 
-    if (String(url).endsWith("/api/v1/init")) {
+    if (String(url).endsWith("/v1/init")) {
       return initResponse({ ingestion: { batchSize: 1 } })
     }
 
@@ -227,7 +228,7 @@ function findRouteCall(calls, path) {
   globalThis.fetch = async (url, options) => {
     calls.push({ url: String(url), body: options.body })
 
-    if (String(url).endsWith("/api/v1/init")) {
+    if (String(url).endsWith("/v1/init")) {
       return initResponse({ plan: "free", ingestion: { batchSize: 1 } })
     }
 
@@ -265,13 +266,13 @@ function findRouteCall(calls, path) {
   }
 
   await sendInitRequest("direct-key", "https://api.example.test/", 1000)
-  assert.equal(calls[0].url, "https://api.example.test/api/v1/init")
+  assert.equal(calls[0].url, "https://api.example.test/v1/init")
   assert.deepEqual(parseBody(calls[0].body), {})
   assert.equal(calls[0].headers.Authorization, "Bearer direct-key")
 
   delete process.env.SDK_BASE_URL
   await sendInitRequest("default-key", undefined, 1000)
-  assert.equal(calls[1].url, `${DEFAULT_API_BASE_URL}/api/v1/init`)
+  assert.equal(calls[1].url, `${DEFAULT_API_BASE_URL}/v1/init`)
   process.env.SDK_BASE_URL = "https://api.example.test"
 
   await assert.rejects(
@@ -283,7 +284,7 @@ function findRouteCall(calls, path) {
 {
   let resolveInit
   globalThis.fetch = async (url) => {
-    if (String(url).endsWith("/api/v1/init")) {
+    if (String(url).endsWith("/v1/init")) {
       await new Promise(resolve => {
         resolveInit = resolve
       })
@@ -319,7 +320,7 @@ function findRouteCall(calls, path) {
   globalThis.fetch = async (url, options) => {
     calls.push({ url: String(url), body: options.body })
 
-    if (String(url).endsWith("/api/v1/init")) {
+    if (String(url).endsWith("/v1/init")) {
       return initResponse({ config: { maxPayloadBytes: 110 } })
     }
 
@@ -340,7 +341,7 @@ function findRouteCall(calls, path) {
 
 {
   globalThis.fetch = async (url) => {
-    if (String(url).endsWith("/api/v1/init")) return initResponse()
+    if (String(url).endsWith("/v1/init")) return initResponse()
     return new Response(JSON.stringify({ ok: true }), {
       status: 200,
       headers: { "content-type": "application/json" },
@@ -367,7 +368,7 @@ function findRouteCall(calls, path) {
 
 {
   globalThis.fetch = async (url) => {
-    if (String(url).endsWith("/api/v1/init")) return initResponse({ rawConfig: {} })
+    if (String(url).endsWith("/v1/init")) return initResponse({ rawConfig: {} })
     return new Response(JSON.stringify({ ok: true }), {
       status: 200,
       headers: { "content-type": "application/json" },
@@ -381,7 +382,7 @@ function findRouteCall(calls, path) {
 {
   let ingestAttempts = 0
   globalThis.fetch = async (url, options) => {
-    if (String(url).endsWith("/api/v1/init")) {
+    if (String(url).endsWith("/v1/init")) {
       return initResponse({ config: { maxPayloadBytes: 110 } })
     }
 
@@ -419,7 +420,7 @@ function findRouteCall(calls, path) {
   globalThis.fetch = async (url, options) => {
     calls.push({ url: String(url), body: options.body })
 
-    if (String(url).endsWith("/api/v1/init")) {
+    if (String(url).endsWith("/v1/init")) {
       return initResponse({ ingestion: { batchSize: 1 } })
     }
 

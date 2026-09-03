@@ -61,4 +61,3 @@ export function severityGte(a, b) {
 export function severityMeetsThreshold(severity, threshold) {
     return severityGte(severity, threshold);
 }
-//# sourceMappingURL=severity.js.map

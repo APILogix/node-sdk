@@ -22,4 +22,3 @@ import type { SeverityLevel } from '../types/severity.js';
  * @returns ErrorClassification with unhandled, fatal, and crash booleans
  */
 export declare function classifyError(handled: boolean, mechanism: ErrorMechanism | string | undefined, severity: ErrorSeverity | SeverityLevel | string | undefined): ErrorClassification;
-//# sourceMappingURL=error-classifier.d.ts.map

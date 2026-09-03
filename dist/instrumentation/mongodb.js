@@ -34,4 +34,3 @@ export function createMongoDBInstrumentation(enabled, mergedOptions, captureConf
 }
 export { OTelMongoDBInstrumentation };
 export default createMongoDBInstrumentation;
-//# sourceMappingURL=mongodb.js.map

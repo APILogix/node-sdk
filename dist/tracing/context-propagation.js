@@ -114,4 +114,3 @@ export const TRACE_HEADERS = {
     PULSE_SPAN_ID: PULSE_SPAN_ID_HEADER,
     PULSE_SAMPLED: PULSE_SAMPLED_HEADER,
 };
-//# sourceMappingURL=context-propagation.js.map

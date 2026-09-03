@@ -40,4 +40,3 @@ export declare const apiPayloadScrubber: ApiPayloadScrubber;
 export declare function sanitizeEvent(event: SDKEvent): SDKEvent;
 export declare function sanitizeHeaders(headers: Readonly<Record<string, unknown>>): Record<string, unknown>;
 export {};
-//# sourceMappingURL=sanitizer.d.ts.map

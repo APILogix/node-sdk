@@ -286,4 +286,3 @@ function isRunningInDocker() {
         return false;
     }
 }
-//# sourceMappingURL=resource-detector.js.map

@@ -166,4 +166,3 @@ export function uninstallHttpLifecycleGuard() {
     delete g[ORIGINAL_EMIT];
     getLogger().debug('HTTP lifecycle guard removed (ClientRequest.emit restored)');
 }
-//# sourceMappingURL=http-lifecycle-guard.js.map

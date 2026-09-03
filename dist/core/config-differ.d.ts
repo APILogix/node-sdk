@@ -1,14 +1,9 @@
+import type { NormalizedRemoteConfig, RemoteConfigResponse, ConfigDiff } from '../types/config.js';
 /**
- * ConfigDiffer — deep-diff utility for RemoteConfigResponse objects.
+ * Diff two remote config snapshots. Returns section-level flags, subsystem fast flags,
+ * structured change collections, and detailed field-level change descriptors.
  *
- * The refresh loop calls this on every successful fetch so subsystems can
- * decide whether to react. Cheap by design: a structural equality check
- * per top-level section, not a per-field traversal of the full tree.
+ * Guaranteed crash-proof against null/undefined or corrupted input objects.
  */
-import type { RemoteConfigResponse, ConfigDiff } from '../types/config.js';
-/**
- * Diff two remote config snapshots. Returns which top-level sections
- * changed and a flat map of field-level changes for diagnostic logging.
- */
-export declare function diffConfigs(oldConfig: Readonly<RemoteConfigResponse>, newConfig: Readonly<RemoteConfigResponse>): ConfigDiff;
-//# sourceMappingURL=config-differ.d.ts.map
+export declare function diffConfigs(oldConfig: Readonly<NormalizedRemoteConfig | RemoteConfigResponse> | null | undefined, newConfig: Readonly<NormalizedRemoteConfig | RemoteConfigResponse> | null | undefined): ConfigDiff;
+export declare function deepEqual(a: unknown, b: unknown): boolean;

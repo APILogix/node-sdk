@@ -51,4 +51,3 @@ export async function stopProfile(profileId) {
         return;
     return subsystem.stopCpuProfile(profileId);
 }
-//# sourceMappingURL=captureProfile.js.map

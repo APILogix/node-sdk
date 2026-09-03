@@ -268,4 +268,3 @@ function extractModule(filename) {
     const lastSlash = withoutExt.lastIndexOf('/');
     return lastSlash !== -1 ? withoutExt.slice(lastSlash + 1) : undefined;
 }
-//# sourceMappingURL=stack-parser.js.map

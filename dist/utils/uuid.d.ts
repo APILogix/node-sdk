@@ -13,4 +13,3 @@ export declare function generateShortId(): string;
  * Validates a UUID v4 string format.
  */
 export declare function isValidUUID(value: string): boolean;
-//# sourceMappingURL=uuid.d.ts.map

@@ -22,4 +22,3 @@ export type { ErrorSeverity };
 export declare function captureError(error: unknown, severity?: ErrorSeverity | {
     severity?: ErrorSeverity;
 } | SeverityLevel): void;
-//# sourceMappingURL=captureError.d.ts.map

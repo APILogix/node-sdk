@@ -30,7 +30,7 @@ async function startMockBackend() {
             const path = req.url ?? '';
             requests.push({ path, contentEncoding: encoding, body });
             res.writeHead(200, { 'content-type': 'application/json' });
-            if (path === '/v1/init') {
+            if (path.includes('init')) {
                 res.end(JSON.stringify({
                     success: true,
                     projectId: 'integration-project',
@@ -53,8 +53,13 @@ async function startMockBackend() {
                         sampling: {
                             ...BAKED_IN_REMOTE_CONFIG.sampling,
                             traces: 1,
+                            spans: 1,
                             requests: 1,
                             errors: 1,
+                            messages: 1,
+                            events: 1,
+                            logs: 1,
+                            crons: 1,
                             profiles: 1,
                             replays: 1,
                             metrics: 1,
@@ -75,11 +80,24 @@ async function startMockBackend() {
                             ])),
                         },
                         meta: { generatedAt: new Date().toISOString(), generatedBy: 'public-telemetry-init-test' },
+                        entitlements: {
+                            ...BAKED_IN_REMOTE_CONFIG.entitlements,
+                            profiling: true,
+                            customSpans: true,
+                            customMetrics: true,
+                            logging: true,
+                            crons: true,
+                            sessionReplay: true,
+                            errors: true,
+                            tracing: true,
+                            metrics: true,
+                            requestCapture: true,
+                        },
                     },
                 }));
                 return;
             }
-            if (path === '/v1/sdk-config') {
+            if (path.includes('sdk-config')) {
                 const routes = Object.fromEntries(Object.entries(BAKED_IN_REMOTE_CONFIG.transport.routes).map(([name, route]) => [
                     name,
                     {
@@ -180,7 +198,6 @@ test('public telemetry adapters serialize authoritative application and SDK meta
     let initialized = false;
     const initialize = () => init({
         apiKey: 'integration-api-key',
-        baseUrl: backend.url,
         applicationName: 'integration-app-override',
         applicationVersion: '9.8.7-test',
         debug: false,

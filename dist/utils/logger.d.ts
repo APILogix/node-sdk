@@ -72,4 +72,3 @@ export declare function setLogger(logger: Logger | undefined | null): void;
  * Get the active logger instance.
  */
 export declare function getLogger(): Logger;
-//# sourceMappingURL=logger.d.ts.map

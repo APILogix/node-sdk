@@ -41,4 +41,3 @@ export function captureReplay(sessionId, segmentId, events) {
         getLogger().warn('captureReplay failed', { error: err });
     }
 }
-//# sourceMappingURL=captureReplay.js.map

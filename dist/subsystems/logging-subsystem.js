@@ -7,6 +7,7 @@ import { getLogger } from '../utils/logger.js';
 import { getRequestContext, getSpanId, getTraceId } from '../core/context.js';
 import { SecurityScrubber } from '../processors/security-scrubber.js';
 import { EntitlementGate } from '../core/entitlement-gate.js';
+import { isSdkConsoleBypass } from '../utils/sdk-console.js';
 const WRAPPER_MARKER = Symbol.for('pulse-sdk.logging-subsystem.wrapper');
 export class LoggingSubsystem {
     static instance = null;
@@ -100,13 +101,15 @@ export class LoggingSubsystem {
             if (typeof current !== 'function')
                 continue;
             if (isMarkedWrapper(current)) {
-                logger.warn(`[LoggingSubsystem] console.${level} is already wrapped by Pulse SDK; skipping install`);
+                logger.warn(`[LoggingSubsystem] console.${level} is already wrapped by Pulse telemetry; skipping install`);
                 continue;
             }
             const original = current.bind(console);
             this.originals.set(level, original);
             const wrapper = (...args) => {
                 original.apply(console, args);
+                if (args.some(isSdkConsoleBypass))
+                    return;
                 if (LoggingSubsystem.captureReentry)
                     return;
                 LoggingSubsystem.captureReentry = true;
@@ -176,4 +179,3 @@ function safeStringify(value) {
             : '[Unserializable]';
     }
 }
-//# sourceMappingURL=logging-subsystem.js.map

@@ -22,4 +22,3 @@ export declare function createPrismaInstrumentation(config: {
 } | boolean, mergedOptions?: Partial<PrismaInstrumentationOptions>): OTelPrismaInstrumentation | null;
 export { OTelPrismaInstrumentation };
 export default createPrismaInstrumentation;
-//# sourceMappingURL=prisma.d.ts.map

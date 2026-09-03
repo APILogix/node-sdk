@@ -35,6 +35,7 @@ export class ProfilingSubsystem {
   private readonly emitter: ProfileEmitter
   private metadata: EventMetadata
   private readonly activeProfiles = new Map<string, ActiveProfile>()
+  private activeCpuProfileKey: string | null = null
   private inspectorSession: unknown = null
   private inspectorAvailable = false
   private destroyed = false
@@ -67,13 +68,34 @@ export class ProfilingSubsystem {
     if (this.destroyed || !this.config.enabled || this.inspectorAvailable) return
     const logger = getLogger()
     try {
-      const inspector = await import('node:inspector/promises').catch(() => null)
-      if (!inspector) {
-        logger.warn('[ProfilingSubsystem] Inspector API not available — profiling disabled')
-        return
+      let session: { post: (method: string, params?: unknown) => Promise<unknown>; disconnect: () => void } | null = null
+      try {
+        const inspectorPromises = await import('node:inspector/promises')
+        const s = new inspectorPromises.Session()
+        s.connect()
+        session = s as unknown as { post: (method: string, params?: unknown) => Promise<unknown>; disconnect: () => void }
+      } catch {
+        const inspector = await import('node:inspector')
+        const rawSession = new inspector.Session()
+        rawSession.connect()
+        session = {
+          post: (method: string, params?: unknown) => new Promise((resolve, reject) => {
+            if (typeof params === 'object' && params !== null) {
+              rawSession.post(method, params as Record<string, unknown>, (err: Error | null, res: unknown) => {
+                if (err) reject(err)
+                else resolve(res)
+              })
+            } else {
+              rawSession.post(method, (err: Error | null, res: unknown) => {
+                if (err) reject(err)
+                else resolve(res)
+              })
+            }
+          }),
+          disconnect: () => rawSession.disconnect(),
+        }
       }
-      const session = new inspector.Session()
-      session.connect()
+
       this.inspectorSession = session
       this.inspectorAvailable = true
       logger.info('[ProfilingSubsystem] Inspector session connected')
@@ -96,11 +118,13 @@ export class ProfilingSubsystem {
     const resolvedSpanId = spanId ?? activeSpanContext?.spanId
     const requestId = getRequestContext()?.requestId
     const key = `cpu:${resolvedTraceId}`
+    if (this.activeCpuProfileKey !== null) return false
     if (this.activeProfiles.has(key)) return false
 
     try {
       await session.post('Profiler.enable')
       await session.post('Profiler.start')
+      this.activeCpuProfileKey = key
       const startTime = Date.now()
       const timeoutHandle = setTimeout(() => void this.stopCpuProfile(resolvedTraceId), this.config.maxDurationMs)
       timeoutHandle.unref?.()
@@ -126,11 +150,15 @@ export class ProfilingSubsystem {
     const key = `cpu:${traceId}`
     const active = this.activeProfiles.get(key)
     if (!active) return
+    if (this.activeCpuProfileKey !== key) return
 
     this.activeProfiles.delete(key)
     if (active.timeoutHandle) clearTimeout(active.timeoutHandle)
     const session = this.inspectorSession as { post: (method: string) => Promise<{ profile: unknown }> } | null
-    if (!session) return
+    if (!session) {
+      this.activeCpuProfileKey = null
+      return
+    }
 
     try {
       const result = await session.post('Profiler.stop')
@@ -161,7 +189,14 @@ export class ProfilingSubsystem {
         activeSpan.setAttribute('pulse.profile.active', false)
       }
     } catch (error) {
-      getLogger().warn('[ProfilingSubsystem] Failed to stop CPU profile', { error })
+      const logger = getLogger()
+      if (isNoRecordingProfilesError(error)) {
+        logger.debug('[ProfilingSubsystem] CPU profile was already stopped', { error })
+      } else {
+        logger.warn('[ProfilingSubsystem] Failed to stop CPU profile', { error })
+      }
+    } finally {
+      this.activeCpuProfileKey = null
     }
   }
 
@@ -175,6 +210,7 @@ export class ProfilingSubsystem {
       if (active.timeoutHandle) clearTimeout(active.timeoutHandle)
     }
     this.activeProfiles.clear()
+    this.activeCpuProfileKey = null
 
     if (this.inspectorSession && this.inspectorAvailable) {
       try {
@@ -213,6 +249,11 @@ export class ProfilingSubsystem {
   static reset(): void {
     ProfilingSubsystem.instance?.destroy()
   }
+}
+
+function isNoRecordingProfilesError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return message.includes('No recording profiles found')
 }
 
 function resolveProfilingConfig(config: Readonly<RemoteConfigResponse>): ProfilingRuntimeConfig {

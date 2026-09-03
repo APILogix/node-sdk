@@ -19,7 +19,6 @@ describe('Pulse SDK Trace/Span Consistency', () => {
     // to reach a real backend; the offline-fallback config kicks in.
     await init({
       apiKey: 'test-key',
-      baseUrl: 'http://127.0.0.1:1',
     })
 
     const rootSpan = startSpan('root')

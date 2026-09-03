@@ -19,9 +19,27 @@ before(() => {
   } as any);
 
   const minimalConfig = {
+    sdk: {
+      projectId: 'test-service',
+      service: 'test-service',
+      release: '1.0.0',
+      environment: 'dev',
+    },
     service: 'test-service',
     release: '1.0.0',
     environment: 'dev',
+    entitlements: {
+      customSpans: true,
+      profiling: true,
+      customMetrics: true,
+      logging: true,
+      sessionReplay: true,
+      crons: true,
+      requestCapture: true,
+      tracing: true,
+      errors: true,
+      metrics: true,
+    },
   } as any;
   initTracer(minimalConfig);
 });

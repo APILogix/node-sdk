@@ -39,4 +39,3 @@ export interface ErrorGrouping {
     /** Number of in-app stack frames used for grouping. */
     readonly inAppFrameCount: number;
 }
-//# sourceMappingURL=error.d.ts.map

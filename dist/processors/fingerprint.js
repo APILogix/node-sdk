@@ -114,4 +114,3 @@ function normalizeErrorMessage(message) {
         .replace(/"[^"]*"/g, '<S>') // Double-quoted strings
         .replace(/'[^']*'/g, '<S>'); // Single-quoted strings
 }
-//# sourceMappingURL=fingerprint.js.map

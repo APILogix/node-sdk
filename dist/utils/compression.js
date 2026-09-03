@@ -55,4 +55,3 @@ export function contentEncoding(algorithm) {
             return undefined;
     }
 }
-//# sourceMappingURL=compression.js.map

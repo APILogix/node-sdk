@@ -27,4 +27,3 @@ export function createBullMQInstrumentation(enabled, mergedOptions, captureConfi
 }
 export { OTelBullMQInstrumentation };
 export default createBullMQInstrumentation;
-//# sourceMappingURL=bullmq.js.map

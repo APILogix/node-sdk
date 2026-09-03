@@ -49,4 +49,3 @@ export declare class KillswitchEngine {
     static reset(): void;
 }
 export {};
-//# sourceMappingURL=killswitch-engine.d.ts.map

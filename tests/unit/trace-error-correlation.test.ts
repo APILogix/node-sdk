@@ -38,7 +38,13 @@ describe('Trace/Span Error Correlation - Automated Scenarios', () => {
           },
         }
         return new Response(
-          JSON.stringify({ status: 'ok', config: activeConfig }),
+          JSON.stringify({
+            success: true,
+            projectId: activeConfig.sdk.projectId,
+            environment: activeConfig.sdk.environment,
+            release: activeConfig.sdk.release,
+            config: activeConfig,
+          }),
           { status: 200, headers: { 'content-type': 'application/json' } }
         )
       }
@@ -48,7 +54,6 @@ describe('Trace/Span Error Correlation - Automated Scenarios', () => {
     // Initialize SDK with mock endpoint
     await init({
       apiKey: 'pv_test_key_1234567890',
-      baseUrl: 'http://localhost:5000',
       debug: false,
     })
 

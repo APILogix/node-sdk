@@ -5,7 +5,6 @@ describe('SDK initialization option boundary', () => {
     it('accepts local integration concerns', () => {
         const result = sdkInitOptionsSchema.safeParse({
             apiKey: 'test-key',
-            baseUrl: 'https://api.example.test',
             applicationName: 'orders',
             applicationVersion: '1.2.3',
             maxBreadcrumbs: 100,
@@ -15,14 +14,9 @@ describe('SDK initialization option boundary', () => {
         });
         assert.equal(result.success, true);
     });
-    it('rejects a baseUrl that is not a credential-free HTTP(S) origin', () => {
-        for (const baseUrl of [
-            'https://api.example.test/prefix',
-            'https://user:secret@api.example.test',
-            'ftp://api.example.test',
-        ]) {
-            assert.equal(sdkInitOptionsSchema.safeParse({ apiKey: 'test-key', baseUrl }).success, false);
-        }
+    it('rejects caller-provided baseUrl because the control-plane route is fixed', () => {
+        const result = sdkInitOptionsSchema.safeParse({ apiKey: 'test-key', baseUrl: 'https://api.example.test' });
+        assert.equal(result.success, false);
     });
     for (const [name, value] of Object.entries({
         service: 'orders',

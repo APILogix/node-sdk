@@ -20,4 +20,3 @@ export declare function initializePlugins(plugins: readonly SDKPlugin[], config:
  * Called during SDK shutdown.
  */
 export declare function teardownPlugins(): Promise<void>;
-//# sourceMappingURL=index.d.ts.map

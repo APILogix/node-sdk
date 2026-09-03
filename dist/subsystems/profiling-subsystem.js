@@ -11,6 +11,7 @@ export class ProfilingSubsystem {
     emitter;
     metadata;
     activeProfiles = new Map();
+    activeCpuProfileKey = null;
     inspectorSession = null;
     inspectorAvailable = false;
     destroyed = false;
@@ -35,13 +36,39 @@ export class ProfilingSubsystem {
             return;
         const logger = getLogger();
         try {
-            const inspector = await import('node:inspector/promises').catch(() => null);
-            if (!inspector) {
-                logger.warn('[ProfilingSubsystem] Inspector API not available — profiling disabled');
-                return;
+            let session = null;
+            try {
+                const inspectorPromises = await import('node:inspector/promises');
+                const s = new inspectorPromises.Session();
+                s.connect();
+                session = s;
             }
-            const session = new inspector.Session();
-            session.connect();
+            catch {
+                const inspector = await import('node:inspector');
+                const rawSession = new inspector.Session();
+                rawSession.connect();
+                session = {
+                    post: (method, params) => new Promise((resolve, reject) => {
+                        if (typeof params === 'object' && params !== null) {
+                            rawSession.post(method, params, (err, res) => {
+                                if (err)
+                                    reject(err);
+                                else
+                                    resolve(res);
+                            });
+                        }
+                        else {
+                            rawSession.post(method, (err, res) => {
+                                if (err)
+                                    reject(err);
+                                else
+                                    resolve(res);
+                            });
+                        }
+                    }),
+                    disconnect: () => rawSession.disconnect(),
+                };
+            }
             this.inspectorSession = session;
             this.inspectorAvailable = true;
             logger.info('[ProfilingSubsystem] Inspector session connected');
@@ -65,11 +92,14 @@ export class ProfilingSubsystem {
         const resolvedSpanId = spanId ?? activeSpanContext?.spanId;
         const requestId = getRequestContext()?.requestId;
         const key = `cpu:${resolvedTraceId}`;
+        if (this.activeCpuProfileKey !== null)
+            return false;
         if (this.activeProfiles.has(key))
             return false;
         try {
             await session.post('Profiler.enable');
             await session.post('Profiler.start');
+            this.activeCpuProfileKey = key;
             const startTime = Date.now();
             const timeoutHandle = setTimeout(() => void this.stopCpuProfile(resolvedTraceId), this.config.maxDurationMs);
             timeoutHandle.unref?.();
@@ -95,12 +125,16 @@ export class ProfilingSubsystem {
         const active = this.activeProfiles.get(key);
         if (!active)
             return;
+        if (this.activeCpuProfileKey !== key)
+            return;
         this.activeProfiles.delete(key);
         if (active.timeoutHandle)
             clearTimeout(active.timeoutHandle);
         const session = this.inspectorSession;
-        if (!session)
+        if (!session) {
+            this.activeCpuProfileKey = null;
             return;
+        }
         try {
             const result = await session.post('Profiler.stop');
             const endTime = Date.now();
@@ -130,7 +164,16 @@ export class ProfilingSubsystem {
             }
         }
         catch (error) {
-            getLogger().warn('[ProfilingSubsystem] Failed to stop CPU profile', { error });
+            const logger = getLogger();
+            if (isNoRecordingProfilesError(error)) {
+                logger.debug('[ProfilingSubsystem] CPU profile was already stopped', { error });
+            }
+            else {
+                logger.warn('[ProfilingSubsystem] Failed to stop CPU profile', { error });
+            }
+        }
+        finally {
+            this.activeCpuProfileKey = null;
         }
     }
     /** Apply a validated complete snapshot selected by ConfigManager. */
@@ -144,6 +187,7 @@ export class ProfilingSubsystem {
                 clearTimeout(active.timeoutHandle);
         }
         this.activeProfiles.clear();
+        this.activeCpuProfileKey = null;
         if (this.inspectorSession && this.inspectorAvailable) {
             try {
                 ;
@@ -184,6 +228,10 @@ export class ProfilingSubsystem {
         ProfilingSubsystem.instance?.destroy();
     }
 }
+function isNoRecordingProfilesError(error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return message.includes('No recording profiles found');
+}
 function resolveProfilingConfig(config) {
     return {
         enabled: config.features.profiling,
@@ -193,4 +241,3 @@ function resolveProfilingConfig(config) {
         maxDurationMs: PROFILING_DEFAULTS.maxDurationMs,
     };
 }
-//# sourceMappingURL=profiling-subsystem.js.map

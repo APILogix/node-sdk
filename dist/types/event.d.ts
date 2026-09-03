@@ -255,4 +255,3 @@ export type SDKEvent = RequestEvent | ErrorEvent | MessageEvent | MetricEvent | 
 export type Event = SDKEvent | (Record<string, unknown> & {
     eventId?: string;
 });
-//# sourceMappingURL=event.d.ts.map

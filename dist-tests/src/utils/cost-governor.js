@@ -67,8 +67,7 @@ export class CostGovernor {
             this.totalSpansBlocked++;
             if (current === this.maxSpansPerTrace) {
                 getLogger().warn('Span limit reached for trace', {
-                    traceId: traceId.slice(0, 8) + '...',
-                    maxSpans: this.maxSpansPerTrace,
+                    utilization: 1,
                 });
             }
             return false;
@@ -115,8 +114,9 @@ export class CostGovernor {
             this.totalBudgetExceeded++;
             if (this.totalBudgetExceeded % 10 === 1) {
                 getLogger().warn('Telemetry bytes budget exceeded', {
-                    currentRate: (currentRate / 1024 / 1024).toFixed(2) + 'MB/min',
-                    budget: (this.bytesBudgetPerMinute / 1024 / 1024).toFixed(2) + 'MB/min',
+                    utilization: this.bytesBudgetPerMinute > 0
+                        ? Math.round((currentRate / this.bytesBudgetPerMinute) * 100) / 100
+                        : 0,
                 });
             }
         }

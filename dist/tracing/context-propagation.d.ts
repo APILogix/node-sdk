@@ -42,4 +42,3 @@ export declare const TRACE_HEADERS: {
     readonly PULSE_SPAN_ID: "x-pulse-span-id";
     readonly PULSE_SAMPLED: "x-pulse-sampled";
 };
-//# sourceMappingURL=context-propagation.d.ts.map

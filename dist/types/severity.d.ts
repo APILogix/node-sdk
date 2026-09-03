@@ -3,11 +3,11 @@
  * Ordered from least to most severe for comparison operations.
  */
 export declare const Severity: {
-    readonly Debug: "debug";
-    readonly Info: "info";
-    readonly Warning: "warning";
-    readonly Error: "error";
-    readonly Fatal: "fatal";
+    readonly Debug: 'debug';
+    readonly Info: 'info';
+    readonly Warning: 'warning';
+    readonly Error: 'error';
+    readonly Fatal: 'fatal';
 };
 export type SeverityLevel = (typeof Severity)[keyof typeof Severity];
 /**
@@ -23,4 +23,3 @@ export declare function severityGte(a: SeverityLevel, b: SeverityLevel): boolean
  * Returns true if the given severity meets the minimum threshold.
  */
 export declare function severityMeetsThreshold(severity: SeverityLevel, threshold: SeverityLevel): boolean;
-//# sourceMappingURL=severity.d.ts.map

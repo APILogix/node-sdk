@@ -186,4 +186,3 @@ function isCritical(event) {
         return event.level === 'fatal';
     return event.type === 'cron_checkin' && event.status === 'error';
 }
-//# sourceMappingURL=transport-event-queue.js.map

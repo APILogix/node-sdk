@@ -210,7 +210,7 @@ async function runShutdown(timeoutMs) {
     const startedAt = Date.now();
     const timeout = resolveTimeout(timeoutMs);
     const stepErrors = [];
-    logger.info('SDK shutdown started', {
+    logger.info('Telemetry shutdown started', {
         queuedEventCount: eventQueue.size(),
         timeoutMs: timeout,
     });
@@ -265,7 +265,7 @@ async function runShutdown(timeoutMs) {
         deadLetterCount: eventQueue.getDeadLetterCount(),
         stepErrors: Object.freeze([...stepErrors]),
     };
-    logger.info('SDK shutdown completed', {
+    logger.info('Telemetry shutdown completed', {
         timedOut: result.timedOut,
         durationMs: result.durationMs,
         deadLetterCount: result.deadLetterCount,
@@ -467,4 +467,3 @@ function resolveTimeout(timeoutMs) {
     }
     return DEFAULT_SHUTDOWN_TIMEOUT_MS;
 }
-//# sourceMappingURL=lifecycle.js.map

@@ -42,4 +42,3 @@ export interface AnalysisIssue {
     location?: string;
     code?: string;
 }
-//# sourceMappingURL=types.d.ts.map

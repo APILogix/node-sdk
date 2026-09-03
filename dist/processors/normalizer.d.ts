@@ -7,4 +7,3 @@ import type { SDKEvent, EventMetadata } from '../types/event.js';
  * Normalize an event — fills in missing required fields, truncates oversized data.
  */
 export declare function normalizeEvent(event: SDKEvent, metadata: EventMetadata): SDKEvent;
-//# sourceMappingURL=normalizer.d.ts.map

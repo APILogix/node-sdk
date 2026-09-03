@@ -111,4 +111,3 @@ export declare function headerString(value: string | string[] | undefined): stri
 export declare function resolveClientIp(headers: Record<string, string | string[] | undefined>, socketRemoteAddress?: string | undefined, trustedProxies?: readonly string[] | undefined, maskIp?: boolean | undefined, preferredIp?: string | undefined): string | undefined;
 /** Match a path against either string prefixes or regex patterns. */
 export declare function matchesIgnoredPath(path: string, patterns: readonly (string | RegExp)[] | undefined): boolean;
-//# sourceMappingURL=request-capture-utils.d.ts.map

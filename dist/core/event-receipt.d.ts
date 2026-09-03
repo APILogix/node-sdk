@@ -58,4 +58,3 @@ export declare function acceptedSyncReceipt(eventId: string): EventReceipt;
  * Uses a pre-resolved promise to avoid allocation.
  */
 export declare function rejectedReceipt(eventId: string, reason: string): EventReceipt;
-//# sourceMappingURL=event-receipt.d.ts.map

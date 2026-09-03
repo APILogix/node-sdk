@@ -35,4 +35,3 @@ export function captureMessage(message, severity = Severity.Info, context) {
         logger.error('captureMessage failed', { error: err });
     }
 }
-//# sourceMappingURL=captureMessage.js.map

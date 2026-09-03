@@ -54,7 +54,13 @@ A successful response contains project information and one complete config docum
     "sampling": {},
     "instrumentation": {},
     "privacy": {},
-    "limits": {},
+    "limits": {
+      "persistenceGovernance": {
+        "maxPersistPerMinute": 20000,
+        "adaptive": true,
+        "budgetExceededLogIntervalMs": 60000
+      }
+    },
     "killswitches": {},
     "transport": {},
     "meta": {
@@ -113,7 +119,31 @@ Owns all control-plane networking. It knows only `/v1/init` and `/v1/sdk-config`
 
 ### `ConfigValidator`
 
-Validates the entire snapshot before it can become active. It checks the schema version; required project/environment/release identity; all feature and kill-switch booleans; sampling probabilities and route overrides; complete instrumentation shapes (including PostgreSQL, MySQL2, and EventEmitter selection); privacy rules; safety-bounded limits; all ten exact transport route URLs; queue capacity/critical reserve and connection policy; metadata; and every entitlement. Unknown fields are tolerated for forward compatibility; missing or malformed required fields reject the whole snapshot. Safety violations reject the snapshot rather than being clamped.
+Validates the entire snapshot before it can become active. It checks the schema version; required project/environment/release identity; all feature and kill-switch booleans; sampling probabilities and route overrides; complete instrumentation shapes (including PostgreSQL, MySQL2, and EventEmitter selection); privacy rules; safety-bounded limits including `limits.persistenceGovernance`; all ten exact transport route URLs; queue capacity/critical reserve and connection policy; metadata; and every entitlement. Unknown fields are tolerated for forward compatibility; missing or malformed required fields reject the whole snapshot. Safety violations reject the snapshot rather than being clamped.
+
+### Persistence Governance
+
+`limits.persistenceGovernance` is mandatory and backend-owned. The SDK does not accept an init option or local override for it.
+
+```json
+{
+  "limits": {
+    "persistenceGovernance": {
+      "maxPersistPerMinute": 20000,
+      "adaptive": true,
+      "budgetExceededLogIntervalMs": 60000
+    }
+  }
+}
+```
+
+`maxPersistPerMinute` is a rolling one-minute budget for disk persistence. Critical errors still persist first; once the window is full, non-critical durability tiers are skipped until capacity returns. `adaptive: true` lets the SDK use memory, queue, event-loop, and GC pressure to reduce non-critical disk writes earlier. `budgetExceededLogIntervalMs` controls aggregated SDK warnings when the budget is exhausted.
+
+| Field | Type | Default sent by backend | Safety bounds | Purpose |
+|---|---:|---:|---:|---|
+| `limits.persistenceGovernance.maxPersistPerMinute` | integer | `20000` | `1..1000000` | Rolling per-minute disk persistence budget before non-critical events are skipped. |
+| `limits.persistenceGovernance.adaptive` | boolean | `true` | `true/false` | Enables pressure-aware reduction for important/transient durability tiers. |
+| `limits.persistenceGovernance.budgetExceededLogIntervalMs` | integer | `60000` | `1000..600000` | Minimum interval for aggregated budget-exceeded SDK warnings. |
 
 ### `ConfigManager`
 
@@ -133,7 +163,7 @@ Computes a section-level diff and invokes only affected handlers. Failure in one
 | `killswitches` | Activate/deactivate only mapped capture, OTel, and transport controls. |
 | `transport` | Build and atomically swap transport queues/batch managers/routes; migrate queued events. |
 | `privacy` | Recompile scrubbing rules and rebuild instrumentation hooks that snapshot capture policy. |
-| `limits` | Update limit/tenant/pressure engines and rebuild transport sizing once. |
+| `limits` | Update limit, tenant, pressure, persistence-governance engines and rebuild transport sizing once. |
 | `instrumentation` | Re-register auto-instrumentation only when tracing remained enabled. |
 | `entitlements` | Update optional public API gates without restarting in-flight work. |
 | `meta`/hash only | Swap the snapshot; do not restart any subsystem. |
@@ -170,7 +200,7 @@ Application-local extension hooks, package identity, source-map paths, diagnosti
 1. Make `/v1/init` return a complete config in `config`.
 2. Include non-empty `sdk.projectId`, `sdk.environment`, and `sdk.release` identity.
 3. Ensure all ten routes are present and use their exact final URLs: `traces`, `requests`, `spans`, `errors`, `metrics`, `logs`, `profiles`, `events`, `crons`, and `replays`.
-4. Include complete queue (including `criticalReserve`), connection, retry, privacy, limits, feature, kill-switch, instrumentation (including `pg`, `mysql2`, and `eventEmitterPatch`), and entitlement sections.
+4. Include complete queue (including `criticalReserve`), connection, retry, privacy, limits including `limits.persistenceGovernance`, feature, kill-switch, instrumentation (including `pg`, `mysql2`, and `eventEmitterPatch`), and entitlement sections.
 5. Return `202`/`change: true` on telemetry only when a newer snapshot is available.
 6. Return a complete config from `/v1/sdk-config`; never return a partial patch.
 7. Keep `meta.generatedAt` monotonic. The SDK rejects older snapshots.

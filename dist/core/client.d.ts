@@ -53,4 +53,3 @@ declare class SDKClient {
 }
 export declare const client: SDKClient;
 export {};
-//# sourceMappingURL=client.d.ts.map

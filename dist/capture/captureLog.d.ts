@@ -30,4 +30,3 @@ export type CaptureLogLevel = SeverityLevel | 'log' | 'warn';
  * @param args - Optional structured arguments (max 10 kept, scrubbed)
  */
 export declare function captureLog(level: CaptureLogLevel, message: string, ...args: unknown[]): void;
-//# sourceMappingURL=captureLog.d.ts.map

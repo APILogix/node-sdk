@@ -52,4 +52,3 @@ export declare class PulseMetricReader extends MetricReader {
     };
 }
 export declare function extractLabels(attributes: Record<string, unknown> | undefined): Record<string, string>;
-//# sourceMappingURL=pulse-metric-reader.d.ts.map

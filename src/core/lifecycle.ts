@@ -248,7 +248,7 @@ async function runShutdown(timeoutMs?: number): Promise<ShutdownResult> {
   const timeout = resolveTimeout(timeoutMs)
   const stepErrors: ShutdownStepError[] = []
 
-  logger.info('SDK shutdown started', {
+  logger.info('Telemetry shutdown started', {
     queuedEventCount: eventQueue.size(),
     timeoutMs: timeout,
   })
@@ -306,7 +306,7 @@ async function runShutdown(timeoutMs?: number): Promise<ShutdownResult> {
     stepErrors: Object.freeze([...stepErrors]),
   }
 
-  logger.info('SDK shutdown completed', {
+  logger.info('Telemetry shutdown completed', {
     timedOut: result.timedOut,
     durationMs: result.durationMs,
     deadLetterCount: result.deadLetterCount,

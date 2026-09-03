@@ -88,6 +88,7 @@ export type {
   ScrubbingConfig,
   PiiDetectionConfig,
   LimitsConfig,
+  PersistenceGovernanceConfig,
   KillswitchesConfig,
   TransportRemoteConfig,
   TransportRouteConfig,

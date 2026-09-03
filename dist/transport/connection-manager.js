@@ -110,4 +110,3 @@ export class ConnectionManager {
         return this.options.maxConnectionsPerRoute[route];
     }
 }
-//# sourceMappingURL=connection-manager.js.map

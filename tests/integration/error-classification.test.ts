@@ -113,7 +113,6 @@ describe('SDK Error Classification Wire Payloads', () => {
     mock = await startMockBackend()
     await init({
       apiKey: 'pk_live_error_classification_test',
-      baseUrl: mock.url,
       applicationName: 'test-app',
       applicationVersion: '1.0.0',
     })

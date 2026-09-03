@@ -20,4 +20,3 @@ export declare function durationMs(startNs: bigint): number;
  * Uses setTimeout internally — safe for event loop.
  */
 export declare function sleep(ms: number): Promise<void>;
-//# sourceMappingURL=time.d.ts.map

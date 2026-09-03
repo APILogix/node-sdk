@@ -102,4 +102,3 @@ export declare function resetEventPipeline(): void;
  * backpressure-aware event ingestion.
  */
 export declare function processEventAsync(rawEvent: SDKEvent | Event, assignedEventId?: string): Promise<boolean>;
-//# sourceMappingURL=event-pipeline.d.ts.map

@@ -127,4 +127,3 @@ export function getMemoryPressureLevel() {
         return 'elevated';
     return 'normal';
 }
-//# sourceMappingURL=backpressure.js.map

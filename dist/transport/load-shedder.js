@@ -108,4 +108,3 @@ export class LoadShedder {
 }
 // ─── Singleton ──────────────────────────────────────────────────────────────
 export const loadShedder = new LoadShedder();
-//# sourceMappingURL=load-shedder.js.map

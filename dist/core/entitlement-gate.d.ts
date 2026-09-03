@@ -55,4 +55,3 @@ export declare class EntitlementGate {
     destroy(): void;
     static reset(): void;
 }
-//# sourceMappingURL=entitlement-gate.d.ts.map

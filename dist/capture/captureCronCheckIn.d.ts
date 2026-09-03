@@ -28,4 +28,3 @@ export interface CronCheckInOptions {
  * ```
  */
 export declare function captureCronCheckIn(monitorSlug: string, status: 'ok' | 'error' | 'in_progress', options?: CronCheckInOptions): void;
-//# sourceMappingURL=captureCronCheckIn.d.ts.map

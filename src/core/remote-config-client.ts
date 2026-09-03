@@ -4,9 +4,10 @@ import { resolveApiBaseUrl } from '../constants/defaults.js'
 import type { RemoteConfigResponse } from '../types/config.js'
 import { SDKError, toError } from './errors.js'
 import { validateApiKey } from './api-key.js'
+import { getLogger } from '../utils/logger.js'
 
 const CONTROL_PLANE_TIMEOUT_MS = 5_000
-const CONTROL_PLANE_PATH_PREFIX = '/api'
+const CONTROL_PLANE_PATH_PREFIX = ''
 
 export interface InitResponse {
   readonly success: boolean
@@ -23,7 +24,6 @@ export interface InitResponse {
 
 interface RemoteConfigClientOptions {
   readonly apiKey: string
-  readonly baseUrl?: string | undefined
   readonly timeoutMs?: number | undefined
   readonly fetchImpl?: typeof fetch | undefined
 }
@@ -43,7 +43,7 @@ export class RemoteConfigClient {
   constructor(options: RemoteConfigClientOptions) {
     validateApiKey(options.apiKey)
     this.apiKey = options.apiKey
-    this.baseUrl = normalizeBaseUrl(resolveApiBaseUrl(options.baseUrl))
+    this.baseUrl = normalizeBaseUrl(resolveApiBaseUrl())
     this.timeoutMs = options.timeoutMs ?? CONTROL_PLANE_TIMEOUT_MS
     this.fetchImpl = options.fetchImpl ?? fetch
   }
@@ -70,6 +70,18 @@ export class RemoteConfigClient {
       )
     }
 
+    getLogger().info('[RemoteConfigClient] Init response accepted', {
+      endpoint: '/v1/init',
+      success: normalized.success,
+      projectId: normalized.projectId,
+      organizationId: normalized.organizationId,
+      environmentId: normalized.environmentId,
+      environment: normalized.environment,
+      release: normalized.release,
+      configRevision: normalized.configRevision,
+      configHash: normalized.configHash,
+    })
+
     return normalized
   }
 
@@ -89,6 +101,13 @@ export class RemoteConfigClient {
     const url = `${this.baseUrl}${CONTROL_PLANE_PATH_PREFIX}${path}`
 
     try {
+      const startedAt = Date.now()
+      getLogger().info('[RemoteConfigClient] Control-plane request started', {
+        endpoint: `${CONTROL_PLANE_PATH_PREFIX}${path}`,
+        url,
+        method: 'POST',
+      })
+
       // Application metadata, capabilities, versions, and local overrides are
       // not configuration inputs; the backend resolves all policy from the API key.
       const response = await context.with(suppressTracing(context.active()), () =>
@@ -104,28 +123,32 @@ export class RemoteConfigClient {
           redirect: 'manual',
         }),
       )
+      const latencyMs = Date.now() - startedAt
 
       const text = await response.text()
+      getLogger().info('[RemoteConfigClient] Control-plane response received', {
+        endpoint: `${CONTROL_PLANE_PATH_PREFIX}${path}`,
+        statusCode: response.status,
+        ok: response.ok,
+        latencyMs,
+        responseBytes: Buffer.byteLength(text),
+        contentType: response.headers.get('content-type') ?? undefined,
+      })
       let payload: unknown = null
       if (text) {
         try {
           payload = JSON.parse(text)
         } catch (error) {
           throw new SDKError('Control-plane response was not valid JSON', 'INVALID_JSON', {
-            endpoint: url,
             statusCode: response.status,
           }, error)
         }
       }
-      console.log('[Pulse] control-plane response', {
-        endpoint: url,
-        statusCode: response.status,
-        body: payload,
-      })
-
+      if (path === '/v1/init') {
+        getLogger().info('[RemoteConfigClient] Init route response served', summarizeInitRoutePayload(payload))
+      }
       if (!response.ok) {
         throw new SDKError('Control-plane request failed', 'HTTP_ERROR', {
-          endpoint: url,
           statusCode: response.status,
           status: response.status,
         })
@@ -136,12 +159,36 @@ export class RemoteConfigClient {
       if (error instanceof SDKError) throw error
       const normalized = toError(error)
       throw new SDKError('Control-plane request failed', 'NETWORK_ERROR', {
-        endpoint: url,
         reason: normalized.name === 'AbortError' ? 'timeout' : normalized.message,
       }, normalized)
     } finally {
       clearTimeout(timer)
     }
+  }
+}
+
+function summarizeInitRoutePayload(payload: unknown): Record<string, unknown> {
+  const summary: Record<string, unknown> = {
+    endpoint: '/v1/init',
+    responseType: payload === null ? 'null' : Array.isArray(payload) ? 'array' : typeof payload,
+  }
+  if (!isRecord(payload)) return summary
+
+  const config = isRecord(payload['config']) ? payload['config'] : undefined
+  const sdk = config && isRecord(config['sdk']) ? config['sdk'] : undefined
+  const meta = config && isRecord(config['meta']) ? config['meta'] : undefined
+
+  return {
+    ...summary,
+    success: payload['success'],
+    projectId: payload['projectId'] ?? sdk?.['projectId'],
+    organizationId: payload['organizationId'],
+    environmentId: payload['environmentId'],
+    environment: payload['environment'] ?? sdk?.['environment'],
+    release: payload['release'] ?? sdk?.['release'],
+    configRevision: payload['configRevision'],
+    configHash: payload['configHash'] ?? meta?.['configHash'],
+    configSections: config ? Object.keys(config).sort() : undefined,
   }
 }
 
@@ -172,9 +219,9 @@ function normalizeInitResponse(payload: unknown): InitResponse | null {
 
   const sdk = config['sdk']
   const meta = isRecord(config['meta']) ? config['meta'] : null
-  const projectId = firstNonEmptyString(payload['projectId'], sdk['projectId'])
-  const environment = firstNonEmptyString(payload['environment'], sdk['environment'])
-  const release = firstNonEmptyString(payload['release'], sdk['release'])
+  const projectId = isNonEmptyString(payload['projectId']) ? payload['projectId'] : null
+  const environment = isNonEmptyString(payload['environment']) ? payload['environment'] : null
+  const release = isNonEmptyString(payload['release']) ? payload['release'] : null
   if (!projectId || !environment || !release) return null
 
   return {

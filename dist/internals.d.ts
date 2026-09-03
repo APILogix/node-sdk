@@ -48,7 +48,6 @@ export { getSessionManager } from './session/session-manager.js';
 export type { Session, SessionManagerOptions } from './session/session-manager.js';
 export { PulseSpan } from './tracing/span.js';
 export { getLogger, jsonLogger, setLogFormat, getLogFormat } from './utils/logger.js';
-export type { RemoteConfigResponse, FeaturesConfig, SamplingConfig, RouteSamplingRates, InstrumentationConfig, PrivacyConfig, PrivacyCaptureConfig, ScrubbingConfig, PiiDetectionConfig, LimitsConfig, KillswitchesConfig, TransportRemoteConfig, TransportRouteConfig, TransportRouteName, TransportRetryConfig, TransportQueueConfig, ConfigMeta, ConfigDiff, } from './types/config.js';
+export type { RemoteConfigResponse, FeaturesConfig, SamplingConfig, RouteSamplingRates, InstrumentationConfig, PrivacyConfig, PrivacyCaptureConfig, ScrubbingConfig, PiiDetectionConfig, LimitsConfig, PersistenceGovernanceConfig, KillswitchesConfig, TransportRemoteConfig, TransportRouteConfig, TransportRouteName, TransportRetryConfig, TransportQueueConfig, ConfigMeta, ConfigDiff, } from './types/config.js';
 export { REMOTE_CONFIG_SCHEMA_VERSION } from './types/config.js';
 export type { TransportResult, IngestPayload, TransportHealth, TransportAdapter, RouteTransportHealth, MultiRouteTransportHealth, } from './types/transport.js';
-//# sourceMappingURL=internals.d.ts.map

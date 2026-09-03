@@ -50,4 +50,3 @@ class SlowRequestDetector {
 }
 export const slowRequestDetector = new SlowRequestDetector();
 export { SlowRequestDetector };
-//# sourceMappingURL=slow-request-detector.js.map

@@ -68,4 +68,3 @@ export type EventPriority = 'critical' | 'high' | 'normal';
  * Quick one-shot check for use in hot paths.
  */
 export declare function getMemoryPressureLevel(): PressureLevel;
-//# sourceMappingURL=backpressure.d.ts.map

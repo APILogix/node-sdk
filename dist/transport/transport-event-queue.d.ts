@@ -49,4 +49,3 @@ export declare class TransportEventQueue {
     clear(): void;
     droppedCount(): number;
 }
-//# sourceMappingURL=transport-event-queue.d.ts.map

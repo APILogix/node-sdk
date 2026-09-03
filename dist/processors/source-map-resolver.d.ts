@@ -94,4 +94,3 @@ declare class SourceMapResolver {
 export declare const sourceMapResolver: SourceMapResolver;
 export { SourceMapResolver };
 export type { SourceMapResolverOptions };
-//# sourceMappingURL=source-map-resolver.d.ts.map

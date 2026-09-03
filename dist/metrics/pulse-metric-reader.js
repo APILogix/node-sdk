@@ -200,4 +200,3 @@ export function extractLabels(attributes) {
     }
     return labels;
 }
-//# sourceMappingURL=pulse-metric-reader.js.map

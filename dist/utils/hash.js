@@ -19,4 +19,3 @@ export function sha1(input) {
 export function hmacSha256(key, data) {
     return createHmac('sha256', key).update(data).digest('hex');
 }
-//# sourceMappingURL=hash.js.map

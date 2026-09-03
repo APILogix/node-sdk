@@ -84,7 +84,7 @@ export function setupGlobalErrorHandlers() {
             catch {
                 // captureError should never throw, but we double-guard here
             }
-            logger.error("Uncaught exception detected — attempting to flush SDK events", {
+            logger.error("Uncaught exception detected — attempting to flush telemetry events", {
                 error: err.message,
                 stack: err.stack,
             });
@@ -237,4 +237,3 @@ export function resetGlobalErrorHandlers() {
     }
     registered = false;
 }
-//# sourceMappingURL=global-errors.js.map

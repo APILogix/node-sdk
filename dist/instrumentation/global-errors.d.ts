@@ -29,4 +29,3 @@ export declare function setupGlobalErrorHandlers(): void;
  * setupGlobalErrorHandlers (no-op).
  */
 export declare function resetGlobalErrorHandlers(): void;
-//# sourceMappingURL=global-errors.d.ts.map

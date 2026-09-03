@@ -20,7 +20,6 @@ import { captureBodySnapshot, evaluateCaptureGate, headerString, matchesIgnoredP
 export function fastifyPulsePlugin(fastify, opts, done) {
     const options = opts ?? {};
     fastify.addHook('onRequest', (request, _reply, hookDone) => {
-        console.log('[DEBUG] fastify onRequest:', request.url);
         try {
             const path = request.url.split('?')[0] || '/';
             if (matchesIgnoredPath(path, options.ignorePaths)) {
@@ -86,11 +85,43 @@ export function fastifyPulsePlugin(fastify, opts, done) {
             hookDone();
         }
     });
-    fastify.addHook('preHandler', (request, _reply, hookDone) => {
+    fastify.addHook('preHandler', (request, reply, hookDone) => {
         const state = request.pulse;
         if (!state) {
             hookDone();
             return;
+        }
+        const rawReply = reply;
+        if (typeof rawReply.send === 'function') {
+            const originalSend = rawReply.send;
+            rawReply.send = function (payload) {
+                if (state && !state.store.extra?.['fastifyErrorCaptured']) {
+                    const errStatusCode = payload?.statusCode
+                        ?? (rawReply.statusCode && rawReply.statusCode !== 200 ? rawReply.statusCode : undefined)
+                        ?? (rawReply.raw?.statusCode && rawReply.raw.statusCode !== 200 ? rawReply.raw.statusCode : undefined)
+                        ?? 500;
+                    if (payload instanceof Error || (payload && typeof payload === 'object' && payload.message && errStatusCode >= 400)) {
+                        withContext(state.store, () => {
+                            try {
+                                if (state.store.extra) {
+                                    ;
+                                    state.store.extra.mechanism = 'fastify.onError';
+                                    state.store.extra.handled = true;
+                                    state.store.extra.statusCode = errStatusCode;
+                                    state.store.extra.getStatusCode = () => errStatusCode;
+                                    state.store.extra.fastifyErrorCaptured = true;
+                                }
+                                attachRequestContextToActiveSpan(state.store);
+                                captureError(payload instanceof Error ? payload : new Error(String(payload.message)));
+                            }
+                            catch (sendErr) {
+                                getLogger().error('fastifyPulsePlugin reply.send error capture failed', { error: sendErr });
+                            }
+                        });
+                    }
+                }
+                return originalSend.apply(this, arguments);
+            };
         }
         withContext(state.store, () => {
             attachRequestContextToActiveSpan(state.store);
@@ -105,6 +136,23 @@ export function fastifyPulsePlugin(fastify, opts, done) {
         }
         withContext(state.store, () => {
             try {
+                const statusCode = reply.statusCode ?? reply.raw?.statusCode ?? 0;
+                if (statusCode >= 400 && !state.store.extra?.['fastifyErrorCaptured']) {
+                    const defaultMsg = statusCode === 422 ? 'Fastify 422 error' : statusCode === 401 ? 'Fastify 401 error' : `Fastify HTTP ${statusCode} error`;
+                    const err = reply?.raw?._error
+                        ?? request?.raw?._error
+                        ?? new Error(defaultMsg);
+                    if (state.store.extra) {
+                        ;
+                        state.store.extra.mechanism = 'fastify.onError';
+                        state.store.extra.handled = true;
+                        state.store.extra.statusCode = statusCode;
+                        state.store.extra.getStatusCode = () => statusCode;
+                        state.store.extra.fastifyErrorCaptured = true;
+                    }
+                    attachRequestContextToActiveSpan(state.store);
+                    captureError(err);
+                }
                 captureFastifyCompletion(request, reply, state);
             }
             catch (err) {
@@ -113,20 +161,55 @@ export function fastifyPulsePlugin(fastify, opts, done) {
             hookDone();
         });
     });
+    fastify.addHook('preSerialization', (request, reply, payload, hookDone) => {
+        const state = request.pulse;
+        if (state) {
+            const errStatusCode = payload?.statusCode
+                ?? (reply.statusCode && reply.statusCode !== 200 ? reply.statusCode : undefined)
+                ?? (reply.raw?.statusCode && reply.raw.statusCode !== 200 ? reply.raw.statusCode : undefined)
+                ?? 500;
+            if (payload instanceof Error || (payload && typeof payload === 'object' && payload.message && errStatusCode >= 400)) {
+                withContext(state.store, () => {
+                    try {
+                        if (state.store.extra) {
+                            ;
+                            state.store.extra.mechanism = 'fastify.onError';
+                            state.store.extra.handled = true;
+                            state.store.extra.statusCode = errStatusCode;
+                            state.store.extra.getStatusCode = () => errStatusCode;
+                        }
+                        attachRequestContextToActiveSpan(state.store);
+                        captureError(payload instanceof Error ? payload : new Error(String(payload.message)));
+                    }
+                    catch (err) {
+                        getLogger().error('fastifyPulsePlugin preSerialization error capture failed', { error: err });
+                    }
+                });
+            }
+        }
+        hookDone(null, payload);
+    });
     fastify.addHook('onError', (request, reply, error, hookDone) => {
-        console.log('[DEBUG] fastify onError triggered!', error.message, 'reply.statusCode=', reply.statusCode, 'reply.raw.statusCode=', reply.raw?.statusCode);
         const state = request.pulse;
         if (!state) {
-            console.log('[DEBUG] no state in request.pulse!');
-            hookDone();
+            if (typeof hookDone === 'function')
+                hookDone();
             return;
         }
+        const errStatusCode = error?.statusCode
+            ?? error?.status
+            ?? (reply.statusCode && reply.statusCode !== 200 ? reply.statusCode : undefined)
+            ?? (reply.raw?.statusCode && reply.raw.statusCode !== 200 ? reply.raw.statusCode : undefined)
+            ?? 500;
         withContext(state.store, () => {
             try {
                 if (state.store.extra) {
                     ;
                     state.store.extra.mechanism = 'fastify.onError';
                     state.store.extra.handled = true;
+                    state.store.extra.statusCode = errStatusCode;
+                    state.store.extra.getStatusCode = () => errStatusCode;
+                    state.store.extra.fastifyErrorCaptured = true;
                 }
                 attachRequestContextToActiveSpan(state.store);
                 captureError(error);
@@ -134,11 +217,114 @@ export function fastifyPulsePlugin(fastify, opts, done) {
             catch (err) {
                 getLogger().error('fastifyPulsePlugin error capture failed', { error: err });
             }
-            hookDone();
+            if (typeof hookDone === 'function')
+                hookDone();
         });
     });
+    fastify.addHook('onSend', (request, reply, payload, hookDone) => {
+        const state = request.pulse;
+        if (state && !state.store.extra?.['fastifyErrorCaptured']) {
+            let errToCapture = null;
+            let statusCode = reply.statusCode ?? reply.raw?.statusCode ?? 200;
+            if (payload instanceof Error) {
+                errToCapture = payload;
+                statusCode = payload.statusCode ?? statusCode;
+            }
+            else {
+                let payloadStr = '';
+                if (typeof payload === 'string') {
+                    payloadStr = payload;
+                }
+                else if (Buffer.isBuffer(payload)) {
+                    payloadStr = payload.toString('utf8');
+                }
+                else if (payload && typeof payload === 'object') {
+                    const obj = payload;
+                    if (typeof obj['statusCode'] === 'number') {
+                        statusCode = obj['statusCode'];
+                    }
+                    if (typeof obj['message'] === 'string' && statusCode >= 400) {
+                        errToCapture = new Error(String(obj['message']));
+                    }
+                }
+                if (payloadStr) {
+                    try {
+                        const parsed = JSON.parse(payloadStr);
+                        if (parsed && typeof parsed === 'object') {
+                            if (typeof parsed['statusCode'] === 'number') {
+                                statusCode = parsed['statusCode'];
+                            }
+                            if (typeof parsed['message'] === 'string' && statusCode >= 400) {
+                                errToCapture = new Error(parsed['message']);
+                            }
+                        }
+                    }
+                    catch { }
+                }
+            }
+            if (errToCapture && statusCode >= 400) {
+                withContext(state.store, () => {
+                    try {
+                        if (state.store.extra) {
+                            ;
+                            state.store.extra.mechanism = 'fastify.onError';
+                            state.store.extra.handled = true;
+                            state.store.extra.statusCode = statusCode;
+                            state.store.extra.getStatusCode = () => statusCode;
+                            state.store.extra.fastifyErrorCaptured = true;
+                        }
+                        attachRequestContextToActiveSpan(state.store);
+                        captureError(errToCapture);
+                    }
+                    catch (err) {
+                        getLogger().error('fastifyPulsePlugin onSend error capture failed', { error: err });
+                    }
+                });
+            }
+        }
+        hookDone(null, payload);
+    });
+    if (typeof fastify.setErrorHandler === 'function') {
+        const defaultErrorHandler = fastify.errorHandler;
+        fastify.setErrorHandler(function (error, request, reply) {
+            const state = request.pulse;
+            if (state) {
+                const errStatusCode = error?.statusCode
+                    ?? error?.status
+                    ?? (reply.statusCode && reply.statusCode !== 200 ? reply.statusCode : undefined)
+                    ?? (reply.raw?.statusCode && reply.raw.statusCode !== 200 ? reply.raw.statusCode : undefined)
+                    ?? 500;
+                withContext(state.store, () => {
+                    try {
+                        if (state.store.extra) {
+                            ;
+                            state.store.extra.mechanism = 'fastify.onError';
+                            state.store.extra.handled = true;
+                            state.store.extra.statusCode = errStatusCode;
+                            state.store.extra.getStatusCode = () => errStatusCode;
+                            state.store.extra.fastifyErrorCaptured = true;
+                        }
+                        attachRequestContextToActiveSpan(state.store);
+                        captureError(error);
+                    }
+                    catch (err) {
+                        getLogger().error('fastifyPulsePlugin errorHandler error capture failed', { error: err });
+                    }
+                });
+            }
+            if (typeof defaultErrorHandler === 'function') {
+                return defaultErrorHandler.call(this, error, request, reply);
+            }
+            if (typeof reply.send === 'function') {
+                reply.send(error);
+            }
+        });
+    }
     done();
 }
+;
+fastifyPulsePlugin[Symbol.for('skip-override')] = true;
+fastifyPulsePlugin[Symbol.for('fastify.display-name')] = 'pulse-fastify';
 function captureFastifyCompletion(request, reply, state) {
     if (state.captured)
         return;
@@ -204,4 +390,3 @@ function readContentLength(value) {
     }
     return undefined;
 }
-//# sourceMappingURL=fastify.js.map

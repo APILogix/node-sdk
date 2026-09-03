@@ -35,7 +35,7 @@ function initPayload(snapshot) {
     };
 }
 describe('single-source remote configuration runtime', () => {
-    it('performs one header-auth /api/v1/init request and no startup config request', async () => {
+    it('performs one header-auth /v1/init request and no startup config request', async () => {
         const calls = [];
         const fetchImpl = async (input, init) => {
             calls.push({
@@ -45,11 +45,11 @@ describe('single-source remote configuration runtime', () => {
             });
             return response(initPayload(config()));
         };
-        const remote = new RemoteConfigClient({ apiKey: 'secret-key', baseUrl: 'https://api.example.test', fetchImpl });
+        const remote = new RemoteConfigClient({ apiKey: 'secret-key', fetchImpl });
         const initResponse = await remote.initialize();
         ConfigManager.getInstance().initialize(remote, initResponse.config);
         assert.equal(calls.length, 1);
-        assert.equal(calls[0]?.url, 'https://api.example.test/api/v1/init');
+        assert.equal(calls[0]?.url, 'http://127.0.0.1:5000/v1/init');
         assert.deepEqual(calls[0]?.body, {});
         assert.equal(calls[0]?.headers?.['X-API-Key'], 'secret-key');
     });
@@ -66,7 +66,6 @@ describe('single-source remote configuration runtime', () => {
         for (const payload of invalidPayloads) {
             const remote = new RemoteConfigClient({
                 apiKey: 'key',
-                baseUrl: 'https://api.example.test',
                 fetchImpl: async () => response(payload),
             });
             await assert.rejects(() => remote.initialize(), /Init response/);
@@ -85,7 +84,7 @@ describe('single-source remote configuration runtime', () => {
             await refreshGate;
             return response(config(0.75, '2026-07-30T00:01:00.000Z'));
         };
-        const remote = new RemoteConfigClient({ apiKey: 'key', baseUrl: 'https://api.example.test', fetchImpl });
+        const remote = new RemoteConfigClient({ apiKey: 'key', fetchImpl });
         const initial = await remote.initialize();
         const manager = ConfigManager.getInstance();
         manager.initialize(remote, initial.config);
@@ -106,7 +105,7 @@ describe('single-source remote configuration runtime', () => {
         const fetchImpl = async (input) => String(input).endsWith('/v1/init')
             ? response(initPayload(config(0.1)))
             : response(next);
-        const remote = new RemoteConfigClient({ apiKey: 'key', baseUrl: 'https://api.example.test', fetchImpl });
+        const remote = new RemoteConfigClient({ apiKey: 'key', fetchImpl });
         const initial = await remote.initialize();
         const manager = ConfigManager.getInstance();
         const before = manager.initialize(remote, initial.config);
@@ -135,7 +134,7 @@ describe('single-source remote configuration runtime', () => {
                 return response({ error: true }, 500);
             return response(config(0.8, '2026-07-30T00:03:00.000Z'));
         };
-        const remote = new RemoteConfigClient({ apiKey: 'key', baseUrl: 'https://api.example.test', fetchImpl });
+        const remote = new RemoteConfigClient({ apiKey: 'key', fetchImpl });
         const initial = await remote.initialize();
         const manager = ConfigManager.getInstance();
         const original = manager.initialize(remote, initial.config);

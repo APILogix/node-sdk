@@ -214,4 +214,3 @@ export declare function withScope<T>(fn: (scope: ScopeManager) => T): T;
  *   3. Event's own values (never overwritten)
  */
 export declare function applyScopeToEvent(event: Record<string, unknown>): Record<string, unknown>;
-//# sourceMappingURL=scope.d.ts.map

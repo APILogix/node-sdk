@@ -29,4 +29,3 @@ export interface MongoDBSpanAttributes {
 }
 export { OTelMongoDBInstrumentation };
 export default createMongoDBInstrumentation;
-//# sourceMappingURL=mongodb.d.ts.map

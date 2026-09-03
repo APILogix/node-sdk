@@ -206,4 +206,3 @@ function serializeLabels(labels) {
 // ─── Singleton ──────────────────────────────────────────────────────────────
 export const metricsRegistry = new MetricsRegistry();
 export { MetricsRegistry };
-//# sourceMappingURL=registry.js.map

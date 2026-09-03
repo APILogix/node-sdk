@@ -28,4 +28,3 @@ export declare class ConfigApplier {
     apply(diff: ConfigDiff, previous: Readonly<RemoteConfigResponse>, current: Readonly<RemoteConfigResponse>): Promise<void>;
 }
 export {};
-//# sourceMappingURL=config-applier.d.ts.map

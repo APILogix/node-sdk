@@ -8,6 +8,7 @@ export declare class ProfilingSubsystem {
     private readonly emitter;
     private metadata;
     private readonly activeProfiles;
+    private activeCpuProfileKey;
     private inspectorSession;
     private inspectorAvailable;
     private destroyed;
@@ -27,4 +28,3 @@ export declare class ProfilingSubsystem {
     static reset(): void;
 }
 export {};
-//# sourceMappingURL=profiling-subsystem.d.ts.map

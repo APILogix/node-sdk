@@ -121,7 +121,7 @@ class SDKClient {
     }
     getApiKey() {
         if (!this.apiKeyValue)
-            throw new SDKError('SDK API key missing', 'SDK_API_KEY_MISSING');
+            throw new SDKError('Telemetry API key missing', 'SDK_API_KEY_MISSING');
         return this.apiKeyValue;
     }
     hasSameIdentity(options) {

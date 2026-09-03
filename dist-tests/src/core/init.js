@@ -30,6 +30,7 @@ import { getSessionManager, resetSessionManager } from '../session/session-manag
 import { processEvent } from './event-pipeline.js';
 import { eventQueue } from '../transport/queue.js';
 import { persistentStorage } from '../storage/persistent-storage.js';
+import { persistenceGovernor } from '../storage/persistence-governor.js';
 import { initializePlugins } from '../plugins/index.js';
 import { sourceMapResolver } from '../processors/source-map-resolver.js';
 import { slowRequestDetector } from '../processors/slow-request-detector.js';
@@ -49,14 +50,14 @@ export async function init(options) {
     validateInitOptions(options);
     if (client.initialized) {
         if (!client.hasSameIdentity(options)) {
-            throw new SDKError('SDK already initialized with different options', 'SDK_ALREADY_INITIALIZED');
+            throw new SDKError('Telemetry already initialized with different options', 'SDK_ALREADY_INITIALIZED');
         }
         return ConfigManager.getInstance().getConfig();
     }
     const existing = client.getInitPromise();
     if (existing) {
         if (!client.hasSamePendingIdentity(options)) {
-            throw new SDKError('SDK initialization already in progress with different options', 'SDK_INIT_IN_PROGRESS');
+            throw new SDKError('Telemetry initialization already in progress with different options', 'SDK_INIT_IN_PROGRESS');
         }
         return existing;
     }
@@ -76,16 +77,14 @@ async function initialize(options) {
     const manager = ConfigManager.getInstance();
     client.setOptions(options);
     client.initBreadcrumbs(options.maxBreadcrumbs ?? 100);
-    logger.info('SDK initialization started', {
+    logger.info('Telemetry initialization started', {
         endpoint: '/v1/init',
-        baseUrl: options.baseUrl,
     });
     try {
         // Startup performs one network operation. No config prefetch, retry,
         // fallback, or immediate /v1/sdk-config request exists.
         const remoteClient = new RemoteConfigClient({
             apiKey: options.apiKey,
-            ...(options.baseUrl !== undefined ? { baseUrl: options.baseUrl } : {}),
         });
         const response = await remoteClient.initialize();
         const config = manager.initialize(remoteClient, response.config);
@@ -98,6 +97,7 @@ async function initialize(options) {
         const securityScrubber = SecurityScrubber.initialize(config.privacy);
         const entitlementGate = EntitlementGate.initialize(config.entitlements);
         tenantGovernor.configure(config.limits.tenantGovernance);
+        persistenceGovernor.configure(config.limits.persistenceGovernance);
         const transportRouter = await TransportRouter.initialize(config.transport, options.apiKey, undefined, config.limits);
         if (config.killswitches.disableTransport || config.killswitches.disableSDK)
             transportRouter.disable();
@@ -265,6 +265,7 @@ async function initialize(options) {
                 if (diff.changes.has('limits.tenantGovernance')) {
                     tenantGovernor.configure(current.limits.tenantGovernance);
                 }
+                persistenceGovernor.configure(current.limits.persistenceGovernance);
                 if (diff.changes.has('limits.maxMemoryMb'))
                     configureAdaptivePressure(current);
                 if (diff.changes.has('limits.maxQueueSize'))
@@ -332,17 +333,13 @@ async function initialize(options) {
         client.markInitialized();
         filterBufferedEvents(config);
         await replayBufferedEvents(persistedEvents);
-        logger.info('SDK initialized from /v1/init configuration', {
-            projectId: client.metadata.projectId,
-            environment: client.metadata.environment,
-            release: client.metadata.release,
-            configHash: manager.getConfig().meta.configHash,
+        logger.info('Telemetry initialized from remote configuration', {
             activeSubsystems: featureController.getActiveSubsystems(),
         });
         return manager.getConfig();
     }
     catch (error) {
-        logger.error('SDK initialization failed; host application will continue without telemetry', { error });
+        logger.error('Telemetry initialization failed; host application will continue without telemetry', { error });
         await cleanupFailedInitialization();
         return undefined;
     }
@@ -352,7 +349,7 @@ function validateInitOptions(options) {
     if (result.success)
         return;
     const issues = result.error.issues.map(issue => `${issue.path.join('.')}: ${issue.message}`);
-    throw new SDKError(`Invalid SDK init options: ${issues.join('; ')}`, 'INVALID_INIT_OPTIONS', { issues });
+    throw new SDKError(`Invalid telemetry init options: ${issues.join('; ')}`, 'INVALID_INIT_OPTIONS', { issues });
 }
 function getQueueUtilization() {
     let utilization = eventQueue.getUtilization();

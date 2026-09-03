@@ -3,7 +3,11 @@ import type { SDKPlugin, EventProcessor, BreadcrumbProcessor } from './plugin.js
 import type { SeverityLevel } from './severity.js';
 /** Bumped on incompatible schema changes. SDKs reject configs with a higher major. */
 export declare const REMOTE_CONFIG_SCHEMA_VERSION = 1;
-export interface RemoteConfigResponse {
+/**
+ * Top-level normalized remote configuration snapshot.
+ * Represents the authoritative, fully validated, and deep-frozen state of the SDK.
+ */
+export interface NormalizedRemoteConfig {
     /** Schema version. Must equal REMOTE_CONFIG_SCHEMA_VERSION on the SDK. */
     readonly schemaVersion: number;
     readonly sdk: SdkIdentityConfig;
@@ -17,7 +21,19 @@ export interface RemoteConfigResponse {
     readonly meta: ConfigMeta;
     /** Billing and API entitlements resolved by the backend. */
     readonly entitlements: EntitlementsConfig;
+    readonly offlineQueue?: OfflineQueueConfig | undefined;
+    readonly profiling?: ProfilingConfig | undefined;
+    readonly replay?: SessionReplayConfig | undefined;
+    readonly errors?: ErrorsConfig | undefined;
+    readonly tracing?: TracingConfig | undefined;
+    readonly metrics?: MetricsConfig | undefined;
+    readonly logs?: LogsConfig | undefined;
+    readonly crons?: CronsConfig | undefined;
 }
+/** Backward-compatibility alias */
+export type RemoteConfigResponse = NormalizedRemoteConfig;
+/** Wire shape prior to validation and normalization */
+export type RawRemoteConfig = Record<string, unknown>;
 export interface SdkIdentityConfig {
     readonly projectId: string;
     /** Backend-owned service identity. Falls back to projectId when omitted. */
@@ -51,17 +67,17 @@ export interface FeaturesConfig {
  * separate `ignoredRoutes` list).
  */
 export interface RouteSamplingRates {
-    readonly traces?: number;
-    readonly requests?: number;
-    readonly spans?: number;
-    readonly errors?: number;
-    readonly messages?: number;
-    readonly profiles?: number;
-    readonly replays?: number;
-    readonly metrics?: number;
-    readonly logs?: number;
-    readonly events?: number;
-    readonly crons?: number;
+    readonly traces?: number | undefined;
+    readonly requests?: number | undefined;
+    readonly spans?: number | undefined;
+    readonly errors?: number | undefined;
+    readonly messages?: number | undefined;
+    readonly profiles?: number | undefined;
+    readonly replays?: number | undefined;
+    readonly metrics?: number | undefined;
+    readonly logs?: number | undefined;
+    readonly events?: number | undefined;
+    readonly crons?: number | undefined;
 }
 export interface SamplingConfig {
     readonly traces: number;
@@ -114,11 +130,11 @@ export interface PrismaInstrumentationConfig {
 export interface BullMQInstrumentationConfig {
     readonly enabled: boolean;
     /** Emit per-job spans for `Queue.addBulk` / `FlowProducer.addBulk`. Default: true. */
-    readonly emitCreateSpansForBulk?: boolean;
+    readonly emitCreateSpansForBulk?: boolean | undefined;
     /** Emit per-job spans for `FlowProducer.add` / `addBulk`. Default: true. */
-    readonly emitCreateSpansForFlow?: boolean;
+    readonly emitCreateSpansForFlow?: boolean | undefined;
     /** Only create producer spans when a parent span is active. Default: false. */
-    readonly requireParentSpanForPublish?: boolean;
+    readonly requireParentSpanForPublish?: boolean | undefined;
 }
 export interface PgInstrumentationConfig {
     readonly enabled: boolean;
@@ -162,6 +178,7 @@ export interface PiiDetectionConfig {
     readonly maskPhones: boolean;
     readonly maskIPs: boolean;
 }
+export type MemoryLimit = number | 'auto';
 /**
  * Hard caps that bound the SDK's resource use and per-event size. Backend
  * sets the values; snapshots outside the SDK safety bounds are rejected as a
@@ -175,14 +192,23 @@ export interface TenantGovernanceConfig {
     /** Additional high-priority/fatal events accepted after normal quota. */
     readonly criticalReserve: number;
 }
+export interface PersistenceGovernanceConfig {
+    /** Maximum non-critical events persisted to disk per rolling minute. */
+    readonly maxPersistPerMinute: number;
+    /** Whether memory/queue/GC/event-loop pressure should reduce non-critical persistence. */
+    readonly adaptive: boolean;
+    /** Minimum interval between aggregated budget-exceeded SDK warnings. */
+    readonly budgetExceededLogIntervalMs: number;
+}
 export interface LimitsConfig {
     readonly maxSpansPerTrace: number;
     readonly maxSpanAttributes: number;
     readonly maxAttributeLength: number;
     readonly maxPayloadSize: number;
     readonly maxQueueSize: number;
-    readonly maxMemoryMb: number | 'auto';
+    readonly maxMemoryMb: MemoryLimit;
     readonly tenantGovernance: TenantGovernanceConfig;
+    readonly persistenceGovernance: PersistenceGovernanceConfig;
 }
 /**
  * Operational fire-extinguishers. Independent of `features.*` — used to
@@ -226,19 +252,92 @@ export interface EntitlementsConfig {
     /** Automatic/runtime metrics collection. */
     readonly metrics: boolean;
 }
+export interface OfflineQueueConfig {
+    readonly enabled: boolean;
+    readonly maxFileSizeBytes: number;
+    readonly maxEvents: number;
+    readonly eventTtlMs: number;
+    readonly ioTimeoutMs: number;
+    readonly flushDebounceMs?: number | undefined;
+}
+export interface ProfilingConfig {
+    readonly enabled: boolean;
+    readonly cpu: boolean;
+    readonly heap: boolean;
+    readonly sampleRate: number;
+    readonly maxDurationMs: number;
+    readonly sampleIntervalMicroseconds?: number | undefined;
+}
+export interface SessionReplayConfig {
+    readonly enabled: boolean;
+    readonly sampleRate: number;
+    readonly idleTimeoutMs: number;
+    readonly maxDurationMs: number;
+    readonly maxBufferSize?: number | undefined;
+    readonly maskAllInputs?: boolean | undefined;
+}
+export interface ErrorsConfig {
+    readonly captureUnhandledRejections: boolean;
+    readonly captureUncaughtExceptions: boolean;
+    readonly captureConsoleErrors: boolean;
+    readonly stackTraceLimit: number;
+    readonly attachSourceContext: boolean;
+    readonly grouping: {
+        readonly enabled: boolean;
+        readonly normalizePaths: boolean;
+    };
+}
+export interface TracingConfig {
+    readonly maxSpansPerTrace: number;
+    readonly maxSpanAttributes: number;
+    readonly maxTraceDurationMs: number;
+    readonly propagation: {
+        readonly w3c: boolean;
+        readonly baggage: boolean;
+        readonly b3: boolean;
+    };
+}
+export interface MetricsConfig {
+    readonly runtimeMetrics: boolean;
+    readonly eventLoopMonitoring: boolean;
+    readonly gcMonitoring: boolean;
+    readonly pushIntervalMs: number;
+    readonly cardinalityLimit: number;
+}
+export interface LogsConfig {
+    readonly enabled: boolean;
+    readonly captureConsole: boolean;
+    readonly levels: readonly string[];
+    readonly maxLogSize: number;
+}
+export interface CronsConfig {
+    readonly enabled: boolean;
+    readonly checkInMarginMs: number;
+    readonly timeoutMs: number;
+}
 /**
  * Per-event-type ingestion routes. The set of route names is fixed by the
  * SDK contract — adding a new event type requires an SDK release.
  */
 export type TransportRouteName = 'traces' | 'requests' | 'spans' | 'errors' | 'metrics' | 'logs' | 'profiles' | 'events' | 'crons' | 'replays';
+export type CompressionType = 'gzip' | 'none';
+export type RoutePriority = 'critical' | 'high' | 'normal' | 'low';
+export type OverflowStrategy = 'drop_oldest' | 'drop_newest';
+export type BackoffStrategy = 'exponential' | 'linear' | 'fixed';
+export declare enum ConfigState {
+    Pending = "pending",
+    Live = "live",
+    Fallback = "fallback",
+    Destroyed = "destroyed"
+}
 export interface TransportRouteConfig {
     readonly url: string;
     readonly batchSize: number;
     readonly flushIntervalMs: number;
     readonly timeoutMs: number;
-    readonly compression: 'gzip' | 'none';
+    readonly compression: CompressionType;
     /** Internal scheduling priority. */
-    readonly priority: 'critical' | 'high' | 'normal' | 'low';
+    readonly priority: RoutePriority;
 }
 export interface TransportRemoteConfig {
     readonly retry: TransportRetryConfig;
@@ -249,17 +348,17 @@ export interface TransportRemoteConfig {
 }
 export interface TransportConnectionConfig {
     readonly maxTotalConnections: number;
-    readonly maxConnectionsPerRoute?: Partial<Readonly<Record<TransportRouteName, number>>>;
+    readonly maxConnectionsPerRoute?: Partial<Readonly<Record<TransportRouteName, number>>> | undefined;
     readonly acquireTimeoutMs: number;
 }
 export interface TransportRetryConfig {
     readonly enabled: boolean;
     readonly maxRetries: number;
-    readonly backoff: 'exponential' | 'linear' | 'fixed';
+    readonly backoff: BackoffStrategy;
     readonly baseDelayMs: number;
 }
 export interface TransportQueueConfig {
-    readonly overflowStrategy: 'drop_oldest' | 'drop_newest';
+    readonly overflowStrategy: OverflowStrategy;
     /** Per-route queue cap; also bounded by limits.maxQueueSize. */
     readonly maxSize: number;
     /** Slots protected from non-critical telemetry. */
@@ -268,10 +367,27 @@ export interface TransportQueueConfig {
 export interface ConfigMeta {
     readonly generatedAt: string;
     readonly generatedBy: string;
-    readonly configHash?: string;
+    readonly configHash?: string | undefined;
 }
-/** Result of diffing two RemoteConfigResponse objects. */
+/**
+ * Detailed descriptor for a single leaf or structured property mutation.
+ */
+export interface FieldChange {
+    /** Dot-delimited canonical path, e.g. "features.profiling", "transport.routes.errors.batchSize" */
+    readonly path: string;
+    /** Value in the previous configuration snapshot (undefined if newly added) */
+    readonly previousValue: unknown;
+    /** Value in the incoming configuration snapshot (undefined if removed) */
+    readonly nextValue: unknown;
+    /** Classification of the mutation */
+    readonly type: 'added' | 'removed' | 'modified';
+}
+/**
+ * Result of diffing two NormalizedRemoteConfig (or RemoteConfigResponse) snapshots.
+ */
 export interface ConfigDiff {
+    /** True if any semantic configuration change exists (ignoring benign meta timestamp updates) */
+    readonly hasChanges: boolean;
     readonly sdkChanged: boolean;
     readonly featuresChanged: boolean;
     readonly killswitchesChanged: boolean;
@@ -281,11 +397,36 @@ export interface ConfigDiff {
     readonly limitsChanged: boolean;
     readonly instrumentationChanged: boolean;
     readonly entitlementsChanged: boolean;
+    readonly profilingChanged: boolean;
+    readonly replayChanged: boolean;
+    readonly tracingChanged: boolean;
+    readonly metricsChanged: boolean;
+    readonly loggingChanged: boolean;
+    readonly errorsChanged: boolean;
+    readonly offlineQueueChanged?: boolean | undefined;
+    readonly logsChanged?: boolean | undefined;
+    readonly cronsChanged?: boolean | undefined;
+    readonly errorsSectionChanged?: boolean | undefined;
+    readonly tracingSectionChanged?: boolean | undefined;
+    readonly metricsSectionChanged?: boolean | undefined;
     readonly changes: ReadonlyMap<string, {
         old: unknown;
         new: unknown;
+        changeType?: 'added' | 'removed' | 'modified' | undefined;
     }>;
+    readonly addedKeys: readonly string[];
+    readonly removedKeys: readonly string[];
+    readonly modifiedKeys: readonly string[];
+    readonly fieldChanges: readonly FieldChange[];
 }
+export declare function isNormalizedRemoteConfig(value: unknown): value is NormalizedRemoteConfig;
+export declare function isRawRemoteConfig(value: unknown): value is RawRemoteConfig;
+export declare function isTransportRouteName(name: string): name is TransportRouteName;
+export declare function isCompressionType(comp: string): comp is CompressionType;
+export declare function isRoutePriority(prio: string): prio is RoutePriority;
+export declare function isOverflowStrategy(strat: string): strat is OverflowStrategy;
+export declare function isBackoffStrategy(strat: string): strat is BackoffStrategy;
+export declare function isMemoryLimit(mem: unknown): mem is MemoryLimit;
 /**
  * Local integration options. Runtime telemetry policy is intentionally absent:
  * identity, features, sampling, privacy, limits, transport, instrumentation,
@@ -293,23 +434,22 @@ export interface ConfigDiff {
  */
 export interface SDKInitOptions {
     readonly apiKey: string;
-    readonly applicationName?: string;
-    readonly applicationVersion?: string;
-    readonly packageJsonPath?: string;
-    readonly maxBreadcrumbs?: number;
-    readonly plugins?: readonly SDKPlugin[];
-    readonly eventProcessors?: readonly EventProcessor[];
-    readonly beforeBreadcrumb?: BreadcrumbProcessor;
-    readonly beforeSend?: (event: Record<string, unknown>) => Record<string, unknown> | null | Promise<Record<string, unknown> | null>;
-    readonly debug?: boolean;
-    readonly logLevel?: SeverityLevel;
-    readonly baseUrl?: string;
-    readonly shutdownTimeoutMs?: number;
+    readonly applicationName?: string | undefined;
+    readonly applicationVersion?: string | undefined;
+    readonly packageJsonPath?: string | undefined;
+    readonly maxBreadcrumbs?: number | undefined;
+    readonly plugins?: readonly SDKPlugin[] | undefined;
+    readonly eventProcessors?: readonly EventProcessor[] | undefined;
+    readonly beforeBreadcrumb?: BreadcrumbProcessor | undefined;
+    readonly beforeSend?: ((event: Record<string, unknown>) => Record<string, unknown> | null | Promise<Record<string, unknown> | null>) | undefined;
+    readonly debug?: boolean | undefined;
+    readonly logLevel?: SeverityLevel | undefined;
+    readonly shutdownTimeoutMs?: number | undefined;
     readonly sourceMaps?: {
-        readonly paths?: readonly string[];
-        readonly allowRemote?: boolean;
-        readonly embedSourceContent?: boolean;
-    };
+        readonly paths?: readonly string[] | undefined;
+        readonly allowRemote?: boolean | undefined;
+        readonly embedSourceContent?: boolean | undefined;
+    } | undefined;
 }
 export declare const sdkInitOptionsSchema: z.ZodObject<{
     apiKey: z.ZodString;
@@ -324,12 +464,11 @@ export declare const sdkInitOptionsSchema: z.ZodObject<{
     debug: z.ZodOptional<z.ZodBoolean>;
     logLevel: z.ZodOptional<z.ZodEnum<{
         debug: "debug";
-        info: "info";
-        warning: "warning";
         error: "error";
         fatal: "fatal";
+        info: "info";
+        warning: "warning";
     }>>;
-    baseUrl: z.ZodOptional<z.ZodString>;
     shutdownTimeoutMs: z.ZodOptional<z.ZodNumber>;
     sourceMaps: z.ZodOptional<z.ZodObject<{
         paths: z.ZodOptional<z.ZodReadonly<z.ZodArray<z.ZodString>>>;
@@ -337,4 +476,3 @@ export declare const sdkInitOptionsSchema: z.ZodObject<{
         embedSourceContent: z.ZodOptional<z.ZodBoolean>;
     }, z.core.$strict>>;
 }, z.core.$strict>;
-//# sourceMappingURL=config.d.ts.map

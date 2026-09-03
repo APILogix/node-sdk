@@ -40,4 +40,3 @@ export interface Recommendation {
     message: string;
     estimatedImpact?: string;
 }
-//# sourceMappingURL=types.d.ts.map

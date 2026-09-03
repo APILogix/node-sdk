@@ -35,4 +35,3 @@ function parsePackage(path) {
         return null;
     }
 }
-//# sourceMappingURL=package-metadata.js.map

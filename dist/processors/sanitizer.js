@@ -229,4 +229,3 @@ export function sanitizeHeaders(headers) {
 function isSafeKey(key) {
     return key !== '__proto__' && key !== 'constructor' && key !== 'prototype';
 }
-//# sourceMappingURL=sanitizer.js.map

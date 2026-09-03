@@ -114,10 +114,9 @@ describe('BatchManager concurrency and shutdown', () => {
     }
     const remote = new RemoteConfigClient({
       apiKey: 'test',
-      baseUrl: 'https://control.example.test',
       fetchImpl: async input => {
         configCalls++
-        assert.equal(String(input), 'https://control.example.test/api/v1/sdk-config')
+        assert.equal(String(input), 'http://127.0.0.1:5000/v1/sdk-config')
         return new Response(JSON.stringify(refreshed), {
           status: 200,
           headers: { 'content-type': 'application/json' },

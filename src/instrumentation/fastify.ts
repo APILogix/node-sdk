@@ -53,6 +53,8 @@ type FastifyInstance = {
   addHook(name: 'preHandler', handler: (request: FastifyRequest, reply: FastifyReply, done: HookDone) => void): void
   addHook(name: 'onResponse', handler: (request: FastifyRequest, reply: FastifyReply, done: HookDone) => void): void
   addHook(name: 'onError', handler: (request: FastifyRequest, reply: FastifyReply, error: Error, done: HookDone) => void): void
+  addHook(name: 'preSerialization', handler: (request: FastifyRequest, reply: FastifyReply, payload: unknown, done: (err: Error | null, payload?: unknown) => void) => void): void
+  addHook(name: 'onSend', handler: (request: FastifyRequest, reply: FastifyReply, payload: unknown, done: (err: Error | null, payload?: unknown) => void) => void): void
 }
 
 type HookDone = (err?: Error) => void
@@ -102,7 +104,6 @@ export function fastifyPulsePlugin(
   const options = opts ?? {}
 
   fastify.addHook('onRequest', (request, _reply, hookDone) => {
-    console.log('[DEBUG] fastify onRequest:', request.url)
     try {
       const path = request.url.split('?')[0] || '/'
 
@@ -180,11 +181,42 @@ export function fastifyPulsePlugin(
     }
   })
 
-  fastify.addHook('preHandler', (request, _reply, hookDone) => {
+  fastify.addHook('preHandler', (request, reply, hookDone) => {
     const state = request.pulse
     if (!state) {
       hookDone()
       return
+    }
+
+    const rawReply = reply as unknown as { send?: (...args: unknown[]) => unknown; statusCode?: number; raw?: { statusCode?: number } }
+    if (typeof rawReply.send === 'function') {
+      const originalSend = rawReply.send
+      rawReply.send = function (this: unknown, payload?: unknown) {
+        if (state && !(state.store.extra as Record<string, unknown> | undefined)?.['fastifyErrorCaptured']) {
+          const errStatusCode = (payload as unknown as { statusCode?: number })?.statusCode
+            ?? (rawReply.statusCode && rawReply.statusCode !== 200 ? rawReply.statusCode : undefined)
+            ?? (rawReply.raw?.statusCode && rawReply.raw.statusCode !== 200 ? rawReply.raw.statusCode : undefined)
+            ?? 500
+          if (payload instanceof Error || (payload && typeof payload === 'object' && (payload as Record<string, unknown>).message && errStatusCode >= 400)) {
+            withContext(state.store, () => {
+              try {
+                if (state.store.extra) {
+                  ;(state.store.extra as Record<string, unknown>).mechanism = 'fastify.onError'
+                  ;(state.store.extra as Record<string, unknown>).handled = true
+                  ;(state.store.extra as Record<string, unknown>).statusCode = errStatusCode
+                  ;(state.store.extra as Record<string, unknown>).getStatusCode = () => errStatusCode
+                  ;(state.store.extra as Record<string, unknown>).fastifyErrorCaptured = true
+                }
+                attachRequestContextToActiveSpan(state.store)
+                captureError(payload instanceof Error ? payload : new Error(String((payload as Record<string, unknown>).message)))
+              } catch (sendErr) {
+                getLogger().error('fastifyPulsePlugin reply.send error capture failed', { error: sendErr })
+              }
+            })
+          }
+        }
+        return originalSend.apply(this, arguments as unknown as [unknown])
+      }
     }
 
     withContext(state.store, () => {
@@ -202,6 +234,22 @@ export function fastifyPulsePlugin(
 
     withContext(state.store, () => {
       try {
+        const statusCode = reply.statusCode ?? reply.raw?.statusCode ?? 0
+        if (statusCode >= 400 && !(state.store.extra as Record<string, unknown> | undefined)?.['fastifyErrorCaptured']) {
+          const defaultMsg = statusCode === 422 ? 'Fastify 422 error' : statusCode === 401 ? 'Fastify 401 error' : `Fastify HTTP ${statusCode} error`
+          const err = (reply as unknown as { raw?: { _error?: Error } })?.raw?._error
+            ?? (request as unknown as { raw?: { _error?: Error } })?.raw?._error
+            ?? new Error(defaultMsg)
+          if (state.store.extra) {
+            ;(state.store.extra as Record<string, unknown>).mechanism = 'fastify.onError'
+            ;(state.store.extra as Record<string, unknown>).handled = true
+            ;(state.store.extra as Record<string, unknown>).statusCode = statusCode
+            ;(state.store.extra as Record<string, unknown>).getStatusCode = () => statusCode
+            ;(state.store.extra as Record<string, unknown>).fastifyErrorCaptured = true
+          }
+          attachRequestContextToActiveSpan(state.store)
+          captureError(err)
+        }
         captureFastifyCompletion(request, reply, state)
       } catch (err) {
         getLogger().error('fastifyPulsePlugin completion failed', { error: err })
@@ -210,32 +258,165 @@ export function fastifyPulsePlugin(
     })
   })
 
+  fastify.addHook('preSerialization', (request, reply, payload, hookDone) => {
+    const state = request.pulse
+    if (state) {
+      const errStatusCode = (payload as unknown as { statusCode?: number })?.statusCode
+        ?? (reply.statusCode && reply.statusCode !== 200 ? reply.statusCode : undefined)
+        ?? (reply.raw?.statusCode && reply.raw.statusCode !== 200 ? reply.raw.statusCode : undefined)
+        ?? 500
+      if (payload instanceof Error || (payload && typeof payload === 'object' && (payload as Record<string, unknown>).message && errStatusCode >= 400)) {
+        withContext(state.store, () => {
+          try {
+            if (state.store.extra) {
+              ;(state.store.extra as Record<string, unknown>).mechanism = 'fastify.onError'
+              ;(state.store.extra as Record<string, unknown>).handled = true
+              ;(state.store.extra as Record<string, unknown>).statusCode = errStatusCode
+              ;(state.store.extra as Record<string, unknown>).getStatusCode = () => errStatusCode
+            }
+            attachRequestContextToActiveSpan(state.store)
+            captureError(payload instanceof Error ? payload : new Error(String((payload as Record<string, unknown>).message)))
+          } catch (err) {
+            getLogger().error('fastifyPulsePlugin preSerialization error capture failed', { error: err })
+          }
+        })
+      }
+    }
+    hookDone(null, payload)
+  })
+
   fastify.addHook('onError', (request, reply, error, hookDone) => {
-    console.log('[DEBUG] fastify onError triggered!', error.message, 'reply.statusCode=', reply.statusCode, 'reply.raw.statusCode=', reply.raw?.statusCode)
     const state = request.pulse
     if (!state) {
-      console.log('[DEBUG] no state in request.pulse!')
-      hookDone()
+      if (typeof hookDone === 'function') hookDone()
       return
     }
+
+    const errStatusCode = (error as unknown as { statusCode?: number; status?: number })?.statusCode
+      ?? (error as unknown as { statusCode?: number; status?: number })?.status
+      ?? (reply.statusCode && reply.statusCode !== 200 ? reply.statusCode : undefined)
+      ?? (reply.raw?.statusCode && reply.raw.statusCode !== 200 ? reply.raw.statusCode : undefined)
+      ?? 500
 
     withContext(state.store, () => {
       try {
         if (state.store.extra) {
           ;(state.store.extra as Record<string, unknown>).mechanism = 'fastify.onError'
           ;(state.store.extra as Record<string, unknown>).handled = true
+          ;(state.store.extra as Record<string, unknown>).statusCode = errStatusCode
+          ;(state.store.extra as Record<string, unknown>).getStatusCode = () => errStatusCode
+          ;(state.store.extra as Record<string, unknown>).fastifyErrorCaptured = true
         }
         attachRequestContextToActiveSpan(state.store)
         captureError(error)
       } catch (err) {
         getLogger().error('fastifyPulsePlugin error capture failed', { error: err })
       }
-      hookDone()
+      if (typeof hookDone === 'function') hookDone()
     })
   })
 
+  fastify.addHook('onSend', (request, reply, payload, hookDone) => {
+    const state = request.pulse
+    if (state && !(state.store.extra as Record<string, unknown> | undefined)?.['fastifyErrorCaptured']) {
+      let errToCapture: Error | null = null
+      let statusCode = reply.statusCode ?? reply.raw?.statusCode ?? 200
+
+      if (payload instanceof Error) {
+        errToCapture = payload
+        statusCode = (payload as unknown as { statusCode?: number }).statusCode ?? statusCode
+      } else {
+        let payloadStr = ''
+        if (typeof payload === 'string') {
+          payloadStr = payload
+        } else if (Buffer.isBuffer(payload)) {
+          payloadStr = payload.toString('utf8')
+        } else if (payload && typeof payload === 'object') {
+          const obj = payload as Record<string, unknown>
+          if (typeof obj['statusCode'] === 'number') {
+            statusCode = obj['statusCode'] as number
+          }
+          if (typeof obj['message'] === 'string' && statusCode >= 400) {
+            errToCapture = new Error(String(obj['message']))
+          }
+        }
+
+        if (payloadStr) {
+          try {
+            const parsed = JSON.parse(payloadStr) as Record<string, unknown>
+            if (parsed && typeof parsed === 'object') {
+              if (typeof parsed['statusCode'] === 'number') {
+                statusCode = parsed['statusCode'] as number
+              }
+              if (typeof parsed['message'] === 'string' && statusCode >= 400) {
+                errToCapture = new Error(parsed['message'] as string)
+              }
+            }
+          } catch {}
+        }
+      }
+
+      if (errToCapture && statusCode >= 400) {
+        withContext(state.store, () => {
+          try {
+            if (state.store.extra) {
+              ;(state.store.extra as Record<string, unknown>).mechanism = 'fastify.onError'
+              ;(state.store.extra as Record<string, unknown>).handled = true
+              ;(state.store.extra as Record<string, unknown>).statusCode = statusCode
+              ;(state.store.extra as Record<string, unknown>).getStatusCode = () => statusCode
+              ;(state.store.extra as Record<string, unknown>).fastifyErrorCaptured = true
+            }
+            attachRequestContextToActiveSpan(state.store)
+            captureError(errToCapture)
+          } catch (err) {
+            getLogger().error('fastifyPulsePlugin onSend error capture failed', { error: err })
+          }
+        })
+      }
+    }
+    hookDone(null, payload)
+  })
+
+  if (typeof (fastify as unknown as { setErrorHandler?: unknown }).setErrorHandler === 'function') {
+    const defaultErrorHandler = (fastify as unknown as { errorHandler?: (err: Error, req: FastifyRequest, rep: FastifyReply) => unknown }).errorHandler
+    ;(fastify as unknown as { setErrorHandler: (fn: (this: unknown, error: Error, request: FastifyRequest, reply: FastifyReply) => unknown) => void }).setErrorHandler(function (this: unknown, error: Error, request: FastifyRequest, reply: FastifyReply) {
+      const state = request.pulse
+      if (state) {
+        const errStatusCode = (error as unknown as { statusCode?: number; status?: number })?.statusCode
+          ?? (error as unknown as { statusCode?: number; status?: number })?.status
+          ?? (reply.statusCode && reply.statusCode !== 200 ? reply.statusCode : undefined)
+          ?? (reply.raw?.statusCode && reply.raw.statusCode !== 200 ? reply.raw.statusCode : undefined)
+          ?? 500
+        withContext(state.store, () => {
+          try {
+            if (state.store.extra) {
+              ;(state.store.extra as Record<string, unknown>).mechanism = 'fastify.onError'
+              ;(state.store.extra as Record<string, unknown>).handled = true
+              ;(state.store.extra as Record<string, unknown>).statusCode = errStatusCode
+              ;(state.store.extra as Record<string, unknown>).getStatusCode = () => errStatusCode
+              ;(state.store.extra as Record<string, unknown>).fastifyErrorCaptured = true
+            }
+            attachRequestContextToActiveSpan(state.store)
+            captureError(error)
+          } catch (err) {
+            getLogger().error('fastifyPulsePlugin errorHandler error capture failed', { error: err })
+          }
+        })
+      }
+      if (typeof defaultErrorHandler === 'function') {
+        return defaultErrorHandler.call(this, error, request, reply)
+      }
+      if (typeof (reply as unknown as { send?: unknown }).send === 'function') {
+        (reply as unknown as { send: (payload: unknown) => unknown }).send(error)
+      }
+    })
+  }
+
   done()
 }
+
+;(fastifyPulsePlugin as any)[Symbol.for('skip-override')] = true
+;(fastifyPulsePlugin as any)[Symbol.for('fastify.display-name')] = 'pulse-fastify'
 
 function captureFastifyCompletion(
   request: FastifyRequest,

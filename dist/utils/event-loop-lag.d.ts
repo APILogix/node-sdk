@@ -59,4 +59,3 @@ export declare class EventLoopLagMonitor extends EventEmitter {
     private emitStats;
     private readHistogram;
 }
-//# sourceMappingURL=event-loop-lag.d.ts.map

@@ -70,4 +70,3 @@ export interface MultiRouteTransportHealth {
     readonly maxGlobalConnections: number;
     readonly transportDisabled: boolean;
 }
-//# sourceMappingURL=transport.d.ts.map

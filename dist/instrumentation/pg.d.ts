@@ -26,4 +26,3 @@ export interface PgSpanAttributes {
 }
 export { OTelPgInstrumentation };
 export default createPgInstrumentation;
-//# sourceMappingURL=pg.d.ts.map

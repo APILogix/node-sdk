@@ -24,4 +24,3 @@ export declare class RingBuffer<T> {
     /** Returns the most recently pushed item, or undefined if empty. */
     peek(): T | undefined;
 }
-//# sourceMappingURL=ring-buffer.d.ts.map

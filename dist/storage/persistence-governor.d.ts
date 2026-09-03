@@ -28,12 +28,15 @@
  * while preserving crash recovery for high-value telemetry.
  */
 import type { Event } from '../types/event.js';
+import type { PersistenceGovernanceConfig } from '../types/config.js';
 export type DurabilityTier = 'critical' | 'important' | 'transient';
 export interface PersistenceGovernorOptions {
-    /** Max events to persist per minute. Default: 5000 */
+    /** Max events to persist per minute. Default: 20000 */
     readonly maxPersistPerMinute?: number;
     /** Enable adaptive persistence reduction under pressure. Default: true */
     readonly enableAdaptive?: boolean;
+    /** Minimum interval between aggregated budget-exceeded warnings. Default: 60000 */
+    readonly budgetExceededLogIntervalMs?: number;
 }
 export interface PersistenceStats {
     readonly totalEvaluated: number;
@@ -45,8 +48,9 @@ export interface PersistenceStats {
     readonly budgetUtilization: number;
 }
 export declare class PersistenceGovernor {
-    private readonly maxPersistPerMinute;
-    private readonly enableAdaptive;
+    private maxPersistPerMinute;
+    private enableAdaptive;
+    private budgetExceededLogIntervalMs;
     private readonly persistWindows;
     private readonly windowDurationMs;
     private totalEvaluated;
@@ -54,7 +58,14 @@ export declare class PersistenceGovernor {
     private totalSkipped;
     private skippedByTier;
     private skippedByBudget;
+    private skippedSinceLastBudgetLog;
+    private lastBudgetExceededLogAt;
     constructor(options?: PersistenceGovernorOptions);
+    /**
+     * Apply the backend-owned persistence governance policy from remote config.
+     * No SDK init option can override this.
+     */
+    configure(config: PersistenceGovernanceConfig): void;
     /**
      * Determine if an event should be persisted to disk.
      *
@@ -88,4 +99,3 @@ export declare class PersistenceGovernor {
     private recordPersist;
 }
 export declare const persistenceGovernor: PersistenceGovernor;
-//# sourceMappingURL=persistence-governor.d.ts.map

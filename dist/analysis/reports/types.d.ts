@@ -42,4 +42,3 @@ export interface ReportMetadata {
     generatedAt: Date;
     analysisDuration: number;
 }
-//# sourceMappingURL=types.d.ts.map

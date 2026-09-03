@@ -102,4 +102,3 @@ export declare class BatchManager {
     private ensureTimer;
     private clearTimer;
 }
-//# sourceMappingURL=batch-manager.d.ts.map

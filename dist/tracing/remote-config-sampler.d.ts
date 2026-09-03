@@ -19,4 +19,3 @@ export declare class RemoteConfigSampler {
     shouldSample(_context: Context, traceId: string, _spanName: string, _spanKind: SpanKind, attributes: Attributes, _links: Link[]): SamplingResult;
     toString(): string;
 }
-//# sourceMappingURL=remote-config-sampler.d.ts.map

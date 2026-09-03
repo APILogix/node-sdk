@@ -339,4 +339,3 @@ function stripSensitiveSections(event) {
         clone['url'] = clone['url'].split('?')[0] ?? '';
     return clone;
 }
-//# sourceMappingURL=security-scrubber.js.map

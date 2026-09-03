@@ -32,4 +32,3 @@ if (parentPort) {
         }
     });
 }
-//# sourceMappingURL=serialization-worker.js.map

@@ -24,4 +24,3 @@ export declare function patchEventEmitter(): void;
  * Idempotent — safe to call before patchEventEmitter or multiple times.
  */
 export declare function unpatchEventEmitter(): void;
-//# sourceMappingURL=event-emitter-patch.d.ts.map

@@ -141,4 +141,3 @@ export class TenantGovernor {
 }
 // ─── Singleton ──────────────────────────────────────────────────────────────
 export const tenantGovernor = new TenantGovernor();
-//# sourceMappingURL=tenant-isolation.js.map

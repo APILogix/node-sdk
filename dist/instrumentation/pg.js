@@ -24,4 +24,3 @@ export function createPgInstrumentation(enabled, mergedOptions, captureConfig) {
 }
 export { OTelPgInstrumentation };
 export default createPgInstrumentation;
-//# sourceMappingURL=pg.js.map

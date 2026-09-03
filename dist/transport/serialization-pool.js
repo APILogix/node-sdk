@@ -106,4 +106,3 @@ export class SerializationPool {
         }
     }
 }
-//# sourceMappingURL=serialization-pool.js.map

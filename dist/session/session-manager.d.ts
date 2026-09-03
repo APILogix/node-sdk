@@ -109,4 +109,3 @@ export declare function peekSessionManager(): SessionManager | null;
  * @internal
  */
 export declare function resetSessionManager(): void;
-//# sourceMappingURL=session-manager.d.ts.map

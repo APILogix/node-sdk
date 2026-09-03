@@ -20,4 +20,3 @@ export * from './reports/index.js';
  * Analysis module version
  */
 export const ANALYSIS_MODULE_VERSION = '1.0.0';
-//# sourceMappingURL=index.js.map

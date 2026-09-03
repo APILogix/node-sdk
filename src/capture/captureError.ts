@@ -81,6 +81,13 @@ export function captureError(
     if (ctx?.extra) {
       if (typeof ctx.extra.getStatusCode === 'function') {
         try { statusCode = ctx.extra.getStatusCode() } catch {}
+      } else if (typeof (ctx.extra as Record<string, unknown>)['statusCode'] === 'number') {
+        statusCode = (ctx.extra as Record<string, unknown>)['statusCode'] as number
+      }
+      if (!statusCode && typeof (normalized as unknown as Record<string, unknown>)['statusCode'] === 'number') {
+        statusCode = (normalized as unknown as Record<string, unknown>)['statusCode'] as number
+      } else if (!statusCode && typeof (normalized as unknown as Record<string, unknown>)['status'] === 'number') {
+        statusCode = (normalized as unknown as Record<string, unknown>)['status'] as number
       }
       if (typeof ctx.extra.getMethod === 'function') {
         try { method = ctx.extra.getMethod() } catch {}

@@ -36,4 +36,3 @@ export declare function createWorkerData(additionalData?: Record<string, unknown
  * Call this inside the worker thread to get correlation metadata.
  */
 export declare function extractWorkerContext(workerData: Record<string, unknown>): SerializedContext | null;
-//# sourceMappingURL=worker-context.d.ts.map

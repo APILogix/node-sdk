@@ -62,4 +62,3 @@ export declare class SlidingWindowRateLimiter implements RateLimiter {
     reset(): void;
     private pruneExpired;
 }
-//# sourceMappingURL=rate-limit.d.ts.map

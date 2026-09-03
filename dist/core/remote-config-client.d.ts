@@ -13,7 +13,6 @@ export interface InitResponse {
 }
 interface RemoteConfigClientOptions {
     readonly apiKey: string;
-    readonly baseUrl?: string | undefined;
     readonly timeoutMs?: number | undefined;
     readonly fetchImpl?: typeof fetch | undefined;
 }
@@ -36,4 +35,3 @@ export declare class RemoteConfigClient {
     private post;
 }
 export {};
-//# sourceMappingURL=remote-config-client.d.ts.map

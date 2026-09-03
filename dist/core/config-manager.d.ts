@@ -50,4 +50,3 @@ export declare class ConfigManager {
 export declare function inspectTelemetryResponse(response: Response): void;
 /** Inspect an already parsed response (used by the shared JSON transport). */
 export declare function inspectTelemetryPayload(httpStatus: number, payload: unknown): void;
-//# sourceMappingURL=config-manager.d.ts.map

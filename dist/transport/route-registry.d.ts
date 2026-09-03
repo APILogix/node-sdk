@@ -20,4 +20,3 @@ export declare class RouteRegistry {
     get(route: EnterpriseRoute): RouteDefinition;
     routes(): readonly EnterpriseRoute[];
 }
-//# sourceMappingURL=route-registry.d.ts.map

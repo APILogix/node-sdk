@@ -56,7 +56,7 @@ class OtelMetricsManager {
                 this.meter = metrics.getMeter('@vikasbaplawat1/pulse-sdk', '2.0.0');
                 this.initialized = true;
                 this.ownsProvider = false;
-                logger.info('OpenTelemetry meter provider already registered by Pulse SDK; reusing global provider');
+                logger.info('OpenTelemetry meter provider already registered by Pulse telemetry; reusing global provider');
                 return;
             }
             const existingGlobal = getOtelGlobalApi();
@@ -64,7 +64,7 @@ class OtelMetricsManager {
                 this.meter = metrics.getMeter('@vikasbaplawat1/pulse-sdk', '2.0.0');
                 this.initialized = true;
                 this.ownsProvider = false;
-                logger.info('Existing OpenTelemetry meter provider detected; Pulse SDK will not register another meter provider');
+                logger.info('Existing OpenTelemetry meter provider detected; Pulse telemetry will not register another meter provider');
                 return;
             }
             const maxBuckets = options.maxHistogramBuckets ?? 160;

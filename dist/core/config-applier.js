@@ -55,4 +55,3 @@ export class ConfigApplier {
 function transportLimitsChanged(diff) {
     return diff.changes.has('limits.maxPayloadSize');
 }
-//# sourceMappingURL=config-applier.js.map

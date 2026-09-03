@@ -22,4 +22,3 @@ export declare class HealthMonitor {
     batchScale(route: EnterpriseRoute): number;
     snapshot(route: EnterpriseRoute): RouteHealthSnapshot;
 }
-//# sourceMappingURL=health-monitor.d.ts.map

@@ -64,4 +64,3 @@ export declare class SecurityScrubber {
     destroy(): void;
     static reset(): void;
 }
-//# sourceMappingURL=security-scrubber.d.ts.map

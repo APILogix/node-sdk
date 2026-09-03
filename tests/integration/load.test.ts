@@ -28,6 +28,7 @@ import { shutdown } from '../../src/core/lifecycle.js'
 import { captureMessage } from '../../src/capture/captureMessage.js'
 import { captureError } from '../../src/capture/captureError.js'
 import { captureMetric } from '../../src/capture/captureMetric.js'
+import { withSpan } from '../../src/tracing/tracer.js'
 import { TransportRouter } from '../../src/transport/transport-router.js'
 import { TEST_REMOTE_CONFIG as BAKED_IN_REMOTE_CONFIG } from '../fixtures/remote-config.js'
 
@@ -88,8 +89,8 @@ async function startMockBackend(): Promise<MockServer> {
         return
       }
 
-      // Complete event-triggered refresh response. Startup never calls it.
-      if (req.url === '/v1/sdk-config') {
+      // Complete event-triggered refresh response.
+      if (req.url?.includes('init') || req.url?.includes('sdk-config')) {
         const routePaths: Record<string, string> = {
           errors: '/api/v1/errors', events: '/api/v1/events', traces: '/api/v1/traces',
           spans: '/api/v1/spans', requests: '/api/v1/requests', metrics: '/api/v1/metrics',
@@ -102,8 +103,7 @@ async function startMockBackend(): Promise<MockServer> {
             { ...route, url: `${localUrl}${routePaths[name]}`, batchSize: 500, flushIntervalMs: 250, timeoutMs: 3_000 },
           ]),
         )
-        res.writeHead(200, { 'content-type': 'application/json' })
-        res.end(JSON.stringify({
+        const configSnapshot = {
           ...BAKED_IN_REMOTE_CONFIG,
           sdk: { projectId: 'load-test', service: 'load-test', environment: 'test', release: '1.0.0' },
           features: {
@@ -132,7 +132,20 @@ async function startMockBackend(): Promise<MockServer> {
             routes: refreshRoutes,
           },
           meta: { generatedAt: new Date().toISOString(), generatedBy: 'load-test-refresh' },
-        }))
+          entitlements: { ...BAKED_IN_REMOTE_CONFIG.entitlements, tracing: true, errors: true, metrics: true, requestCapture: true, customSpans: true, logging: true },
+        }
+        res.writeHead(200, { 'content-type': 'application/json' })
+        if (req.url?.includes('init')) {
+          res.end(JSON.stringify({
+            success: true,
+            projectId: 'load-test',
+            environment: 'test',
+            release: '1.0.0',
+            config: configSnapshot,
+          }))
+        } else {
+          res.end(JSON.stringify(configSnapshot))
+        }
         return
       }
 
@@ -185,7 +198,6 @@ describe('SDK load test', { timeout: 120_000 }, () => {
   it('accepts ≥5,000 events/sec and shuts down cleanly under load', async () => {
     await init({
       apiKey: 'load-test-key',
-      baseUrl: backend.url,
       debug: false,
     })
 
@@ -264,7 +276,6 @@ describe('SDK load test', { timeout: 120_000 }, () => {
     // (because shutdown() in the previous test cleared it) — re-init below.
     await init({
       apiKey: 'saturation-test-key',
-      baseUrl: backend.url,
       debug: false,
     })
 
@@ -293,5 +304,32 @@ describe('SDK load test', { timeout: 120_000 }, () => {
 
     const result = await shutdown(15_000)
     assert.equal(result.timedOut, false, `saturation shutdown timed out: ${JSON.stringify(result.stepErrors)}`)
+  })
+
+  it('handles concurrent high-throughput parent and child spans with 100% context preservation', async () => {
+    await init({
+      apiKey: 'span-load-test-key',
+      debug: false,
+    })
+
+    const SPAN_PAIRS = 500
+    const promises: Promise<void>[] = []
+
+    for (let i = 0; i < SPAN_PAIRS; i++) {
+      promises.push(
+        withSpan(`parent-span-${i}`, async parentSpan => {
+          parentSpan.setAttribute('parent.index', i)
+          await withSpan(`child-span-${i}`, async childSpan => {
+            childSpan.setAttribute('child.index', i)
+            childSpan.setAttribute('child.parent_id', parentSpan.spanId)
+            assert.equal(childSpan.parentSpanId, parentSpan.spanId, 'child parentSpanId must match parent spanId')
+          })
+        })
+      )
+    }
+
+    await Promise.all(promises)
+    const result = await shutdown(15_000)
+    assert.equal(result.timedOut, false, 'span load shutdown must converge')
   })
 })

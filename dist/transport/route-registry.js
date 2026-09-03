@@ -59,4 +59,3 @@ function createDefinition(route, config) {
         url: config.routes[route].url,
     };
 }
-//# sourceMappingURL=route-registry.js.map

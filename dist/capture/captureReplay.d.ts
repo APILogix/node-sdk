@@ -18,4 +18,3 @@
  * No-op when the `sessionReplay` entitlement is revoked by remote config.
  */
 export declare function captureReplay(sessionId: string, segmentId: number, events: readonly unknown[]): void;
-//# sourceMappingURL=captureReplay.d.ts.map

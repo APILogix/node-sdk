@@ -23,4 +23,3 @@ export declare function compress(data: Buffer, algorithm: CompressionAlgorithm):
  * Returns the Content-Encoding header value for the given algorithm.
  */
 export declare function contentEncoding(algorithm: CompressionAlgorithm): string | undefined;
-//# sourceMappingURL=compression.d.ts.map

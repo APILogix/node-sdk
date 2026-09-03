@@ -18,7 +18,7 @@
  */
 import { GraphQLInstrumentation } from '@opentelemetry/instrumentation-graphql';
 import { MongoDBInstrumentation } from '@opentelemetry/instrumentation-mongodb';
-import { RedisInstrumentation } from '@opentelemetry/instrumentation-redis-4';
+import { RedisInstrumentation } from '@opentelemetry/instrumentation-redis';
 import { PrismaInstrumentation } from '@prisma/instrumentation';
 import { BullMQInstrumentation } from 'opentelemetry-instrumentation-bullmq';
 /**
@@ -40,4 +40,3 @@ export declare function registerAutoInstrumentations(): void;
  */
 export declare function resetAutoInstrumentations(): void;
 export { GraphQLInstrumentation, MongoDBInstrumentation, RedisInstrumentation, PrismaInstrumentation, BullMQInstrumentation };
-//# sourceMappingURL=auto-instrument.d.ts.map

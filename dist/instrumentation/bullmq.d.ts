@@ -32,4 +32,3 @@ export interface BullMQSpanAttributes {
 }
 export { OTelBullMQInstrumentation };
 export default createBullMQInstrumentation;
-//# sourceMappingURL=bullmq.d.ts.map

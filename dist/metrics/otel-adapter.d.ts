@@ -90,4 +90,3 @@ declare class OtelMetricsManager {
 }
 export declare const otelMetrics: OtelMetricsManager;
 export { OtelMetricsManager };
-//# sourceMappingURL=otel-adapter.d.ts.map

@@ -1,4 +1,4 @@
-# Master Architectural Audit & Capability Inventory
+cd sdk-ode# Master Architectural Audit & Capability Inventory
 **SDK Scope**: Pulse Node.js SDK (`@vikasbaplawat1/pulse-sdk`) & Control Plane Gateway  
 **Date**: August 2026  
 **Auditor**: Principal SDK & Observability Architect  

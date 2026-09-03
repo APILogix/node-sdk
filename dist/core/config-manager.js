@@ -215,4 +215,3 @@ function isOlderSnapshot(candidate, active) {
     const activeTime = Date.parse(active.meta.generatedAt);
     return Number.isFinite(candidateTime) && Number.isFinite(activeTime) && candidateTime < activeTime;
 }
-//# sourceMappingURL=config-manager.js.map

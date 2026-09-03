@@ -251,4 +251,3 @@ export function getPriority(event) {
     }
 }
 export const eventQueue = new EventQueue();
-//# sourceMappingURL=queue.js.map

@@ -13,4 +13,3 @@ import type { RequestEvent } from '../types/event.js';
  * Sampling is handled by the event pipeline — callers don't need to filter.
  */
 export declare function captureRequest(event: RequestEvent): void;
-//# sourceMappingURL=captureRequest.d.ts.map

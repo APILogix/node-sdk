@@ -156,4 +156,3 @@ export declare function getTraceAggregator(config?: TraceAggregatorConfig): Trac
  * Reset the singleton (for shutdown/reinit).
  */
 export declare function resetTraceAggregator(): void;
-//# sourceMappingURL=trace-aggregator.d.ts.map

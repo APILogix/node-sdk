@@ -260,4 +260,3 @@ export class PulseSpan {
         });
     }
 }
-//# sourceMappingURL=span.js.map

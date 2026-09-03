@@ -29,6 +29,8 @@ type FastifyInstance = {
     addHook(name: 'preHandler', handler: (request: FastifyRequest, reply: FastifyReply, done: HookDone) => void): void;
     addHook(name: 'onResponse', handler: (request: FastifyRequest, reply: FastifyReply, done: HookDone) => void): void;
     addHook(name: 'onError', handler: (request: FastifyRequest, reply: FastifyReply, error: Error, done: HookDone) => void): void;
+    addHook(name: 'preSerialization', handler: (request: FastifyRequest, reply: FastifyReply, payload: unknown, done: (err: Error | null, payload?: unknown) => void) => void): void;
+    addHook(name: 'onSend', handler: (request: FastifyRequest, reply: FastifyReply, payload: unknown, done: (err: Error | null, payload?: unknown) => void) => void): void;
 };
 type HookDone = (err?: Error) => void;
 type FastifyRequest = {
@@ -76,4 +78,3 @@ interface PulseFastifyState {
 }
 export declare function fastifyPulsePlugin(fastify: FastifyInstance, opts: PulseFastifyOptions, done: (err?: Error) => void): void;
 export {};
-//# sourceMappingURL=fastify.d.ts.map

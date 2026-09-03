@@ -69,6 +69,15 @@ export function captureError(error, severity) {
                 }
                 catch { }
             }
+            else if (typeof ctx.extra['statusCode'] === 'number') {
+                statusCode = ctx.extra['statusCode'];
+            }
+            if (!statusCode && typeof normalized['statusCode'] === 'number') {
+                statusCode = normalized['statusCode'];
+            }
+            else if (!statusCode && typeof normalized['status'] === 'number') {
+                statusCode = normalized['status'];
+            }
             if (typeof ctx.extra.getMethod === 'function') {
                 try {
                     method = ctx.extra.getMethod();
@@ -166,4 +175,3 @@ function scrubBreadcrumb(breadcrumb, scrubber) {
         data: safeData,
     };
 }
-//# sourceMappingURL=captureError.js.map

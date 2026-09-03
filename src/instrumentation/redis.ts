@@ -10,12 +10,12 @@
  * - Stream operations support (XADD, XRANGE, etc.)
  */
 
-import { RedisInstrumentation as OTelRedisInstrumentation } from '@opentelemetry/instrumentation-redis-4'
+import { RedisInstrumentation as OTelRedisInstrumentation } from '@opentelemetry/instrumentation-redis'
 import type {
   DbStatementSerializer,
   RedisInstrumentationConfig as OTelRedisInstrumentationConfig,
   RedisResponseCustomAttributeFunction,
-} from '@opentelemetry/instrumentation-redis-4'
+} from '@opentelemetry/instrumentation-redis'
 import type { PrivacyCaptureConfig } from '../types/config.js'
 
 export interface RedisInstrumentationOptions {

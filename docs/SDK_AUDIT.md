@@ -410,7 +410,18 @@ Your backend at `POST /v1/sdk-config` must return this:
     "maxPayloadSize": 262144,
     "maxQueueSize": 10000,
     "maxMemoryMb": 256,
-    "maxCpuOverheadPercent": 5
+    "tenantGovernance": {
+      "enabled": false,
+      "maxTenantsTracked": 1000,
+      "quotaPerWindow": 10000,
+      "windowDurationMs": 60000,
+      "criticalReserve": 100
+    },
+    "persistenceGovernance": {
+      "maxPersistPerMinute": 20000,
+      "adaptive": true,
+      "budgetExceededLogIntervalMs": 60000
+    }
   },
   "killswitches": {
     "disableSDK": false,

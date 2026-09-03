@@ -32,16 +32,19 @@ import { adaptivePressure, type CompositePressureLevel } from '../utils/adaptive
 import { getLogger } from '../utils/logger.js'
 import { epochMs } from '../utils/time.js'
 import type { Event } from '../types/event.js'
+import type { PersistenceGovernanceConfig } from '../types/config.js'
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 export type DurabilityTier = 'critical' | 'important' | 'transient'
 
 export interface PersistenceGovernorOptions {
-  /** Max events to persist per minute. Default: 5000 */
+  /** Max events to persist per minute. Default: 20000 */
   readonly maxPersistPerMinute?: number
   /** Enable adaptive persistence reduction under pressure. Default: true */
   readonly enableAdaptive?: boolean
+  /** Minimum interval between aggregated budget-exceeded warnings. Default: 60000 */
+  readonly budgetExceededLogIntervalMs?: number
 }
 
 export interface PersistenceStats {
@@ -56,11 +59,13 @@ export interface PersistenceStats {
 
 // ─── Implementation ─────────────────────────────────────────────────────────
 
-const DEFAULT_MAX_PERSIST_PER_MINUTE = 5000
+const DEFAULT_MAX_PERSIST_PER_MINUTE = 20_000
+const DEFAULT_BUDGET_EXCEEDED_LOG_INTERVAL_MS = 60_000
 
 export class PersistenceGovernor {
-  private readonly maxPersistPerMinute: number
-  private readonly enableAdaptive: boolean
+  private maxPersistPerMinute: number
+  private enableAdaptive: boolean
+  private budgetExceededLogIntervalMs: number
 
   // Sliding window for per-minute budget tracking
   private readonly persistWindows: Array<{ timestamp: number }> = []
@@ -76,10 +81,26 @@ export class PersistenceGovernor {
     transient: 0,
   }
   private skippedByBudget = 0
+  private skippedSinceLastBudgetLog = 0
+  private lastBudgetExceededLogAt = 0
 
   constructor(options: PersistenceGovernorOptions = {}) {
     this.maxPersistPerMinute = options.maxPersistPerMinute ?? DEFAULT_MAX_PERSIST_PER_MINUTE
     this.enableAdaptive = options.enableAdaptive ?? true
+    this.budgetExceededLogIntervalMs = options.budgetExceededLogIntervalMs ?? DEFAULT_BUDGET_EXCEEDED_LOG_INTERVAL_MS
+  }
+
+  /**
+   * Apply the backend-owned persistence governance policy from remote config.
+   * No SDK init option can override this.
+   */
+  configure(config: PersistenceGovernanceConfig): void {
+    this.maxPersistPerMinute = config.maxPersistPerMinute
+    this.enableAdaptive = config.adaptive
+    this.budgetExceededLogIntervalMs = config.budgetExceededLogIntervalMs
+    getLogger().debug('Persistence governor configured from remote config', {
+      adaptive: this.enableAdaptive,
+    })
   }
 
   /**
@@ -108,14 +129,20 @@ export class PersistenceGovernor {
     if (this.isOverBudget()) {
       this.skippedByBudget++
       this.totalSkipped++
+      this.skippedSinceLastBudgetLog++
 
-      if (this.skippedByBudget % 100 === 1) {
+      const now = epochMs()
+      if (now - this.lastBudgetExceededLogAt >= this.budgetExceededLogIntervalMs) {
         getLogger().warn('Persistence governor: persist budget exceeded', {
-          currentRate: this.getCurrentPersistRate(),
-          budget: this.maxPersistPerMinute,
+          utilization: this.maxPersistPerMinute > 0
+            ? Math.round((this.getCurrentPersistRate() / this.maxPersistPerMinute) * 100) / 100
+            : 0,
+          skippedSinceLastLog: this.skippedSinceLastBudgetLog,
           tier,
           pressure,
         })
+        this.skippedSinceLastBudgetLog = 0
+        this.lastBudgetExceededLogAt = now
       }
 
       return false
@@ -176,6 +203,8 @@ export class PersistenceGovernor {
     this.totalSkipped = 0
     this.skippedByTier = { critical: 0, important: 0, transient: 0 }
     this.skippedByBudget = 0
+    this.skippedSinceLastBudgetLog = 0
+    this.lastBudgetExceededLogAt = 0
     this.persistWindows.length = 0
   }
 

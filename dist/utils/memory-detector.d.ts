@@ -55,4 +55,3 @@ export declare function resolveMaxMemoryMb(userValue: 'auto' | number): number;
  * with different environment conditions.
  */
 export declare function clearMemoryDetectionCache(): void;
-//# sourceMappingURL=memory-detector.d.ts.map

@@ -29,4 +29,3 @@ export declare function recordHistogram(name: string, value: number, tags?: Reco
  * Used for tracking active connections, queue depth, etc.
  */
 export declare function addUpDownCounter(name: string, value: number, tags?: Record<string, string>): void;
-//# sourceMappingURL=captureMetric.d.ts.map

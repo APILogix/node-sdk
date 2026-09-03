@@ -400,4 +400,3 @@ function scrubObjectValues(obj) {
     }
     return result;
 }
-//# sourceMappingURL=scope.js.map

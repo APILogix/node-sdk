@@ -30,4 +30,3 @@ export function classifyError(handled, mechanism, severity) {
         crash: isCrash,
     };
 }
-//# sourceMappingURL=error-classifier.js.map

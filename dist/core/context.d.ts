@@ -27,10 +27,10 @@ export interface ContextStore {
     readonly extra?: Readonly<Record<string, unknown>> | undefined;
 }
 export declare const PULSE_CONTEXT_ATTRIBUTES: {
-    readonly requestId: "pulse.request_id";
-    readonly sessionId: "pulse.session_id";
-    readonly userId: "pulse.user_id";
-    readonly tenantId: "pulse.tenant_id";
+    readonly requestId: 'pulse.request_id';
+    readonly sessionId: 'pulse.session_id';
+    readonly userId: 'pulse.user_id';
+    readonly tenantId: 'pulse.tenant_id';
 };
 /**
  * Get the current request context, or undefined if outside a context scope.
@@ -71,4 +71,3 @@ export declare function createContextStore(requestId: string, maxBreadcrumbs: nu
  */
 export declare function withContext<T>(store: ContextStore, fn: () => T): T;
 export declare function bindContext<T extends (...args: never[]) => unknown>(fn: T, store?: ContextStore | undefined): T;
-//# sourceMappingURL=context.d.ts.map

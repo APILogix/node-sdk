@@ -1,44 +1,169 @@
+import type {
+  NormalizedRemoteConfig,
+  RemoteConfigResponse,
+  ConfigDiff,
+  FieldChange,
+} from '../types/config.js'
+
 /**
- * ConfigDiffer — deep-diff utility for RemoteConfigResponse objects.
+ * Diff two remote config snapshots. Returns section-level flags, subsystem fast flags,
+ * structured change collections, and detailed field-level change descriptors.
  *
- * The refresh loop calls this on every successful fetch so subsystems can
- * decide whether to react. Cheap by design: a structural equality check
- * per top-level section, not a per-field traversal of the full tree.
- */
-
-import type { RemoteConfigResponse, ConfigDiff } from '../types/config.js'
-
-/**
- * Diff two remote config snapshots. Returns which top-level sections
- * changed and a flat map of field-level changes for diagnostic logging.
+ * Guaranteed crash-proof against null/undefined or corrupted input objects.
  */
 export function diffConfigs(
-  oldConfig: Readonly<RemoteConfigResponse>,
-  newConfig: Readonly<RemoteConfigResponse>,
+  oldConfig: Readonly<NormalizedRemoteConfig | RemoteConfigResponse> | null | undefined,
+  newConfig: Readonly<NormalizedRemoteConfig | RemoteConfigResponse> | null | undefined,
 ): ConfigDiff {
-  const changes = new Map<string, { old: unknown; new: unknown }>()
+  const changes = new Map<string, { old: unknown; new: unknown; changeType?: 'added' | 'removed' | 'modified' }>()
+  const fieldChanges: FieldChange[] = []
+  const addedKeys: string[] = []
+  const removedKeys: string[] = []
+  const modifiedKeys: string[] = []
 
-  const sdkChanged = !deepEqual(oldConfig.sdk, newConfig.sdk)
-  const featuresChanged = !deepEqual(oldConfig.features, newConfig.features)
-  const killswitchesChanged = !deepEqual(oldConfig.killswitches, newConfig.killswitches)
-  const samplingChanged = !deepEqual(oldConfig.sampling, newConfig.sampling)
-  const transportChanged = !deepEqual(oldConfig.transport, newConfig.transport)
-  const privacyChanged = !deepEqual(oldConfig.privacy, newConfig.privacy)
-  const limitsChanged = !deepEqual(oldConfig.limits, newConfig.limits)
-  const instrumentationChanged = !deepEqual(oldConfig.instrumentation, newConfig.instrumentation)
-  const entitlementsChanged = !deepEqual(oldConfig.entitlements, newConfig.entitlements)
+  // Fast path: identical reference or both null/undefined
+  if (oldConfig === newConfig || (!oldConfig && !newConfig)) {
+    return createEmptyDiff()
+  }
 
-  if (sdkChanged) collectChanges('sdk', oldConfig.sdk, newConfig.sdk, changes)
-  if (featuresChanged) collectChanges('features', oldConfig.features, newConfig.features, changes)
-  if (killswitchesChanged) collectChanges('killswitches', oldConfig.killswitches, newConfig.killswitches, changes)
-  if (samplingChanged) collectChanges('sampling', oldConfig.sampling, newConfig.sampling, changes)
-  if (transportChanged) changes.set('transport', { old: '[complex]', new: '[complex]' })
-  if (privacyChanged) changes.set('privacy', { old: '[complex]', new: '[complex]' })
-  if (limitsChanged) collectChanges('limits', oldConfig.limits, newConfig.limits, changes)
-  if (instrumentationChanged) changes.set('instrumentation', { old: '[complex]', new: '[complex]' })
-  if (entitlementsChanged) collectChanges('entitlements', oldConfig.entitlements, newConfig.entitlements, changes)
+  // Handle null/undefined boundary cases gracefully
+  const safeOld = (oldConfig ?? {}) as Record<string, unknown>
+  const safeNew = (newConfig ?? {}) as Record<string, unknown>
+
+  // 1. Top-Level Section Equality Checks
+  const sdkChanged = !deepEqual(safeOld['sdk'], safeNew['sdk'])
+  const featuresChanged = !deepEqual(safeOld['features'], safeNew['features'])
+  const killswitchesChanged = !deepEqual(safeOld['killswitches'], safeNew['killswitches'])
+  const samplingChanged = !deepEqual(safeOld['sampling'], safeNew['sampling'])
+  const transportChanged = !deepEqual(safeOld['transport'], safeNew['transport'])
+  const privacyChanged = !deepEqual(safeOld['privacy'], safeNew['privacy'])
+  const limitsChanged = !deepEqual(safeOld['limits'], safeNew['limits'])
+  const instrumentationChanged = !deepEqual(safeOld['instrumentation'], safeNew['instrumentation'])
+  const entitlementsChanged = !deepEqual(safeOld['entitlements'], safeNew['entitlements'])
+
+  // Optional subsystem sections
+  const offlineQueueChanged = safeOld['offlineQueue'] !== undefined || safeNew['offlineQueue'] !== undefined
+    ? !deepEqual(safeOld['offlineQueue'], safeNew['offlineQueue'])
+    : false
+  const profilingSectionChanged = safeOld['profiling'] !== undefined || safeNew['profiling'] !== undefined
+    ? !deepEqual(safeOld['profiling'], safeNew['profiling'])
+    : false
+  const replaySectionChanged = safeOld['replay'] !== undefined || safeNew['replay'] !== undefined
+    ? !deepEqual(safeOld['replay'], safeNew['replay'])
+    : false
+  const errorsSectionChanged = safeOld['errors'] !== undefined || safeNew['errors'] !== undefined
+    ? !deepEqual(safeOld['errors'], safeNew['errors'])
+    : false
+  const tracingSectionChanged = safeOld['tracing'] !== undefined || safeNew['tracing'] !== undefined
+    ? !deepEqual(safeOld['tracing'], safeNew['tracing'])
+    : false
+  const metricsSectionChanged = safeOld['metrics'] !== undefined || safeNew['metrics'] !== undefined
+    ? !deepEqual(safeOld['metrics'], safeNew['metrics'])
+    : false
+  const logsSectionChanged = safeOld['logs'] !== undefined || safeNew['logs'] !== undefined
+    ? !deepEqual(safeOld['logs'], safeNew['logs'])
+    : false
+  const cronsSectionChanged = safeOld['crons'] !== undefined || safeNew['crons'] !== undefined
+    ? !deepEqual(safeOld['crons'], safeNew['crons'])
+    : false
+
+  // 2. Recursive Property Traversal across all relevant sections
+  if (sdkChanged) collectChanges('sdk', safeOld['sdk'], safeNew['sdk'], changes, fieldChanges, addedKeys, removedKeys, modifiedKeys)
+  if (featuresChanged) collectChanges('features', safeOld['features'], safeNew['features'], changes, fieldChanges, addedKeys, removedKeys, modifiedKeys)
+  if (killswitchesChanged) collectChanges('killswitches', safeOld['killswitches'], safeNew['killswitches'], changes, fieldChanges, addedKeys, removedKeys, modifiedKeys)
+  if (samplingChanged) collectChanges('sampling', safeOld['sampling'], safeNew['sampling'], changes, fieldChanges, addedKeys, removedKeys, modifiedKeys)
+  if (transportChanged) collectChanges('transport', safeOld['transport'], safeNew['transport'], changes, fieldChanges, addedKeys, removedKeys, modifiedKeys)
+  if (privacyChanged) collectChanges('privacy', safeOld['privacy'], safeNew['privacy'], changes, fieldChanges, addedKeys, removedKeys, modifiedKeys)
+  if (limitsChanged) collectChanges('limits', safeOld['limits'], safeNew['limits'], changes, fieldChanges, addedKeys, removedKeys, modifiedKeys)
+  if (instrumentationChanged) collectChanges('instrumentation', safeOld['instrumentation'], safeNew['instrumentation'], changes, fieldChanges, addedKeys, removedKeys, modifiedKeys)
+  if (entitlementsChanged) collectChanges('entitlements', safeOld['entitlements'], safeNew['entitlements'], changes, fieldChanges, addedKeys, removedKeys, modifiedKeys)
+
+  if (offlineQueueChanged) collectChanges('offlineQueue', safeOld['offlineQueue'], safeNew['offlineQueue'], changes, fieldChanges, addedKeys, removedKeys, modifiedKeys)
+  if (profilingSectionChanged) collectChanges('profiling', safeOld['profiling'], safeNew['profiling'], changes, fieldChanges, addedKeys, removedKeys, modifiedKeys)
+  if (replaySectionChanged) collectChanges('replay', safeOld['replay'], safeNew['replay'], changes, fieldChanges, addedKeys, removedKeys, modifiedKeys)
+  if (errorsSectionChanged) collectChanges('errors', safeOld['errors'], safeNew['errors'], changes, fieldChanges, addedKeys, removedKeys, modifiedKeys)
+  if (tracingSectionChanged) collectChanges('tracing', safeOld['tracing'], safeNew['tracing'], changes, fieldChanges, addedKeys, removedKeys, modifiedKeys)
+  if (metricsSectionChanged) collectChanges('metrics', safeOld['metrics'], safeNew['metrics'], changes, fieldChanges, addedKeys, removedKeys, modifiedKeys)
+  if (logsSectionChanged) collectChanges('logs', safeOld['logs'], safeNew['logs'], changes, fieldChanges, addedKeys, removedKeys, modifiedKeys)
+  if (cronsSectionChanged) collectChanges('crons', safeOld['crons'], safeNew['crons'], changes, fieldChanges, addedKeys, removedKeys, modifiedKeys)
+
+  // 3. Subsystem Fast-Flag Computation
+  const hasChanges = changes.size > 0
+
+  const profilingChanged =
+    profilingSectionChanged ||
+    hasAnyKey(changes, [
+      'features.profiling',
+      'killswitches.disableProfiling',
+      'entitlements.profiling',
+      'sampling.profiles',
+    ]) ||
+    hasKeyPrefix(changes, 'sampling.routes', 'profiles')
+
+  const replayChanged =
+    replaySectionChanged ||
+    hasAnyKey(changes, [
+      'features.sessionReplay',
+      'entitlements.sessionReplay',
+      'sampling.replays',
+    ]) ||
+    hasKeyPrefix(changes, 'sampling.routes', 'replays')
+
+  const tracingChanged =
+    tracingSectionChanged ||
+    hasAnyKey(changes, [
+      'features.tracing',
+      'killswitches.disableTracing',
+      'entitlements.tracing',
+      'entitlements.customSpans',
+      'sampling.traces',
+      'sampling.spans',
+      'limits.maxSpansPerTrace',
+      'limits.maxSpanAttributes',
+      'limits.maxAttributeLength',
+    ]) ||
+    instrumentationChanged ||
+    hasKeyPrefix(changes, 'sampling.routes', 'traces') ||
+    hasKeyPrefix(changes, 'sampling.routes', 'spans')
+
+  const metricsChanged =
+    metricsSectionChanged ||
+    hasAnyKey(changes, [
+      'features.metrics',
+      'features.runtimeMetrics',
+      'features.eventLoopMonitoring',
+      'features.gcMonitoring',
+      'killswitches.disableMetrics',
+      'entitlements.metrics',
+      'entitlements.customMetrics',
+      'sampling.metrics',
+    ]) ||
+    hasKeyPrefix(changes, 'sampling.routes', 'metrics')
+
+  const loggingChanged =
+    logsSectionChanged ||
+    hasAnyKey(changes, [
+      'features.logging',
+      'killswitches.disableLogs',
+      'entitlements.logging',
+      'sampling.logs',
+    ]) ||
+    hasKeyPrefix(changes, 'sampling.routes', 'logs')
+
+  const errorsChanged =
+    errorsSectionChanged ||
+    hasAnyKey(changes, [
+      'features.errors',
+      'killswitches.disableErrors',
+      'entitlements.errors',
+      'sampling.errors',
+      'sampling.messages',
+    ]) ||
+    hasKeyPrefix(changes, 'sampling.routes', 'errors') ||
+    hasKeyPrefix(changes, 'sampling.routes', 'messages')
 
   return {
+    hasChanges,
     sdkChanged,
     featuresChanged,
     killswitchesChanged,
@@ -48,13 +173,57 @@ export function diffConfigs(
     limitsChanged,
     instrumentationChanged,
     entitlementsChanged,
+    offlineQueueChanged,
+    profilingChanged,
+    replayChanged,
+    tracingChanged,
+    metricsChanged,
+    loggingChanged,
+    errorsChanged,
+    errorsSectionChanged,
+    tracingSectionChanged,
+    metricsSectionChanged,
+    logsSectionChanged,
+    cronsSectionChanged,
     changes,
+    addedKeys: Object.freeze(addedKeys),
+    removedKeys: Object.freeze(removedKeys),
+    modifiedKeys: Object.freeze(modifiedKeys),
+    fieldChanges: Object.freeze(fieldChanges),
+  } as ConfigDiff
+}
+
+function createEmptyDiff(): ConfigDiff {
+  return {
+    hasChanges: false,
+    sdkChanged: false,
+    featuresChanged: false,
+    killswitchesChanged: false,
+    samplingChanged: false,
+    transportChanged: false,
+    privacyChanged: false,
+    limitsChanged: false,
+    instrumentationChanged: false,
+    entitlementsChanged: false,
+    offlineQueueChanged: false,
+    profilingChanged: false,
+    replayChanged: false,
+    tracingChanged: false,
+    metricsChanged: false,
+    loggingChanged: false,
+    errorsChanged: false,
+    changes: new Map(),
+    addedKeys: Object.freeze([]),
+    removedKeys: Object.freeze([]),
+    modifiedKeys: Object.freeze([]),
+    fieldChanges: Object.freeze([]),
   }
 }
 
-function deepEqual(a: unknown, b: unknown): boolean {
+export function deepEqual(a: unknown, b: unknown): boolean {
   if (a === b) return true
-  if (a === null || b === null) return false
+  if (typeof a === 'number' && typeof b === 'number' && Number.isNaN(a) && Number.isNaN(b)) return true
+  if (a === null || b === null || a === undefined || b === undefined) return false
   if (typeof a !== typeof b) return false
   if (typeof a !== 'object') return false
 
@@ -70,17 +239,73 @@ function deepEqual(a: unknown, b: unknown): boolean {
   const bKeys = Object.keys(bObj)
 
   if (aKeys.length !== bKeys.length) return false
-  return aKeys.every(key => deepEqual(aObj[key], bObj[key]))
+  return aKeys.every(key => Object.prototype.hasOwnProperty.call(bObj, key) && deepEqual(aObj[key], bObj[key]))
 }
 
 function collectChanges(
   prefix: string,
   oldVal: unknown,
   newVal: unknown,
-  changes: Map<string, { old: unknown; new: unknown }>,
+  changes: Map<string, { old: unknown; new: unknown; changeType?: 'added' | 'removed' | 'modified' }>,
+  fieldChanges: FieldChange[],
+  addedKeys: string[],
+  removedKeys: string[],
+  modifiedKeys: string[],
 ): void {
-  if (typeof oldVal !== 'object' || typeof newVal !== 'object' || oldVal === null || newVal === null) {
-    changes.set(prefix, { old: oldVal, new: newVal })
+  // If oldVal is undefined and newVal is a non-null, non-array object:
+  if (oldVal === undefined && typeof newVal === 'object' && newVal !== null && !Array.isArray(newVal)) {
+    const newObj = newVal as Record<string, unknown>
+    const keys = Object.keys(newObj)
+    if (keys.length === 0) {
+      changes.set(prefix, { old: undefined, new: newVal, changeType: 'added' })
+      fieldChanges.push({ path: prefix, previousValue: undefined, nextValue: newVal, type: 'added' })
+      addedKeys.push(prefix)
+    } else {
+      for (const key of keys) {
+        const subPath = prefix ? `${prefix}.${key}` : key
+        collectChanges(subPath, undefined, newObj[key], changes, fieldChanges, addedKeys, removedKeys, modifiedKeys)
+      }
+    }
+    return
+  }
+
+  // If newVal is undefined and oldVal is a non-null, non-array object:
+  if (newVal === undefined && typeof oldVal === 'object' && oldVal !== null && !Array.isArray(oldVal)) {
+    const oldObj = oldVal as Record<string, unknown>
+    const keys = Object.keys(oldObj)
+    if (keys.length === 0) {
+      changes.set(prefix, { old: oldVal, new: undefined, changeType: 'removed' })
+      fieldChanges.push({ path: prefix, previousValue: oldVal, nextValue: undefined, type: 'removed' })
+      removedKeys.push(prefix)
+    } else {
+      for (const key of keys) {
+        const subPath = prefix ? `${prefix}.${key}` : key
+        collectChanges(subPath, oldObj[key], undefined, changes, fieldChanges, addedKeys, removedKeys, modifiedKeys)
+      }
+    }
+    return
+  }
+
+  // If either side is not an object or is null/array, treat as leaf property
+  if (
+    typeof oldVal !== 'object' ||
+    typeof newVal !== 'object' ||
+    oldVal === null ||
+    newVal === null ||
+    Array.isArray(oldVal) ||
+    Array.isArray(newVal)
+  ) {
+    if (!deepEqual(oldVal, newVal)) {
+      const type: 'added' | 'removed' | 'modified' =
+        oldVal === undefined ? 'added' : newVal === undefined ? 'removed' : 'modified'
+
+      changes.set(prefix, { old: oldVal, new: newVal, changeType: type })
+      fieldChanges.push({ path: prefix, previousValue: oldVal, nextValue: newVal, type })
+
+      if (type === 'added') addedKeys.push(prefix)
+      else if (type === 'removed') removedKeys.push(prefix)
+      else modifiedKeys.push(prefix)
+    }
     return
   }
 
@@ -89,8 +314,44 @@ function collectChanges(
   const allKeys = new Set([...Object.keys(oldObj), ...Object.keys(newObj)])
 
   for (const key of allKeys) {
-    if (!deepEqual(oldObj[key], newObj[key])) {
-      changes.set(`${prefix}.${key}`, { old: oldObj[key], new: newObj[key] })
+    const subPath = prefix ? `${prefix}.${key}` : key
+    const hasOld = Object.prototype.hasOwnProperty.call(oldObj, key)
+    const hasNew = Object.prototype.hasOwnProperty.call(newObj, key)
+
+    if (hasOld && !hasNew) {
+      collectChanges(subPath, oldObj[key], undefined, changes, fieldChanges, addedKeys, removedKeys, modifiedKeys)
+    } else if (!hasOld && hasNew) {
+      collectChanges(subPath, undefined, newObj[key], changes, fieldChanges, addedKeys, removedKeys, modifiedKeys)
+    } else {
+      const oVal = oldObj[key]
+      const nVal = newObj[key]
+      if (!deepEqual(oVal, nVal)) {
+        collectChanges(subPath, oVal, nVal, changes, fieldChanges, addedKeys, removedKeys, modifiedKeys)
+      }
     }
   }
+}
+
+function hasAnyKey(changes: Map<string, unknown>, keys: readonly string[]): boolean {
+  for (const key of keys) {
+    if (changes.has(key)) return true
+  }
+  return false
+}
+
+function hasKeyPrefix(changes: Map<string, unknown>, prefix: string, suffix: string): boolean {
+  for (const [key, val] of changes.entries()) {
+    if (key.startsWith(prefix)) {
+      if (key.endsWith(`.${suffix}`) || key.includes(`.${suffix}.`) || key === `${prefix}.${suffix}`) {
+        return true
+      }
+      if (val && typeof val === 'object') {
+        const oldVal = (val as any).old
+        const newVal = (val as any).new
+        if (oldVal && typeof oldVal === 'object' && suffix in oldVal) return true
+        if (newVal && typeof newVal === 'object' && suffix in newVal) return true
+      }
+    }
+  }
+  return false
 }

@@ -9,7 +9,7 @@
  * - Error tracking with command context
  * - Stream operations support (XADD, XRANGE, etc.)
  */
-import { RedisInstrumentation as OTelRedisInstrumentation } from '@opentelemetry/instrumentation-redis-4';
+import { RedisInstrumentation as OTelRedisInstrumentation } from '@opentelemetry/instrumentation-redis';
 export function createRedisInstrumentation(enabled, mergedOptions, captureConfig) {
     if (!enabled) {
         return null;

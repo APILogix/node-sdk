@@ -40,4 +40,3 @@ export function captureRequest(event) {
         });
     }
 }
-//# sourceMappingURL=captureRequest.js.map

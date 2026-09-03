@@ -44,4 +44,3 @@ export function captureLog(level, message, ...args) {
         getLogger().warn('captureLog failed', { error: err });
     }
 }
-//# sourceMappingURL=captureLog.js.map

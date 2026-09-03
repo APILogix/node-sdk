@@ -308,4 +308,3 @@ function scrubHeadersSafe(headers) {
 function isRecord(value) {
     return !!value && typeof value === 'object' && !Array.isArray(value);
 }
-//# sourceMappingURL=express.js.map

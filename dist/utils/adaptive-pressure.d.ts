@@ -77,4 +77,3 @@ export declare class AdaptivePressureMonitor {
     private stopGCTracking;
 }
 export declare const adaptivePressure: AdaptivePressureMonitor;
-//# sourceMappingURL=adaptive-pressure.d.ts.map

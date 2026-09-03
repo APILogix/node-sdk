@@ -25,4 +25,3 @@ export declare function createGraphQLInstrumentation(config: {
 } | boolean, mergedOptions?: Partial<GraphQLInstrumentationOptions>): OTelGraphQLInstrumentation | null;
 export { OTelGraphQLInstrumentation };
 export default createGraphQLInstrumentation;
-//# sourceMappingURL=graphql.d.ts.map

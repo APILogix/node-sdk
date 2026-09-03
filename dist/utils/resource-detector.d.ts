@@ -62,4 +62,3 @@ export declare function resetResourceCache(): void;
  * @param sdkVersion - SDK version string
  */
 export declare function detectOtelResource(service: string, version: string, environment: string, sdkVersion: string): Resource;
-//# sourceMappingURL=resource-detector.d.ts.map

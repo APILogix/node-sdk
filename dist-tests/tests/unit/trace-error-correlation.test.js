@@ -33,14 +33,19 @@ describe('Trace/Span Error Correlation - Automated Scenarios', () => {
                         errors: true,
                     },
                 };
-                return new Response(JSON.stringify({ status: 'ok', config: activeConfig }), { status: 200, headers: { 'content-type': 'application/json' } });
+                return new Response(JSON.stringify({
+                    success: true,
+                    projectId: activeConfig.sdk.projectId,
+                    environment: activeConfig.sdk.environment,
+                    release: activeConfig.sdk.release,
+                    config: activeConfig,
+                }), { status: 200, headers: { 'content-type': 'application/json' } });
             }
             return new Response(JSON.stringify({ status: 'ok' }), { status: 200 });
         });
         // Initialize SDK with mock endpoint
         await init({
             apiKey: 'pv_test_key_1234567890',
-            baseUrl: 'http://localhost:5000',
             debug: false,
         });
         // Register test event processor to capture processed events

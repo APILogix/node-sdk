@@ -21,4 +21,3 @@ import type { StackFrame } from './stack-parser.js';
  * @param customFingerprint - Optional explicit fingerprint override
  */
 export declare function generateFingerprint(error: Error, stackFrames: StackFrame[], customFingerprint?: string): string;
-//# sourceMappingURL=fingerprint.d.ts.map

@@ -5,4 +5,3 @@ import type { RemoteConfigResponse, SDKInitOptions } from '../types/config.js';
  * a runtime configuration or start telemetry with defaults.
  */
 export declare function init(options: SDKInitOptions): Promise<Readonly<RemoteConfigResponse> | undefined>;
-//# sourceMappingURL=init.d.ts.map

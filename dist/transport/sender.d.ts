@@ -5,4 +5,3 @@
  * telemetry delivery is owned exclusively by TransportRouter/BatchManager.
  */
 export {};
-//# sourceMappingURL=sender.d.ts.map

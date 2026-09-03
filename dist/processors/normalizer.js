@@ -120,4 +120,3 @@ function truncateObject(value, maxDepth, currentDepth = 0, seen) {
     }
     return result;
 }
-//# sourceMappingURL=normalizer.js.map

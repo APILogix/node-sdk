@@ -11,6 +11,7 @@ import { captureError } from '../../src/capture/captureError.js';
 import { client } from '../../src/core/client.js';
 import { monitorMiddleware } from '../../src/instrumentation/express.js';
 import { fastifyPulsePlugin } from '../../src/instrumentation/fastify.js';
+import { createContextStore, withContext } from '../../src/core/context.js';
 import { TEST_REMOTE_CONFIG as BAKED_IN_REMOTE_CONFIG } from '../fixtures/remote-config.js';
 async function startMockBackend() {
     const requests = [];
@@ -32,7 +33,18 @@ async function startMockBackend() {
             if (req.url === '/v1/init' || req.url === '/api/v1/init') {
                 const port = server.address().port;
                 const localUrl = `http://127.0.0.1:${port}`;
-                const paths = { errors: '/api/v1/errors', events: '/api/v1/events' };
+                const paths = {
+                    errors: '/api/v1/errors',
+                    events: '/api/v1/events',
+                    requests: '/api/v1/requests',
+                    traces: '/api/v1/traces',
+                    spans: '/api/v1/spans',
+                    metrics: '/api/v1/metrics',
+                    logs: '/api/v1/logs',
+                    profiles: '/api/v1/profiles',
+                    crons: '/api/v1/checkins',
+                    replays: '/api/v1/replays',
+                };
                 const routes = Object.fromEntries(Object.entries(BAKED_IN_REMOTE_CONFIG.transport.routes).map(([name, route]) => [
                     name,
                     { ...route, url: `${localUrl}${paths[name] || '/api/v1/unknown'}`, batchSize: 1, flushIntervalMs: 50, timeoutMs: 2_000 },
@@ -50,6 +62,7 @@ async function startMockBackend() {
                         sampling: { ...BAKED_IN_REMOTE_CONFIG.sampling, traces: 1, requests: 1, errors: 1, metrics: 1 },
                         killswitches: { ...BAKED_IN_REMOTE_CONFIG.killswitches, disableTransport: false },
                         transport: { ...BAKED_IN_REMOTE_CONFIG.transport, routes },
+                        entitlements: { ...BAKED_IN_REMOTE_CONFIG.entitlements, errors: true, tracing: true, requestCapture: true, customSpans: true },
                     },
                 }));
                 return;
@@ -111,7 +124,6 @@ describe('HTTP Status Enrichment', { timeout: 30_000 }, () => {
         backend = await startMockBackend();
         await init({
             apiKey: 'test-key',
-            baseUrl: backend.url,
             debug: false,
         });
         console.log('SDK Init result. client.initialized:', client.initialized);
@@ -264,7 +276,12 @@ describe('HTTP Status Enrichment', { timeout: 30_000 }, () => {
         });
         it('unhandledRejection handles false, no HTTP status', async () => {
             backend.reset();
-            captureError(new Error('Unhandled rejection'), 'error');
+            const store = createContextStore('unhandled', 10, {
+                extra: { mechanism: 'unhandledRejection', handled: false },
+            });
+            withContext(store, () => {
+                captureError(new Error('Unhandled rejection'), 'error');
+            });
             await delay(50);
             await flush();
             const events = getErrorEvents(backend);

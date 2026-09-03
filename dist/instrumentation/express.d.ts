@@ -57,4 +57,3 @@ export declare function monitorMiddleware(options?: PulseExpressOptions): (req: 
  * ```
  */
 export declare function expressErrorHandler(): (err: unknown, req: Request, res: Response, next: NextFunction) => void;
-//# sourceMappingURL=express.d.ts.map

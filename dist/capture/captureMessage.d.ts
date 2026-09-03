@@ -11,4 +11,3 @@ import type { SeverityLevel } from '../types/severity.js';
  * @param context - Additional context data
  */
 export declare function captureMessage(message: string, severity?: SeverityLevel, context?: Record<string, unknown>): void;
-//# sourceMappingURL=captureMessage.d.ts.map

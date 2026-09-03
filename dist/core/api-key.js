@@ -11,4 +11,3 @@ export function validateApiKey(apiKey) {
         throw new SDKError('apiKey contains illegal control characters', 'INVALID_API_KEY');
     }
 }
-//# sourceMappingURL=api-key.js.map

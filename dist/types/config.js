@@ -1,11 +1,61 @@
 import { z } from 'zod';
-// ─── Remote Config Response (the wire shape) ────────────────────────────────
+// ─── Remote Config Response (the wire shape & runtime snapshot) ──────────────
 //
 // Every behaviour-affecting knob is in this object. The SDK never invents
 // policy — it executes whatever the backend sends. Schema is versioned so
 // older SDKs can detect breaking changes and refuse to apply them.
 /** Bumped on incompatible schema changes. SDKs reject configs with a higher major. */
 export const REMOTE_CONFIG_SCHEMA_VERSION = 1;
+export var ConfigState;
+(function (ConfigState) {
+    ConfigState["Pending"] = "pending";
+    ConfigState["Live"] = "live";
+    ConfigState["Fallback"] = "fallback";
+    ConfigState["Destroyed"] = "destroyed";
+})(ConfigState || (ConfigState = {}));
+// ─── Type Guards ────────────────────────────────────────────────────────────
+const VALID_ROUTE_NAMES = new Set([
+    'traces', 'requests', 'spans', 'errors', 'metrics',
+    'logs', 'profiles', 'events', 'crons', 'replays',
+]);
+export function isNormalizedRemoteConfig(value) {
+    if (value === null || typeof value !== 'object' || Array.isArray(value))
+        return false;
+    const c = value;
+    return (typeof c['schemaVersion'] === 'number' &&
+        c['schemaVersion'] >= 1 &&
+        c['sdk'] !== null && typeof c['sdk'] === 'object' &&
+        c['features'] !== null && typeof c['features'] === 'object' &&
+        c['sampling'] !== null && typeof c['sampling'] === 'object' &&
+        c['transport'] !== null && typeof c['transport'] === 'object' &&
+        c['limits'] !== null && typeof c['limits'] === 'object' &&
+        c['killswitches'] !== null && typeof c['killswitches'] === 'object' &&
+        c['privacy'] !== null && typeof c['privacy'] === 'object' &&
+        c['instrumentation'] !== null && typeof c['instrumentation'] === 'object' &&
+        c['entitlements'] !== null && typeof c['entitlements'] === 'object' &&
+        c['meta'] !== null && typeof c['meta'] === 'object');
+}
+export function isRawRemoteConfig(value) {
+    return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+export function isTransportRouteName(name) {
+    return VALID_ROUTE_NAMES.has(name);
+}
+export function isCompressionType(comp) {
+    return comp === 'gzip' || comp === 'none';
+}
+export function isRoutePriority(prio) {
+    return prio === 'critical' || prio === 'high' || prio === 'normal' || prio === 'low';
+}
+export function isOverflowStrategy(strat) {
+    return strat === 'drop_oldest' || strat === 'drop_newest';
+}
+export function isBackoffStrategy(strat) {
+    return strat === 'exponential' || strat === 'linear' || strat === 'fixed';
+}
+export function isMemoryLimit(mem) {
+    return mem === 'auto' || (typeof mem === 'number' && Number.isFinite(mem) && mem > 0);
+}
 // ─── Zod Schema ─────────────────────────────────────────────────────────────
 export const sdkInitOptionsSchema = z.object({
     apiKey: z.string().trim().min(1, 'apiKey is required'),
@@ -21,7 +71,6 @@ export const sdkInitOptionsSchema = z.object({
         .optional(),
     debug: z.boolean().optional(),
     logLevel: z.enum(['debug', 'info', 'warning', 'error', 'fatal']).optional(),
-    baseUrl: z.string().url().refine(isHttpOrigin, 'baseUrl must be an HTTP(S) origin').optional(),
     shutdownTimeoutMs: z.number().int().min(1000).max(60000).optional(),
     sourceMaps: z
         .object({
@@ -32,18 +81,3 @@ export const sdkInitOptionsSchema = z.object({
         .strict()
         .optional(),
 }).strict();
-function isHttpOrigin(value) {
-    try {
-        const url = new URL(value);
-        return (url.protocol === 'https:' || url.protocol === 'http:')
-            && !url.username
-            && !url.password
-            && !url.search
-            && !url.hash
-            && (url.pathname === '' || url.pathname === '/');
-    }
-    catch {
-        return false;
-    }
-}
-//# sourceMappingURL=config.js.map

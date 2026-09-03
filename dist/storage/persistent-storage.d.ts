@@ -213,4 +213,3 @@ declare class PersistentStorage {
 export declare const persistentStorage: PersistentStorage;
 export { PersistentStorage };
 export type { PersistentStorageOptions };
-//# sourceMappingURL=persistent-storage.d.ts.map

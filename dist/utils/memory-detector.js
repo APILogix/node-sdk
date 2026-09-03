@@ -240,4 +240,3 @@ export function resolveMaxMemoryMb(userValue) {
 export function clearMemoryDetectionCache() {
     cachedResult = null;
 }
-//# sourceMappingURL=memory-detector.js.map

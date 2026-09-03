@@ -19,4 +19,3 @@ export interface HttpResponse<T> {
     rateLimitRemaining?: number;
 }
 export declare function postJson<T>(url: string, body: unknown, headers: Record<string, string>, timeoutMs: number, options?: PostJsonOptions): Promise<T>;
-//# sourceMappingURL=http.d.ts.map

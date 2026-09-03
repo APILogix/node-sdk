@@ -20,4 +20,3 @@ export declare function startProfile(profileId: string): Promise<boolean>;
  * @param profileId The unique identifier passed to `startProfile()`.
  */
 export declare function stopProfile(profileId: string): Promise<void>;
-//# sourceMappingURL=captureProfile.d.ts.map

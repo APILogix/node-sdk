@@ -238,4 +238,3 @@ function extractScheme(url) {
     return 'https';
 }
 export default createAxiosInstrumentation;
-//# sourceMappingURL=axios.js.map

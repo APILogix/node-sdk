@@ -29,4 +29,3 @@ export declare class ConnectionManager {
     stats(): ConnectionPoolStats;
     maxForRoute(route: EnterpriseRoute): number;
 }
-//# sourceMappingURL=connection-manager.d.ts.map

@@ -282,4 +282,3 @@ export function resetTraceAggregator() {
         instance = null;
     }
 }
-//# sourceMappingURL=trace-aggregator.js.map

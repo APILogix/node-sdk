@@ -9,4 +9,3 @@ export { createMongoDBInstrumentation } from './mongodb.js';
 export { createRedisInstrumentation } from './redis.js';
 export { createBullMQInstrumentation } from './bullmq.js';
 export { createAxiosInstrumentation } from './axios.js';
-//# sourceMappingURL=index.js.map

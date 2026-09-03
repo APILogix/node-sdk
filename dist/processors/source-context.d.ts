@@ -33,4 +33,3 @@ export declare function attachSourceContext(frames: readonly StackFrame[]): Prom
  * Useful for testing.
  */
 export declare function resetSourceContextCache(): void;
-//# sourceMappingURL=source-context.d.ts.map

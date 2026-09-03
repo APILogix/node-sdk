@@ -61,4 +61,3 @@ export function captureCronCheckIn(monitorSlug, status, options) {
         subsystem.checkIn(monitorSlug, status, options);
     }
 }
-//# sourceMappingURL=captureCronCheckIn.js.map

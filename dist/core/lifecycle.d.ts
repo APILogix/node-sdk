@@ -97,4 +97,3 @@ export declare function registerSignalHandlers(): void;
  * @internal
  */
 export declare function resetSignalHandlers(): void;
-//# sourceMappingURL=lifecycle.d.ts.map

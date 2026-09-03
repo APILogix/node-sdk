@@ -195,4 +195,3 @@ export class SpanDurationTracker {
 }
 /** Singleton instance for the SDK. */
 export const spanDurationTracker = new SpanDurationTracker();
-//# sourceMappingURL=span-duration.js.map

@@ -20,4 +20,3 @@ export function toError(value) {
         return new Error(String(value));
     }
 }
-//# sourceMappingURL=errors.js.map

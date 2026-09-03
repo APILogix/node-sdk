@@ -104,4 +104,3 @@ export function unpatchEventEmitter() {
     delete g[PATCH_SYMBOL];
     getLogger().debug('EventEmitter context binding patch removed');
 }
-//# sourceMappingURL=event-emitter-patch.js.map

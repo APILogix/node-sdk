@@ -43,4 +43,3 @@ export interface AxiosSpanAttributes {
     'http.response.body'?: string;
 }
 export default createAxiosInstrumentation;
-//# sourceMappingURL=axios.d.ts.map

@@ -4,4 +4,3 @@ export declare class SDKError extends Error {
     constructor(message: string, code: string, context?: Record<string, unknown>, cause?: unknown);
 }
 export declare function toError(value: unknown): Error;
-//# sourceMappingURL=errors.d.ts.map

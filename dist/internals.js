@@ -48,4 +48,3 @@ export { PulseSpan } from './tracing/span.js';
 // ─── Logging plumbing ───────────────────────────────────────────────────────
 export { getLogger, jsonLogger, setLogFormat, getLogFormat } from './utils/logger.js';
 export { REMOTE_CONFIG_SCHEMA_VERSION } from './types/config.js';
-//# sourceMappingURL=internals.js.map

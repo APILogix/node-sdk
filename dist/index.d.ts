@@ -139,4 +139,3 @@ export declare function getSDKHealth(): {
         totalFlushed: number;
     };
 };
-//# sourceMappingURL=index.d.ts.map

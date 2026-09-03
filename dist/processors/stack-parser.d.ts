@@ -39,4 +39,3 @@ export type { StackFrame } from '../types/event.js';
  * Filters out internal Node.js frames.
  */
 export declare function parseStack(stack?: string, error?: Error): StackFrame[];
-//# sourceMappingURL=stack-parser.d.ts.map

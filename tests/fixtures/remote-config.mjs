@@ -45,6 +45,9 @@ export const TEST_REMOTE_CONFIG = Object.freeze({
       enabled: false, maxTenantsTracked: 1000, quotaPerWindow: 10000,
       windowDurationMs: 60000, criticalReserve: 100,
     },
+    persistenceGovernance: {
+      maxPersistPerMinute: 20000, adaptive: true, budgetExceededLogIntervalMs: 60000,
+    },
   },
   killswitches: {
     disableSDK: false, disableTracing: false, disableMetrics: false,

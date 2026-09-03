@@ -12,4 +12,3 @@ export declare function sha1(input: string): string;
  * Used for payload signing in transport layer.
  */
 export declare function hmacSha256(key: string, data: string): string;
-//# sourceMappingURL=hash.d.ts.map

@@ -92,4 +92,3 @@ export async function teardownPlugins() {
         }
     }
 }
-//# sourceMappingURL=index.js.map

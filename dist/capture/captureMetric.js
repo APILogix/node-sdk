@@ -85,4 +85,3 @@ export function addUpDownCounter(name, value, tags) {
         return;
     metricsRegistry.addUpDownCounter(name, value, { labels: tags ?? {} });
 }
-//# sourceMappingURL=captureMetric.js.map

@@ -82,4 +82,3 @@ export declare class CardinalityGovernor {
     private evictStaleSeries;
 }
 export declare const cardinalityGovernor: CardinalityGovernor;
-//# sourceMappingURL=cardinality-governor.d.ts.map

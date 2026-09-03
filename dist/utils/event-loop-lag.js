@@ -89,4 +89,3 @@ export class EventLoopLagMonitor extends EventEmitter {
         };
     }
 }
-//# sourceMappingURL=event-loop-lag.js.map

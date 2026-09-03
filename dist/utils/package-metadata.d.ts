@@ -6,4 +6,3 @@ export interface ApplicationPackageMetadata {
 }
 /** Resolve consuming-app identity once during SDK initialization. Never throws. */
 export declare function resolveApplicationPackage(options: SDKInitOptions): ApplicationPackageMetadata;
-//# sourceMappingURL=package-metadata.d.ts.map

@@ -39,4 +39,3 @@ export declare class LoadShedder {
     reset(): void;
 }
 export declare const loadShedder: LoadShedder;
-//# sourceMappingURL=load-shedder.d.ts.map

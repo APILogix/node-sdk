@@ -10,6 +10,7 @@ import { getLogger } from '../utils/logger.js'
 import { getRequestContext, getSpanId, getTraceId } from '../core/context.js'
 import { SecurityScrubber } from '../processors/security-scrubber.js'
 import { EntitlementGate } from '../core/entitlement-gate.js'
+import { isSdkConsoleBypass } from '../utils/sdk-console.js'
 
 type LogEmitter = (event: LogEvent) => void
 type ConsoleMethod = (...args: unknown[]) => void
@@ -132,7 +133,7 @@ export class LoggingSubsystem {
       if (typeof current !== 'function') continue
       if (isMarkedWrapper(current)) {
         logger.warn(
-          `[LoggingSubsystem] console.${level} is already wrapped by Pulse SDK; skipping install`,
+          `[LoggingSubsystem] console.${level} is already wrapped by Pulse telemetry; skipping install`,
         )
         continue
       }
@@ -142,6 +143,7 @@ export class LoggingSubsystem {
 
       const wrapper: MarkedWrapper = (...args: unknown[]) => {
         original.apply(console, args)
+        if (args.some(isSdkConsoleBypass)) return
         if (LoggingSubsystem.captureReentry) return
         LoggingSubsystem.captureReentry = true
         try {

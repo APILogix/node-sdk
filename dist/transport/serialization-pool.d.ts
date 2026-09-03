@@ -27,4 +27,3 @@ export declare class SerializationPool {
      */
     static reset(): Promise<void>;
 }
-//# sourceMappingURL=serialization-pool.d.ts.map

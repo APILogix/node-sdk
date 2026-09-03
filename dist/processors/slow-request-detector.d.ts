@@ -54,4 +54,3 @@ declare class SlowRequestDetector {
 }
 export declare const slowRequestDetector: SlowRequestDetector;
 export { SlowRequestDetector };
-//# sourceMappingURL=slow-request-detector.d.ts.map

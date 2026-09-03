@@ -306,7 +306,6 @@ export class TransportRouter {
             const maxSize = config.queue.maxSize;
             getLogger().info('[TransportRouter] Configured route', {
                 route,
-                url: routeRemote.url,
                 batchSize: routeRemote.batchSize,
                 flushIntervalMs: routeRemote.flushIntervalMs,
                 timeoutMs: routeRemote.timeoutMs,
@@ -409,4 +408,3 @@ function emptyStats(route) {
         avgBatchSize: 0,
     };
 }
-//# sourceMappingURL=transport-router.js.map

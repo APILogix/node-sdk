@@ -86,4 +86,3 @@ export interface SDKPlugin {
      */
     teardown?(): void | Promise<void>;
 }
-//# sourceMappingURL=plugin.d.ts.map

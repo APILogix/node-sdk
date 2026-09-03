@@ -292,7 +292,7 @@ export function initTracer(config, customResources) {
             tracer = trace.getTracer(SDK_NAME, SDK_VERSION);
             initialized = true;
             ownsProvider = false;
-            logger.info('OpenTelemetry tracer provider already registered by Pulse SDK; reusing global provider');
+            logger.info('OpenTelemetry tracer provider already registered by Pulse telemetry; reusing global provider');
             return;
         }
         const existingGlobal = getOtelGlobalApi();
@@ -300,7 +300,7 @@ export function initTracer(config, customResources) {
             tracer = trace.getTracer(SDK_NAME, SDK_VERSION);
             initialized = true;
             ownsProvider = false;
-            logger.info('Existing OpenTelemetry provider/context manager detected; Pulse SDK will not register another provider');
+            logger.info('Existing OpenTelemetry provider/context manager detected; Pulse telemetry will not register another provider');
             return;
         }
         // Build resource descriptor
@@ -814,4 +814,3 @@ function getOtelGlobalApi() {
     const key = Symbol.for('opentelemetry.js.api.1');
     return globalThis[key];
 }
-//# sourceMappingURL=tracer.js.map

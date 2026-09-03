@@ -40,4 +40,3 @@ export interface BreadcrumbInput {
     readonly type?: BreadcrumbType;
     readonly data?: Readonly<Record<string, unknown>>;
 }
-//# sourceMappingURL=breadcrumb.d.ts.map

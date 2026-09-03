@@ -26,4 +26,3 @@ export function createMySQLInstrumentation(enabled, mergedOptions, captureConfig
 }
 export { OTelMySQL2Instrumentation };
 export default createMySQLInstrumentation;
-//# sourceMappingURL=mysql.js.map

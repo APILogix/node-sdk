@@ -287,4 +287,3 @@ export function setLogger(logger) {
 export function getLogger() {
     return activeLogger;
 }
-//# sourceMappingURL=logger.js.map

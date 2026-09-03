@@ -61,4 +61,3 @@ export class RingBuffer {
         return this.buffer[index];
     }
 }
-//# sourceMappingURL=ring-buffer.js.map

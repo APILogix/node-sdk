@@ -20,11 +20,11 @@
 import { registerInstrumentations } from '@opentelemetry/instrumentation'
 import { HttpInstrumentation } from '@opentelemetry/instrumentation-http'
 import { ExpressInstrumentation } from '@opentelemetry/instrumentation-express'
-import { FastifyInstrumentation } from '@opentelemetry/instrumentation-fastify'
+import { FastifyOtelInstrumentation } from '@fastify/otel'
 import { UndiciInstrumentation } from '@opentelemetry/instrumentation-undici'
 import { GraphQLInstrumentation } from '@opentelemetry/instrumentation-graphql'
 import { MongoDBInstrumentation } from '@opentelemetry/instrumentation-mongodb'
-import { RedisInstrumentation } from '@opentelemetry/instrumentation-redis-4'
+import { RedisInstrumentation } from '@opentelemetry/instrumentation-redis'
 import { PrismaInstrumentation } from '@prisma/instrumentation'
 import { BullMQInstrumentation } from 'opentelemetry-instrumentation-bullmq'
 import { client } from '../core/client.js'
@@ -288,7 +288,10 @@ export function registerAutoInstrumentations(): void {
   }
 
   if (resolved.fastify) {
-    instrumentations.push(new FastifyInstrumentation())
+    instrumentations.push(new FastifyOtelInstrumentation({
+      registerOnInitialization: true,
+      instrumentHooks: resolved.fastifyConfig.captureHooks,
+    }))
   }
 
   if (resolved.undici) {

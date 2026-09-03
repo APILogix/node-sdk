@@ -39,4 +39,3 @@ export function acceptedSyncReceipt(eventId) {
 export function rejectedReceipt(eventId, reason) {
     return { accepted: false, eventId, reason, processed: REJECTED_PROMISE };
 }
-//# sourceMappingURL=event-receipt.js.map

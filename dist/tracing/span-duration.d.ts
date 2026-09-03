@@ -127,4 +127,3 @@ export declare class SpanDurationTracker {
 }
 /** Singleton instance for the SDK. */
 export declare const spanDurationTracker: SpanDurationTracker;
-//# sourceMappingURL=span-duration.d.ts.map

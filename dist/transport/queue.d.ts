@@ -75,4 +75,3 @@ export declare class EventQueue {
  */
 export declare function getPriority(event: Event | Record<string, unknown>): EventPriority;
 export declare const eventQueue: EventQueue;
-//# sourceMappingURL=queue.d.ts.map

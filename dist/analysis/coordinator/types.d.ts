@@ -21,4 +21,3 @@ export interface CoordinatorState {
     progress: number;
     currentPhase?: string;
 }
-//# sourceMappingURL=types.d.ts.map

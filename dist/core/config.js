@@ -3,4 +3,3 @@ import { ConfigManager } from './config-manager.js';
 export function getConfig() {
     return ConfigManager.getInstance().getConfig();
 }
-//# sourceMappingURL=config.js.map
