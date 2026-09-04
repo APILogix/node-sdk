@@ -16,6 +16,7 @@ import { SecurityScrubber } from '../processors/security-scrubber.js';
 import { TransportRouter } from '../transport/transport-router.js';
 import { tenantGovernor } from './tenant-isolation.js';
 import { adaptivePressure } from '../utils/adaptive-pressure.js';
+import { quotaController } from './quota-controller.js';
 import { costGovernor } from '../utils/cost-governor.js';
 import { TRACING_DEFAULTS } from '../constants/internal-defaults.js';
 import { initTracer, shutdownTracer } from '../tracing/tracer.js';
@@ -333,8 +334,14 @@ async function initialize(options) {
         client.markInitialized();
         filterBufferedEvents(config);
         await replayBufferedEvents(persistedEvents);
+        adaptivePressure.resetWarmup();
+        const pressureSnapshot = adaptivePressure.getSnapshot();
+        const quotaSnapshot = quotaController.getSnapshot();
         logger.info('Telemetry initialized from remote configuration', {
             activeSubsystems: featureController.getActiveSubsystems(),
+            pressureState: pressureSnapshot.state,
+            pressureScore: pressureSnapshot.score,
+            quotaState: quotaSnapshot.state,
         });
         return manager.getConfig();
     }

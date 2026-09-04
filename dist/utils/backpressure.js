@@ -1,17 +1,14 @@
 import { EventEmitter } from 'events';
+import * as v8 from 'node:v8';
 /**
  * Monitors process memory and emits events when pressure levels change.
- *
- * Usage:
- *   const monitor = new MemoryPressureMonitor()
- *   monitor.on('pressure', (state) => { ... })
- *   monitor.start()
- *   // ... later
- *   monitor.stop()
+ * Uses effective heap limit and hysteresis to prevent false alarms during V8 heap expansion.
  */
 export class MemoryPressureMonitor extends EventEmitter {
     elevatedThreshold;
     criticalThreshold;
+    elevatedExitThreshold;
+    criticalExitThreshold;
     pollIntervalMs;
     minHeapTotalMb;
     maxMemoryMb;
@@ -19,8 +16,10 @@ export class MemoryPressureMonitor extends EventEmitter {
     lastLevel = 'normal';
     constructor(options = {}) {
         super();
-        this.elevatedThreshold = options.elevatedThreshold ?? 0.7;
-        this.criticalThreshold = options.criticalThreshold ?? 0.9;
+        this.elevatedThreshold = options.elevatedThreshold ?? 0.70;
+        this.criticalThreshold = options.criticalThreshold ?? 0.88;
+        this.elevatedExitThreshold = options.elevatedExitThreshold ?? 0.60;
+        this.criticalExitThreshold = options.criticalExitThreshold ?? 0.75;
         this.pollIntervalMs = options.pollIntervalMs ?? 5000;
         this.minHeapTotalMb = options.minHeapTotalMb ?? 100;
         this.maxMemoryMb = options.maxMemoryMb;
@@ -49,30 +48,60 @@ export class MemoryPressureMonitor extends EventEmitter {
         const heapTotalMb = mem.heapTotal / (1024 * 1024);
         const rssMb = mem.rss / (1024 * 1024);
         const heapUtilization = mem.heapTotal > 0 ? mem.heapUsed / mem.heapTotal : 0;
-        // If heap is small (< minHeapTotalMb), utilization ratio is meaningless
-        // V8 starts with a tiny heap that grows on demand — high ratio on small
-        // heap does NOT indicate actual pressure.
-        let level = 'normal';
-        if (heapTotalMb >= this.minHeapTotalMb) {
-            if (heapUtilization >= this.criticalThreshold) {
+        // Resolve the true effective memory ceiling (either configured maxMemoryMb or V8 heap limit)
+        let effectiveLimitMb = this.maxMemoryMb && this.maxMemoryMb > 0
+            ? this.maxMemoryMb
+            : 0;
+        if (effectiveLimitMb <= 0) {
+            try {
+                const v8Limit = v8.getHeapStatistics().heap_size_limit;
+                effectiveLimitMb = v8Limit > 0 ? v8Limit / (1024 * 1024) : 1024;
+            }
+            catch {
+                effectiveLimitMb = 1024;
+            }
+        }
+        const effectiveUtilization = effectiveLimitMb > 0 ? heapUsedMb / effectiveLimitMb : 0;
+        // Compute pressure level with hysteresis
+        let level = this.lastLevel;
+        if (this.lastLevel === 'critical') {
+            // Exit critical only if effective utilization drops below criticalExitThreshold
+            if (effectiveUtilization < this.criticalExitThreshold) {
+                level = effectiveUtilization >= this.elevatedThreshold ? 'elevated' : 'normal';
+            }
+        }
+        else if (this.lastLevel === 'elevated') {
+            if (effectiveUtilization >= this.criticalThreshold) {
                 level = 'critical';
             }
-            else if (heapUtilization >= this.elevatedThreshold) {
+            else if (effectiveUtilization < this.elevatedExitThreshold) {
+                level = 'normal';
+            }
+        }
+        else {
+            // Currently normal
+            if (effectiveUtilization >= this.criticalThreshold) {
+                level = 'critical';
+            }
+            else if (effectiveUtilization >= this.elevatedThreshold) {
                 level = 'elevated';
             }
         }
-        // Also enforce an absolute ceiling if configured. This matters in
-        // containers with large heaps where a ratio threshold is too lenient.
-        if (this.maxMemoryMb && this.maxMemoryMb > 0) {
-            const absoluteUtil = heapUsedMb / this.maxMemoryMb;
-            if (absoluteUtil >= this.criticalThreshold) {
-                level = 'critical';
-            }
-            else if (absoluteUtil >= this.elevatedThreshold && level !== 'critical') {
+        // Secondary check: if heap is already large (> 75% of limit) AND heapTotal is nearly 100% full
+        if (heapTotalMb >= this.minHeapTotalMb && heapTotalMb >= effectiveLimitMb * 0.75) {
+            if (heapUtilization >= 0.95 && level === 'normal') {
                 level = 'elevated';
             }
         }
-        return { level, heapUsedMb, heapTotalMb, rssMb, heapUtilization };
+        return {
+            level,
+            heapUsedMb,
+            heapTotalMb,
+            rssMb,
+            heapUtilization,
+            effectiveLimitMb,
+            effectiveUtilization,
+        };
     }
     /** Returns true if the system is under elevated or critical memory pressure. */
     isUnderPressure() {
@@ -80,9 +109,6 @@ export class MemoryPressureMonitor extends EventEmitter {
     }
     /**
      * Check if an event should be accepted based on memory pressure and priority.
-     * - normal: accept all
-     * - elevated: reject 'normal' priority
-     * - critical: reject 'normal' and 'high', only 'critical' survives
      */
     shouldAcceptEvent(priority) {
         const level = this.getState().level;
@@ -117,13 +143,18 @@ export class MemoryPressureMonitor extends EventEmitter {
  */
 export function getMemoryPressureLevel() {
     const mem = process.memoryUsage();
-    const heapTotalMb = mem.heapTotal / (1024 * 1024);
-    if (heapTotalMb < 100)
-        return 'normal';
-    const utilization = mem.heapUsed / mem.heapTotal;
-    if (utilization >= 0.9)
+    const heapUsedMb = mem.heapUsed / (1024 * 1024);
+    let effectiveLimitMb = 1024;
+    try {
+        const v8Limit = v8.getHeapStatistics().heap_size_limit;
+        if (v8Limit > 0)
+            effectiveLimitMb = v8Limit / (1024 * 1024);
+    }
+    catch { }
+    const utilization = heapUsedMb / effectiveLimitMb;
+    if (utilization >= 0.88)
         return 'critical';
-    if (utilization >= 0.7)
+    if (utilization >= 0.70)
         return 'elevated';
     return 'normal';
 }

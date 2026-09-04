@@ -6,7 +6,7 @@ import { SDKError, toError } from './errors.js'
 import { validateApiKey } from './api-key.js'
 import { getLogger } from '../utils/logger.js'
 
-const CONTROL_PLANE_TIMEOUT_MS = 10_000
+const CONTROL_PLANE_TIMEOUT_MS = 5_000
 const CONTROL_PLANE_PATH_PREFIX = ''
 
 export interface InitResponse {
@@ -22,9 +22,8 @@ export interface InitResponse {
   readonly config: RemoteConfigResponse
 }
 
-export interface RemoteConfigClientOptions {
+interface RemoteConfigClientOptions {
   readonly apiKey: string
-  readonly baseUrl?: string | undefined
   readonly timeoutMs?: number | undefined
   readonly fetchImpl?: typeof fetch | undefined
 }
@@ -44,7 +43,7 @@ export class RemoteConfigClient {
   constructor(options: RemoteConfigClientOptions) {
     validateApiKey(options.apiKey)
     this.apiKey = options.apiKey
-    this.baseUrl = normalizeBaseUrl(options.baseUrl ?? resolveApiBaseUrl())
+    this.baseUrl = normalizeBaseUrl(resolveApiBaseUrl())
     this.timeoutMs = options.timeoutMs ?? CONTROL_PLANE_TIMEOUT_MS
     this.fetchImpl = options.fetchImpl ?? fetch
   }

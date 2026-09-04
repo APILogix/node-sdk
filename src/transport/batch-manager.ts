@@ -14,6 +14,7 @@ import { persistenceGovernor } from '../storage/persistence-governor.js'
 import { costGovernor } from '../utils/cost-governor.js'
 import { compressGzip } from '../utils/compression.js'
 import { inspectTelemetryResponse } from '../core/config-manager.js'
+import { quotaController } from '../core/quota-controller.js'
 import { toError } from '../core/errors.js'
 import { sdkConsoleDebug } from '../utils/console-debug.js'
 import { sdkConsoleLog } from '../utils/sdk-console.js'
@@ -52,6 +53,7 @@ export interface BatchManagerStats {
 }
 
 const WARMUP_SUCCESS_THRESHOLD = 5
+const MAX_BATCH_RETENTION_AGE_MS = 300_000 // 5 minutes max retention before dropping stale retries
 
 export class BatchManager {
   private timer: ReturnType<typeof setTimeout> | null = null
@@ -63,6 +65,7 @@ export class BatchManager {
   private readonly pendingRetryPromises = new Set<Promise<void>>()
   private readonly pendingRetryTimers = new Map<ReturnType<typeof setTimeout>, { events: SDKEvent[]; resolve: () => void }>()
   private readonly retryAttempts = new Map<string, number>()
+  private readonly firstAttemptTimestamps = new Map<string, number>()
   private batched = 0
   private totalSent = 0
   private totalDropped = 0
@@ -123,8 +126,7 @@ export class BatchManager {
 
   /**
    * Stop new work, cancel delayed retries, abort active requests, and return
-   * any batches that could not be quiesced within the bounded wait. The
-   * router persists returned events before dropping manager references.
+   * any batches that could not be quiesced within the bounded wait.
    */
   async shutdown(timeoutMs = 4_000): Promise<SDKEvent[]> {
     this.destroyed = true
@@ -201,9 +203,6 @@ export class BatchManager {
         body = JSON.stringify(payload)
         payloadBytes = Buffer.byteLength(body)
       } catch {
-        // Serialization failed (e.g., circular ref). Drop the entire batch in
-        // one go and emit a single onDrop notification. Do not requeue — that
-        // would re-serialize the same bad payload and double-count the drop.
         this.totalDropped += batch.length
         this.options.onDrop?.({
           route: this.options.route,
@@ -264,9 +263,6 @@ export class BatchManager {
       this.activeSends--
       this.batched -= events.length
       this.totalFailed += events.length
-      // Connection-pool starvation is a transient failure (rate-limited or
-      // socket-saturated). Persist so a process crash before the next pump
-      // doesn't lose the batch, then re-queue for the next tick.
       this.persistOnFailure(events, 'connection_acquire_failed')
       this.retryOrRetain(events)
       return
@@ -329,11 +325,6 @@ export class BatchManager {
           compression: 'gzip',
         })
 
-        // suppressTracing prevents OTel HttpInstrumentation from creating a
-        // span for our own batch send. Without this, every export of N
-        // events produces N+1 spans, which themselves export, causing
-        // unbounded fan-out. The static URL ignore list in
-        // auto-instrument.ts is defense-in-depth for the same problem.
         const response = await otelContext.with(
           suppressTracing(otelContext.active()),
           () =>
@@ -342,12 +333,15 @@ export class BatchManager {
               headers,
               body: requestBody,
               signal: controller.signal,
-              // Never forward the bearer token to a redirected origin.
               redirect: 'manual',
             }),
         )
 
         const latency = Date.now() - startedAt
+
+        // Inspect response status and headers for Quota Controller signals & Retry-After
+        quotaController.inspectResponse(response.status, response.headers)
+
         logTransportConsole('response', {
           route: this.options.route,
           statusCode: response.status,
@@ -363,24 +357,20 @@ export class BatchManager {
           latencyMs: latency,
           eventCount: events.length,
         })
+
         if (response.ok) {
           this.options.healthMonitor.recordSuccess(this.options.route, latency)
           this.totalSent += events.length
           this.totalRequests++
           this.totalBatchEvents += events.length
-          for (const event of events) this.retryAttempts.delete(event.eventId ?? '')
-          // Feed the cost governor's bytes budget with the uncompressed
-          // payload size — ingestion billing is per event byte, not per
-          // compressed wire byte. Without this, shouldReduceTelemetry()
-          // could never engage and getStats() always reported 0 bytes.
+          for (const event of events) {
+            const key = event.eventId ?? ''
+            this.retryAttempts.delete(key)
+            this.firstAttemptTimestamps.delete(key)
+          }
           costGovernor.recordBytesSent(Buffer.byteLength(body))
-          // ACK: backend confirmed delivery. Remove the batch from disk if
-          // it had been persisted on a previous failed attempt. discard()
-          // is async (it rewrites the NDJSON file) but we do not await it
-          // here — the send pipeline must not block on filesystem latency.
-          // The write chain inside persistentStorage serializes discards
-          // safely.
           this.discardOnSuccess(events)
+
           getLogger().info('[TransportRouter] Batch send successful', {
             route: this.options.route,
             statusCode: response.status,
@@ -397,9 +387,7 @@ export class BatchManager {
             payloadBytes: Buffer.byteLength(body),
             wireBytes: wireBody.byteLength,
           })
-          // The telemetry ACK is fully accounted for before config refresh is
-          // considered. Inspection is non-blocking and ConfigManager enforces
-          // single-flight refreshes.
+
           inspectTelemetryResponse(response)
         } else if (response.status >= 500 || response.status === 429 || response.status === 408) {
           getLogger().warn('[TransportRouter] Retryable batch response', {
@@ -416,10 +404,12 @@ export class BatchManager {
           })
           this.options.healthMonitor.recordFailure(this.options.route)
           this.totalFailed += events.length
-          // Retry-eligible failure: persist before re-queue so a crash
-          // between now and the next attempt doesn't lose the batch.
+
           this.persistOnFailure(events, `http_${response.status}`)
-          this.retryOrRetain(events)
+
+          const retryAfterHeader = response.headers.get('retry-after')
+          const retryAfterMs = retryAfterHeader ? parseRetryAfterHeader(retryAfterHeader) : null
+          this.retryOrRetain(events, retryAfterMs)
         } else {
           getLogger().warn('[TransportRouter] Non-retryable batch response', {
             route: this.options.route,
@@ -435,11 +425,12 @@ export class BatchManager {
           })
           this.options.healthMonitor.recordFailure(this.options.route)
           this.totalDropped += events.length
-          for (const event of events) this.retryAttempts.delete(event.eventId ?? '')
-          // Non-retryable failure (4xx other than 408/429). The backend
-          // has rejected the batch and a retry would just be re-rejected.
-          // Do NOT persist — replaying a permanent rejection forever is a
-          // bug. Drop the batch and notify the dropper.
+          for (const event of events) {
+            const key = event.eventId ?? ''
+            this.retryAttempts.delete(key)
+            this.firstAttemptTimestamps.delete(key)
+          }
+
           this.options.onDrop?.({
             route: this.options.route,
             reason: 'route_unavailable',
@@ -458,9 +449,7 @@ export class BatchManager {
       const abortReason = aborted ? (this.destroyed ? 'shutdown' : 'timeout') : undefined
       this.options.healthMonitor.recordFailure(this.options.route)
       this.totalFailed += events.length
-      // Network-level failure (DNS, TCP reset, abort, fetch rejection).
-      // The backend never saw the request, so retry is safe. Persist so a
-      // crash before retry doesn't drop the batch.
+
       this.persistOnFailure(events, 'network_error')
       this.retryOrRetain(events)
       getLogger().warn('[TransportRouter] Batch send failed', {
@@ -494,35 +483,73 @@ export class BatchManager {
     }
   }
 
-  private retryOrRetain(events: readonly SDKEvent[]): void {
+  private retryOrRetain(events: readonly SDKEvent[], retryAfterMs?: number | null): void {
     if (this.destroyed) {
       const retained = events.filter(event => !this.handedOffEvents.has(event))
       this.options.queue.requeueFront(retained)
-      for (const event of events) this.retryAttempts.delete(event.eventId ?? '')
+      for (const event of events) {
+        const key = event.eventId ?? ''
+        this.retryAttempts.delete(key)
+        this.firstAttemptTimestamps.delete(key)
+      }
       return
     }
     if (!this.options.retry.enabled || this.options.retry.maxRetries <= 0) return
 
+    const now = Date.now()
     const retryable: SDKEvent[] = []
     let highestAttempt = 0
+
     for (const event of events) {
       const key = event.eventId ?? ''
+      const firstAttempt = this.firstAttemptTimestamps.get(key) ?? now
+      if (!this.firstAttemptTimestamps.has(key)) {
+        this.firstAttemptTimestamps.set(key, now)
+      }
+
+      // Drop poisoned/stale batches exceeding max retention age
+      if (now - firstAttempt > MAX_BATCH_RETENTION_AGE_MS) {
+        this.retryAttempts.delete(key)
+        this.firstAttemptTimestamps.delete(key)
+        this.totalDropped++
+        this.options.onDrop?.({
+          route: this.options.route,
+          reason: 'route_unavailable',
+          count: 1,
+          eventType: event.type,
+          eventId: event.eventId,
+        })
+        continue
+      }
+
       const attempt = (this.retryAttempts.get(key) ?? 0) + 1
       if (attempt > this.options.retry.maxRetries) {
         this.retryAttempts.delete(key)
+        this.firstAttemptTimestamps.delete(key)
+        this.totalDropped++
+        this.options.onDrop?.({
+          route: this.options.route,
+          reason: 'route_unavailable',
+          count: 1,
+          eventType: event.type,
+          eventId: event.eventId,
+        })
         continue
       }
+
       this.retryAttempts.set(key, attempt)
       highestAttempt = Math.max(highestAttempt, attempt)
       retryable.push(event)
     }
+
     if (retryable.length === 0) return
 
     this.totalRetries += retryable.length
-    const delayMs = retryDelay(this.options.retry, highestAttempt)
+    const delayMs = retryDelay(this.options.retry, highestAttempt, retryAfterMs)
     let resolveRetry!: () => void
     const pending = new Promise<void>(resolve => { resolveRetry = resolve })
     this.pendingRetryPromises.add(pending)
+
     const timer = setTimeout(() => {
       this.pendingRetryTimers.delete(timer)
       this.pendingRetryPromises.delete(pending)
@@ -544,32 +571,14 @@ export class BatchManager {
     this.pendingRetryPromises.clear()
   }
 
-  /**
-   * Persist a batch to disk after a transient send failure.
-   *
-   * Called on network errors, retry-eligible HTTP failures (5xx, 429, 408),
-   * and connection-acquisition starvation. NOT called on 4xx permanent
-   * rejections — those are dropped because replaying them forever is a bug.
-   *
-   * Persistence is best-effort and never throws to the caller. The batch
-   * is still re-queued in memory by the caller; persistence is purely
-   * defense against process crash before the in-memory retry succeeds.
-   */
   private persistOnFailure(batch: readonly SDKEvent[], reason: string): void {
     try {
       if (!persistentStorage.isInitialized) return
-      // Consult the persistence governor per event: critical-tier events
-      // (errors/crashes) always persist, but under adaptive pressure the
-      // governor sheds lower durability tiers and enforces the per-minute
-      // persist budget — so a failing backend can't turn into a disk-I/O
-      // storm exactly when the process is already under memory/GC pressure.
       const survivable = batch.filter(event => persistenceGovernor.shouldPersist(event as Event))
       if (survivable.length > 0) {
         persistentStorage.persistBatch(survivable as readonly Event[])
       }
     } catch (error) {
-      // Persistence failure on the failure path is genuinely best-effort.
-      // We've already counted the batch as failed; logging here is enough.
       getLogger().debug('[TransportRouter] Failed to persist failed batch', {
         route: this.options.route,
         reason,
@@ -579,16 +588,6 @@ export class BatchManager {
     }
   }
 
-  /**
-   * Discard delivered events from durable storage after backend ACK.
-   *
-   * Fire-and-forget: the rewrite is serialized through the storage write
-   * chain, so completion order is correct, but we do not await here so a
-   * slow filesystem cannot block the send pipeline. A crash before the
-   * discard write hits disk leaves the events on disk and produces a
-   * single duplicate replay on the next start — which the backend MUST
-   * dedupe by `eventId` per the at-least-once delivery contract.
-   */
   private discardOnSuccess(batch: readonly SDKEvent[]): void {
     if (!persistentStorage.isInitialized) return
     void persistentStorage.discard(batch as readonly Event[]).catch(error => {
@@ -696,9 +695,34 @@ function logTransportConsole(direction: 'request' | 'response', details: Readonl
   })
 }
 
-function retryDelay(config: TransportRetryConfig, attempt: number): number {
+function retryDelay(config: TransportRetryConfig, attempt: number, retryAfterMs?: number | null): number {
+  if (typeof retryAfterMs === 'number' && retryAfterMs > 0) {
+    return Math.min(60_000, retryAfterMs)
+  }
   const base = Math.max(0, config.baseDelayMs)
-  if (config.backoff === 'fixed') return base
-  if (config.backoff === 'linear') return Math.min(30_000, base * attempt)
-  return Math.min(30_000, base * 2 ** Math.max(0, attempt - 1))
+  let delay = base
+  if (config.backoff === 'fixed') {
+    delay = base
+  } else if (config.backoff === 'linear') {
+    delay = Math.min(30_000, base * attempt)
+  } else {
+    delay = Math.min(30_000, base * 2 ** Math.max(0, attempt - 1))
+  }
+  const jitter = 0.8 + Math.random() * 0.4
+  return Math.max(50, Math.floor(delay * jitter))
+}
+
+function parseRetryAfterHeader(headerValue: string): number | null {
+  const trimmed = headerValue.trim()
+  if (!trimmed) return null
+  const seconds = Number(trimmed)
+  if (!Number.isNaN(seconds) && seconds >= 0) {
+    return Math.min(3_600_000, Math.floor(seconds * 1000))
+  }
+  const dateMs = Date.parse(trimmed)
+  if (!Number.isNaN(dateMs)) {
+    const diff = dateMs - Date.now()
+    return Math.max(0, Math.min(3_600_000, diff))
+  }
+  return null
 }

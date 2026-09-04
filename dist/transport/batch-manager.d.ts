@@ -46,6 +46,7 @@ export declare class BatchManager {
     private readonly pendingRetryPromises;
     private readonly pendingRetryTimers;
     private readonly retryAttempts;
+    private readonly firstAttemptTimestamps;
     private batched;
     private totalSent;
     private totalDropped;
@@ -62,8 +63,7 @@ export declare class BatchManager {
     flush(): Promise<void>;
     /**
      * Stop new work, cancel delayed retries, abort active requests, and return
-     * any batches that could not be quiesced within the bounded wait. The
-     * router persists returned events before dropping manager references.
+     * any batches that could not be quiesced within the bounded wait.
      */
     shutdown(timeoutMs?: number): Promise<SDKEvent[]>;
     stats(): BatchManagerStats;
@@ -72,28 +72,7 @@ export declare class BatchManager {
     private sendBatch;
     private retryOrRetain;
     private cancelPendingRetries;
-    /**
-     * Persist a batch to disk after a transient send failure.
-     *
-     * Called on network errors, retry-eligible HTTP failures (5xx, 429, 408),
-     * and connection-acquisition starvation. NOT called on 4xx permanent
-     * rejections — those are dropped because replaying them forever is a bug.
-     *
-     * Persistence is best-effort and never throws to the caller. The batch
-     * is still re-queued in memory by the caller; persistence is purely
-     * defense against process crash before the in-memory retry succeeds.
-     */
     private persistOnFailure;
-    /**
-     * Discard delivered events from durable storage after backend ACK.
-     *
-     * Fire-and-forget: the rewrite is serialized through the storage write
-     * chain, so completion order is correct, but we do not await here so a
-     * slow filesystem cannot block the send pipeline. A crash before the
-     * discard write hits disk leaves the events on disk and produces a
-     * single duplicate replay on the next start — which the backend MUST
-     * dedupe by `eventId` per the at-least-once delivery contract.
-     */
     private discardOnSuccess;
     private effectiveMaxBatchSize;
     private effectiveConcurrency;

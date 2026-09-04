@@ -21,10 +21,14 @@
  *     - transient (metrics, messages): persisted only under normal pressure
  *   This prevents disk I/O from becoming a throughput bottleneck at scale.
  *
- * Load shedding:
+ * Load shedding & Correlation Groups:
  *   The pipeline integrates with `LoadShedder` and `AdaptivePressureMonitor`
- *   to drop low-priority telemetry under system pressure before any expensive
- *   processing occurs.
+ *   to drop low-priority telemetry under system pressure at the correlation-group
+ *   level before any expensive processing occurs.
+ *
+ * Quota Control:
+ *   Integrated with `QuotaController` to gracefully suppress billable telemetry
+ *   during exhaustion while preserving application execution and SDK runtime.
  *
  * Replay safety:
  *   Persisted events are replayed on SDK restart via `PersistentStorage`.
@@ -49,16 +53,6 @@ import { type EventReceipt } from './event-receipt.js';
  *
  * The pipeline is intentionally non-blocking. Processing is deferred via
  * `setImmediate()` to avoid blocking the caller's request lifecycle.
- *
- * @example
- * ```ts
- * const receipt = enqueueEvent(event)
- * if (!receipt.accepted) {
- *   logger.warn('Event dropped:', receipt.reason)
- * }
- * // Only await if you need confirmation (e.g., shutdown/flush):
- * await receipt.processed
- * ```
  */
 export declare function enqueueEvent(rawEvent: SDKEvent | Event): EventReceipt;
 /**
@@ -66,39 +60,17 @@ export declare function enqueueEvent(rawEvent: SDKEvent | Event): EventReceipt;
  *
  * **Backward-compatible wrapper** — returns `true` if the event was accepted
  * into the pipeline, `false` if it was synchronously rejected.
- *
- * For explicit lifecycle tracking, use `enqueueEvent()` which returns an
- * `EventReceipt` with async processing status.
- *
- * @deprecated Prefer `enqueueEvent()` for new code — it provides clear
- * async acceptance semantics via `EventReceipt`.
  */
 export declare function processEvent(rawEvent: SDKEvent | Event): boolean;
 /**
  * Drain all in-flight pipeline work to completion.
- *
- * After this returns, the Set is guaranteed empty AND no new entries can be
- * added (the pipelineDraining flag rejects new captures synchronously). The
- * flag is automatically cleared when the SDK is no longer shutting down so
- * the pipeline becomes accepting again on the next init().
- *
- * Bounded by an outer timeout in the lifecycle module — drain itself does
- * not impose a time limit because individual pipeline tasks already have
- * per-step timeouts.
  */
 export declare function drainPendingEventProcessing(): Promise<void>;
 /**
- * Reset the pipeline-draining flag. Called from the lifecycle module's
- * unconditional cleanup phase to guarantee the next init() begins with an
- * accepting pipeline.
- *
- * @internal
+ * Reset the pipeline-draining flag.
  */
 export declare function resetEventPipeline(): void;
 /**
  * Async pipeline — processes a single event through all pipeline stages.
- *
- * Used internally by `enqueueEvent()` and by OTel exporters that need
- * backpressure-aware event ingestion.
  */
 export declare function processEventAsync(rawEvent: SDKEvent | Event, assignedEventId?: string): Promise<boolean>;

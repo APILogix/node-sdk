@@ -85,6 +85,9 @@ import { errorDeduplicator } from './processors/deduplicator.js';
 import { persistentStorage } from './storage/persistent-storage.js';
 import { sourceMapResolver } from './processors/source-map-resolver.js';
 import { metricsRegistry } from './metrics/registry.js';
+import { adaptivePressure } from './utils/adaptive-pressure.js';
+import { quotaController } from './core/quota-controller.js';
+import { loadShedder } from './transport/load-shedder.js';
 let sharedMemoryMonitor = null;
 function getSharedMemoryMonitor() {
     if (!sharedMemoryMonitor) {
@@ -105,6 +108,9 @@ export function getSDKHealth() {
     const sourceMapStats = sourceMapResolver.getStats();
     const metricsStats = metricsRegistry.getStats();
     const transportHealth = TransportRouter.getInstance()?.getHealth();
+    const pressureSnapshot = adaptivePressure.getSnapshot();
+    const quotaSnapshot = quotaController.getSnapshot();
+    const shedderStats = loadShedder.getStats();
     return {
         initialized: client.initialized,
         circuitState: transportHealth
@@ -117,6 +123,24 @@ export function getSDKHealth() {
             level: memState.level,
             heapUsedMb: Math.round(memState.heapUsedMb * 100) / 100,
             heapUtilization: Math.round(memState.heapUtilization * 1000) / 1000,
+            effectiveLimitMb: Math.round(memState.effectiveLimitMb),
+            effectiveUtilization: Math.round(memState.effectiveUtilization * 1000) / 1000,
+        },
+        pressure: {
+            state: pressureSnapshot.state,
+            score: pressureSnapshot.score,
+            level: pressureSnapshot.level,
+        },
+        quota: {
+            state: quotaSnapshot.state,
+            isExhausted: quotaSnapshot.isExhausted,
+            droppedEventsCount: quotaSnapshot.droppedEventsCount,
+        },
+        loadShedder: {
+            totalShed: shedderStats.totalShed,
+            totalAdmitted: shedderStats.totalAdmitted,
+            groupsAdmitted: shedderStats.groupsAdmitted,
+            groupsShed: shedderStats.groupsShed,
         },
         session: {
             totalSessions: sessionHealth.totalSessions,

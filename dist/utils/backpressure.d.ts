@@ -9,32 +9,34 @@ export interface MemoryPressureState {
     readonly heapTotalMb: number;
     readonly rssMb: number;
     readonly heapUtilization: number;
+    readonly effectiveLimitMb: number;
+    readonly effectiveUtilization: number;
 }
 export interface MemoryPressureOptions {
-    /** Heap utilization threshold for 'elevated' (0.0–1.0). Default: 0.7 */
+    /** Effective utilization threshold for 'elevated' (0.0–1.0). Default: 0.70 */
     readonly elevatedThreshold?: number;
-    /** Heap utilization threshold for 'critical' (0.0–1.0). Default: 0.9 */
+    /** Effective utilization threshold for 'critical' (0.0–1.0). Default: 0.88 */
     readonly criticalThreshold?: number;
+    /** Elevated exit threshold for hysteresis (0.0–1.0). Default: 0.60 */
+    readonly elevatedExitThreshold?: number;
+    /** Critical exit threshold for hysteresis (0.0–1.0). Default: 0.75 */
+    readonly criticalExitThreshold?: number;
     /** Polling interval in milliseconds. Default: 5000 */
     readonly pollIntervalMs?: number;
     /** Minimum heap total (MB) before utilization thresholds apply. Default: 100 */
     readonly minHeapTotalMb?: number;
-    /** Optional absolute ceiling (MB). When set, pressure is also computed against this limit. */
+    /** Optional absolute ceiling (MB). When set, pressure is computed against this limit. */
     readonly maxMemoryMb?: number | undefined;
 }
 /**
  * Monitors process memory and emits events when pressure levels change.
- *
- * Usage:
- *   const monitor = new MemoryPressureMonitor()
- *   monitor.on('pressure', (state) => { ... })
- *   monitor.start()
- *   // ... later
- *   monitor.stop()
+ * Uses effective heap limit and hysteresis to prevent false alarms during V8 heap expansion.
  */
 export declare class MemoryPressureMonitor extends EventEmitter {
     private readonly elevatedThreshold;
     private readonly criticalThreshold;
+    private readonly elevatedExitThreshold;
+    private readonly criticalExitThreshold;
     private readonly pollIntervalMs;
     private readonly minHeapTotalMb;
     private maxMemoryMb;
@@ -51,9 +53,6 @@ export declare class MemoryPressureMonitor extends EventEmitter {
     isUnderPressure(): boolean;
     /**
      * Check if an event should be accepted based on memory pressure and priority.
-     * - normal: accept all
-     * - elevated: reject 'normal' priority
-     * - critical: reject 'normal' and 'high', only 'critical' survives
      */
     shouldAcceptEvent(priority: EventPriority): boolean;
     /** Convenience method to register a pressure change callback. */

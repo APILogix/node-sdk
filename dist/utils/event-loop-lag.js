@@ -54,6 +54,12 @@ export class EventLoopLagMonitor extends EventEmitter {
             this.timer = null;
         }
     }
+    /** Reset the histogram to clear startup/warmup outliers. */
+    reset() {
+        if (this.histogram) {
+            this.histogram.reset();
+        }
+    }
     /** Get current lag stats without emitting an event. */
     getStats() {
         if (!this.histogram)

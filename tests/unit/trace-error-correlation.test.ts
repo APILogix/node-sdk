@@ -83,7 +83,7 @@ describe('Trace/Span Error Correlation - Automated Scenarios', () => {
       captureError(new Error('error inside withSpan'))
     })
 
-    await new Promise(r => setTimeout(r, 50))
+    await new Promise(r => setTimeout(r, 120))
 
     assert.strictEqual(capturedEvents.length, 1)
     const event = capturedEvents[0]!
@@ -104,7 +104,7 @@ describe('Trace/Span Error Correlation - Automated Scenarios', () => {
       span.end()
     })
 
-    await new Promise(r => setTimeout(r, 50))
+    await new Promise(r => setTimeout(r, 120))
 
     assert.strictEqual(capturedEvents.length, 1)
     const event = capturedEvents[0]!
@@ -116,7 +116,7 @@ describe('Trace/Span Error Correlation - Automated Scenarios', () => {
   it('3. captureError() during startup / outside span -> traceId absent (undefined)', async () => {
     captureError(new Error('startup failure'))
 
-    await new Promise(r => setTimeout(r, 50))
+    await new Promise(r => setTimeout(r, 120))
 
     assert.strictEqual(capturedEvents.length, 1)
     const event = capturedEvents[0]!
@@ -128,7 +128,7 @@ describe('Trace/Span Error Correlation - Automated Scenarios', () => {
   it('4. captureError() inside a cron job without a span -> traceId absent', async () => {
     captureError(new Error('cron job failure'))
 
-    await new Promise(r => setTimeout(r, 50))
+    await new Promise(r => setTimeout(r, 120))
 
     assert.strictEqual(capturedEvents.length, 1)
     const event = capturedEvents[0]!
@@ -145,7 +145,7 @@ describe('Trace/Span Error Correlation - Automated Scenarios', () => {
       captureError(new Error('error after await'))
     })
 
-    await new Promise(r => setTimeout(r, 50))
+    await new Promise(r => setTimeout(r, 120))
 
     assert.strictEqual(capturedEvents.length, 1)
     const event = capturedEvents[0]!
@@ -167,7 +167,7 @@ describe('Trace/Span Error Correlation - Automated Scenarios', () => {
       })
     })
 
-    await new Promise(r => setTimeout(r, 50))
+    await new Promise(r => setTimeout(r, 120))
 
     assert.strictEqual(capturedEvents.length, 1)
     const event = capturedEvents[0]!
@@ -186,7 +186,7 @@ describe('Trace/Span Error Correlation - Automated Scenarios', () => {
       span.end()
     })
 
-    await new Promise(r => setTimeout(r, 50))
+    await new Promise(r => setTimeout(r, 120))
 
     assert.strictEqual(capturedEvents.length, 1)
     const event = capturedEvents[0]!

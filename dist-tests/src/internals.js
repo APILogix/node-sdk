@@ -35,6 +35,10 @@ export { CronSubsystem } from './subsystems/cron-subsystem.js';
 // ─── Diagnostics & observability of the SDK itself ──────────────────────────
 export { EventLoopLagMonitor } from './utils/event-loop-lag.js';
 export { detectResources, detectOtelResource } from './utils/resource-detector.js';
+export { QuotaController, quotaController } from './core/quota-controller.js';
+export { LoadShedder, loadShedder } from './transport/load-shedder.js';
+export { AdaptivePressureMonitor, adaptivePressure } from './utils/adaptive-pressure.js';
+export { MemoryPressureMonitor } from './utils/backpressure.js';
 export { otelMetrics } from './metrics/otel-adapter.js';
 export { errorDeduplicator } from './processors/deduplicator.js';
 export { persistentStorage } from './storage/persistent-storage.js';

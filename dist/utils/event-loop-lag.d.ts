@@ -52,6 +52,8 @@ export declare class EventLoopLagMonitor extends EventEmitter {
     start(): void;
     /** Stop monitoring and clean up. */
     stop(): void;
+    /** Reset the histogram to clear startup/warmup outliers. */
+    reset(): void;
     /** Get current lag stats without emitting an event. */
     getStats(): EventLoopLagStats | null;
     /** Returns true if event loop lag p99 exceeds the given threshold (ms). */

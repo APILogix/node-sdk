@@ -70,7 +70,7 @@ describe('Trace/Span Error Correlation - Automated Scenarios', () => {
             expectedSpanId = span.spanContext().spanId;
             captureError(new Error('error inside withSpan'));
         });
-        await new Promise(r => setTimeout(r, 50));
+        await new Promise(r => setTimeout(r, 120));
         assert.strictEqual(capturedEvents.length, 1);
         const event = capturedEvents[0];
         assert.strictEqual(event.message, 'error inside withSpan');
@@ -87,7 +87,7 @@ describe('Trace/Span Error Correlation - Automated Scenarios', () => {
             captureError(new Error('job failed'));
             span.end();
         });
-        await new Promise(r => setTimeout(r, 50));
+        await new Promise(r => setTimeout(r, 120));
         assert.strictEqual(capturedEvents.length, 1);
         const event = capturedEvents[0];
         assert.strictEqual(event.message, 'job failed');
@@ -96,7 +96,7 @@ describe('Trace/Span Error Correlation - Automated Scenarios', () => {
     });
     it('3. captureError() during startup / outside span -> traceId absent (undefined)', async () => {
         captureError(new Error('startup failure'));
-        await new Promise(r => setTimeout(r, 50));
+        await new Promise(r => setTimeout(r, 120));
         assert.strictEqual(capturedEvents.length, 1);
         const event = capturedEvents[0];
         assert.strictEqual(event.message, 'startup failure');
@@ -105,7 +105,7 @@ describe('Trace/Span Error Correlation - Automated Scenarios', () => {
     });
     it('4. captureError() inside a cron job without a span -> traceId absent', async () => {
         captureError(new Error('cron job failure'));
-        await new Promise(r => setTimeout(r, 50));
+        await new Promise(r => setTimeout(r, 120));
         assert.strictEqual(capturedEvents.length, 1);
         const event = capturedEvents[0];
         assert.strictEqual(event.message, 'cron job failure');
@@ -118,7 +118,7 @@ describe('Trace/Span Error Correlation - Automated Scenarios', () => {
             await new Promise(res => setTimeout(res, 20));
             captureError(new Error('error after await'));
         });
-        await new Promise(r => setTimeout(r, 50));
+        await new Promise(r => setTimeout(r, 120));
         assert.strictEqual(capturedEvents.length, 1);
         const event = capturedEvents[0];
         assert.strictEqual(event.message, 'error after await');
@@ -136,7 +136,7 @@ describe('Trace/Span Error Correlation - Automated Scenarios', () => {
                 }, 20);
             });
         });
-        await new Promise(r => setTimeout(r, 50));
+        await new Promise(r => setTimeout(r, 120));
         assert.strictEqual(capturedEvents.length, 1);
         const event = capturedEvents[0];
         assert.strictEqual(event.message, 'error inside setTimeout');
@@ -151,7 +151,7 @@ describe('Trace/Span Error Correlation - Automated Scenarios', () => {
             captureError(new Error('express route handler error'));
             span.end();
         });
-        await new Promise(r => setTimeout(r, 50));
+        await new Promise(r => setTimeout(r, 120));
         assert.strictEqual(capturedEvents.length, 1);
         const event = capturedEvents[0];
         assert.strictEqual(event.message, 'express route handler error');

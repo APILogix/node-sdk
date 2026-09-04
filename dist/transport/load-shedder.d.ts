@@ -1,42 +1,56 @@
 /**
- * Adaptive Load Shedder — graceful degradation during overload.
+ * Adaptive Load Shedder & Correlation Group Admission Controller.
  *
- * Classifies telemetry events by priority and sheds them based on
- * the current system pressure level from AdaptivePressureMonitor.
- *
- * Priority levels:
- *   P0 (never drop): uncaughtException, unhandledRejection, OOM
- *   P1 (drop last): errors with stack traces
- *   P2 (brownout): request events, spans
- *   P3 (drop first): messages, metrics, breadcrumbs
- *
- * Shedding behavior by pressure level:
- *   normal:   shed nothing
- *   elevated: shed nothing (warning logged)
- *   high:     shed P3 events
- *   critical: shed P3, keep a deterministic P2 sample, P0 + P1 survive
+ * Requirements:
+ * 1. Priority-aware admission: P0 (never drop), P1 (errors + correlated context), P2 (requests/spans), P3 (low-value).
+ * 2. Correlation-Group Admission: Makes admission decisions at the correlation-group level (traceId/requestId).
+ *    Never produces orphan errors or broken traces (request without spans, span without parent).
+ * 3. 5-State Pressure Integration: HEALTHY, ELEVATED, PRESSURED, CRITICAL, RECOVERING.
+ * 4. Deterministic Group-Level Sampling: If sampling is applied under pressure, all events in a trace/request
+ *    share the same group hash and survive or shed as a unified diagnostic unit.
+ * 5. Degradation Metadata: Explicitly tags degraded telemetry so backend/UI distinguishes intentional shedding.
+ * 6. Operational Metrics: Exposes full counters for admissions, shedding, priority drops, and group decisions.
  */
 import { type CompositePressureLevel } from '../utils/adaptive-pressure.js';
-export type TelemetryPriority = 'p0_critical' | 'p1_error' | 'p2_request' | 'p3_low';
+import type { PressureState, TelemetryPriority } from '../types/telemetry-classes.js';
+export type { TelemetryPriority };
 export interface LoadShedderStats {
     readonly droppedByPriority: Record<TelemetryPriority, number>;
+    readonly admittedByPriority: Record<TelemetryPriority, number>;
     readonly currentLevel: CompositePressureLevel;
+    readonly currentState: PressureState;
     readonly totalShed: number;
+    readonly totalAdmitted: number;
+    readonly groupsAdmitted: number;
+    readonly groupsShed: number;
 }
+export type PressureInputState = PressureState | CompositePressureLevel;
 export declare class LoadShedder {
-    private readonly getPressureLevel;
+    private readonly getPressureState;
     private droppedCounts;
+    private admittedCounts;
     private totalShed;
-    constructor(getPressureLevel?: () => CompositePressureLevel);
+    private totalAdmitted;
+    private groupsAdmitted;
+    private groupsShed;
+    private readonly groupTracker;
+    constructor(getPressureState?: () => PressureInputState);
     /**
-     * Classify an event into a telemetry priority tier.
+     * Extract or resolve the stable correlation group key for an event.
+     * Priority: traceId > requestId > eventId.
+     */
+    resolveCorrelationKey(event: Record<string, unknown>): string;
+    /**
+     * Classify an event into an enterprise telemetry priority tier.
      */
     classifyEvent(event: Record<string, unknown>): TelemetryPriority;
     /**
-     * Determine if an event should be shed based on current pressure.
+     * Determine if an event should be shed based on current system pressure
+     * and correlation group semantics.
      * Returns true if the event should be DROPPED.
      */
     shouldShed(event: Record<string, unknown>): boolean;
+    getPressureLevel(): CompositePressureLevel;
     getStats(): LoadShedderStats;
     reset(): void;
 }

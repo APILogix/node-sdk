@@ -30,7 +30,21 @@ function toQueuePriority(priority: 'critical' | 'high' | 'normal' | 'low' | unde
   if (priority === 'critical' || priority === 'high') return 'high'
   if (priority === 'normal') return 'normal'
   if (priority === 'low') return 'low'
+  return undefined
 }
+
+const MIN_BATCH_SIZE: Readonly<Record<EnterpriseRoute, number>> = Object.freeze({
+  errors: 1,
+  events: 1,
+  traces: 10,
+  spans: 10,
+  metrics: 50,
+  logs: 10,
+  profiles: 1,
+  crons: 1,
+  requests: 10,
+  replays: 1,
+})
 
 export class TransportRouter {
   private static instance: TransportRouter | null = null
@@ -356,10 +370,10 @@ export class TransportRouter {
         connectionManager,
         healthMonitor,
         maxBatchSize: routeRemote.batchSize,
-        minBatchSize: 1,
+        minBatchSize: Math.min(MIN_BATCH_SIZE[route], routeRemote.batchSize),
         maxWaitTimeMs: routeRemote.flushIntervalMs,
         maxPayloadBytes: limits.maxPayloadSize,
-        socketTimeoutMs: Math.max(15_000, routeRemote.timeoutMs ?? 15_000),
+        socketTimeoutMs: routeRemote.timeoutMs,
         compression: routeRemote.compression,
         keepAlive: config.keepAlive,
         retry: config.retry,

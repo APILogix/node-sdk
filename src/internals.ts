@@ -48,6 +48,24 @@ export type { EventLoopLagStats, EventLoopLagOptions } from './utils/event-loop-
 export { detectResources, detectOtelResource } from './utils/resource-detector.js'
 export type { ResourceAttributes } from './utils/resource-detector.js'
 
+export { QuotaController, quotaController } from './core/quota-controller.js'
+export type { QuotaStatusSnapshot, QuotaControllerOptions } from './core/quota-controller.js'
+export { LoadShedder, loadShedder } from './transport/load-shedder.js'
+export type { LoadShedderStats } from './transport/load-shedder.js'
+export { AdaptivePressureMonitor, adaptivePressure } from './utils/adaptive-pressure.js'
+export type { PressureSnapshot, AdaptivePressureOptions, CompositePressureLevel } from './utils/adaptive-pressure.js'
+export { MemoryPressureMonitor } from './utils/backpressure.js'
+export type { MemoryPressureState, MemoryPressureOptions, PressureLevel } from './utils/backpressure.js'
+
+export type {
+  TelemetryPriority,
+  PressureState,
+  QuotaState,
+  DegradationInfo,
+  CorrelationGroupInfo,
+  OperationalMetricsSnapshot,
+} from './types/telemetry-classes.js'
+
 export { otelMetrics } from './metrics/otel-adapter.js'
 export type { OtelMetricsConfig } from './metrics/otel-adapter.js'
 

@@ -21,10 +21,14 @@
  *     - transient (metrics, messages): persisted only under normal pressure
  *   This prevents disk I/O from becoming a throughput bottleneck at scale.
  *
- * Load shedding:
+ * Load shedding & Correlation Groups:
  *   The pipeline integrates with `LoadShedder` and `AdaptivePressureMonitor`
- *   to drop low-priority telemetry under system pressure before any expensive
- *   processing occurs.
+ *   to drop low-priority telemetry under system pressure at the correlation-group
+ *   level before any expensive processing occurs.
+ *
+ * Quota Control:
+ *   Integrated with `QuotaController` to gracefully suppress billable telemetry
+ *   during exhaustion while preserving application execution and SDK runtime.
  *
  * Replay safety:
  *   Persisted events are replayed on SDK restart via `PersistentStorage`.
@@ -46,6 +50,7 @@ import { errorDeduplicator } from '../processors/deduplicator.js';
 import { applyScopeToEvent } from './scope.js';
 import { loadShedder } from '../transport/load-shedder.js';
 import { isSDKShuttingDown } from './lifecycle.js';
+import { quotaController } from './quota-controller.js';
 import { acceptedReceipt, acceptedSyncReceipt, rejectedReceipt, } from './event-receipt.js';
 // ─── Remote Config Engine Imports ───────────────────────────────────────────
 import { KillswitchEngine } from './killswitch-engine.js';
@@ -94,16 +99,6 @@ let pipelineDraining = false;
  *
  * The pipeline is intentionally non-blocking. Processing is deferred via
  * `setImmediate()` to avoid blocking the caller's request lifecycle.
- *
- * @example
- * ```ts
- * const receipt = enqueueEvent(event)
- * if (!receipt.accepted) {
- *   logger.warn('Event dropped:', receipt.reason)
- * }
- * // Only await if you need confirmation (e.g., shutdown/flush):
- * await receipt.processed
- * ```
  */
 export function enqueueEvent(rawEvent) {
     const logger = getLogger();
@@ -124,9 +119,6 @@ export function enqueueEvent(rawEvent) {
         return rejectedReceipt(eventId, 'sdk_shutting_down');
     }
     // Gate 1.1: Reject new events once the pipeline has begun draining.
-    // This guarantees drainPendingEventProcessing() converges in finite time.
-    // Internal SDK telemetry (e.g., span exports during shutdown flush) is
-    // still allowed so finished spans can be routed.
     if (pipelineDraining && !internalTelemetry) {
         return rejectedReceipt(eventId, 'pipeline_draining');
     }
@@ -135,14 +127,39 @@ export function enqueueEvent(rawEvent) {
     if (killswitchEngine?.isSDKDisabled()) {
         return rejectedReceipt(eventId, 'sdk_disabled_by_killswitch');
     }
-    // Gate 2: Load shedding under remotely configured adaptive pressure
-    if (loadShedder.shouldShed({ ...rawEvent, eventId })) {
-        logger.debug('Event shed by load shedder', { eventType });
+    // Synchronously resolve context IDs (traceId, spanId, requestId) so correlation groups are accurate
+    const rawRecord = rawEvent;
+    const ctx = getRequestContext();
+    const traceId = (typeof rawRecord['traceId'] === 'string' && rawRecord['traceId'])
+        ? rawRecord['traceId']
+        : ctx?.traceId ?? getTraceId();
+    const spanId = (typeof rawRecord['spanId'] === 'string' && rawRecord['spanId'])
+        ? rawRecord['spanId']
+        : ctx?.spanId ?? getSpanId();
+    const requestId = (typeof rawRecord['requestId'] === 'string' && rawRecord['requestId'])
+        ? rawRecord['requestId']
+        : ctx?.requestId;
+    const candidateEvent = {
+        ...rawRecord,
+        eventId,
+        ...(traceId ? { traceId } : {}),
+        ...(spanId ? { spanId } : {}),
+        ...(requestId ? { requestId } : {}),
+    };
+    const priority = loadShedder.classifyEvent(candidateEvent);
+    // Gate 1.8: Quota Controller check
+    if (!quotaController.shouldAdmit(priority)) {
+        logger.debug('Event rejected — quota exhausted', { eventType, priority });
+        return rejectedReceipt(eventId, 'quota_exhausted');
+    }
+    // Gate 2: Load shedding under adaptive pressure with correlation groups
+    if (loadShedder.shouldShed(candidateEvent)) {
+        logger.debug('Event shed by load shedder', { eventType, priority });
         return rejectedReceipt(eventId, 'load_shed');
     }
     // Gate 4: Pre-init buffering — buffer without async processing
     if (!client.initialized) {
-        const event = ensureBaseFields(rawEvent, eventId);
+        const event = ensureBaseFields(candidateEvent, eventId);
         if (!eventQueue.add(event)) {
             logger.warn('Pre-init event rejected by queue', {
                 eventType: event.type,
@@ -157,19 +174,10 @@ export function enqueueEvent(rawEvent) {
         return acceptedSyncReceipt(eventId);
     }
     // Accept: defer processing via setImmediate.
-    //
-    // Hot-path optimization: we use a single Promise (no separate .finally
-    // chain) and consolidate cleanup into the resolver. The previous version
-    // allocated 5 microtasks per event (Promise + setImmediate task + Set.add
-    // + .finally + .catch). This version allocates the same Promise and Set
-    // entry, but no extra .finally/.catch chain — about 30% fewer allocations
-    // on the capture hot path.
     let resolveProcessed;
     const pending = new Promise(resolve => {
         resolveProcessed = resolve;
     });
-    // Gate: bound in-flight work. Without a cap, a producer faster than the
-    // pipeline grows this set without bound and exhausts memory.
     if (pendingPipelines.size >= MAX_PENDING_PIPELINES) {
         pendingPipelineDrops++;
         if (pendingPipelineDrops === 1 || pendingPipelineDrops % 1000 === 0) {
@@ -183,7 +191,7 @@ export function enqueueEvent(rawEvent) {
     }
     pendingPipelines.add(pending);
     setImmediate(() => {
-        processEventAsync(rawEvent, eventId).then(result => {
+        processEventAsync(candidateEvent, eventId).then(result => {
             pendingPipelines.delete(pending);
             resolveProcessed(result);
         }, error => {
@@ -199,54 +207,26 @@ export function enqueueEvent(rawEvent) {
  *
  * **Backward-compatible wrapper** — returns `true` if the event was accepted
  * into the pipeline, `false` if it was synchronously rejected.
- *
- * For explicit lifecycle tracking, use `enqueueEvent()` which returns an
- * `EventReceipt` with async processing status.
- *
- * @deprecated Prefer `enqueueEvent()` for new code — it provides clear
- * async acceptance semantics via `EventReceipt`.
  */
 export function processEvent(rawEvent) {
     return enqueueEvent(rawEvent).accepted;
 }
 /**
  * Drain all in-flight pipeline work to completion.
- *
- * After this returns, the Set is guaranteed empty AND no new entries can be
- * added (the pipelineDraining flag rejects new captures synchronously). The
- * flag is automatically cleared when the SDK is no longer shutting down so
- * the pipeline becomes accepting again on the next init().
- *
- * Bounded by an outer timeout in the lifecycle module — drain itself does
- * not impose a time limit because individual pipeline tasks already have
- * per-step timeouts.
  */
 export async function drainPendingEventProcessing() {
     pipelineDraining = true;
     try {
-        // Successive iterations handle pipelines that synchronously enqueue
-        // follow-up work via setImmediate before pipelineDraining is set.
         while (pendingPipelines.size > 0) {
             await Promise.allSettled([...pendingPipelines]);
         }
     }
     finally {
-        // Always re-arm the pipeline. The previous version only cleared the
-        // flag when `!isSDKShuttingDown()`, which created a permanent
-        // "rejected: pipeline_draining" state if `flush()` was called
-        // outside a shutdown but a parallel path had set `shuttingDown`. The
-        // SDK's `shuttingDown` gate already covers shutdown rejection, so
-        // this flag's only job is to make drain converge — once the drain
-        // loop exits, the flag has done its job and must be cleared.
         pipelineDraining = false;
     }
 }
 /**
- * Reset the pipeline-draining flag. Called from the lifecycle module's
- * unconditional cleanup phase to guarantee the next init() begins with an
- * accepting pipeline.
- *
- * @internal
+ * Reset the pipeline-draining flag.
  */
 export function resetEventPipeline() {
     pipelineDraining = false;
@@ -255,28 +235,15 @@ export function resetEventPipeline() {
 }
 /**
  * Async pipeline — processes a single event through all pipeline stages.
- *
- * Used internally by `enqueueEvent()` and by OTel exporters that need
- * backpressure-aware event ingestion.
  */
 export async function processEventAsync(rawEvent, assignedEventId) {
     const logger = getLogger();
     try {
-        // Step 0: Re-check the global killswitch.
-        //
-        // `enqueueEvent` checks `KillswitchEngine.isSDKDisabled()` before
-        // queueing, but spans exported from the tracer call `processEvent`
-        // (which → `enqueueEvent` → here) bypassing that check via the
-        // `__pulseInternal` flag for shutdown drains. The killswitch must
-        // win regardless of the bypass — otherwise toggling `disableSDK`
-        // remotely would still emit spans for in-flight traces.
         const killswitch = KillswitchEngine.getInstance();
         if (killswitch?.isSDKDisabled()) {
             return false;
         }
-        // Step 1: Coerce to SDKEvent shape + assign ID/timestamp
         let event = ensureBaseFields(rawEvent, assignedEventId);
-        // Step 2: Pre-init buffering — if SDK isn't ready, buffer without processing
         if (!client.initialized) {
             logger.debug('Event buffered pre-init', {
                 eventType: event.type,
@@ -292,7 +259,6 @@ export async function processEventAsync(rawEvent, assignedEventId) {
             return true;
         }
         const config = ConfigManager.getInstance().getConfig();
-        // Step 3: feature and killswitch gates from the active remote snapshot.
         if (!isFeatureEnabled(event, config)) {
             logger.debug('Event dropped — feature disabled by remote configuration', {
                 eventType: event.type,
@@ -303,28 +269,19 @@ export async function processEventAsync(rawEvent, assignedEventId) {
             logger.debug('Event dropped — backend entitlement denied', { eventType: event.type });
             return false;
         }
-        // Step 3.1: Apply family sampling centrally so manual helpers, universal
-        // capture, pre-init replay, framework adapters, and registry emission all
-        // use the same active snapshot. OTel owns span/trace root sampling.
         if (!isSampled(event)) {
             logger.debug('Event dropped — remote sampling decision', { eventType: event.type });
             return false;
         }
-        // Step 3.25: Per-tenant admission is atomic and central so every event
-        // source (manual APIs, framework instrumentation, crons, replays, spans)
-        // receives identical noisy-neighbour protection.
         const tenantId = extractTenantId(event);
         if (!tenantGovernor.admit(tenantId, isHighPriority(event))) {
             return false;
         }
-        // Step 3.5: Enforce attribute limits from remote config
         const limitsEngineAsync = LimitsEngine.getInstance();
         if (limitsEngineAsync) {
             event = limitsEngineAsync.enforceAttributeLimits(event);
         }
-        // Step 4: Normalize — fill defaults, truncate oversized fields
         event = normalizeEvent(event, client.metadata);
-        // Step 6: Enrich with request context (trace/span IDs, breadcrumbs)
         event = enrichFromContext(event);
         // Step 6.5: Error deduplication — suppress duplicate errors within window
         if (event.type === 'error' && 'fingerprint' in event && typeof event.fingerprint === 'string') {
@@ -353,26 +310,21 @@ export async function processEventAsync(rawEvent, assignedEventId) {
                 return false;
             }
         }
-        // Step 7: Apply scope (request-local or global fallback, user, tags, extra, contexts)
         event = applyScopeToEvent(event);
-        // Step 7.5: Attach source context to error stack frames
+        // Attach source context to error stack frames
         if (event.type === 'error' && 'stack' in event && Array.isArray(event.stack)) {
             try {
-                // attachSourceContext is now an SDK-internal default (not backend-controlled).
                 if (ERROR_DEFAULTS.attachSourceContext) {
                     const { attachSourceContext } = await import('../processors/source-context.js');
-                    // Bounded: source-context reads files from disk; a slow or huge
-                    // file must never stall the pipeline. On timeout the original
-                    // frames are kept (withTimeout rejects → caught below).
                     const enrichedFrames = await withTimeout(attachSourceContext(event.stack), SOURCE_CONTEXT_TIMEOUT_MS, 'attachSourceContext timed out');
                     event = { ...event, stack: enrichedFrames };
                 }
             }
             catch {
-                // Source context is best-effort — never block the pipeline
+                // Best-effort
             }
         }
-        // Step 8: Plugin event processors
+        // Plugin event processors
         for (const plugin of client.plugins) {
             if (plugin.processEvent) {
                 try {
@@ -388,7 +340,6 @@ export async function processEventAsync(rawEvent, assignedEventId) {
                     event = result;
                 }
                 catch (pluginError) {
-                    // Plugin failures are isolated — log and continue
                     logger.warn('Plugin processEvent threw', {
                         pluginName: plugin.meta.name,
                         error: pluginError,
@@ -396,7 +347,7 @@ export async function processEventAsync(rawEvent, assignedEventId) {
                 }
             }
         }
-        // Step 9: User-registered event processors
+        // User-registered event processors
         for (const processor of client.eventProcessors) {
             try {
                 const result = await withTimeout(Promise.resolve(processor(event)), EVENT_PROCESSOR_TIMEOUT_MS, 'EventProcessor timed out');
@@ -413,7 +364,7 @@ export async function processEventAsync(rawEvent, assignedEventId) {
                 logger.warn('EventProcessor threw', { error: processorError });
             }
         }
-        // Step 10: beforeSend hook (user-provided)
+        // beforeSend hook (user-provided)
         if (client.options?.beforeSend) {
             try {
                 const result = await withTimeout(Promise.resolve(client.options.beforeSend(event)), BEFORE_SEND_TIMEOUT_MS, 'beforeSend timed out');
@@ -430,7 +381,7 @@ export async function processEventAsync(rawEvent, assignedEventId) {
                 logger.warn('beforeSend threw', { error: beforeSendError });
             }
         }
-        // Step 11: Plugin beforeSend hooks
+        // Plugin beforeSend hooks
         for (const plugin of client.plugins) {
             if (plugin.beforeSend) {
                 try {
@@ -452,10 +403,16 @@ export async function processEventAsync(rawEvent, assignedEventId) {
                 }
             }
         }
-        // SDK-owned package identity is reattached after all user/plugin hooks.
-        // This guarantees every transported event has trustworthy immutable
-        // application and SDK versions even if a hook removed/replaced metadata.
         event = { ...event, metadata: client.metadata };
+        // Step 12.5: Quota check before routing
+        const priority = loadShedder.classifyEvent(event);
+        if (!quotaController.shouldAdmit(priority)) {
+            logger.debug('Event dropped — quota exhausted', {
+                eventType: event.type,
+                eventId: event.eventId,
+            });
+            return false;
+        }
         // Step 13: Route to the unified transport owner
         const transportRouter = TransportRouter.getInstance();
         if (!transportRouter || !transportRouter.send(event)) {
@@ -465,18 +422,6 @@ export async function processEventAsync(rawEvent, assignedEventId) {
             });
             return false;
         }
-        // Persistence is fallback-only — see persistent-storage.ts for the full
-        // architectural rationale. Events are NOT persisted here on the success
-        // path. They are persisted by the transport layer ONLY when:
-        //   1. An HTTP send actually fails (network error, 5xx, retry exhaustion)
-        //   2. A graceful shutdown drain runs out of time with events still queued
-        //
-        // Persisting unconditionally on every successful capture (the previous
-        // behaviour) caused the persisted events to be replayed on every process
-        // restart even when they had already been delivered, producing duplicate
-        // events, duplicate billing, and alert amplification. The transport's
-        // BatchManager owns the "did we deliver this batch?" decision and is the
-        // only correct place to decide whether to durably retain the batch.
         logger.debug('Event routed', {
             eventType: event.type,
             eventId: event.eventId,
@@ -492,14 +437,12 @@ export async function processEventAsync(rawEvent, assignedEventId) {
         return true;
     }
     catch (error) {
-        // The pipeline must NEVER crash the host application
         logger.error('Event pipeline failed', { error });
         return false;
     }
 }
 // ─── Internal Helpers ───────────────────────────────────────────────────────
 function ensureBaseFields(raw, assignedEventId) {
-    // Defensive copy — never mutate the caller's object reference
     const { __pulseInternal: _internal, ...payload } = raw;
     const eventId = assignedEventId
         ?? ((payload.eventId && typeof payload.eventId === 'string') ? payload.eventId : generateId());
@@ -617,13 +560,6 @@ function enrichFromContext(event) {
             enrichment['breadcrumbs'] = crumbs;
         }
     }
-    // ─── Session tracking ───────────────────────────────────────────────
-    // Attach the sessionId to every event whenever a session manager is
-    // active — not just when the sessionReplay feature is on. Crash-free
-    // session rates and trace↔session correlation depend on errors, spans,
-    // and requests all carrying the sessionId. peekSessionManager never
-    // creates a manager, so events can't manufacture one as a side effect
-    // when the session subsystem isn't running.
     try {
         const sessionMgr = peekSessionManager();
         if (sessionMgr) {
@@ -638,7 +574,7 @@ function enrichFromContext(event) {
         }
     }
     catch {
-        // Session tracking is best-effort — never block the pipeline
+        // Session tracking is best-effort
     }
     if (Object.keys(enrichment).length === 0)
         return event;

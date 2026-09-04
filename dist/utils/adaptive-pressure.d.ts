@@ -1,24 +1,32 @@
 /**
- * Adaptive Pressure Monitor — unified runtime protection system.
+ * Adaptive Pressure Monitor — Unified Runtime Protection & 5-State Pressure Engine.
  *
- * Combines multiple pressure signals into a single composite score:
- * - Memory pressure (heap utilization ratio)
+ * Combines multiple pressure signals with hysteresis to prevent oscillation:
+ * - Memory pressure (effective heap utilization ratio)
  * - Event loop lag (perf_hooks monitorEventLoopDelay p99)
  * - Queue depth (% of max capacity)
  * - GC pressure (PerformanceObserver GC duration tracking)
  *
- * Produces a single CompositePressureLevel that all subsystems query
- * for adaptive behavior: sampling, shedding, throttling, batching.
+ * 5-State State Machine:
+ * - HEALTHY: Full admission of all telemetry.
+ * - ELEVATED: Warning state; minor reduction of low-value P3 debug telemetry.
+ * - PRESSURED: Aggressive P3 shedding, reduce optional metadata. Preserve P0/P1/P2 groups.
+ * - CRITICAL: Protect the host application first. Preserve P0 and P1 diagnostic groups.
+ * - RECOVERING: Smooth stepped recovery preventing backlog/replay storms.
  */
 import { type PressureLevel } from './backpressure.js';
-export type CompositePressureLevel = 'normal' | 'elevated' | 'high' | 'critical';
+import type { PressureState } from '../types/telemetry-classes.js';
+export type CompositePressureLevel = 'normal' | 'elevated' | 'high' | 'critical' | 'healthy' | 'pressured' | 'recovering';
 export interface PressureSnapshot {
     readonly level: CompositePressureLevel;
+    readonly state: PressureState;
     readonly memoryLevel: PressureLevel;
+    readonly effectiveMemoryUtilization: number;
     readonly eventLoopLagMs: number;
     readonly queueUtilization: number;
     readonly gcPressure: number;
     readonly score: number;
+    readonly transitions: number;
 }
 export interface AdaptivePressureOptions {
     /** Polling interval in milliseconds. Default: 2000 */
@@ -40,7 +48,10 @@ export declare class AdaptivePressureMonitor {
     private readonly memoryMonitor;
     private readonly options;
     private timer;
-    private lastLevel;
+    private currentState;
+    private recoveryCycles;
+    private transitionCount;
+    private recoveryTransitionCount;
     private lastSnapshot;
     private levelChangeCallbacks;
     private readonly lagMonitor;
@@ -50,29 +61,21 @@ export declare class AdaptivePressureMonitor {
     constructor(options?: AdaptivePressureOptions);
     start(): void;
     stop(): void;
-    /**
-     * Reconfigure which pressure signals are active. Called during SDK init
-     * and on config refresh so the control plane can disable individual
-     * monitoring families without restarting the process.
-     */
+    /** Reset all monitoring state (useful after init warmup). */
+    resetWarmup(): void;
     configure(options: AdaptivePressureOptions): void;
     getSnapshot(): PressureSnapshot;
+    getState(): PressureState;
+    /** Backward-compatible level getter returning 'normal' | 'elevated' | 'high' | 'critical'. */
     getLevel(): CompositePressureLevel;
-    /**
-     * Reconfigure the absolute memory ceiling from remote config. Called
-     * during SDK init after the remote config has arrived.
-     */
     setMaxMemoryMb(maxMemoryMb: number): void;
     /**
-     * Should the system shed events of the given priority?
-     * - normal pressure: shed nothing
-     * - elevated: shed nothing (warning only)
-     * - high: shed 'normal' priority
-     * - critical: shed 'normal' and 'high', only 'critical' survives
+     * Determine if an event should be shed based on current pressure state.
      */
     shouldShed(priority: 'critical' | 'high' | 'normal'): boolean;
     onLevelChange(callback: (snapshot: PressureSnapshot) => void): void;
-    private poll;
+    poll(): void;
+    private evaluateStateWithHysteresis;
     private startGCTracking;
     private stopGCTracking;
 }
