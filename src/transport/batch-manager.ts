@@ -85,6 +85,16 @@ export class BatchManager {
     if (this.destroyed) return false
     const accepted = this.options.queue.enqueue(event)
     if (!accepted) return false
+    const currentQueueSize = this.options.queue.size()
+    const maxSize = this.options.queue.maxSize
+    if (currentQueueSize <= 50 || (currentQueueSize < maxSize && currentQueueSize % 500 === 0)) {
+      sdkConsoleLog('[Pulse] Event batched', {
+        route: this.options.route,
+        eventType: event.type,
+        eventId: event.eventId,
+        queueSize: currentQueueSize,
+      })
+    }
     sdkConsoleDebug('batch enqueue', {
       route: this.options.route,
       eventType: event.type,

@@ -8,4 +8,4 @@
 /** SDK package name used in telemetry, tracers, and exporters. */
 export const SDK_NAME = '@vikasbaplawat1/pulse-sdk';
 /** SDK semantic version — corresponds to p.increments in `package.json`. */
-export const SDK_VERSION = '3.0.0';
+export const SDK_VERSION = '3.6.7';

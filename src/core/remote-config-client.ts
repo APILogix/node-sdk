@@ -24,6 +24,7 @@ export interface InitResponse {
 
 interface RemoteConfigClientOptions {
   readonly apiKey: string
+  readonly baseUrl?: string | undefined
   readonly timeoutMs?: number | undefined
   readonly fetchImpl?: typeof fetch | undefined
 }
@@ -43,7 +44,7 @@ export class RemoteConfigClient {
   constructor(options: RemoteConfigClientOptions) {
     validateApiKey(options.apiKey)
     this.apiKey = options.apiKey
-    this.baseUrl = normalizeBaseUrl(resolveApiBaseUrl())
+    this.baseUrl = normalizeBaseUrl(options.baseUrl ?? resolveApiBaseUrl())
     this.timeoutMs = options.timeoutMs ?? CONTROL_PLANE_TIMEOUT_MS
     this.fetchImpl = options.fetchImpl ?? fetch
   }

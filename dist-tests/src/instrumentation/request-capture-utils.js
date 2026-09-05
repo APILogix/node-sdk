@@ -52,6 +52,7 @@ export function evaluateCaptureGate(input) {
         return denied('sdk_disabled');
     }
     // The request capture path is part of the tracing surface. If tracing is
+    // killed we should not be emitting `request` events either — they would
     // killed we should not be emitting `request` events either - they would
     // be orphan signals without trace correlation.
     if (killswitch?.isKilled('disableTracing')) {
@@ -60,6 +61,7 @@ export function evaluateCaptureGate(input) {
     if (!EntitlementGate.isAllowed('requestCapture')) {
         return denied('request_capture_not_entitled');
     }
+    // 3. Feature controller — `requestCapture` is its own remote-config flag
     // 3. Feature controller - `requestCapture` is its own remote-config flag
     // in v3. The `tracing` feature controls span emission, not request events.
     // We keep the tracing check as well because requests carry trace context;

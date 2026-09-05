@@ -10,6 +10,7 @@
  * The plugin is intentionally fail-open. If any hook throws, the host
  * application continues serving traffic and the SDK logs the failure.
  */
+import { type Span } from '@opentelemetry/api';
 import { type ContextStore } from '../core/context.js';
 export interface PulseFastifyOptions {
     readonly ignorePaths?: readonly (string | RegExp)[];
@@ -66,6 +67,8 @@ interface PulseFastifyState {
     store: ContextStore;
     startTime: number;
     captured: boolean;
+    activeSpan?: Span | undefined;
+    createdServerSpan?: boolean | undefined;
     tenantId: string | undefined;
     userId: string | undefined;
     sessionId: string | undefined;

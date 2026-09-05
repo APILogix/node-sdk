@@ -28,6 +28,7 @@ export { init } from './core/init.js'
 export { flush, shutdown, crashFlush } from './core/lifecycle.js'
 export { getConfig } from './core/config.js'
 export { SDKError } from './core/errors.js'
+export { SDK_NAME, SDK_VERSION } from './constants/version.js'
 
 /**
  * Create and initialize the SDK. Recommended entry point — equivalent to

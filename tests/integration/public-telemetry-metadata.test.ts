@@ -20,6 +20,7 @@ import {
   startSpan,
   stopProfile,
 } from '../../src/index.js'
+import { SDK_VERSION } from '../../src/constants/version.js'
 import { TEST_REMOTE_CONFIG as BAKED_IN_REMOTE_CONFIG } from '../fixtures/remote-config.js'
 
 interface SerializedEvent {
@@ -333,7 +334,7 @@ test('public telemetry adapters serialize authoritative application and SDK meta
       applicationName: 'integration-app-override',
       applicationVersion: '9.8.7-test',
       sdkName: '@vikasbaplawat1/pulse-sdk',
-      sdkVersion: '3.0.0',
+      sdkVersion: SDK_VERSION,
       projectId: 'integration-project',
     }
     for (const { path, event } of routedEvents) {

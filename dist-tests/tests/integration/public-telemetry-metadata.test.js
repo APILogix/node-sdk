@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { gunzipSync } from 'node:zlib';
 import { captureCronCheckIn, captureError, captureEvent, captureLog, captureMessage, captureMetric, captureReplay, captureRequest, flushTracer, incrementCounter, init, shutdown, startProfile, startSpan, stopProfile, } from '../../src/index.js';
+import { SDK_VERSION } from '../../src/constants/version.js';
 import { TEST_REMOTE_CONFIG as BAKED_IN_REMOTE_CONFIG } from '../fixtures/remote-config.js';
 const ROUTE_PATHS = {
     errors: '/api/v1/errors',
@@ -270,7 +271,7 @@ test('public telemetry adapters serialize authoritative application and SDK meta
             applicationName: 'integration-app-override',
             applicationVersion: '9.8.7-test',
             sdkName: '@vikasbaplawat1/pulse-sdk',
-            sdkVersion: '3.0.0',
+            sdkVersion: SDK_VERSION,
             projectId: 'integration-project',
         };
         for (const { path, event } of routedEvents) {

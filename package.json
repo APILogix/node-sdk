@@ -1,6 +1,7 @@
 {
   "name": "@vikasbaplawat1/pulse-sdk",
-  "version": "3.6.2",
+ 
+  "version": "3.6.7",
   "description": "Enterprise-grade observability SDK with error tracking, tracing, metrics, and breadcrumbs",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

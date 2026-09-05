@@ -25,11 +25,15 @@
  */
 import { captureError } from '../capture/captureError.js';
 import { captureRequest } from '../capture/captureRequest.js';
-import { trace, SpanStatusCode } from '@opentelemetry/api';
+import { trace, context, SpanKind, SpanStatusCode } from '@opentelemetry/api';
 import { client } from '../core/client.js';
 import { attachRequestContextToActiveSpan, createContextStore, withContext, getRequestContext, getTraceId, getSpanId, } from '../core/context.js';
+import { FeatureController } from '../core/feature-controller.js';
+import { KillswitchEngine } from '../core/killswitch-engine.js';
+import { SDK_NAME, SDK_VERSION } from '../constants/version.js';
 import { getLogger } from '../utils/logger.js';
 import { generateId } from '../utils/uuid.js';
+import { extractTraceContext } from '../tracing/context-propagation.js';
 import { captureBodySnapshot, evaluateCaptureGate, headerString, matchesIgnoredPath, resolveClientIp, scrubHeaders, scrubQuery, } from './request-capture-utils.js';
 export function monitorMiddleware(options = {}) {
     return function pulseExpressMiddleware(req, res, next) {
@@ -87,146 +91,177 @@ export function monitorMiddleware(options = {}) {
         const captureHeaders = decision.allowHeaders;
         const captureQuery = decision.allowQuery;
         const captureBody = decision.allowBody;
-        withContext(store, () => {
-            // OpenTelemetry owns SERVER span creation. Middleware only enriches an
-            // active span when backend-selected instrumentation created one.
-            attachRequestContextToActiveSpan(store);
-            let captured = false;
-            const captureCompletion = () => {
-                if (captured)
-                    return;
-                captured = true;
-                // Re-enter the request's ALS scope so descendants — particularly
-                // any captureError() the user calls in onResponse hooks — see the
-                // request's ContextStore. The OTel context is preserved by the
-                // EventEmitter binding patch, but ALS is a separate channel and
-                // must be re-installed explicitly here.
-                withContext(store, () => {
-                    try {
-                        const bodySnapshot = captureBodySnapshot(req.body, captureBody);
-                        const responseSize = readContentLength(res.getHeader('content-length'));
-                        // Enrich the active backend-selected OpenTelemetry span. Resolve
-                        // it at completion because the listener runs in the propagated
-                        // request context.
-                        const activeSpan = trace.getActiveSpan();
-                        if (activeSpan) {
-                            const route = normalizedRoute(req);
-                            const enrichmentAttrs = {
-                                'http.route': route,
-                                'http.status_code': res.statusCode,
-                                'pulse.request_id': requestId,
-                                'pulse.latency_ms': Date.now() - startTime,
-                            };
-                            if (tenantId)
-                                enrichmentAttrs['pulse.tenant_id'] = tenantId;
-                            if (userId)
-                                enrichmentAttrs['pulse.user_id'] = userId;
-                            if (sessionId)
-                                enrichmentAttrs['pulse.session_id'] = sessionId;
-                            if (clientIp)
-                                enrichmentAttrs['http.client_ip'] = clientIp;
-                            if (userAgent)
-                                enrichmentAttrs['http.user_agent'] = userAgent;
-                            if (referer)
-                                enrichmentAttrs['http.referer'] = referer;
-                            if (bodySnapshot.bodySize !== undefined)
-                                enrichmentAttrs['http.request.body.size'] = bodySnapshot.bodySize;
-                            if (responseSize !== undefined)
-                                enrichmentAttrs['http.response.body.size'] = responseSize;
-                            activeSpan.setAttributes(enrichmentAttrs);
-                        }
-                        // Emit the discrete request event to the canonical requests route.
-                        captureRequest({
-                            type: 'request',
-                            requestId,
-                            method: req.method,
-                            url: normalizedRoute(req),
-                            statusCode: res.statusCode,
-                            latency: Date.now() - startTime,
-                            timestamp: startTime,
-                            traceId: getTraceId() ?? store.traceId,
-                            spanId: getSpanId() ?? store.spanId,
-                            ...(userId ? { userId } : {}),
-                            ...(tenantId ? { tenantId } : {}),
-                            ...(sessionId ? { sessionId } : {}),
-                            ...(clientIp ? { clientIp } : {}),
-                            ...(userAgent ? { userAgent } : {}),
-                            ...(referer ? { referer } : {}),
-                            ...(captureHeaders ? { headers: scrubHeadersSafe(req.headers) } : {}),
-                            ...(captureQuery && isRecord(req.query) ? { query: scrubQuery(req.query) } : {}),
-                            ...(bodySnapshot.body ? { body: bodySnapshot.body } : {}),
-                            ...(bodySnapshot.bodySize !== undefined ? { bodySize: bodySnapshot.bodySize } : {}),
-                            ...(responseSize !== undefined ? { responseSize } : {}),
-                            route: normalizedRoute(req),
-                        });
-                    }
-                    catch (err) {
-                        // The middleware must NEVER crash the host. Log and move on.
-                        getLogger().error('monitorMiddleware completion failed', { error: err });
-                    }
-                });
-            };
-            res.once('finish', captureCompletion);
-            res.once('close', captureCompletion);
-            res.once('error', error => {
-                // Re-enter ALS so captureError can pick up the request context
-                // (requestId, breadcrumbs, tenantId). Without this withContext
-                // wrapper, getRequestContext() inside captureError returns
-                // undefined and the error event is emitted without enrichment.
-                withContext(store, () => {
-                    try {
-                        if (store.extra) {
-                            ;
-                            store.extra.mechanism = 'express.res.error';
-                            store.extra.handled = true;
-                        }
-                        captureError(error);
-                        const activeSpan = trace.getActiveSpan();
-                        if (activeSpan) {
-                            try {
-                                activeSpan.recordException(error);
+        const tracer = trace.getTracer(SDK_NAME, SDK_VERSION);
+        let activeSpan = trace.getActiveSpan();
+        let createdServerSpan = false;
+        const featureCtrl = FeatureController.getInstance();
+        const killswitchEngine = KillswitchEngine.getInstance();
+        const isTracingActive = !killswitchEngine?.isKilled('disableTracing') && (!featureCtrl || featureCtrl.isEnabled('tracing'));
+        const parentContext = extractTraceContext(req.headers);
+        if (!activeSpan && isTracingActive) {
+            try {
+                activeSpan = tracer.startSpan(`HTTP ${req.method} ${path}`, {
+                    kind: SpanKind.SERVER,
+                    attributes: {
+                        'http.method': req.method,
+                        'http.url': req.originalUrl || req.url,
+                        'http.route': path,
+                        'http.target': req.url,
+                        ...(req.headers.host ? { 'http.host': req.headers.host } : {}),
+                        ...(userAgent ? { 'http.user_agent': userAgent } : {}),
+                        ...(clientIp ? { 'http.client_ip': clientIp } : {}),
+                    },
+                }, parentContext);
+                createdServerSpan = true;
+            }
+            catch {
+                // Fail-open: tracing creation failure should never affect request processing
+            }
+        }
+        const runInScope = () => {
+            withContext(store, () => {
+                attachRequestContextToActiveSpan(store);
+                let captured = false;
+                const captureCompletion = () => {
+                    if (captured)
+                        return;
+                    captured = true;
+                    withContext(store, () => {
+                        try {
+                            const bodySnapshot = captureBodySnapshot(req.body, captureBody);
+                            const responseSize = readContentLength(res.getHeader('content-length'));
+                            const currentActiveSpan = trace.getActiveSpan() ?? activeSpan;
+                            if (currentActiveSpan) {
+                                const route = normalizedRoute(req);
+                                const enrichmentAttrs = {
+                                    'http.route': route,
+                                    'http.status_code': res.statusCode,
+                                    'pulse.request_id': requestId,
+                                    'pulse.latency_ms': Date.now() - startTime,
+                                };
+                                if (tenantId)
+                                    enrichmentAttrs['pulse.tenant_id'] = tenantId;
+                                if (userId)
+                                    enrichmentAttrs['pulse.user_id'] = userId;
+                                if (sessionId)
+                                    enrichmentAttrs['pulse.session_id'] = sessionId;
+                                if (clientIp)
+                                    enrichmentAttrs['http.client_ip'] = clientIp;
+                                if (userAgent)
+                                    enrichmentAttrs['http.user_agent'] = userAgent;
+                                if (referer)
+                                    enrichmentAttrs['http.referer'] = referer;
+                                if (bodySnapshot.bodySize !== undefined)
+                                    enrichmentAttrs['http.request.body.size'] = bodySnapshot.bodySize;
+                                if (responseSize !== undefined)
+                                    enrichmentAttrs['http.response.body.size'] = responseSize;
+                                currentActiveSpan.setAttributes(enrichmentAttrs);
+                                if (res.statusCode >= 500) {
+                                    currentActiveSpan.setStatus({ code: SpanStatusCode.ERROR });
+                                }
+                                else if (res.statusCode >= 100 && res.statusCode < 400) {
+                                    currentActiveSpan.setStatus({ code: SpanStatusCode.OK });
+                                }
                             }
-                            catch { /* fail-open */ }
+                            if (createdServerSpan && activeSpan) {
+                                try {
+                                    activeSpan.end();
+                                }
+                                catch (endErr) {
+                                    getLogger().error('Failed to end server span', { error: endErr });
+                                }
+                            }
+                            // Emit the discrete request event to the canonical requests route.
+                            captureRequest({
+                                type: 'request',
+                                requestId,
+                                method: req.method,
+                                url: normalizedRoute(req),
+                                statusCode: res.statusCode,
+                                latency: Date.now() - startTime,
+                                timestamp: startTime,
+                                traceId: getTraceId() ?? store.traceId ?? activeSpan?.spanContext().traceId,
+                                spanId: getSpanId() ?? store.spanId ?? activeSpan?.spanContext().spanId,
+                                ...(userId ? { userId } : {}),
+                                ...(tenantId ? { tenantId } : {}),
+                                ...(sessionId ? { sessionId } : {}),
+                                ...(clientIp ? { clientIp } : {}),
+                                ...(userAgent ? { userAgent } : {}),
+                                ...(referer ? { referer } : {}),
+                                ...(captureHeaders ? { headers: scrubHeadersSafe(req.headers) } : {}),
+                                ...(captureQuery && isRecord(req.query) ? { query: scrubQuery(req.query) } : {}),
+                                ...(bodySnapshot.body ? { body: bodySnapshot.body } : {}),
+                                ...(bodySnapshot.bodySize !== undefined ? { bodySize: bodySnapshot.bodySize } : {}),
+                                ...(responseSize !== undefined ? { responseSize } : {}),
+                                route: normalizedRoute(req),
+                            });
                         }
-                    }
-                    catch (err) {
-                        getLogger().error('monitorMiddleware error capture failed', { error: err });
-                    }
-                });
-            });
-            // Intercept next(err) — errors routed to Express error-handling
-            // middleware never hit the response 'error' event, so without this
-            // they would never be captured. Plain next() calls pass through
-            // untouched.
-            const wrappedNext = (err) => {
-                if (err) {
-                    const error = err instanceof Error ? err : new Error(String(err));
+                        catch (err) {
+                            getLogger().error('monitorMiddleware completion failed', { error: err });
+                        }
+                    });
+                };
+                res.once('finish', captureCompletion);
+                res.once('close', captureCompletion);
+                res.once('error', error => {
                     withContext(store, () => {
                         try {
                             if (store.extra) {
                                 ;
-                                store.extra.mechanism = 'express.next';
+                                store.extra.mechanism = 'express.res.error';
                                 store.extra.handled = true;
                             }
                             captureError(error);
-                            const activeSpan = trace.getActiveSpan();
-                            if (activeSpan) {
+                            const currentActiveSpan = trace.getActiveSpan() ?? activeSpan;
+                            if (currentActiveSpan) {
                                 try {
-                                    activeSpan.recordException(error);
-                                    activeSpan.setStatus({ code: SpanStatusCode.ERROR, message: error.message });
+                                    currentActiveSpan.recordException(error);
+                                    currentActiveSpan.setStatus({ code: SpanStatusCode.ERROR, message: error.message });
                                 }
                                 catch { /* fail-open */ }
                             }
                         }
-                        catch (captureErr) {
-                            getLogger().error('monitorMiddleware next(err) capture failed', { error: captureErr });
+                        catch (err) {
+                            getLogger().error('monitorMiddleware error capture failed', { error: err });
                         }
                     });
-                }
-                next(err);
-            };
-            wrappedNext();
-        });
+                });
+                const wrappedNext = (err) => {
+                    if (err) {
+                        const error = err instanceof Error ? err : new Error(String(err));
+                        withContext(store, () => {
+                            try {
+                                if (store.extra) {
+                                    ;
+                                    store.extra.mechanism = 'express.next';
+                                    store.extra.handled = true;
+                                }
+                                captureError(error);
+                                const currentActiveSpan = trace.getActiveSpan() ?? activeSpan;
+                                if (currentActiveSpan) {
+                                    try {
+                                        currentActiveSpan.recordException(error);
+                                        currentActiveSpan.setStatus({ code: SpanStatusCode.ERROR, message: error.message });
+                                    }
+                                    catch { /* fail-open */ }
+                                }
+                            }
+                            catch (captureErr) {
+                                getLogger().error('monitorMiddleware next(err) capture failed', { error: captureErr });
+                            }
+                        });
+                    }
+                    next(err);
+                };
+                wrappedNext();
+            });
+        };
+        if (createdServerSpan && activeSpan) {
+            context.with(trace.setSpan(parentContext ?? context.active(), activeSpan), runInScope);
+        }
+        else {
+            runInScope();
+        }
     };
 }
 /**

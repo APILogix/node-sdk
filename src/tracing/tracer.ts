@@ -396,7 +396,7 @@ export function initTracer(config: Readonly<RemoteConfigResponse>, customResourc
                 new BatchSpanProcessor(new PipelineSpanExporter(), {
                     maxQueueSize: 2048,
                     maxExportBatchSize: 512,
-                    scheduledDelayMillis: 5000,
+                    scheduledDelayMillis: 2000,
                     exportTimeoutMillis: 30000,
                 }),
             ],

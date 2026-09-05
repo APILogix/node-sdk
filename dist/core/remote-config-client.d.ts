@@ -11,7 +11,7 @@ export interface InitResponse {
     readonly configHash?: string | null | undefined;
     readonly config: RemoteConfigResponse;
 }
-export interface RemoteConfigClientOptions {
+interface RemoteConfigClientOptions {
     readonly apiKey: string;
     readonly baseUrl?: string | undefined;
     readonly timeoutMs?: number | undefined;
@@ -35,3 +35,4 @@ export declare class RemoteConfigClient {
     fetchLatest(): Promise<unknown>;
     private post;
 }
+export {};

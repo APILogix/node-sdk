@@ -13,6 +13,7 @@
 
 import { captureError } from '../capture/captureError.js'
 import { captureRequest } from '../capture/captureRequest.js'
+import { trace, context, SpanKind, SpanStatusCode, type Span } from '@opentelemetry/api'
 import { client } from '../core/client.js'
 import {
   attachRequestContextToActiveSpan,
@@ -22,8 +23,12 @@ import {
   type ContextStore,
   withContext,
 } from '../core/context.js'
+import { FeatureController } from '../core/feature-controller.js'
+import { KillswitchEngine } from '../core/killswitch-engine.js'
+import { SDK_NAME, SDK_VERSION } from '../constants/version.js'
 import { getLogger } from '../utils/logger.js'
 import { generateId } from '../utils/uuid.js'
+import { extractTraceContext } from '../tracing/context-propagation.js'
 import {
   captureBodySnapshot,
   evaluateCaptureGate,
@@ -85,6 +90,8 @@ interface PulseFastifyState {
   store: ContextStore
   startTime: number
   captured: boolean
+  activeSpan?: Span | undefined
+  createdServerSpan?: boolean | undefined
   tenantId: string | undefined
   userId: string | undefined
   sessionId: string | undefined
@@ -155,11 +162,58 @@ export function fastifyPulsePlugin(
         },
       )
 
+      const tracer = trace.getTracer(SDK_NAME, SDK_VERSION)
+      let activeSpan = trace.getActiveSpan()
+      let createdServerSpan = false
+
+      const featureCtrl = FeatureController.getInstance()
+      const killswitchEngine = KillswitchEngine.getInstance()
+      const isTracingActive = !killswitchEngine?.isKilled('disableTracing') && (!featureCtrl || featureCtrl.isEnabled('tracing'))
+
+      const parentContext = extractTraceContext(request.headers as any)
+
+      if (!activeSpan && isTracingActive) {
+        try {
+          activeSpan = tracer.startSpan(`HTTP ${request.method} ${path}`, {
+            kind: SpanKind.SERVER,
+            attributes: {
+              'http.method': request.method,
+              'http.url': request.url,
+              'http.route': path,
+              'http.target': request.url,
+              ...(request.headers.host ? { 'http.host': String(request.headers.host) } : {}),
+              ...(userAgent ? { 'http.user_agent': userAgent } : {}),
+              ...(clientIp ? { 'http.client_ip': clientIp } : {}),
+          activeSpan = tracer.startSpan(
+            `HTTP ${request.method} ${path}`,
+            {
+              kind: SpanKind.SERVER,
+              attributes: {
+                'http.method': request.method,
+                'http.url': request.url,
+                'http.route': path,
+                'http.target': request.url,
+                ...(request.headers.host ? { 'http.host': String(request.headers.host) } : {}),
+                ...(userAgent ? { 'http.user_agent': userAgent } : {}),
+                ...(clientIp ? { 'http.client_ip': clientIp } : {}),
+              },
+            },
+          })
+            parentContext,
+          )
+          createdServerSpan = true
+        } catch {
+          // Fail-open
+        }
+      }
+
       request.pulse = {
         requestId,
         store,
         startTime: Date.now(),
         captured: false,
+        activeSpan,
+        createdServerSpan,
         tenantId,
         userId,
         sessionId,
@@ -171,10 +225,20 @@ export function fastifyPulsePlugin(
         captureBody: decision.allowBody,
       }
 
-      withContext(store, () => {
-        attachRequestContextToActiveSpan(store)
-        hookDone()
-      })
+      const runHook = () => {
+        withContext(store, () => {
+          attachRequestContextToActiveSpan(store)
+          hookDone()
+        })
+      }
+
+      if (createdServerSpan && activeSpan) {
+        context.with(trace.setSpan(context.active(), activeSpan), runHook)
+        context.with(trace.setSpan(parentContext, activeSpan), runHook)
+        context.with(trace.setSpan(parentContext ?? context.active(), activeSpan), runHook)
+      } else {
+        runHook()
+      }
     } catch (err) {
       getLogger().error('fastifyPulsePlugin onRequest failed', { error: err })
       hookDone()
@@ -219,10 +283,18 @@ export function fastifyPulsePlugin(
       }
     }
 
-    withContext(state.store, () => {
-      attachRequestContextToActiveSpan(state.store)
-      hookDone()
-    })
+    const runInScope = () => {
+      withContext(state.store, () => {
+        attachRequestContextToActiveSpan(state.store)
+        hookDone()
+      })
+    }
+
+    if (state.createdServerSpan && state.activeSpan) {
+      context.with(trace.setSpan(context.active(), state.activeSpan), runInScope)
+    } else {
+      runInScope()
+    }
   })
 
   fastify.addHook('onResponse', (request, reply, hookDone) => {
@@ -309,6 +381,13 @@ export function fastifyPulsePlugin(
         }
         attachRequestContextToActiveSpan(state.store)
         captureError(error)
+        const currentActiveSpan = trace.getActiveSpan() ?? state.activeSpan
+        if (currentActiveSpan) {
+          try {
+            currentActiveSpan.recordException(error)
+            currentActiveSpan.setStatus({ code: SpanStatusCode.ERROR, message: error.message })
+          } catch { /* fail-open */ }
+        }
       } catch (err) {
         getLogger().error('fastifyPulsePlugin error capture failed', { error: err })
       }
@@ -430,6 +509,40 @@ function captureFastifyCompletion(
   const bodySnapshot = captureBodySnapshot(request.body, state.captureBody)
   const responseSize = readContentLength(reply.getHeader?.('content-length'))
 
+  const currentActiveSpan = trace.getActiveSpan() ?? state.activeSpan
+  if (currentActiveSpan) {
+    const route = normalizedRoute(request)
+    const enrichmentAttrs: Record<string, string | number | boolean> = {
+      'http.route': route,
+      'http.status_code': statusCode,
+      'pulse.request_id': state.requestId,
+      'pulse.latency_ms': Date.now() - state.startTime,
+    }
+    if (state.tenantId) enrichmentAttrs['pulse.tenant_id'] = state.tenantId
+    if (state.userId) enrichmentAttrs['pulse.user_id'] = state.userId
+    if (state.sessionId) enrichmentAttrs['pulse.session_id'] = state.sessionId
+    if (state.clientIp) enrichmentAttrs['http.client_ip'] = state.clientIp
+    if (state.userAgent) enrichmentAttrs['http.user_agent'] = state.userAgent
+    if (state.referer) enrichmentAttrs['http.referer'] = state.referer
+    if (bodySnapshot.bodySize !== undefined) enrichmentAttrs['http.request.body.size'] = bodySnapshot.bodySize
+    if (responseSize !== undefined) enrichmentAttrs['http.response.body.size'] = responseSize
+    currentActiveSpan.setAttributes(enrichmentAttrs)
+
+    if (statusCode >= 500) {
+      currentActiveSpan.setStatus({ code: SpanStatusCode.ERROR })
+    } else if (statusCode >= 100 && statusCode < 400) {
+      currentActiveSpan.setStatus({ code: SpanStatusCode.OK })
+    }
+  }
+
+  if (state.createdServerSpan && state.activeSpan) {
+    try {
+      state.activeSpan.end()
+    } catch (endErr) {
+      getLogger().error('Failed to end Fastify server span', { error: endErr })
+    }
+  }
+
   captureRequest({
     type: 'request',
     requestId: state.requestId,
@@ -438,8 +551,8 @@ function captureFastifyCompletion(
     statusCode,
     latency: Date.now() - state.startTime,
     timestamp: Date.now(),
-    traceId: getTraceId() ?? state.store.traceId,
-    spanId: getSpanId() ?? state.store.spanId,
+    traceId: getTraceId() ?? state.store.traceId ?? state.activeSpan?.spanContext().traceId,
+    spanId: getSpanId() ?? state.store.spanId ?? state.activeSpan?.spanContext().spanId,
     ...(state.userId ? { userId: state.userId } : {}),
     ...(state.tenantId ? { tenantId: state.tenantId } : {}),
     ...(state.sessionId ? { sessionId: state.sessionId } : {}),
