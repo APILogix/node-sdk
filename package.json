@@ -23,7 +23,7 @@
         "build": "npm run clean && npx tsc",
         "test": "npm run test:unit && npm run test:integration",
         "test:unit": "npx tsc -p tsconfig.test.json && node --test dist-tests/tests/unit/*.test.js",
-        "test:integration": "npx tsc -p tsconfig.test.json && node --test --test-concurrency=1 dist-tests/tests/integration/*.test.js",
+        "test:integration": "npx tsc && npx tsc -p tsconfig.test.json && node --test --test-concurrency=1 dist-tests/tests/integration/*.test.js",
         "test:all": "npm test",
         "test:trace": "npx tsc -p tsconfig.test.json && node --test dist-tests/tests/unit/trace-span.test.js",
         "prepublishOnly": "npm run  build",

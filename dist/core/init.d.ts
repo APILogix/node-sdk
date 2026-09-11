@@ -1,0 +1,7 @@
+import type { RemoteConfigResponse, SDKInitOptions } from '../types/config.js';
+/**
+ * Initialize from exactly one complete remote snapshot returned by POST
+ * /v1/init. Failure is fail-open to the host application but does not invent
+ * a runtime configuration or start telemetry with defaults.
+ */
+export declare function init(options: SDKInitOptions): Promise<Readonly<RemoteConfigResponse> | undefined>;
