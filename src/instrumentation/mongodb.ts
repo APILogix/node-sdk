@@ -20,6 +20,7 @@ export interface MongoDBInstrumentationOptions {
   dbStatementSerializer?: (command: Record<string, unknown>) => string
   addStatementAttribute?: boolean
   captureCommandArguments?: boolean
+  requireParentSpan?: boolean
 }
 
 export function createMongoDBInstrumentation(
@@ -36,6 +37,7 @@ export function createMongoDBInstrumentation(
   const instrumentationOptions: OTelMongoDBInstrumentationConfig = {
     enabled: true,
     enhancedDatabaseReporting: mergedOptions?.enhancedDatabaseReporting ?? false,
+    ...(mergedOptions?.requireParentSpan !== undefined ? { requireParentSpan: mergedOptions.requireParentSpan } : {}),
     dbStatementSerializer: mergedOptions?.dbStatementSerializer ?? ((command) => {
       if (!captureBody) {
         return '[REDACTED]'

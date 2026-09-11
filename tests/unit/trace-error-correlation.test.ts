@@ -84,6 +84,10 @@ describe('Trace/Span Error Correlation - Automated Scenarios', () => {
     })
 
     await new Promise(r => setTimeout(r, 120))
+    const deadline = Date.now() + 1000
+    while (capturedEvents.length === 0 && Date.now() < deadline) {
+      await new Promise(r => setTimeout(r, 20))
+    }
 
     assert.strictEqual(capturedEvents.length, 1)
     const event = capturedEvents[0]!

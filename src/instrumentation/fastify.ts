@@ -120,11 +120,12 @@ export function fastifyPulsePlugin(
       }
 
       // Resolve identity up front so the sampling decision is deterministic.
-      const requestId = headerString(request.headers['x-request-id'])
-        ?? headerString(request.headers['x-correlation-id'])
+      const headers = (request.headers as Record<string, string | string[] | undefined>) || {}
+      const requestId = headerString(headers['x-request-id'])
+        ?? headerString(headers['x-correlation-id'])
         ?? request.id
         ?? generateId()
-      const tenantId = headerString(request.headers['x-tenant-id'])
+      const tenantId = headerString(headers['x-tenant-id'])
 
       const decision = evaluateCaptureGate({
         path,
@@ -140,10 +141,10 @@ export function fastifyPulsePlugin(
       }
 
       const userId = readUserId(request)
-      const sessionId = headerString(request.headers['x-session-id'])
-      const userAgent = headerString(request.headers['user-agent'])
-      const referer = headerString(request.headers['referer'] ?? request.headers['referrer'])
-      const clientIp = resolveClientIp(request.headers, request.socket?.remoteAddress, options.trustedProxies, decision.maskIp, request.ip)
+      const sessionId = headerString(headers['x-session-id'])
+      const userAgent = headerString(headers['user-agent'])
+      const referer = headerString(headers['referer'] ?? headers['referrer'])
+      const clientIp = resolveClientIp(headers, request.socket?.remoteAddress, options.trustedProxies, decision.maskIp, request.ip)
 
       const store = createContextStore(
         requestId,
@@ -170,20 +171,10 @@ export function fastifyPulsePlugin(
       const killswitchEngine = KillswitchEngine.getInstance()
       const isTracingActive = !killswitchEngine?.isKilled('disableTracing') && (!featureCtrl || featureCtrl.isEnabled('tracing'))
 
-      const parentContext = extractTraceContext(request.headers as any)
+      const parentContext = extractTraceContext(headers)
 
       if (!activeSpan && isTracingActive) {
         try {
-          activeSpan = tracer.startSpan(`HTTP ${request.method} ${path}`, {
-            kind: SpanKind.SERVER,
-            attributes: {
-              'http.method': request.method,
-              'http.url': request.url,
-              'http.route': path,
-              'http.target': request.url,
-              ...(request.headers.host ? { 'http.host': String(request.headers.host) } : {}),
-              ...(userAgent ? { 'http.user_agent': userAgent } : {}),
-              ...(clientIp ? { 'http.client_ip': clientIp } : {}),
           activeSpan = tracer.startSpan(
             `HTTP ${request.method} ${path}`,
             {
@@ -194,12 +185,12 @@ export function fastifyPulsePlugin(
                 'http.route': path,
                 'http.target': request.url,
                 ...(request.headers.host ? { 'http.host': String(request.headers.host) } : {}),
+                ...(headers['host'] ? { 'http.host': String(headers['host']) } : {}),
                 ...(userAgent ? { 'http.user_agent': userAgent } : {}),
                 ...(clientIp ? { 'http.client_ip': clientIp } : {}),
               },
             },
-          })
-            parentContext,
+            parentContext ?? context.active(),
           )
           createdServerSpan = true
         } catch {
@@ -233,8 +224,6 @@ export function fastifyPulsePlugin(
       }
 
       if (createdServerSpan && activeSpan) {
-        context.with(trace.setSpan(context.active(), activeSpan), runHook)
-        context.with(trace.setSpan(parentContext, activeSpan), runHook)
         context.with(trace.setSpan(parentContext ?? context.active(), activeSpan), runHook)
       } else {
         runHook()

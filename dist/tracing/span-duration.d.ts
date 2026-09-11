@@ -49,26 +49,6 @@ export interface DurationBreakdown {
     /** Total non-overlapping wall-clock time covered by child spans. */
     readonly childDuration: number;
 }
-/**
- * Compute the exclusive (self) duration of a parent span by subtracting
- * the merged coverage of its direct child span intervals.
- *
- * @param parentStartMs - Parent span start time in milliseconds.
- * @param parentEndMs   - Parent span end time in milliseconds.
- * @param childIntervals - Array of direct child span intervals.
- * @returns Duration breakdown with inclusive, exclusive, and child durations.
- *
- * @example
- * ```ts
- * const result = computeExclusiveDuration(0, 200, [
- *   { startTime: 0, endTime: 50 },
- *   { startTime: 30, endTime: 110 },
- * ])
- * // result.inclusiveDuration === 200
- * // result.childDuration === 110  (merged: 0-110)
- * // result.exclusiveDuration === 90
- * ```
- */
 export declare function computeExclusiveDuration(parentStartMs: number, parentEndMs: number, childIntervals: ReadonlyArray<SpanInterval>): DurationBreakdown;
 /**
  * In-memory buffer that tracks child span intervals per trace for

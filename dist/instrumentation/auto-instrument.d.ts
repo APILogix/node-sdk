@@ -22,10 +22,26 @@ import { RedisInstrumentation } from '@opentelemetry/instrumentation-redis';
 import { PrismaInstrumentation } from '@prisma/instrumentation';
 import { BullMQInstrumentation } from 'opentelemetry-instrumentation-bullmq';
 /**
+ * Wait for any asynchronous instrumentation setup (such as Axios ESM loader)
+ * to complete before application code executes.
+ */
+export declare function waitForPendingInstrumentations(): Promise<void>;
+/**
  * Register all configured auto-instrumentations.
  * Idempotent: a second call without an intervening reset is a no-op.
  */
 export declare function registerAutoInstrumentations(): void;
+/**
+ * Install safe module-load hooks as soon as the SDK package is imported.
+ *
+ * This closes the common ESM/CJS race where application code imports Pulse,
+ * starts `createSDK()`, and imports DB clients while the one remote-config
+ * request is still in flight. The early hooks use privacy-safe defaults and
+ * a no-op/proxy tracer until `initTracer()` installs the real provider. Once
+ * remote config arrives, `registerAutoInstrumentations()` rebuilds the same
+ * hooks from the authoritative backend snapshot.
+ */
+export declare function registerBootstrapAutoInstrumentations(): void;
 /**
  * Fully reset auto-instrumentation state.
  *
@@ -34,7 +50,6 @@ export declare function registerAutoInstrumentations(): void;
  *   2. Call the OTel unregister handle to disable every instrumentation.
  *   3. Clear the global guard so the next register call rebuilds from scratch.
  *
-
  * Errors in any single teardown are logged but never thrown — reset must
  * always succeed so a failed instrumentation cannot block SDK reinit.
  */

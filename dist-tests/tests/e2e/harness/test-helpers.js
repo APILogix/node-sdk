@@ -26,6 +26,8 @@ export async function resetSdkState() {
             // Best-effort shutdown
         }
     }
+    delete process.env['SDK_BASE_URL'];
+    delete process.env['PULSE_BASE_URL'];
     ConfigManager.reset();
     client.clear();
     return result;
@@ -36,6 +38,7 @@ export async function resetSdkState() {
  */
 export async function setupTestSdk(server, customOptions = {}) {
     await resetSdkState();
+    process.env['SDK_BASE_URL'] = server.url;
     return await init({
         apiKey: 'test-e2e-api-key',
         debug: false,
@@ -46,6 +49,7 @@ export async function setupTestSdk(server, customOptions = {}) {
  * Convenience alias for initializing SDK with mock server.
  */
 export async function initSdkForTest(server, options = {}) {
+    process.env['SDK_BASE_URL'] = server.url;
     return await init({
         apiKey: 'test-e2e-api-key',
         debug: false,

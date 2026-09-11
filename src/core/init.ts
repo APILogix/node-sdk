@@ -15,13 +15,18 @@ import { FeatureController } from './feature-controller.js'
 import { LimitsEngine } from './limits-engine.js'
 import { SecurityScrubber } from '../processors/security-scrubber.js'
 import { TransportRouter } from '../transport/transport-router.js'
+import { SerializationPool } from '../transport/serialization-pool.js'
 import { tenantGovernor } from './tenant-isolation.js'
 import { adaptivePressure } from '../utils/adaptive-pressure.js'
 import { quotaController } from './quota-controller.js'
 import { costGovernor } from '../utils/cost-governor.js'
 import { TRACING_DEFAULTS } from '../constants/internal-defaults.js'
 import { initTracer, shutdownTracer } from '../tracing/tracer.js'
-import { registerAutoInstrumentations, resetAutoInstrumentations } from '../instrumentation/auto-instrument.js'
+import {
+  registerAutoInstrumentations,
+  resetAutoInstrumentations,
+  waitForPendingInstrumentations,
+} from '../instrumentation/auto-instrument.js'
 import { setupGlobalErrorHandlers, resetGlobalErrorHandlers } from '../instrumentation/global-errors.js'
 import { otelMetrics } from '../metrics/otel-adapter.js'
 import { metricsRegistry } from '../metrics/registry.js'
@@ -92,6 +97,7 @@ async function initialize(options: SDKInitOptions): Promise<Readonly<RemoteConfi
     // fallback, or immediate /v1/sdk-config request exists.
     const remoteClient = new RemoteConfigClient({
       apiKey: options.apiKey,
+      initTimeoutMs: options.initTimeoutMs,
     })
     const response = await remoteClient.initialize()
     const config = manager.initialize(remoteClient, response.config)
@@ -107,6 +113,7 @@ async function initialize(options: SDKInitOptions): Promise<Readonly<RemoteConfi
     const entitlementGate = EntitlementGate.initialize(config.entitlements)
     tenantGovernor.configure(config.limits.tenantGovernance)
     persistenceGovernor.configure(config.limits.persistenceGovernance)
+    SerializationPool.initialize(2)
 
     const transportRouter = await TransportRouter.initialize(
       config.transport,
@@ -160,11 +167,12 @@ async function initialize(options: SDKInitOptions): Promise<Readonly<RemoteConfi
 
     const resources = detectResources(client.metadata.sdkVersion)
 
-    const startTracing = (): void => {
+    const startTracing = async (): Promise<void> => {
       const active = manager.getConfig()
       if (active.killswitches.disableTracing) return
       initTracer(active, resources)
       registerAutoInstrumentations()
+      await waitForPendingInstrumentations()
     }
     const stopTracing = async (): Promise<void> => {
       await shutdownTracer()
@@ -375,6 +383,9 @@ async function initialize(options: SDKInitOptions): Promise<Readonly<RemoteConfi
         }
       },
     }))
+
+    // Await any asynchronous instrumentation setups (e.g. Axios ESM patching)
+    await waitForPendingInstrumentations()
 
     // Only now may capture paths leave the pre-init buffer.
     client.markInitialized()

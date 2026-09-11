@@ -12,11 +12,11 @@
  *     not in PulseSpan or at span creation time
  *   - Centralized SDK name/version constants (no hardcoded strings)
  */
-import { trace, SpanKind, context as otelContext, } from '@opentelemetry/api';
+import { trace, SpanKind, context as otelContext, ROOT_CONTEXT, INVALID_SPAN_CONTEXT, } from '@opentelemetry/api';
 import { computeExclusiveDuration, spanDurationTracker, } from './span-duration.js';
 import { getTraceAggregator, resetTraceAggregator } from './trace-aggregator.js';
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
-import { BatchSpanProcessor, ParentBasedSampler, } from '@opentelemetry/sdk-trace-base';
+import { BatchSpanProcessor, ParentBasedSampler, AlwaysOnSampler, AlwaysOffSampler, } from '@opentelemetry/sdk-trace-base';
 import { resourceFromAttributes } from '@opentelemetry/resources';
 import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION, ATTR_DEPLOYMENT_ENVIRONMENT_NAME, } from '@opentelemetry/semantic-conventions';
 import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks';
@@ -24,10 +24,10 @@ import { W3CTraceContextPropagator, CompositePropagator, W3CBaggagePropagator, s
 import { TRACING_DEFAULTS } from '../constants/internal-defaults.js';
 import { PulseSpan } from './span.js';
 import { getLogger } from '../utils/logger.js';
-import { processEvent } from '../core/event-pipeline.js';
-import { getRequestContext, PULSE_CONTEXT_ATTRIBUTES, } from '../core/context.js';
+import { processEvent, drainPendingEventProcessing } from '../core/event-pipeline.js';
+import { getRequestContext, PULSE_CONTEXT_ATTRIBUTES, createContextStore, withContext, } from '../core/context.js';
 import { costGovernor } from '../utils/cost-governor.js';
-import { RemoteConfigSampler } from './remote-config-sampler.js';
+import { RemoteConfigSampler, LocalRecordSampler } from './remote-config-sampler.js';
 import { ConfigManager } from '../core/config-manager.js';
 import { ProfilingSubsystem } from '../subsystems/profiling-subsystem.js';
 import { EntitlementGate } from '../core/entitlement-gate.js';
@@ -47,11 +47,8 @@ const PULSE_INTERNAL_CONTEXT_KEY = Symbol.for('pulse-sdk.internal-context');
  * revoked — in every case the caller gets a span object it can safely call
  * `end()` / `setAttribute()` on, but nothing is recorded or exported.
  */
-function createNoopSpan(name) {
-    if (!noopTracer) {
-        noopTracer = trace.getTracer(SDK_NAME + '/noop');
-    }
-    return new PulseSpan(noopTracer.startSpan(name));
+function createNoopSpan(_name) {
+    return new PulseSpan(trace.wrapSpanContext(INVALID_SPAN_CONTEXT));
 }
 /**
  * Custom developer spans are gated by the `customSpans` entitlement.
@@ -97,12 +94,6 @@ class PipelineSpanExporter {
                 for (const span of spans) {
                     const ctx = span.spanContext();
                     const traceId = ctx.traceId;
-                    const isSampled = (ctx.traceFlags & 1) === 1;
-                    const hasError = span.status.code === 2
-                        || span.events.some(e => e.name === 'exception');
-                    if (!isSampled && !hasError) {
-                        continue;
-                    }
                     if (!costGovernor.canCreateSpan(traceId) || !costGovernor.canContinueTrace(traceId)) {
                         continue;
                     }
@@ -119,9 +110,14 @@ class PipelineSpanExporter {
                     const ctx = span.spanContext();
                     const traceId = ctx.traceId;
                     traceIdsInBatch.add(traceId);
-                    const traceEvent = this.spanToEvent(span);
-                    if (!processEvent(traceEvent)) {
-                        allAccepted = false;
+                    const traceEvent = spanToEvent(span);
+                    const isSampled = (ctx.traceFlags & 1) === 1;
+                    // Only emit directly to event pipeline if head-sampled.
+                    // Otherwise, the TraceAggregator will buffer and tail-promote if error or slow.
+                    if (isSampled) {
+                        if (!processEvent(traceEvent)) {
+                            allAccepted = false;
+                        }
                     }
                     try {
                         getTraceAggregator().addSpan(traceEvent);
@@ -139,13 +135,6 @@ class PipelineSpanExporter {
                     }
                     catch { }
                 }
-                // Clean up span duration tracker for traces whose root spans were processed in this batch
-                for (const traceId of rootTraceIds) {
-                    try {
-                        spanDurationTracker.cleanupTrace(traceId);
-                    }
-                    catch { }
-                }
                 resultCallback({ code: allAccepted ? 0 : 1 });
             }
             catch (err) {
@@ -157,122 +146,172 @@ class PipelineSpanExporter {
     shutdown() {
         return Promise.resolve();
     }
-    forceFlush() {
-        return Promise.resolve();
+    async forceFlush() {
+        try {
+            getTraceAggregator().flushAll();
+        }
+        catch { }
     }
-    /**
-     * Transform an OTel ReadableSpan into a Pulse SDK event.
-     *
-     * The ReadableSpan is the single source of truth — we read:
-     * - spanContext() → traceId, spanId, traceFlags
-     * - parentSpanId → from ReadableSpan directly (NOT from PulseSpan)
-     * - name, attributes, status, events, links, duration
-     * - resource → service metadata
-     *
-     * We ENRICH with:
-     * - SDK metadata (centralized constants)
-     * - Tenant/session from current request context
-     * - Service/environment from resolved SDK config
-     *
-     * tracing.capture.* security gates:
-     * - headers: false → strip http.request.header.* and http.response.header.*
-     * - body: false → strip http.request.body and http.response.body
-     * - query: false → strip http.url query params
-     * - cookies: false → strip http.request.header.cookie
-     */
-    spanToEvent(span) {
-        const ctx = span.spanContext();
-        const attrs = span.attributes;
-        const status = span.status;
-        const durationMs = hrTimeToMs(span.duration);
-        const parentSpanId = span.parentSpanContext?.spanId;
-        const statusLabel = status.code === 0 ? 'unset' : status.code === 1 ? 'ok' : 'error';
-        // Read one immutable snapshot for all policy applied to this span.
-        const activeConfig = ConfigManager.getInstance().getConfig();
-        const capture = activeConfig.privacy.capture;
-        let filteredAttrs = Object.fromEntries(Object.entries(attrs).filter(([, value]) => value !== undefined));
-        if (!capture.headers) {
-            filteredAttrs = Object.fromEntries(Object.entries(filteredAttrs).filter(([key]) => !key.startsWith('http.request.header.') && !key.startsWith('http.response.header.')));
+}
+/**
+ * Transform an OTel ReadableSpan into a Pulse SDK event.
+ *
+ * The ReadableSpan is the single source of truth — we read:
+ * - spanContext() → traceId, spanId, traceFlags
+ * - parentSpanId → from ReadableSpan directly (NOT from PulseSpan)
+ * - name, attributes, status, events, links, duration
+ * - resource → service metadata
+ *
+ * We ENRICH with:
+ * - SDK metadata (centralized constants)
+ * - Tenant/session from current request context
+ * - Service/environment from resolved SDK config
+ *
+ * tracing.capture.* security gates:
+ * - headers: false → strip http.request.header.* and http.response.header.*
+ * - body: false → strip http.request.body and http.response.body
+ * - query: false → strip http.url query params
+ * - cookies: false → strip http.request.header.cookie
+ */
+function spanToEvent(span) {
+    const ctx = span.spanContext();
+    const attrs = span.attributes;
+    const status = span.status;
+    const durationMs = hrTimeToMs(span.duration);
+    const parentSpanId = span.parentSpanContext?.spanId;
+    const statusLabel = status.code === 0 ? 'unset' : status.code === 1 ? 'ok' : 'error';
+    // Read one immutable snapshot for all policy applied to this span.
+    const activeConfig = ConfigManager.getInstance().getConfig();
+    const capture = activeConfig.privacy.capture;
+    let filteredAttrs = Object.fromEntries(Object.entries(attrs).filter(([, value]) => value !== undefined));
+    if (!capture.headers) {
+        filteredAttrs = Object.fromEntries(Object.entries(filteredAttrs).filter(([key]) => !key.startsWith('http.request.header.') && !key.startsWith('http.response.header.')));
+    }
+    if (!capture.body) {
+        delete filteredAttrs['http.request.body'];
+        delete filteredAttrs['http.response.body'];
+    }
+    if (!capture.query) {
+        for (const key of ['http.url', 'http.target', 'url.full']) {
+            const value = filteredAttrs[key];
+            if (typeof value === 'string')
+                filteredAttrs[key] = value.split('?')[0] ?? value;
         }
-        if (!capture.body) {
-            delete filteredAttrs['http.request.body'];
-            delete filteredAttrs['http.response.body'];
-        }
-        if (!capture.query) {
-            for (const key of ['http.url', 'http.target', 'url.full']) {
-                const value = filteredAttrs[key];
-                if (typeof value === 'string')
-                    filteredAttrs[key] = value.split('?')[0] ?? value;
+    }
+    if (!capture.cookies) {
+        delete filteredAttrs['http.request.header.cookie'];
+        delete filteredAttrs['http.request.header.set-cookie'];
+    }
+    if (!capture.response) {
+        delete filteredAttrs['http.response.body'];
+    }
+    const maxAttrs = activeConfig.limits.maxSpanAttributes;
+    const attrEntries = Object.entries(filteredAttrs);
+    if (attrEntries.length > maxAttrs) {
+        const retained = Math.max(0, maxAttrs - Math.min(2, maxAttrs));
+        filteredAttrs = Object.fromEntries(attrEntries.slice(0, retained));
+        if (maxAttrs >= 1)
+            filteredAttrs['pulse.attributes_truncated'] = true;
+        if (maxAttrs >= 2)
+            filteredAttrs['pulse.original_attribute_count'] = attrEntries.length;
+    }
+    const startTimeMs = hrTimeToMs(span.startTime);
+    const endTimeMs = hrTimeToMs(span.endTime);
+    // Compute exclusive (self) duration by subtracting merged child
+    // span intervals from this span's total duration. This enables
+    // performance attribution: "DB took 50ms, business logic 400ms".
+    const childIntervals = spanDurationTracker.getChildIntervals(ctx.traceId, ctx.spanId);
+    const durationBreakdown = computeExclusiveDuration(startTimeMs, endTimeMs, childIntervals);
+    return {
+        type: 'span',
+        eventId: `span_${ctx.spanId}`,
+        spanId: ctx.spanId,
+        traceId: ctx.traceId,
+        parentSpanId,
+        name: span.name,
+        kind: spanKindToString(span.kind),
+        startTime: startTimeMs,
+        endTime: endTimeMs,
+        duration: durationMs,
+        exclusiveDuration: durationBreakdown.exclusiveDuration,
+        status: statusLabel,
+        statusMessage: status.message,
+        attributes: filteredAttrs,
+        isSampled: (ctx.traceFlags & 1) === 1,
+        traceFlags: ctx.traceFlags,
+        events: span.events.map(e => ({
+            name: e.name,
+            timestamp: hrTimeToMs(e.time),
+            attributes: e.attributes,
+        })),
+        links: span.links.map(l => ({
+            traceId: l.context.traceId,
+            spanId: l.context.spanId,
+            attributes: l.attributes,
+        })),
+        // Pulse-specific enrichment. The event pipeline replaces this
+        // snapshot with the canonical immutable client metadata before send.
+        metadata: {
+            sdkName: SDK_NAME,
+            sdkVersion: SDK_VERSION,
+            applicationName: activeConfig.sdk.service ?? activeConfig.sdk.projectId,
+            applicationVersion: activeConfig.sdk.release,
+            projectId: activeConfig.sdk.projectId,
+            environment: activeConfig.sdk.environment,
+            release: activeConfig.sdk.release,
+        },
+        // Internal marker allows shutdown force-flush to route finished spans
+        // while rejecting new user-captured events. Stripped by event pipeline.
+        __pulseInternal: true,
+        requestId: attrString(attrs[PULSE_CONTEXT_ATTRIBUTES.requestId]),
+        sessionId: attrString(attrs[PULSE_CONTEXT_ATTRIBUTES.sessionId]),
+        userId: attrString(attrs[PULSE_CONTEXT_ATTRIBUTES.userId]),
+        tenantId: attrString(attrs[PULSE_CONTEXT_ATTRIBUTES.tenantId]),
+    };
+}
+/**
+ * Synchronous SpanProcessor that hooks every span start and end in real time.
+ * Participates directly in TraceAggregator lifecycle:
+ *   - onStart: registers span with trace, tracking activeSpanCount
+ *   - onEnd: records child interval, converts span to event, buffers in aggregator,
+ *            and triggers state transitions (ROOT_ENDED -> QUIESCING -> FINALIZED)
+ */
+class AggregatorSpanProcessor {
+    onStart(span, _parentContext) {
+        try {
+            const ctx = span.spanContext();
+            if (ctx?.traceId && ctx?.spanId) {
+                getTraceAggregator().onSpanStart(ctx.traceId, ctx.spanId);
             }
         }
-        if (!capture.cookies) {
-            delete filteredAttrs['http.request.header.cookie'];
-            delete filteredAttrs['http.request.header.set-cookie'];
+        catch (err) {
+            getLogger().debug('AggregatorSpanProcessor.onStart failed', { error: err });
         }
-        if (!capture.response) {
-            delete filteredAttrs['http.response.body'];
+    }
+    onEnd(span) {
+        try {
+            const ctx = span.spanContext();
+            if (ctx?.traceId && ctx?.spanId) {
+                const parentSpanId = span.parentSpanContext?.spanId;
+                if (parentSpanId) {
+                    spanDurationTracker.recordChildInterval(ctx.traceId, parentSpanId, hrTimeToMs(span.startTime), hrTimeToMs(span.endTime));
+                }
+                // Convert span to event immediately and buffer in aggregator
+                const traceEvent = spanToEvent(span);
+                getTraceAggregator().addSpan(traceEvent);
+                const isRoot = !parentSpanId;
+                getTraceAggregator().onSpanEnd(ctx.traceId, ctx.spanId, isRoot);
+            }
         }
-        const maxAttrs = activeConfig.limits.maxSpanAttributes;
-        const attrEntries = Object.entries(filteredAttrs);
-        if (attrEntries.length > maxAttrs) {
-            const retained = Math.max(0, maxAttrs - Math.min(2, maxAttrs));
-            filteredAttrs = Object.fromEntries(attrEntries.slice(0, retained));
-            if (maxAttrs >= 1)
-                filteredAttrs['pulse.attributes_truncated'] = true;
-            if (maxAttrs >= 2)
-                filteredAttrs['pulse.original_attribute_count'] = attrEntries.length;
+        catch (err) {
+            getLogger().debug('AggregatorSpanProcessor.onEnd failed', { error: err });
         }
-        const startTimeMs = hrTimeToMs(span.startTime);
-        const endTimeMs = hrTimeToMs(span.endTime);
-        // Compute exclusive (self) duration by subtracting merged child
-        // span intervals from this span's total duration. This enables
-        // performance attribution: "DB took 50ms, business logic 400ms".
-        const childIntervals = spanDurationTracker.getChildIntervals(ctx.traceId, ctx.spanId);
-        const durationBreakdown = computeExclusiveDuration(startTimeMs, endTimeMs, childIntervals);
-        return {
-            type: 'span',
-            eventId: `span_${ctx.spanId}`,
-            spanId: ctx.spanId,
-            traceId: ctx.traceId,
-            parentSpanId,
-            name: span.name,
-            kind: spanKindToString(span.kind),
-            startTime: startTimeMs,
-            endTime: endTimeMs,
-            duration: durationMs,
-            exclusiveDuration: durationBreakdown.exclusiveDuration,
-            status: statusLabel,
-            statusMessage: status.message,
-            attributes: filteredAttrs,
-            events: span.events.map(e => ({
-                name: e.name,
-                timestamp: hrTimeToMs(e.time),
-                attributes: e.attributes,
-            })),
-            links: span.links.map(l => ({
-                traceId: l.context.traceId,
-                spanId: l.context.spanId,
-                attributes: l.attributes,
-            })),
-            // Pulse-specific enrichment. The event pipeline replaces this
-            // snapshot with the canonical immutable client metadata before send.
-            metadata: {
-                sdkName: SDK_NAME,
-                sdkVersion: SDK_VERSION,
-                applicationName: activeConfig.sdk.service ?? activeConfig.sdk.projectId,
-                applicationVersion: activeConfig.sdk.release,
-                projectId: activeConfig.sdk.projectId,
-                environment: activeConfig.sdk.environment,
-                release: activeConfig.sdk.release,
-            },
-            // Internal marker allows shutdown force-flush to route finished spans
-            // while rejecting new user-captured events. Stripped by event pipeline.
-            __pulseInternal: true,
-            requestId: attrString(attrs[PULSE_CONTEXT_ATTRIBUTES.requestId]),
-            sessionId: attrString(attrs[PULSE_CONTEXT_ATTRIBUTES.sessionId]),
-            userId: attrString(attrs[PULSE_CONTEXT_ATTRIBUTES.userId]),
-            tenantId: attrString(attrs[PULSE_CONTEXT_ATTRIBUTES.tenantId]),
-        };
+    }
+    shutdown() {
+        return Promise.resolve();
+    }
+    forceFlush() {
+        return Promise.resolve();
     }
 }
 // ─── Initialization ─────────────────────────────────────────────────────────
@@ -319,8 +358,13 @@ export function initTracer(config, customResources) {
             resource,
             sampler: new ParentBasedSampler({
                 root: remoteConfigSampler, // RemoteConfigSampler implements shouldSample
+                localParentSampled: new AlwaysOnSampler(),
+                localParentNotSampled: new LocalRecordSampler(),
+                remoteParentSampled: new AlwaysOnSampler(),
+                remoteParentNotSampled: new AlwaysOffSampler(),
             }),
             spanProcessors: [
+                new AggregatorSpanProcessor(),
                 new BatchSpanProcessor(new PipelineSpanExporter(), {
                     maxQueueSize: 2048,
                     maxExportBatchSize: 512,
@@ -420,15 +464,12 @@ export function startSpan(name, options) {
         return createNoopSpan(name);
     }
     try {
-        const otelOptions = {};
-        otelOptions.attributes = withRequestContextAttributes(options?.attributes);
-        if (options?.startTime)
-            otelOptions.startTime = options.startTime;
-        if (options?.links) {
-            otelOptions.links = PulseSpan.toOTelLinks(options.links);
-        }
-        const parentSpanId = snapshotActiveSpanId();
-        const span = tracer.startSpan(name, otelOptions);
+        const otelOptions = toOtelSpanOptions(options);
+        const parentContext = resolveParentContext(options?.parent);
+        const parentSpanId = resolveParentSpanId(options, parentContext);
+        const span = parentContext
+            ? tracer.startSpan(name, otelOptions, parentContext)
+            : tracer.startSpan(name, otelOptions);
         return new PulseSpan(span, parentSpanId);
     }
     catch (err) {
@@ -491,12 +532,10 @@ export async function withSpan(name, fnOrOptions, optionsOrFn) {
         }
     }
     const otelOptions = toOtelSpanOptions(options);
-    // Snapshot the parent BEFORE entering the new active scope. Inside the
-    // callback below `trace.getActiveSpan()` returns the new span itself,
-    // so any parent lookup must happen out here.
-    const parentSpanId = snapshotActiveSpanId();
+    const parentContext = resolveParentContext(options?.parent);
+    const parentSpanId = resolveParentSpanId(options, parentContext);
     const isRoot = parentSpanId === undefined;
-    return tracer.startActiveSpan(name, otelOptions, async (span) => {
+    const runCallback = async (span) => {
         const pulseSpan = new PulseSpan(span, parentSpanId);
         const logger = getLogger();
         if (isRoot) {
@@ -563,7 +602,10 @@ export async function withSpan(name, fnOrOptions, optionsOrFn) {
             }
             pulseSpan.end(); // Idempotent — safe if timeout already ended it
         }
-    });
+    };
+    return parentContext
+        ? tracer.startActiveSpan(name, otelOptions, parentContext, runCallback)
+        : tracer.startActiveSpan(name, otelOptions, runCallback);
 }
 /**
  * Synchronous version of `withSpan`. Same contract, except `fn` may not
@@ -592,9 +634,10 @@ export function withSpanSync(name, fnOrOptions, optionsOrFn) {
         }
     }
     const otelOptions = toOtelSpanOptions(options);
-    const parentSpanId = snapshotActiveSpanId();
+    const parentContext = resolveParentContext(options?.parent);
+    const parentSpanId = resolveParentSpanId(options, parentContext);
     const isRoot = parentSpanId === undefined;
-    return tracer.startActiveSpan(name, otelOptions, span => {
+    const runCallback = (span) => {
         const pulseSpan = new PulseSpan(span, parentSpanId);
         if (isRoot) {
             try {
@@ -631,7 +674,324 @@ export function withSpanSync(name, fnOrOptions, optionsOrFn) {
             }
             pulseSpan.end();
         }
-    });
+    };
+    return parentContext
+        ? tracer.startActiveSpan(name, otelOptions, parentContext, runCallback)
+        : tracer.startActiveSpan(name, otelOptions, runCallback);
+}
+// ─── Background / Detached Spans ──────────────────────────────────────────
+export const MAX_CONCURRENT_BACKGROUND_SPANS = 1000;
+let activeBackgroundSpans = 0;
+/**
+ * Get the current number of concurrently active background spans.
+ */
+export function getActiveBackgroundSpanCount() {
+    return activeBackgroundSpans;
+}
+function resolveWithBackgroundSpanArgs(fnOrOptions, optionsOrFn) {
+    if (typeof fnOrOptions === 'function') {
+        return { fn: fnOrOptions, options: optionsOrFn };
+    }
+    if (typeof optionsOrFn === 'function') {
+        return { fn: optionsOrFn, options: fnOrOptions };
+    }
+    throw new TypeError('withBackgroundSpan requires a callback function');
+}
+/**
+ * Execute an asynchronous background task within a new detached root trace,
+ * causally linked to the active (originating) span via OpenTelemetry SpanLink.
+ *
+ * ## Architecture & Motivation
+ *
+ * In web applications, asynchronous background tasks often outlive the HTTP
+ * request lifecycle (e.g. fire-and-forget processing, email dispatch, webhooks,
+ * queue publication).
+ *
+ * In naive implementations, two failure modes occur:
+ *   1. If the background work is created as a child of the HTTP request span,
+ *      the trace finalizes when the HTTP response ends (250ms safety deadline),
+ *      and subsequent background spans are dropped by the anti-resurrection guard.
+ *   2. If the HTTP span is kept alive until background work finishes, memory leaks
+ *      occur (req/res/sockets held in memory, unbounded buffer growth).
+ *
+ * `withBackgroundSpan` solves both without compromising safety:
+ *   - Starts a NEW independent root trace (`ROOT_CONTEXT`) with a fresh `traceId`.
+ *   - Causally links to the originating span via standard OTel `SpanLink` with
+ *     attribute `pulse.link.type: 'caused_by'`.
+ *   - Sets `pulse.background: true`, `pulse.originating.trace_id`, and
+ *     `pulse.originating.span_id` on the background root span.
+ *   - Forks the SDK `ContextStore` (isolated breadcrumb buffer while preserving
+ *     tenant/user/session correlation).
+ *   - Bounded concurrency: capped at `MAX_CONCURRENT_BACKGROUND_SPANS` (1000) to
+ *     prevent memory exhaustion under runaway background spawning.
+ *   - Independent finalization: the HTTP trace finalizes promptly after `res.end()`,
+ *     and the background trace finalizes independently when its own work finishes.
+ */
+export async function withBackgroundSpan(name, fnOrOptions, optionsOrFn) {
+    const { fn, options } = resolveWithBackgroundSpanArgs(fnOrOptions, optionsOrFn);
+    const logger = getLogger();
+    if (!tracer || !customSpansAllowed()) {
+        const span = createNoopSpan(name);
+        try {
+            const result = await fn(span);
+            span.setStatus('ok');
+            return result;
+        }
+        catch (err) {
+            if (err instanceof Error) {
+                span.recordError(err);
+            }
+            span.setStatus('error', err instanceof Error ? err.message : String(err));
+            throw err;
+        }
+        finally {
+            span.end();
+        }
+    }
+    if (activeBackgroundSpans >= MAX_CONCURRENT_BACKGROUND_SPANS) {
+        logger.warn('Max concurrent background spans reached, executing untraced', {
+            name,
+            active: activeBackgroundSpans,
+            limit: MAX_CONCURRENT_BACKGROUND_SPANS,
+        });
+        const span = createNoopSpan(name);
+        return await fn(span);
+    }
+    // Resolve originating trace/span for causal linking
+    let originatingTraceId;
+    let originatingSpanId;
+    if (options?.originatingSpan) {
+        const orig = options.originatingSpan;
+        if (typeof orig.traceId === 'string' && typeof orig.spanId === 'string') {
+            originatingTraceId = orig.traceId;
+            originatingSpanId = orig.spanId;
+        }
+        else if (typeof orig.spanContext === 'function') {
+            const sc = orig.spanContext();
+            originatingTraceId = sc.traceId;
+            originatingSpanId = sc.spanId;
+        }
+    }
+    else {
+        const activeSpan = trace.getActiveSpan();
+        if (activeSpan) {
+            const sc = activeSpan.spanContext();
+            originatingTraceId = sc.traceId;
+            originatingSpanId = sc.spanId;
+        }
+    }
+    const links = [];
+    if (originatingTraceId && originatingSpanId) {
+        links.push({
+            traceId: originatingTraceId,
+            spanId: originatingSpanId,
+            attributes: {
+                'pulse.link.type': 'caused_by',
+            },
+        });
+    }
+    if (options?.links) {
+        links.push(...options.links);
+    }
+    const attributes = {
+        ...(options?.attributes ?? {}),
+        'pulse.background': true,
+    };
+    if (originatingTraceId) {
+        attributes['pulse.originating.trace_id'] = originatingTraceId;
+    }
+    if (originatingSpanId) {
+        attributes['pulse.originating.span_id'] = originatingSpanId;
+    }
+    const resolvedKind = (options?.kind ? toOtelSpanKind(options.kind) : undefined) ?? SpanKind.INTERNAL;
+    const otelOptions = {
+        attributes: withRequestContextAttributes(attributes),
+        kind: resolvedKind,
+        links: PulseSpan.toOTelLinks(links),
+    };
+    if (options?.startTime !== undefined) {
+        otelOptions.startTime = options.startTime;
+    }
+    const currentStore = getRequestContext();
+    const runCallback = async (span) => {
+        const pulseSpan = new PulseSpan(span, undefined);
+        try {
+            const subsystem = ProfilingSubsystem.getInstance();
+            if (subsystem)
+                void subsystem.startCpuProfile(pulseSpan.traceId, pulseSpan.spanId);
+        }
+        catch (err) {
+            logger.warn('Failed to start CPU profile for background span', { error: err });
+        }
+        let timeoutTimer;
+        if (options?.timeoutMs && options.timeoutMs > 0) {
+            const timeoutMs = options.timeoutMs;
+            timeoutTimer = setTimeout(() => {
+                if (!pulseSpan.isEnded) {
+                    pulseSpan.addEvent('pulse.span.timeout', {
+                        'pulse.timeout_ms': timeoutMs,
+                    });
+                    pulseSpan.setStatus('error', `Background span timed out after ${timeoutMs}ms`);
+                    pulseSpan.end();
+                    logger.warn('Background span force-ended due to timeout', {
+                        name,
+                        timeoutMs,
+                        traceId: pulseSpan.traceId,
+                        spanId: pulseSpan.spanId,
+                    });
+                }
+            }, timeoutMs);
+            timeoutTimer.unref();
+        }
+        const runWork = async () => {
+            if (currentStore) {
+                const bgStore = createContextStore(`${currentStore.requestId}-bg-${Date.now().toString(36)}`, 100, {
+                    userId: currentStore.userId,
+                    sessionId: currentStore.sessionId,
+                    tags: currentStore.tags,
+                    extra: currentStore.extra,
+                });
+                return withContext(bgStore, () => fn(pulseSpan));
+            }
+            return fn(pulseSpan);
+        };
+        try {
+            const result = await runWork();
+            if (!pulseSpan.isEnded) {
+                pulseSpan.setStatus('ok');
+            }
+            return result;
+        }
+        catch (err) {
+            if (!pulseSpan.isEnded) {
+                if (err instanceof Error) {
+                    pulseSpan.recordError(err);
+                }
+                pulseSpan.setStatus('error', err instanceof Error ? err.message : String(err));
+            }
+            throw err;
+        }
+        finally {
+            if (timeoutTimer)
+                clearTimeout(timeoutTimer);
+            try {
+                const subsystem = ProfilingSubsystem.getInstance();
+                if (subsystem)
+                    void subsystem.stopCpuProfile(pulseSpan.traceId);
+            }
+            catch (err) {
+                logger.warn('Failed to stop CPU profile for background span', { error: err });
+            }
+            pulseSpan.end();
+        }
+    };
+    activeBackgroundSpans++;
+    try {
+        return await tracer.startActiveSpan(name, otelOptions, ROOT_CONTEXT, runCallback);
+    }
+    finally {
+        activeBackgroundSpans = Math.max(0, activeBackgroundSpans - 1);
+    }
+}
+/**
+ * Manually start a detached background span.
+ * The caller is responsible for calling `span.end()`.
+ *
+ * Note: To ensure child spans (like DB/HTTP calls) are attached to this
+ * background span across async boundaries, `withBackgroundSpan(name, fn)`
+ * is strongly recommended instead.
+ */
+export function startBackgroundSpan(name, options) {
+    const logger = getLogger();
+    if (!customSpansAllowed()) {
+        logger.debug('startBackgroundSpan called but customSpans entitlement is revoked — returning no-op span', { name });
+        return createNoopSpan(name);
+    }
+    if (!tracer) {
+        logger.debug('startBackgroundSpan called but tracer is not initialized — returning no-op span', { name });
+        return createNoopSpan(name);
+    }
+    if (activeBackgroundSpans >= MAX_CONCURRENT_BACKGROUND_SPANS) {
+        logger.warn('Max concurrent background spans reached, returning no-op span', {
+            name,
+            active: activeBackgroundSpans,
+            limit: MAX_CONCURRENT_BACKGROUND_SPANS,
+        });
+        return createNoopSpan(name);
+    }
+    try {
+        let originatingTraceId;
+        let originatingSpanId;
+        if (options?.originatingSpan) {
+            const orig = options.originatingSpan;
+            if (typeof orig.traceId === 'string' && typeof orig.spanId === 'string') {
+                originatingTraceId = orig.traceId;
+                originatingSpanId = orig.spanId;
+            }
+            else if (typeof orig.spanContext === 'function') {
+                const sc = orig.spanContext();
+                originatingTraceId = sc.traceId;
+                originatingSpanId = sc.spanId;
+            }
+        }
+        else {
+            const activeSpan = trace.getActiveSpan();
+            if (activeSpan) {
+                const sc = activeSpan.spanContext();
+                originatingTraceId = sc.traceId;
+                originatingSpanId = sc.spanId;
+            }
+        }
+        const links = [];
+        if (originatingTraceId && originatingSpanId) {
+            links.push({
+                traceId: originatingTraceId,
+                spanId: originatingSpanId,
+                attributes: {
+                    'pulse.link.type': 'caused_by',
+                },
+            });
+        }
+        if (options?.links) {
+            links.push(...options.links);
+        }
+        const attributes = {
+            ...(options?.attributes ?? {}),
+            'pulse.background': true,
+        };
+        if (originatingTraceId) {
+            attributes['pulse.originating.trace_id'] = originatingTraceId;
+        }
+        if (originatingSpanId) {
+            attributes['pulse.originating.span_id'] = originatingSpanId;
+        }
+        const resolvedKind = (options?.kind ? toOtelSpanKind(options.kind) : undefined) ?? SpanKind.INTERNAL;
+        const otelOptions = {
+            attributes: withRequestContextAttributes(attributes),
+            kind: resolvedKind,
+            links: PulseSpan.toOTelLinks(links),
+        };
+        if (options?.startTime !== undefined) {
+            otelOptions.startTime = options.startTime;
+        }
+        const span = tracer.startSpan(name, otelOptions, ROOT_CONTEXT);
+        activeBackgroundSpans++;
+        const pulseSpan = new PulseSpan(span, undefined);
+        const origEnd = pulseSpan.end.bind(pulseSpan);
+        let decremented = false;
+        pulseSpan.end = (endTime) => {
+            if (!decremented) {
+                decremented = true;
+                activeBackgroundSpans = Math.max(0, activeBackgroundSpans - 1);
+            }
+            origEnd(endTime);
+        };
+        return pulseSpan;
+    }
+    catch (err) {
+        logger.warn('Failed to start background span', { name, error: err });
+        return createNoopSpan(name);
+    }
 }
 // ─── Active Span ────────────────────────────────────────────────────────────
 /**
@@ -684,6 +1044,8 @@ export async function shutdownTracer() {
         initialized = false;
         tracer = null;
         ownsProvider = false;
+        ownsProvider = false;
+        activeBackgroundSpans = 0;
         // Clear the global guard if we own it — otherwise leave it for
         // whoever registered the provider externally.
         if (ownsLocal) {
@@ -698,16 +1060,31 @@ export async function shutdownTracer() {
     tracer = null;
     ownsProvider = false;
     initialized = false;
+    activeBackgroundSpans = 0;
     try {
-        await localProvider.forceFlush();
+        if (localProvider) {
+            await localProvider.forceFlush();
+        }
+        try {
+            getTraceAggregator().flushAll();
+        }
+        catch { }
     }
     catch (err) {
         logger.error('Failed to flush tracer during shutdown', { error: err });
     }
     try {
-        if (ownsLocal) {
+        if (ownsLocal && localProvider) {
             await localProvider.shutdown();
             delete globalThis[TRACER_PROVIDER_SYMBOL];
+            try {
+                trace.disable();
+            }
+            catch { }
+            try {
+                otelContext.disable();
+            }
+            catch { }
         }
         logger.info('OpenTelemetry tracer shut down');
     }
@@ -722,6 +1099,10 @@ export async function shutdownTracer() {
     catch (err) {
         logger.warn('Trace aggregator reset failed during shutdown', { error: err });
     }
+    try {
+        costGovernor.reset();
+    }
+    catch { }
 }
 /**
  * Force-flush pending spans without shutting down.
@@ -730,7 +1111,16 @@ export async function flushTracer() {
     if (!provider)
         return;
     try {
+        try {
+            getTraceAggregator().flushAll();
+        }
+        catch { }
         await provider.forceFlush();
+        try {
+            getTraceAggregator().flushAll();
+        }
+        catch { }
+        await drainPendingEventProcessing();
     }
     catch (err) {
         getLogger().error('Failed to flush tracer', { error: err });
@@ -776,11 +1166,74 @@ function resolveWithSpanSyncArgs(fnOrOptions, optionsOrFn) {
 function toOtelSpanOptions(options) {
     const otelOptions = {};
     otelOptions.attributes = withRequestContextAttributes(options?.attributes);
+    if (options?.kind) {
+        const kind = toOtelSpanKind(options.kind);
+        if (kind !== undefined) {
+            otelOptions.kind = kind;
+        }
+    }
     if (options?.startTime)
         otelOptions.startTime = options.startTime;
     if (options?.links)
         otelOptions.links = PulseSpan.toOTelLinks(options.links);
     return otelOptions;
+}
+function toOtelSpanKind(kind) {
+    switch (kind) {
+        case 'internal': return SpanKind.INTERNAL;
+        case 'server': return SpanKind.SERVER;
+        case 'client': return SpanKind.CLIENT;
+        case 'producer': return SpanKind.PRODUCER;
+        case 'consumer': return SpanKind.CONSUMER;
+        default: return undefined;
+    }
+}
+function resolveParentContext(parent) {
+    if (!parent)
+        return undefined;
+    if (typeof parent.getValue === 'function' && typeof parent.setValue === 'function') {
+        return parent;
+    }
+    if (typeof parent.getOTelSpan === 'function') {
+        return trace.setSpan(otelContext.active(), parent.getOTelSpan());
+    }
+    if (parent.otelSpan) {
+        return trace.setSpan(otelContext.active(), parent.otelSpan);
+    }
+    if (typeof parent.spanContext === 'function') {
+        return trace.setSpan(otelContext.active(), parent);
+    }
+    if (typeof parent.traceId === 'string' && typeof parent.spanId === 'string') {
+        const spanContext = {
+            traceId: parent.traceId,
+            spanId: parent.spanId,
+            traceFlags: typeof parent.traceFlags === 'number' ? parent.traceFlags : 1,
+            ...(typeof parent.isRemote === 'boolean' ? { isRemote: parent.isRemote } : {}),
+            ...(parent.traceState ? { traceState: parent.traceState } : {}),
+        };
+        return trace.setSpanContext(otelContext.active(), spanContext);
+    }
+    return undefined;
+}
+function resolveParentSpanId(options, parentContext) {
+    if (options?.parent) {
+        const p = options.parent;
+        if (typeof p.spanId === 'string')
+            return p.spanId;
+        if (typeof p.spanContext === 'function')
+            return p.spanContext().spanId;
+        if (typeof p.getOTelSpan === 'function')
+            return p.getOTelSpan().spanContext().spanId;
+    }
+    if (parentContext) {
+        try {
+            const span = trace.getSpan(parentContext);
+            if (span)
+                return span.spanContext().spanId;
+        }
+        catch { }
+    }
+    return snapshotActiveSpanId();
 }
 function withRequestContextAttributes(attributes) {
     const requestCtx = getRequestContext();

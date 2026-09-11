@@ -21,6 +21,9 @@
 
 import { init } from './core/init.js'
 import type { SDKInitOptions, RemoteConfigResponse } from './types/config.js'
+import { registerBootstrapAutoInstrumentations } from './instrumentation/auto-instrument.js'
+
+registerBootstrapAutoInstrumentations()
 
 // ─── Lifecycle ──────────────────────────────────────────────────────────────
 
@@ -91,9 +94,21 @@ export type { User, ScopeData } from './core/scope.js'
 
 // ─── Tracing (manual span APIs) ─────────────────────────────────────────────
 
-export { startSpan, withSpan, withSpanSync, getActiveSpan, flushTracer } from './tracing/tracer.js'
+export {
+  startSpan,
+  withSpan,
+  withSpanSync,
+  withBackgroundSpan,
+  startBackgroundSpan,
+  getActiveBackgroundSpanCount,
+  getActiveSpan,
+  flushTracer,
+} from './tracing/tracer.js'
+export { startDbSpan, withDbSpan, withDbSpanSync } from './tracing/db-span.js'
 export { extractTraceContext, injectTraceContext } from './tracing/context-propagation.js'
-export type { SpanStatus, SpanOptions, SpanLink } from './tracing/span.js'
+export type { DbSpanOptions, DbSystem } from './tracing/db-span.js'
+export type { SpanStatus, SpanKindName, SpanOptions, SpanLink } from './tracing/span.js'
+export type { BackgroundSpanOptions } from './tracing/tracer.js'
 
 // ─── Framework instrumentation ──────────────────────────────────────────────
 
@@ -102,6 +117,7 @@ export type { PulseExpressOptions } from './instrumentation/express.js'
 export { fastifyPulsePlugin } from './instrumentation/fastify.js'
 export type { PulseFastifyOptions } from './instrumentation/fastify.js'
 export { registerAutoInstrumentations } from './instrumentation/auto-instrument.js'
+export { registerEsmLoaderHooks } from './instrumentation/esm-loader.js'
 export { createGraphQLInstrumentation } from './instrumentation/graphql.js'
 export type { GraphQLInstrumentationOptions } from './instrumentation/graphql.js'
 export { createPrismaInstrumentation } from './instrumentation/prisma.js'

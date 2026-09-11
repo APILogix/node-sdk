@@ -13,7 +13,7 @@ export declare function compressBrotli(data: Buffer): Promise<Buffer>;
  * Compresses data using the specified algorithm.
  * Returns the original buffer if algorithm is 'none' or payload is too small.
  */
-export declare function compress(data: Buffer, algorithm: CompressionAlgorithm): Promise<{
+export declare function compress(data: Buffer | string | Uint8Array, algorithm: CompressionAlgorithm): Promise<{
     buffer: Buffer;
     algorithm: CompressionAlgorithm;
     originalSize: number;

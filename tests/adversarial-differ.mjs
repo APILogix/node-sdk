@@ -266,7 +266,8 @@ console.log('\n[Suite 5: Fast-Flag Activation Matrix & Subsystem Granularity]')
 
 const fastFlagScenarios = [
   // Profiling
-  { section: 'features.profiling', setup: (c) => (c.features.profiling = true), expected: { profiling: true, replay: false, tracing: false, metrics: false, logging: false, errors: false } },
+  { section: 'features.profiling', setupOld: (c) => (c.features.profiling = false), setup: (c) => (c.features.profiling = true), expected: { profiling: true, replay: false, tracing: false, metrics: false, logging: false, errors: false } },
+  { section: 'features.profiling', setup: (c) => (c.features.profiling = false), expected: { profiling: true, replay: false, tracing: false, metrics: false, logging: false, errors: false } },
   { section: 'killswitches.disableProfiling', setup: (c) => (c.killswitches.disableProfiling = true), expected: { profiling: true, replay: false, tracing: false, metrics: false, logging: false, errors: false } },
   { section: 'entitlements.profiling', setup: (c) => (c.entitlements.profiling = false), expected: { profiling: true, replay: false, tracing: false, metrics: false, logging: false, errors: false } },
   { section: 'sampling.profiles', setup: (c) => (c.sampling.profiles = 0.5), expected: { profiling: true, replay: false, tracing: false, metrics: false, logging: false, errors: false } },
@@ -274,22 +275,26 @@ const fastFlagScenarios = [
   { section: 'profiling.maxDurationMs', setup: (c) => (c.profiling = { ...c.profiling, maxDurationMs: 60000 }), expected: { profiling: true, replay: false, tracing: false, metrics: false, logging: false, errors: false } },
 
   // Session Replay
-  { section: 'features.sessionReplay', setup: (c) => (c.features.sessionReplay = true), expected: { profiling: false, replay: true, tracing: false, metrics: false, logging: false, errors: false } },
+  { section: 'features.sessionReplay', setupOld: (c) => (c.features.sessionReplay = false), setup: (c) => (c.features.sessionReplay = true), expected: { profiling: false, replay: true, tracing: false, metrics: false, logging: false, errors: false } },
+  { section: 'features.sessionReplay', setup: (c) => (c.features.sessionReplay = false), expected: { profiling: false, replay: true, tracing: false, metrics: false, logging: false, errors: false } },
   { section: 'entitlements.sessionReplay', setup: (c) => (c.entitlements.sessionReplay = false), expected: { profiling: false, replay: true, tracing: false, metrics: false, logging: false, errors: false } },
   { section: 'sampling.replays', setup: (c) => (c.sampling.replays = 0.5), expected: { profiling: false, replay: true, tracing: false, metrics: false, logging: false, errors: false } },
   { section: 'sampling.routes./app.replays', setup: (c) => (c.sampling.routes['/app'] = { replays: 0.5 }), expected: { profiling: false, replay: true, tracing: false, metrics: false, logging: false, errors: false } },
   { section: 'replay.sampleRate', setup: (c) => (c.replay = { ...c.replay, sampleRate: 0.5 }), expected: { profiling: false, replay: true, tracing: false, metrics: false, logging: false, errors: false } },
 
   // Tracing
-  { section: 'features.tracing', setup: (c) => (c.features.tracing = true), expected: { profiling: false, replay: false, tracing: true, metrics: false, logging: false, errors: false } },
+  { section: 'features.tracing', setupOld: (c) => (c.features.tracing = false), setup: (c) => (c.features.tracing = true), expected: { profiling: false, replay: false, tracing: true, metrics: false, logging: false, errors: false } },
+  { section: 'features.tracing', setup: (c) => (c.features.tracing = false), expected: { profiling: false, replay: false, tracing: true, metrics: false, logging: false, errors: false } },
   { section: 'killswitches.disableTracing', setup: (c) => (c.killswitches.disableTracing = true), expected: { profiling: false, replay: false, tracing: true, metrics: false, logging: false, errors: false } },
   { section: 'entitlements.tracing', setup: (c) => (c.entitlements.tracing = false), expected: { profiling: false, replay: false, tracing: true, metrics: false, logging: false, errors: false } },
   { section: 'entitlements.customSpans', setup: (c) => (c.entitlements.customSpans = false), expected: { profiling: false, replay: false, tracing: true, metrics: false, logging: false, errors: false } },
   { section: 'sampling.traces', setup: (c) => (c.sampling.traces = 0.5), expected: { profiling: false, replay: false, tracing: true, metrics: false, logging: false, errors: false } },
   { section: 'sampling.spans', setup: (c) => (c.sampling.spans = 0.5), expected: { profiling: false, replay: false, tracing: true, metrics: false, logging: false, errors: false } },
   { section: 'limits.maxSpansPerTrace', setup: (c) => (c.limits.maxSpansPerTrace = 1000), expected: { profiling: false, replay: false, tracing: true, metrics: false, logging: false, errors: false } },
-  { section: 'limits.maxSpanAttributes', setup: (c) => (c.limits.maxSpanAttributes = 200), expected: { profiling: false, replay: false, tracing: true, metrics: false, logging: false, errors: false } },
-  { section: 'limits.maxAttributeLength', setup: (c) => (c.limits.maxAttributeLength = 8192), expected: { profiling: false, replay: false, tracing: true, metrics: false, logging: false, errors: false } },
+  { section: 'limits.maxSpanAttributes', setupOld: (c) => (c.limits.maxSpanAttributes = 100), setup: (c) => (c.limits.maxSpanAttributes = 200), expected: { profiling: false, replay: false, tracing: true, metrics: false, logging: false, errors: false } },
+  { section: 'limits.maxAttributeLength', setupOld: (c) => (c.limits.maxAttributeLength = 2048), setup: (c) => (c.limits.maxAttributeLength = 8192), expected: { profiling: false, replay: false, tracing: true, metrics: false, logging: false, errors: false } },
+  { section: 'limits.maxSpanAttributes', setup: (c) => (c.limits.maxSpanAttributes = 300), expected: { profiling: false, replay: false, tracing: true, metrics: false, logging: false, errors: false } },
+  { section: 'limits.maxAttributeLength', setup: (c) => (c.limits.maxAttributeLength = 4096), expected: { profiling: false, replay: false, tracing: true, metrics: false, logging: false, errors: false } },
   { section: 'instrumentation.http', setup: (c) => (c.instrumentation.http = false), expected: { profiling: false, replay: false, tracing: true, metrics: false, logging: false, errors: false } },
   { section: 'instrumentation.express.enabled', setup: (c) => (c.instrumentation.express = { enabled: false }), expected: { profiling: false, replay: false, tracing: true, metrics: false, logging: false, errors: false } },
   { section: 'sampling.routes./api.traces', setup: (c) => (c.sampling.routes['/api'] = { traces: 0.5 }), expected: { profiling: false, replay: false, tracing: true, metrics: false, logging: false, errors: false } },
@@ -297,10 +302,14 @@ const fastFlagScenarios = [
   { section: 'tracing.maxSpansPerTrace', setup: (c) => (c.tracing = { ...c.tracing, maxSpansPerTrace: 2500 }), expected: { profiling: false, replay: false, tracing: true, metrics: false, logging: false, errors: false } },
 
   // Metrics
-  { section: 'features.metrics', setup: (c) => (c.features.metrics = true), expected: { profiling: false, replay: false, tracing: false, metrics: true, logging: false, errors: false } },
-  { section: 'features.runtimeMetrics', setup: (c) => (c.features.runtimeMetrics = true), expected: { profiling: false, replay: false, tracing: false, metrics: true, logging: false, errors: false } },
-  { section: 'features.eventLoopMonitoring', setup: (c) => (c.features.eventLoopMonitoring = true), expected: { profiling: false, replay: false, tracing: false, metrics: true, logging: false, errors: false } },
-  { section: 'features.gcMonitoring', setup: (c) => (c.features.gcMonitoring = true), expected: { profiling: false, replay: false, tracing: false, metrics: true, logging: false, errors: false } },
+  { section: 'features.metrics', setupOld: (c) => (c.features.metrics = false), setup: (c) => (c.features.metrics = true), expected: { profiling: false, replay: false, tracing: false, metrics: true, logging: false, errors: false } },
+  { section: 'features.runtimeMetrics', setupOld: (c) => (c.features.runtimeMetrics = false), setup: (c) => (c.features.runtimeMetrics = true), expected: { profiling: false, replay: false, tracing: false, metrics: true, logging: false, errors: false } },
+  { section: 'features.eventLoopMonitoring', setupOld: (c) => (c.features.eventLoopMonitoring = false), setup: (c) => (c.features.eventLoopMonitoring = true), expected: { profiling: false, replay: false, tracing: false, metrics: true, logging: false, errors: false } },
+  { section: 'features.gcMonitoring', setupOld: (c) => (c.features.gcMonitoring = false), setup: (c) => (c.features.gcMonitoring = true), expected: { profiling: false, replay: false, tracing: false, metrics: true, logging: false, errors: false } },
+  { section: 'features.metrics', setup: (c) => (c.features.metrics = false), expected: { profiling: false, replay: false, tracing: false, metrics: true, logging: false, errors: false } },
+  { section: 'features.runtimeMetrics', setup: (c) => (c.features.runtimeMetrics = false), expected: { profiling: false, replay: false, tracing: false, metrics: true, logging: false, errors: false } },
+  { section: 'features.eventLoopMonitoring', setup: (c) => (c.features.eventLoopMonitoring = false), expected: { profiling: false, replay: false, tracing: false, metrics: true, logging: false, errors: false } },
+  { section: 'features.gcMonitoring', setup: (c) => (c.features.gcMonitoring = false), expected: { profiling: false, replay: false, tracing: false, metrics: true, logging: false, errors: false } },
   { section: 'killswitches.disableMetrics', setup: (c) => (c.killswitches.disableMetrics = true), expected: { profiling: false, replay: false, tracing: false, metrics: true, logging: false, errors: false } },
   { section: 'entitlements.metrics', setup: (c) => (c.entitlements.metrics = false), expected: { profiling: false, replay: false, tracing: false, metrics: true, logging: false, errors: false } },
   { section: 'entitlements.customMetrics', setup: (c) => (c.entitlements.customMetrics = false), expected: { profiling: false, replay: false, tracing: false, metrics: true, logging: false, errors: false } },
@@ -309,7 +318,8 @@ const fastFlagScenarios = [
   { section: 'metrics.pushIntervalMs', setup: (c) => (c.metrics = { ...c.metrics, pushIntervalMs: 5000 }), expected: { profiling: false, replay: false, tracing: false, metrics: true, logging: false, errors: false } },
 
   // Logging
-  { section: 'features.logging', setup: (c) => (c.features.logging = true), expected: { profiling: false, replay: false, tracing: false, metrics: false, logging: true, errors: false } },
+  { section: 'features.logging', setupOld: (c) => (c.features.logging = false), setup: (c) => (c.features.logging = true), expected: { profiling: false, replay: false, tracing: false, metrics: false, logging: true, errors: false } },
+  { section: 'features.logging', setup: (c) => (c.features.logging = false), expected: { profiling: false, replay: false, tracing: false, metrics: false, logging: true, errors: false } },
   { section: 'killswitches.disableLogs', setup: (c) => (c.killswitches.disableLogs = true), expected: { profiling: false, replay: false, tracing: false, metrics: false, logging: true, errors: false } },
   { section: 'entitlements.logging', setup: (c) => (c.entitlements.logging = false), expected: { profiling: false, replay: false, tracing: false, metrics: false, logging: true, errors: false } },
   { section: 'sampling.logs', setup: (c) => (c.sampling.logs = 0.5), expected: { profiling: false, replay: false, tracing: false, metrics: false, logging: true, errors: false } },
@@ -317,7 +327,8 @@ const fastFlagScenarios = [
   { section: 'logs.maxLogSize', setup: (c) => (c.logs = { ...c.logs, maxLogSize: 65536 }), expected: { profiling: false, replay: false, tracing: false, metrics: false, logging: true, errors: false } },
 
   // Errors
-  { section: 'features.errors', setup: (c) => (c.features.errors = true), expected: { profiling: false, replay: false, tracing: false, metrics: false, logging: false, errors: true } },
+  { section: 'features.errors', setupOld: (c) => (c.features.errors = false), setup: (c) => (c.features.errors = true), expected: { profiling: false, replay: false, tracing: false, metrics: false, logging: false, errors: true } },
+  { section: 'features.errors', setup: (c) => (c.features.errors = false), expected: { profiling: false, replay: false, tracing: false, metrics: false, logging: false, errors: true } },
   { section: 'killswitches.disableErrors', setup: (c) => (c.killswitches.disableErrors = true), expected: { profiling: false, replay: false, tracing: false, metrics: false, logging: false, errors: true } },
   { section: 'entitlements.errors', setup: (c) => (c.entitlements.errors = false), expected: { profiling: false, replay: false, tracing: false, metrics: false, logging: false, errors: true } },
   { section: 'sampling.errors', setup: (c) => (c.sampling.errors = 0.5), expected: { profiling: false, replay: false, tracing: false, metrics: false, logging: false, errors: true } },
@@ -331,6 +342,9 @@ for (const sc of fastFlagScenarios) {
   runTest(`Fast-flag activation for: ${sc.section}`, () => {
     const oldCfg = cloneConfig()
     const newCfg = cloneConfig()
+    if (sc.setupOld) {
+      sc.setupOld(oldCfg)
+    }
     sc.setup(newCfg)
     const diff = diffConfigs(oldCfg, newCfg)
     assert.equal(diff.hasChanges, true)
@@ -374,6 +388,8 @@ runTest('Simultaneous mutations across all 11 core sections', () => {
   newCfg.sdk.release = '3.1.0'
   newCfg.features.profiling = true
   newCfg.features.tracing = true
+  newCfg.features.profiling = false
+  newCfg.features.tracing = false
   newCfg.sampling.traces = 0.5
   newCfg.instrumentation.http = false
   newCfg.privacy.capture.headers = true
@@ -381,6 +397,7 @@ runTest('Simultaneous mutations across all 11 core sections', () => {
   newCfg.killswitches.disableMetrics = true
   newCfg.transport.keepAlive = false
   newCfg.entitlements.customSpans = true
+  newCfg.entitlements.customSpans = false
   newCfg.offlineQueue = { enabled: false, maxFileSizeBytes: 1000, maxEvents: 10, eventTtlMs: 1000, ioTimeoutMs: 100 }
 
   const diff = diffConfigs(oldCfg, newCfg)

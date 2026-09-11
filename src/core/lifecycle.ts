@@ -53,6 +53,10 @@ import { tenantGovernor } from './tenant-isolation.js'
 import { cardinalityGovernor } from '../utils/cardinality-governor.js'
 import { adaptivePressure } from '../utils/adaptive-pressure.js'
 import { SerializationPool } from '../transport/serialization-pool.js'
+import { QuotaController } from './quota-controller.js'
+import { costGovernor } from '../utils/cost-governor.js'
+import { persistenceGovernor } from '../storage/persistence-governor.js'
+import { resetFingerprintCache } from '../processors/fingerprint.js'
 
 // ─── Module State ───────────────────────────────────────────────────────────
 
@@ -484,7 +488,9 @@ async function runUnconditionalCleanup(stepErrors: ShutdownStepError[]): Promise
   runSync('security-scrubber.reset', () => SecurityScrubber.reset(), stepErrors)
   runSync('global-errors.reset', () => resetGlobalErrorHandlers(), stepErrors)
   runSync('logging-subsystem.reset', () => LoggingSubsystem.reset(), stepErrors)
+  runSync('profiling-subsystem.reset', () => ProfilingSubsystem.reset(), stepErrors)
   runSync('cron-subsystem.reset', () => CronSubsystem.reset(), stepErrors)
+  runSync('session.reset', () => resetSessionManager(), stepErrors)
   runSync('signal-handlers.reset', () => resetSignalHandlers(), stepErrors)
   runSync('auto-instrumentations.reset', () => resetAutoInstrumentations(), stepErrors)
   // tenantGovernor is a module-level singleton (see tenant-isolation.ts).
@@ -496,6 +502,10 @@ async function runUnconditionalCleanup(stepErrors: ShutdownStepError[]): Promise
   // Stop its timers/observers so a reinit cycle doesn't stack pollers.
   runSync('adaptive-pressure.stop', () => adaptivePressure.stop(), stepErrors)
 
+  runSync('quota-controller.reset', () => QuotaController.reset(), stepErrors)
+  runSync('cost-governor.reset', () => costGovernor.reset(), stepErrors)
+  runSync('persistence-governor.reset', () => persistenceGovernor.reset(), stepErrors)
+  runSync('fingerprint-cache.reset', () => resetFingerprintCache(), stepErrors)
   // Terminate serialization worker threads — awaited so they can't outlive
   // the SDK and hold the host process open across shutdown/reinit cycles.
   await runStep('serialization-pool.reset', async () => {

@@ -17,6 +17,7 @@ import { getLogger } from '../utils/logger.js'
 import { isIP } from 'node:net'
 
 const REDACTED = '[Redacted]'
+const SYSTEM_ID_KEYS = new Set(['traceId', 'spanId', 'parentSpanId', 'eventId'])
 
 export class SecurityScrubber {
   private static instance: SecurityScrubber | null = null
@@ -33,8 +34,8 @@ export class SecurityScrubber {
   private sensitiveFields: Set<string>
 
   // PII patterns
-  private static readonly EMAIL_PATTERN = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g
-  private static readonly PHONE_PATTERN = /(\+?1?\s*[-.\s]?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4})/g
+  private static readonly EMAIL_PATTERN = /(?<![a-zA-Z0-9._%+-])[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g
+  private static readonly PHONE_PATTERN = /(?<![a-zA-Z0-9])(\+?1?\s*[-.\s]?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4})(?![a-zA-Z0-9])/g
   private static readonly IPV4_PATTERN = /\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b/g
   private static readonly BRACKETED_IPV6_PATTERN = /\[([0-9A-Fa-f:.]+)(%[0-9A-Za-z_.-]+)?\](?::\d{1,5})?/g
   private static readonly IPV6_CANDIDATE_PATTERN = /(?<![0-9A-Za-z])([0-9A-Fa-f:.]+(?:%[0-9A-Za-z_.-]+)?)(?![0-9A-Za-z])/g
@@ -80,7 +81,7 @@ export class SecurityScrubber {
       const hasHeaderRules = this.scrubbingConfig.enabled && this.sensitiveHeaders.size > 0
       const hasFieldRules = this.scrubbingConfig.enabled && this.sensitiveFields.size > 0
       const hasPiiRules = this.piiConfig.enabled && (this.piiConfig.maskEmails || this.piiConfig.maskPhones || this.piiConfig.maskIPs)
-      const needsDeepScrub = hasFieldRules || hasPiiRules
+      const needsDeepScrub = hasFieldRules || hasHeaderRules || hasPiiRules
 
       // Shallow clone objects that we'll mutate — but only when we actually
       // have rules that require inspecting them. Previously these clones
@@ -120,12 +121,15 @@ export class SecurityScrubber {
       }
 
       // Deep-copy and scrub every payload section, including scope-provided
-      // `extra` and `contexts`. This prevents sensitive keys from escaping
+      // `extra`, `contexts`, `rootSpan`, and embedded `spans`. This prevents sensitive keys from escaping
       // merely because a new event field was added, and preserves caller
       // immutability for nested objects/arrays.
       if (needsDeepScrub) {
         for (const [key, value] of Object.entries(clone)) {
-          if (key === 'metadata') continue
+          if (key === 'metadata' || SYSTEM_ID_KEYS.has(key) || SecurityScrubber.DANGEROUS_KEYS.has(key)) {
+            if (SecurityScrubber.DANGEROUS_KEYS.has(key)) delete clone[key]
+            continue
+          }
           clone[key] = this.scrubValue(value)
         }
       }
@@ -145,10 +149,27 @@ export class SecurityScrubber {
   }
 
   /**
+   * Determine if a field or attribute key matches sensitive field/header rules.
+   * Checks full key as well as trailing component (e.g. `http.request.header.authorization` -> `authorization`).
+   */
+  private isKeySensitive(rawKey: string): boolean {
+    if (!this.scrubbingConfig.enabled) return false
+    const key = rawKey.toLowerCase()
+    if (this.sensitiveFields.has(key) || this.sensitiveHeaders.has(key)) return true
+
+    const parts = key.split(/[\.:]/)
+    const lastPart = parts[parts.length - 1]
+    if (lastPart && (this.sensitiveFields.has(lastPart) || this.sensitiveHeaders.has(lastPart))) {
+      return true
+    }
+    return false
+  }
+
+  /**
    * Scrub an arbitrary value (object, array, or string) with the active
    * field-redaction and PII rules. Used for payload sections that are not
    * part of the fixed event shape — e.g. `LogEvent.args`,
-   * `ReplayEvent.events`, profile payloads. Returns a new value; never
+   * `ReplayEvent.events`, profile payloads, aggregated trace spans. Returns a new value; never
    * mutates the input. Never throws.
    */
   scrubValue(value: unknown, depth: number = 0): unknown {
@@ -157,7 +178,15 @@ export class SecurityScrubber {
 
     try {
       if (typeof value === 'string') {
-        return this.piiConfig.enabled ? this.scrubPiiInString(value) : value
+        let str = value
+        if (this.piiConfig.enabled) {
+          str = this.scrubPiiInString(str)
+        }
+        if (this.scrubbingConfig.enabled) {
+          str = str.replace(/Bearer\s+[A-Za-z0-9_\-\.]+/gi, 'Bearer [Redacted]')
+          str = str.replace(/eyJ[a-zA-Z0-9_-]{10,}\.eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}/g, '[Redacted]')
+        }
+        return str
       }
       if (Array.isArray(value)) {
         return value.map(item => this.scrubValue(item, depth + 1))
@@ -166,7 +195,9 @@ export class SecurityScrubber {
         const result: Record<string, unknown> = Object.create(null)
         for (const [key, v] of Object.entries(value as Record<string, unknown>)) {
           if (SecurityScrubber.DANGEROUS_KEYS.has(key)) continue
-          if (this.scrubbingConfig.enabled && this.sensitiveFields.has(key.toLowerCase())) {
+          if (SYSTEM_ID_KEYS.has(key)) {
+            result[key] = v
+          } else if (this.isKeySensitive(key)) {
             result[key] = REDACTED
           } else {
             result[key] = this.scrubValue(v, depth + 1)

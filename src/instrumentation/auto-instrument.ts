@@ -17,6 +17,8 @@
  *   OTel Instrumentation → Pulse SpanProcessor → PipelineSpanExporter → EventPipeline
  */
 
+import { context, SpanKind } from '@opentelemetry/api'
+import { getTraceAggregator } from '../tracing/trace-aggregator.js'
 import { registerInstrumentations } from '@opentelemetry/instrumentation'
 import { HttpInstrumentation } from '@opentelemetry/instrumentation-http'
 import { ExpressInstrumentation } from '@opentelemetry/instrumentation-express'
@@ -32,16 +34,17 @@ import { getLogger } from '../utils/logger.js'
 import { ConfigManager } from '../core/config-manager.js'
 import { EntitlementGate } from '../core/entitlement-gate.js'
 import type { InstrumentationConfig } from '../types/config.js'
-import { createAxiosInstrumentation } from './axios.js'
+import { createAxiosInstrumentation, SUPPRESS_INNER_HTTP } from './axios.js'
 import { createPgInstrumentation } from './pg.js'
 import { createMySQLInstrumentation } from './mysql.js'
 import { createMongoDBInstrumentation } from './mongodb.js'
-import { createRedisInstrumentation } from './redis.js'
+import { createRedisInstrumentation, createIORedisInstrumentation } from './redis.js'
 import { createBullMQInstrumentation } from './bullmq.js'
 import { createGraphQLInstrumentation } from './graphql.js'
 import { createPrismaInstrumentation } from './prisma.js'
 import { patchEventEmitter, unpatchEventEmitter } from './event-emitter-patch.js'
 import { installHttpLifecycleGuard, uninstallHttpLifecycleGuard } from './http-lifecycle-guard.js'
+import { registerEsmLoaderHooks } from './esm-loader.js'
 
 // ─── Global Guard + Teardown Registry ───────────────────────────────────────
 // We attach to globalThis (via Symbol.for) so the guard survives multiple
@@ -52,15 +55,31 @@ import { installHttpLifecycleGuard, uninstallHttpLifecycleGuard } from './http-l
 const INSTRUMENTATION_GUARD = Symbol.for('pulse-sdk.auto-instrumentation.registered')
 const TEARDOWN_REGISTRY = Symbol.for('pulse-sdk.auto-instrumentation.teardowns')
 const UNREGISTER_FN = Symbol.for('pulse-sdk.auto-instrumentation.unregister')
+const BOOTSTRAP_GUARD = Symbol.for('pulse-sdk.auto-instrumentation.bootstrap')
 
 interface InstrumentationGlobalState {
   [INSTRUMENTATION_GUARD]?: boolean
   [TEARDOWN_REGISTRY]?: Array<() => void | Promise<void>>
   [UNREGISTER_FN]?: () => void
+  [BOOTSTRAP_GUARD]?: boolean
 }
 
 function getGlobalState(): InstrumentationGlobalState {
   return globalThis as typeof globalThis & InstrumentationGlobalState
+}
+
+let pendingAsyncSetup: Promise<void> | null = null
+
+/**
+ * Wait for any asynchronous instrumentation setup (such as Axios ESM loader)
+ * to complete before application code executes.
+ */
+export async function waitForPendingInstrumentations(): Promise<void> {
+  if (pendingAsyncSetup) {
+    try {
+      await pendingAsyncSetup
+    } catch {}
+  }
 }
 
 // ─── Public Types ───────────────────────────────────────────────────────────
@@ -77,6 +96,7 @@ interface ResolvedInstrumentation {
   prismaConfig: { enabled: boolean; captureQueries: boolean; captureParams: boolean }
   mongodb: boolean
   redis: boolean
+  redisConfig: { enabled: boolean; keyPolicy?: 'command-only' | 'sanitized-key' | 'full' | 'hash' }
   bullmq: boolean
   bullmqConfig: {
     enabled: boolean
@@ -139,7 +159,10 @@ function resolveInstrumentationOptions(): ResolvedInstrumentation {
     : { enabled: prismaEnabled, captureQueries: true, captureParams: false }
 
   const mongodbEnabled = instr.mongodb
-  const redisEnabled = instr.redis
+  const redisEnabled = typeof instr.redis === 'object' ? instr.redis.enabled : Boolean(instr.redis)
+  const redisConfig = typeof instr.redis === 'object'
+    ? instr.redis
+    : { enabled: redisEnabled, keyPolicy: 'sanitized-key' as const }
   const axiosEnabled = instr.axios
 
   // BullMQ accepts an object form in remote config so the control plane can
@@ -187,6 +210,7 @@ function resolveInstrumentationOptions(): ResolvedInstrumentation {
     prismaConfig,
     mongodb: mongodbEnabled && automaticTracingAllowed,
     redis: redisEnabled && automaticTracingAllowed,
+    redisConfig,
     bullmq: bullmqConfig.enabled && automaticTracingAllowed,
     bullmqConfig,
     axios: axiosEnabled && automaticTracingAllowed,
@@ -209,9 +233,14 @@ function resolveInstrumentationOptions(): ResolvedInstrumentation {
  */
 export function registerAutoInstrumentations(): void {
   const g = getGlobalState()
-  if (g[INSTRUMENTATION_GUARD]) return
+  if (g[INSTRUMENTATION_GUARD] && !g[BOOTSTRAP_GUARD]) return
+  if (g[BOOTSTRAP_GUARD]) resetAutoInstrumentations()
   g[INSTRUMENTATION_GUARD] = true
+  delete g[BOOTSTRAP_GUARD]
   g[TEARDOWN_REGISTRY] = []
+
+  // Ensure Node.js ESM customization hooks are registered so ESM modules are intercepted
+  registerEsmLoaderHooks()
 
   const logger = getLogger()
   const resolved = resolveInstrumentationOptions()
@@ -221,6 +250,7 @@ export function registerAutoInstrumentations(): void {
     instrumentations.push(
       new HttpInstrumentation({
         ignoreOutgoingRequestHook: (request: unknown) => {
+          if (context.active().getValue(SUPPRESS_INNER_HTTP) === true) return true
           if (!client.initialized) return false
           try {
             if (!isRequestProtocolEnabled(request, resolved.http, resolved.https)) return true
@@ -270,9 +300,53 @@ export function registerAutoInstrumentations(): void {
         requestHook: (span, request) => {
           try {
             const req = request as unknown as Record<string, unknown>
+            ;(req as any).__pulseServerSpan = span
             const socket = req.socket as Record<string, unknown> | null | undefined
             if (socket && (socket.destroyed === true || socket.writable === false)) {
               span.setAttribute('pulse.http.socket_state', 'destroyed')
+            }
+
+            // P0.3: Root HTTP Server Span Lifecycle Coordination
+            // Ensure root HTTP server span remains open until all request-scoped async operations
+            // (database queries, external calls, async route handler continuation) complete.
+            const spanAny = span as unknown as Record<string, unknown>
+            const isServerSpan = spanAny['kind'] === SpanKind.SERVER || (!('getHeader' in (request as any)) && 'socket' in (request as any))
+            if (isServerSpan && typeof (span as any).end === 'function') {
+              const ctx = span.spanContext()
+              const traceId = ctx?.traceId
+              if (traceId) {
+                const originalEnd = (span as any).end.bind(span)
+                let ended = false
+
+                ;(span as any).end = function pulseInterceptedRootSpanEnd(this: typeof span, ...args: unknown[]) {
+                  if (ended) return
+                  const aggregator = getTraceAggregator()
+                  const activeCount = aggregator.getActiveSpanCount(traceId)
+
+                  const executeEnd = () => {
+                    if (ended) return
+                    ended = true
+                    // Call originalEnd with truthful completion time, ensuring parent.end >= child.end
+                    originalEnd.apply(this, args.length > 0 ? args : undefined)
+                  }
+
+                  if (activeCount > 1) {
+                    // In-flight child spans detected; defer ending until child spans complete
+                    aggregator.waitForActiveChildren(traceId, executeEnd, 10000)
+                  } else {
+                    // Defer by setImmediate to give any async handler returning a Promise or chaining
+                    // an unawaited microtask the opportunity to begin its child span
+                    setImmediate(() => {
+                      const countNow = aggregator.getActiveSpanCount(traceId)
+                      if (countNow > 1) {
+                        aggregator.waitForActiveChildren(traceId, executeEnd, 10000)
+                      } else {
+                        executeEnd()
+                      }
+                    })
+                  }
+                }
+              }
             }
           } catch {
             // Never crash from a hook — isolated by design
@@ -310,6 +384,7 @@ export function registerAutoInstrumentations(): void {
     instrumentations.push(
       new UndiciInstrumentation({
         ignoreRequestHook: (request: unknown) => {
+          if (context.active().getValue(SUPPRESS_INNER_HTTP) === true) return true
           if (!client.initialized) return false
           try {
             const reqCheck = request as { headers?: Record<string, string | string[]> | string[] }
@@ -376,11 +451,19 @@ export function registerAutoInstrumentations(): void {
   if (resolved.redis) {
     const redisInstrumentation = createRedisInstrumentation(
       true,
-      {},
+      resolved.redisConfig,
       resolved.captureConfig
     )
     if (redisInstrumentation) {
       instrumentations.push(redisInstrumentation)
+    }
+    const ioRedisInstrumentation = createIORedisInstrumentation(
+      true,
+      resolved.redisConfig,
+      resolved.captureConfig
+    )
+    if (ioRedisInstrumentation) {
+      instrumentations.push(ioRedisInstrumentation)
     }
   }
 
@@ -403,9 +486,8 @@ export function registerAutoInstrumentations(): void {
     if (axiosInstrumentation) {
       // Track teardown so reset() can fully unwind the patch.
       g[TEARDOWN_REGISTRY]!.push(axiosInstrumentation.teardown)
-      // setup() is async (ESM-safe module loading) — fire-and-forget but
-      // surface any failure so we can detect setup races.
-      void axiosInstrumentation.setup().catch((err: unknown) => {
+      // setup() is async (ESM-safe module loading) — track promise to await in init
+      pendingAsyncSetup = axiosInstrumentation.setup().catch((err: unknown) => {
         logger.warn('Axios instrumentation setup failed', { error: String(err) })
       })
     }
@@ -484,6 +566,81 @@ export function registerAutoInstrumentations(): void {
 }
 
 /**
+ * Install safe module-load hooks as soon as the SDK package is imported.
+ *
+ * This closes the common ESM/CJS race where application code imports Pulse,
+ * starts `createSDK()`, and imports DB clients while the one remote-config
+ * request is still in flight. The early hooks use privacy-safe defaults and
+ * a no-op/proxy tracer until `initTracer()` installs the real provider. Once
+ * remote config arrives, `registerAutoInstrumentations()` rebuilds the same
+ * hooks from the authoritative backend snapshot.
+ */
+export function registerBootstrapAutoInstrumentations(): void {
+  const g = getGlobalState()
+  if (g[INSTRUMENTATION_GUARD]) return
+
+  g[INSTRUMENTATION_GUARD] = true
+  g[BOOTSTRAP_GUARD] = true
+  g[TEARDOWN_REGISTRY] = []
+
+  // Ensure Node.js ESM customization hooks are registered as early as possible
+  registerEsmLoaderHooks()
+
+  const captureConfig: TraceCaptureConfig = {
+    headers: false,
+    body: false,
+    response: false,
+    query: false,
+    cookies: false,
+  }
+
+  const instrumentations = [
+    new HttpInstrumentation({
+      ignoreOutgoingRequestHook: () => context.active().getValue(SUPPRESS_INNER_HTTP) === true,
+    }),
+    new ExpressInstrumentation(),
+    new FastifyOtelInstrumentation({
+      registerOnInitialization: true,
+      instrumentHooks: true,
+    }),
+    new UndiciInstrumentation({
+      ignoreRequestHook: () => context.active().getValue(SUPPRESS_INNER_HTTP) === true,
+    }),
+    createGraphQLInstrumentation(true, { enabled: true, captureResolvers: true }),
+    createPrismaInstrumentation(true, { enabled: true, captureQueries: true, captureParams: false }),
+    createMongoDBInstrumentation(true, { enhancedDatabaseReporting: false }, captureConfig),
+    createRedisInstrumentation(true, {}, captureConfig),
+    createIORedisInstrumentation(true, {}, captureConfig),
+    createBullMQInstrumentation(
+      true,
+      {
+        enabled: true,
+        emitCreateSpansForBulk: true,
+        emitCreateSpansForFlow: true,
+        requireParentSpanForPublish: false,
+      },
+      captureConfig,
+    ),
+    createPgInstrumentation(true, { captureQueries: false, captureParams: false }, captureConfig),
+    createMySQLInstrumentation(true, { captureQueries: false }, captureConfig),
+  ].filter(Boolean)
+
+  if (instrumentations.length > 0) {
+    g[UNREGISTER_FN] = registerInstrumentations({
+      instrumentations: instrumentations as any[],
+    })
+  }
+
+  // NOTE: patchEventEmitter() is intentionally NOT called during bootstrap.
+  // Global prototype patching must be strictly governed by configuration.
+  installHttpLifecycleGuard()
+
+  getLogger().debug('Bootstrap auto-instrumentation hooks registered before remote config', {
+    count: instrumentations.length,
+  })
+}
+
+/**
  * Fully reset auto-instrumentation state.
  *
  * Steps:
@@ -491,7 +648,6 @@ export function registerAutoInstrumentations(): void {
  *   2. Call the OTel unregister handle to disable every instrumentation.
  *   3. Clear the global guard so the next register call rebuilds from scratch.
  *
-
  * Errors in any single teardown are logged but never thrown — reset must
  * always succeed so a failed instrumentation cannot block SDK reinit.
  */
@@ -525,8 +681,10 @@ export function resetAutoInstrumentations(): void {
   }
 
   delete g[INSTRUMENTATION_GUARD]
+  delete g[BOOTSTRAP_GUARD]
   delete g[TEARDOWN_REGISTRY]
   delete g[UNREGISTER_FN]
+  pendingAsyncSetup = null
 
   // Remove the EventEmitter context binding patch so the next register
   // call rebuilds from scratch with the latest configuration.

@@ -19,6 +19,8 @@
  *     app.use(monitorMiddleware())
  */
 import { init } from './core/init.js';
+import { registerBootstrapAutoInstrumentations } from './instrumentation/auto-instrument.js';
+registerBootstrapAutoInstrumentations();
 // ─── Lifecycle ──────────────────────────────────────────────────────────────
 export { init } from './core/init.js';
 export { flush, shutdown, crashFlush } from './core/lifecycle.js';
@@ -55,12 +57,14 @@ export { addBreadcrumb, getRequestContext, getTraceId, getSpanId, withContext, c
 // ─── Scope management ──────────────────────────────────────────────────────
 export { setUser, setTag, setTags, removeTag, setExtra, setExtras, removeExtra, setContext, getScopeData, clearScope, withScope, } from './core/scope.js';
 // ─── Tracing (manual span APIs) ─────────────────────────────────────────────
-export { startSpan, withSpan, withSpanSync, getActiveSpan, flushTracer } from './tracing/tracer.js';
+export { startSpan, withSpan, withSpanSync, withBackgroundSpan, startBackgroundSpan, getActiveBackgroundSpanCount, getActiveSpan, flushTracer, } from './tracing/tracer.js';
+export { startDbSpan, withDbSpan, withDbSpanSync } from './tracing/db-span.js';
 export { extractTraceContext, injectTraceContext } from './tracing/context-propagation.js';
 // ─── Framework instrumentation ──────────────────────────────────────────────
 export { monitorMiddleware, expressErrorHandler } from './instrumentation/express.js';
 export { fastifyPulsePlugin } from './instrumentation/fastify.js';
 export { registerAutoInstrumentations } from './instrumentation/auto-instrument.js';
+export { registerEsmLoaderHooks } from './instrumentation/esm-loader.js';
 export { createGraphQLInstrumentation } from './instrumentation/graphql.js';
 export { createPrismaInstrumentation } from './instrumentation/prisma.js';
 export { createMongoDBInstrumentation } from './instrumentation/mongodb.js';

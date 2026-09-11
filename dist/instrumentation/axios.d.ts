@@ -1,23 +1,5 @@
-/**
- * Axios Instrumentation — OpenTelemetry-compatible HTTP client instrumentation
- * wrapped with Pulse SDK guards and remote config support.
- *
- * Axios is an HTTP client that wraps node:http/https. This instrumentation
- * ensures axios requests are properly traced with axios-specific attributes.
- *
- * Features:
- * - Automatic span creation for axios requests
- * - Request/response interceptors for tracing
- * - Axios-specific span attributes (config, headers)
- * - Error tracking with response context
- * - Request timeout tracking
- * - Multipart form data handling
- *
- * Note: Since axios uses node:http/https internally, the OTel HttpInstrumentation
- * already captures these requests. This module adds axios-specific attributes
- * and ensures proper span naming conventions.
- */
 import type { PrivacyCaptureConfig } from '../types/config.js';
+export declare const SUPPRESS_INNER_HTTP: symbol;
 export interface AxiosInstrumentationOptions {
     enabled: boolean;
     captureRequestData?: boolean;

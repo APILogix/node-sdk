@@ -83,7 +83,11 @@ export function normalizeEvent(event: SDKEvent, metadata: EventMetadata): SDKEve
 /**
  * Truncate a string to a maximum length, appending '...[truncated]' if cut.
  */
-function truncateString(value: string, maxLength: number): string {
+function truncateString(value: unknown, maxLength: number): string {
+  if (typeof value !== 'string') {
+    if (value === undefined || value === null) return ''
+    return String(value).slice(0, maxLength)
+  }
   if (value.length <= maxLength) return value
   return value.slice(0, maxLength - 14) + '...[truncated]'
 }

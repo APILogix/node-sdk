@@ -45,11 +45,12 @@ export class TokenBucketRateLimiter implements RateLimiter {
   private lastRefillTime: number
 
   constructor(options: TokenBucketOptions) {
-    this.capacity = Math.max(1, Math.floor(options.capacity))
-    this.refillRate = Math.max(0.1, options.refillRate)
+    this.capacity = Number.isFinite(options?.capacity) ? Math.max(1, Math.floor(options.capacity)) : 10
+    this.refillRate = Number.isFinite(options?.refillRate) ? Math.max(0.1, options.refillRate) : 1
     this.tokens = this.capacity
     this.lastRefillTime = Date.now()
   }
+
 
   tryAcquire(): boolean {
     this.refill()
@@ -107,8 +108,8 @@ export class SlidingWindowRateLimiter implements RateLimiter {
   private readonly timestamps: number[] = []
 
   constructor(options: SlidingWindowOptions) {
-    this.maxRequests = Math.max(1, Math.floor(options.maxRequests))
-    this.windowMs = Math.max(100, Math.floor(options.windowMs))
+    this.maxRequests = Number.isFinite(options?.maxRequests) ? Math.max(1, Math.floor(options.maxRequests)) : 10
+    this.windowMs = Number.isFinite(options?.windowMs) ? Math.max(100, Math.floor(options.windowMs)) : 1000
   }
 
   tryAcquire(): boolean {

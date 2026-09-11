@@ -134,11 +134,11 @@ export class CardinalityGovernor {
                 break
             }
 
-            let sanitizedValue = value
+            let sanitizedValue = typeof value === 'string' ? value : String(value ?? '')
 
             // Route normalization for known route attributes
             if (this.enableRouteNormalization && isRouteAttribute(key)) {
-                sanitizedValue = this.normalizeRoute(value)
+                sanitizedValue = this.normalizeRoute(sanitizedValue)
             }
 
             // Truncate long values
@@ -199,6 +199,7 @@ export class CardinalityGovernor {
      *   /items?page=2&sort=name → /items
      */
     normalizeRoute(path: string): string {
+        if (typeof path !== 'string') path = String(path ?? '')
         // Strip query parameters
         const queryIndex = path.indexOf('?')
         let cleanPath = queryIndex >= 0 ? path.slice(0, queryIndex) : path

@@ -131,7 +131,7 @@ export interface InstrumentationConfig {
   readonly graphql: GraphQLInstrumentationConfig | boolean
   readonly prisma: PrismaInstrumentationConfig | boolean
   readonly mongodb: boolean
-  readonly redis: boolean
+  readonly redis: RedisInstrumentationConfig | boolean
   readonly bullmq: BullMQInstrumentationConfig | boolean
   readonly pg: PgInstrumentationConfig | boolean
   readonly mysql2: MySQLInstrumentationConfig | boolean
@@ -178,6 +178,11 @@ export interface PgInstrumentationConfig {
 export interface MySQLInstrumentationConfig {
   readonly enabled: boolean
   readonly captureQueries: boolean
+}
+
+export interface RedisInstrumentationConfig {
+  readonly enabled: boolean
+  readonly keyPolicy?: 'command-only' | 'sanitized-key' | 'full' | 'hash'
 }
 
 // ─── Privacy ────────────────────────────────────────────────────────────────
@@ -578,6 +583,8 @@ export function isMemoryLimit(mem: unknown): mem is MemoryLimit {
  */
 export interface SDKInitOptions {
   readonly apiKey: string
+  /** Startup request deadline in milliseconds (default: 1500). Failure leaves telemetry disabled. */
+  readonly initTimeoutMs?: number | undefined
   readonly applicationName?: string | undefined
   readonly applicationVersion?: string | undefined
   readonly packageJsonPath?: string | undefined
@@ -600,6 +607,7 @@ export interface SDKInitOptions {
 
 export const sdkInitOptionsSchema = z.object({
   apiKey: z.string().trim().min(1, 'apiKey is required'),
+  initTimeoutMs: z.number().int().min(100).max(30000).optional(),
   applicationName: z.string().trim().min(1).optional(),
   applicationVersion: z.string().trim().min(1).optional(),
   packageJsonPath: z.string().trim().min(1).optional(),

@@ -27,6 +27,7 @@
 
 import {
     type Span as OTelSpan,
+    type Context,
     type SpanContext,
     SpanStatusCode,
     type Attributes,
@@ -37,10 +38,18 @@ import { getLogger } from '../utils/logger.js'
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 export type SpanStatus = 'ok' | 'error' | 'unset'
+export type SpanKindName = 'internal' | 'server' | 'client' | 'producer' | 'consumer'
 
 export interface SpanOptions {
     /** Custom attributes to attach to the span at creation. */
     attributes?: Attributes
+    /** OpenTelemetry span kind. Use `client` for outbound DB/cache/HTTP dependency spans. */
+    kind?: SpanKindName
+    /**
+     * Explicit parent for cases where the active async context is unavailable
+     * (custom queues, worker bridges, or manual context handoff).
+     */
+    parent?: PulseSpan | OTelSpan | SpanContext | Context
     /** ISO timestamp to use as span start time. */
     startTime?: TimeInput
     /** Span links — for batch processing, fan-out, or queue consumer patterns. */

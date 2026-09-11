@@ -10,7 +10,7 @@
  * Patch is idempotent (global Symbol guard) and fully reversible.
  */
 
-import { context as otelContext } from '@opentelemetry/api'
+import { context as otelContext, trace } from '@opentelemetry/api'
 import { EventEmitter } from 'events'
 import { getLogger } from '../utils/logger.js'
 
@@ -30,6 +30,22 @@ let originalOnce: ListenerMethod | null = null
 let originalPrependListener: ListenerMethod | null = null
 let originalPrependOnceListener: ListenerMethod | null = null
 
+// WeakMap caches bound listeners so re-adding the same listener doesn't allocate duplicate wrappers
+const listenerWrapperCache = new WeakMap<EventListener, RemovableListener>()
+
+function isGlobalOrSystemEmitter(emitter: unknown): boolean {
+  if (!emitter || typeof emitter !== 'object') return false
+  if (typeof process !== 'undefined' && emitter === process) {
+    return true
+  }
+  const name = (emitter as any)?.constructor?.name
+  if (name === 'Process') return true
+  if ((emitter as any)?.isTTY !== undefined && typeof (emitter as any)?.fd === 'number') {
+    return true
+  }
+  return false
+}
+
 /**
  * Patch EventEmitter.prototype to automatically bind listeners to the
  * current OTel context at registration time.
@@ -48,15 +64,39 @@ export function patchEventEmitter(): void {
   originalPrependListener = EventEmitter.prototype.prependListener
   originalPrependOnceListener = EventEmitter.prototype.prependOnceListener
 
-  const bind = (listener: EventListener): RemovableListener => {
-    const contextBound = otelContext.bind(otelContext.active(), listener)
-    const wrapper: RemovableListener = function contextBoundListener(this: unknown, ...args: any[]): void {
-      contextBound.apply(this, args)
+  const bind = (emitter: EventEmitter, listener: EventListener): EventListener => {
+    // 1. Do not patch global/long-lived process streams to prevent memory leaks and retaining request context
+    if (isGlobalOrSystemEmitter(emitter)) {
+      return listener
     }
-    // Node's removeListener(event, original) and listeners(event) honor the
-    // conventional `.listener` backlink. Keeping it on every context wrapper
-    // makes registration fully reversible without retaining emitters in a map.
+
+    // 2. If no active span is in scope, there is no request context to propagate
+    const activeSpan = trace.getActiveSpan()
+    if (!activeSpan) {
+      return listener
+    }
+
+    const cached = listenerWrapperCache.get(listener)
+    if (cached) {
+      return cached
+    }
+
+    const activeCtx = otelContext.active()
+    const contextBound = otelContext.bind(activeCtx, listener)
+
+    const wrapper: RemovableListener = function contextBoundListener(this: unknown, ...args: any[]): void {
+      // 3. Prevent resurrection: If the span that was active when this listener was registered
+      // has already ended, do NOT resurrect that ended trace context. Execute in ambient context.
+      const spanAny = activeSpan as unknown as { ended?: boolean; _ended?: boolean }
+      if (spanAny.ended === true || spanAny._ended === true) {
+        listener.apply(this, args)
+      } else {
+        contextBound.apply(this, args)
+      }
+    }
+
     Object.defineProperty(wrapper, 'listener', { value: listener, configurable: true })
+    listenerWrapperCache.set(listener, wrapper)
     return wrapper
   }
 
@@ -66,12 +106,26 @@ export function patchEventEmitter(): void {
     listener: EventListener,
     prepend: boolean,
   ): EventEmitter => {
-    const contextBound = otelContext.bind(otelContext.active(), listener)
+    if (isGlobalOrSystemEmitter(emitter)) {
+      return (prepend ? originalPrependOnceListener! : originalOnce!).call(emitter, event, listener)
+    }
+
+    const activeSpan = trace.getActiveSpan()
+    if (!activeSpan) {
+      return (prepend ? originalPrependOnceListener! : originalOnce!).call(emitter, event, listener)
+    }
+
+    const activeCtx = otelContext.active()
+    const contextBound = otelContext.bind(activeCtx, listener)
+
     const wrapper: RemovableListener = function contextBoundOnceListener(this: EventEmitter, ...args: any[]): void {
-      // Remove before invocation, matching EventEmitter.once semantics even
-      // when the listener recursively emits the same event.
       this.removeListener(event, wrapper)
-      contextBound.apply(this, args)
+      const spanAny = activeSpan as unknown as { ended?: boolean; _ended?: boolean }
+      if (spanAny.ended === true || spanAny._ended === true) {
+        listener.apply(this, args)
+      } else {
+        contextBound.apply(this, args)
+      }
     }
     Object.defineProperty(wrapper, 'listener', { value: listener, configurable: true })
     return (prepend ? originalPrependListener! : originalOn!).call(emitter, event, wrapper)
@@ -82,7 +136,7 @@ export function patchEventEmitter(): void {
     event: string | symbol,
     listener: EventListener,
   ): EventEmitter {
-    return originalOn!.call(this, event, bind(listener))
+    return originalOn!.call(this, event, bind(this, listener))
   }
 
   const patchedOnce: ListenerMethod = function patchedOnce(
@@ -98,7 +152,7 @@ export function patchEventEmitter(): void {
     event: string | symbol,
     listener: EventListener,
   ): EventEmitter {
-    return originalPrependListener!.call(this, event, bind(listener))
+    return originalPrependListener!.call(this, event, bind(this, listener))
   }
 
   const patchedPrependOnce: ListenerMethod = function patchedPrependOnce(

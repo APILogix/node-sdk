@@ -113,11 +113,16 @@ export function generateFingerprint(
  * - Strip line:col suffixes
  * - Normalize path separators
  */
-function normalizeForFingerprint(filename: string): string {
+function normalizeForFingerprint(filename?: string): string {
+  if (!filename) return '<unknown>'
   return filename
     .replace(/[?#].*$/, '')           // Strip query params and hash
     .replace(/:\d+:\d+$/, '')          // Strip :line:col
     .replace(/\\/g, '/')              // Normalize separators
+}
+
+export function resetFingerprintCache(): void {
+  fingerprintCache.clear()
 }
 
 /**
@@ -127,7 +132,8 @@ function normalizeForFingerprint(filename: string): string {
  * - Replace quoted strings with <S>
  * - Replace hex hashes with <H>
  */
-function normalizeErrorMessage(message: string): string {
+function normalizeErrorMessage(message?: string): string {
+  if (!message || typeof message !== 'string') return ''
   return message
     .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, '<UUID>')
     .replace(/\b[0-9a-f]{40}\b/gi, '<H>')        // SHA1 hashes

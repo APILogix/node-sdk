@@ -25,7 +25,7 @@ if (parentPort) {
                     compressedSize = compressed.length;
                 }
             }
-            parentPort.postMessage({ id, buffer, algorithm, originalSize, compressedSize }, [buffer.buffer]);
+            parentPort.postMessage({ id, buffer, algorithm, originalSize, compressedSize });
         }
         catch (err) {
             parentPort.postMessage({ id, error: err instanceof Error ? err.message : String(err) });

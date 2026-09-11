@@ -12,8 +12,8 @@
  *     not in PulseSpan or at span creation time
  *   - Centralized SDK name/version constants (no hardcoded strings)
  */
-import { type Tracer, type Context } from '@opentelemetry/api';
-import { PulseSpan, type SpanOptions } from './span.js';
+import { type Tracer, type Span, type Attributes, type Context } from '@opentelemetry/api';
+import { PulseSpan, type SpanOptions, type SpanLink, type SpanKindName } from './span.js';
 import type { RemoteConfigResponse } from '../types/config.js';
 import type { ResourceAttributes } from '../utils/resource-detector.js';
 /**
@@ -94,6 +94,82 @@ export declare function withSpan<T>(name: string, fnOrOptions: ((span: PulseSpan
  * `withSpan` is preferred everywhere else.
  */
 export declare function withSpanSync<T>(name: string, fnOrOptions: ((span: PulseSpan) => T) | SpanOptions, optionsOrFn?: SpanOptions | ((span: PulseSpan) => T)): T;
+export declare const MAX_CONCURRENT_BACKGROUND_SPANS = 1000;
+/**
+ * Get the current number of concurrently active background spans.
+ */
+export declare function getActiveBackgroundSpanCount(): number;
+/**
+ * Options for creating detached background spans.
+ */
+export interface BackgroundSpanOptions {
+    /** Custom attributes to attach to the background span. */
+    attributes?: Attributes;
+    /** OpenTelemetry span kind. Defaults to SpanKind.INTERNAL. */
+    kind?: SpanKindName;
+    /**
+     * Originating parent or span to link to.
+     * Defaults to the currently active span when withBackgroundSpan is invoked.
+     */
+    originatingSpan?: PulseSpan | Span | {
+        traceId: string;
+        spanId: string;
+    };
+    /**
+     * Explicit links in addition to the originating span link.
+     */
+    links?: SpanLink[];
+    /**
+     * Hard timeout for the background span in milliseconds.
+     *
+     * If the operation exceeds this deadline, the span is force-ended with an
+     * ERROR status and a `pulse.span.timeout` event. User execution continues
+     * uninterrupted (fail-open).
+     */
+    timeoutMs?: number;
+    /** ISO timestamp to use as span start time. */
+    startTime?: import('@opentelemetry/api').TimeInput;
+}
+/**
+ * Execute an asynchronous background task within a new detached root trace,
+ * causally linked to the active (originating) span via OpenTelemetry SpanLink.
+ *
+ * ## Architecture & Motivation
+ *
+ * In web applications, asynchronous background tasks often outlive the HTTP
+ * request lifecycle (e.g. fire-and-forget processing, email dispatch, webhooks,
+ * queue publication).
+ *
+ * In naive implementations, two failure modes occur:
+ *   1. If the background work is created as a child of the HTTP request span,
+ *      the trace finalizes when the HTTP response ends (250ms safety deadline),
+ *      and subsequent background spans are dropped by the anti-resurrection guard.
+ *   2. If the HTTP span is kept alive until background work finishes, memory leaks
+ *      occur (req/res/sockets held in memory, unbounded buffer growth).
+ *
+ * `withBackgroundSpan` solves both without compromising safety:
+ *   - Starts a NEW independent root trace (`ROOT_CONTEXT`) with a fresh `traceId`.
+ *   - Causally links to the originating span via standard OTel `SpanLink` with
+ *     attribute `pulse.link.type: 'caused_by'`.
+ *   - Sets `pulse.background: true`, `pulse.originating.trace_id`, and
+ *     `pulse.originating.span_id` on the background root span.
+ *   - Forks the SDK `ContextStore` (isolated breadcrumb buffer while preserving
+ *     tenant/user/session correlation).
+ *   - Bounded concurrency: capped at `MAX_CONCURRENT_BACKGROUND_SPANS` (1000) to
+ *     prevent memory exhaustion under runaway background spawning.
+ *   - Independent finalization: the HTTP trace finalizes promptly after `res.end()`,
+ *     and the background trace finalizes independently when its own work finishes.
+ */
+export declare function withBackgroundSpan<T>(name: string, fnOrOptions: ((span: PulseSpan) => T | Promise<T>) | BackgroundSpanOptions, optionsOrFn?: BackgroundSpanOptions | ((span: PulseSpan) => T | Promise<T>)): Promise<T>;
+/**
+ * Manually start a detached background span.
+ * The caller is responsible for calling `span.end()`.
+ *
+ * Note: To ensure child spans (like DB/HTTP calls) are attached to this
+ * background span across async boundaries, `withBackgroundSpan(name, fn)`
+ * is strongly recommended instead.
+ */
+export declare function startBackgroundSpan(name: string, options?: BackgroundSpanOptions): PulseSpan;
 /**
  * Get the currently active span (if any).
  */

@@ -35,6 +35,30 @@ function initPayload(snapshot) {
     };
 }
 describe('single-source remote configuration runtime', () => {
+    it('bounds startup even when fetch ignores cancellation, without retrying', async () => {
+        let calls = 0;
+        let signal;
+        const remote = new RemoteConfigClient({
+            apiKey: 'key',
+            initTimeoutMs: 20,
+            fetchImpl: async (_input, options) => {
+                calls++;
+                signal = options?.signal;
+                return new Promise(() => { });
+            },
+        });
+        await assert.rejects(remote.initialize(), /timed out/);
+        assert.equal(calls, 1);
+        assert.equal(signal?.aborted, true);
+    });
+    it('includes a stalled response body in the startup deadline', async () => {
+        const remote = new RemoteConfigClient({
+            apiKey: 'key',
+            initTimeoutMs: 20,
+            fetchImpl: async () => ({ text: () => new Promise(() => { }) }),
+        });
+        await assert.rejects(remote.initialize(), /timed out/);
+    });
     it('performs one header-auth /v1/init request and no startup config request', async () => {
         const calls = [];
         const fetchImpl = async (input, init) => {

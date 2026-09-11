@@ -6,6 +6,6 @@
  * every release; `package.json` should be kept in sync.
  */
 /** SDK package name used in telemetry, tracers, and exporters. */
-export declare const SDK_NAME = "@vikasbaplawat1/pulse-sdk";
-/** SDK semantic version — corresponds to p.increments in `package.json`. */
-export declare const SDK_VERSION = "3.6.7";
+export declare const SDK_NAME = "@pulse-apm/node";
+/** SDK semantic version — corresponds to increments in `package.json`. */
+export declare const SDK_VERSION = "8.1.0";

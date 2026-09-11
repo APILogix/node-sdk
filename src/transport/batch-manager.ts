@@ -18,6 +18,9 @@ import { quotaController } from '../core/quota-controller.js'
 import { toError } from '../core/errors.js'
 import { sdkConsoleDebug } from '../utils/console-debug.js'
 import { sdkConsoleLog } from '../utils/sdk-console.js'
+import { SerializationPool } from './serialization-pool.js'
+
+const WORKER_SERIALIZATION_THRESHOLD_BYTES = 50 * 1024 // 50KB
 
 export interface BatchManagerOptions {
   readonly route: EnterpriseRoute
@@ -281,7 +284,23 @@ export class BatchManager {
     try {
       const isGzip = this.options.compression === 'gzip'
       const rawBody = Buffer.from(body, 'utf8')
-      const wireBody = isGzip ? await compressGzip(rawBody) : rawBody
+      let wireBody: Buffer
+
+      // Delegate batches exceeding 50KB to worker threads (SerializationPool)
+      // to offload JSON stringification and compression from the event loop during sustained >50k RPS workloads.
+      const pool = SerializationPool.getInstance()
+      if (rawBody.byteLength >= WORKER_SERIALIZATION_THRESHOLD_BYTES && pool && isGzip) {
+        try {
+          const payload = { events, route: this.options.route, timestamp: Date.now() }
+          const res = await pool.serialize(payload, 'gzip')
+          wireBody = res.buffer
+        } catch (poolErr) {
+          getLogger().debug('[BatchManager] SerializationPool offload failed, falling back to main-thread compression', { error: poolErr })
+          wireBody = await compressGzip(rawBody)
+        }
+      } else {
+        wireBody = isGzip ? await compressGzip(rawBody) : rawBody
+      }
       const headers: Record<string, string> = {
         'Content-Type': this.options.definition.contentType,
         Authorization: `Bearer ${this.options.apiKey}`,

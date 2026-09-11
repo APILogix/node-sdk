@@ -37,21 +37,31 @@ const MIN_COMPRESSION_BYTES = 1024
  * Returns the original buffer if algorithm is 'none' or payload is too small.
  */
 export async function compress(
-  data: Buffer,
+  data: Buffer | string | Uint8Array,
   algorithm: CompressionAlgorithm
 ): Promise<{ buffer: Buffer; algorithm: CompressionAlgorithm; originalSize: number; compressedSize: number }> {
-  const originalSize = data.length
+  const buf = Buffer.isBuffer(data)
+    ? data
+    : typeof data === 'string'
+      ? Buffer.from(data, 'utf8')
+      : data instanceof Uint8Array
+        ? Buffer.from(data.buffer, data.byteOffset, data.byteLength)
+        : data == null
+          ? Buffer.alloc(0)
+          : Buffer.from(String(data))
+
+  const originalSize = buf.length
 
   if (algorithm === 'none' || originalSize < MIN_COMPRESSION_BYTES) {
-    return { buffer: data, algorithm: 'none', originalSize, compressedSize: originalSize }
+    return { buffer: buf, algorithm: 'none', originalSize, compressedSize: originalSize }
   }
 
   const compressor = algorithm === 'brotli' ? compressBrotli : compressGzip
-  const buffer = await compressor(data)
+  const buffer = await compressor(buf)
 
   // Only use compression if it actually reduced size
   if (buffer.length >= originalSize) {
-    return { buffer: data, algorithm: 'none', originalSize, compressedSize: originalSize }
+    return { buffer: buf, algorithm: 'none', originalSize, compressedSize: originalSize }
   }
 
   return { buffer, algorithm, originalSize, compressedSize: buffer.length }

@@ -78,6 +78,11 @@ export function normalizeEvent(event, metadata) {
  * Truncate a string to a maximum length, appending '...[truncated]' if cut.
  */
 function truncateString(value, maxLength) {
+    if (typeof value !== 'string') {
+        if (value === undefined || value === null)
+            return '';
+        return String(value).slice(0, maxLength);
+    }
     if (value.length <= maxLength)
         return value;
     return value.slice(0, maxLength - 14) + '...[truncated]';

@@ -30,6 +30,7 @@ export function captureRequest(event: RequestEvent): void {
 
     const enriched: RequestEvent = {
       ...event,
+      type: 'request',
       ...(traceId ? { traceId } : {}),
       ...(spanId ? { spanId } : {}),
       ...(requestId ? { requestId } : {}),

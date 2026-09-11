@@ -214,14 +214,16 @@ export function resolveClientIp(headers, socketRemoteAddress, trustedProxies, ma
     return rawIp;
 }
 function resolveRawClientIp(headers, socketRemoteAddress, trustedProxies) {
+    if (!headers || typeof headers !== 'object')
+        return socketRemoteAddress;
     if (socketRemoteAddress && isTrustedProxy(socketRemoteAddress, trustedProxies)) {
-        const xff = headerString(headers['x-forwarded-for']);
+        const xff = headerString(headers['x-forwarded-for'] ?? headers['X-Forwarded-For']);
         if (xff) {
             const first = xff.split(',')[0]?.trim();
             if (first)
                 return first;
         }
-        const real = headerString(headers['x-real-ip']);
+        const real = headerString(headers['x-real-ip'] ?? headers['X-Real-IP']);
         if (real)
             return real;
     }
@@ -278,6 +280,9 @@ function computeBodySize(rawBody) {
         return 0;
     if (typeof rawBody === 'string')
         return Buffer.byteLength(rawBody);
+    if (typeof rawBody === 'number' || typeof rawBody === 'boolean' || typeof rawBody === 'bigint') {
+        return Buffer.byteLength(String(rawBody));
+    }
     if (rawBody instanceof Uint8Array)
         return rawBody.byteLength;
     if (typeof rawBody === 'object') {

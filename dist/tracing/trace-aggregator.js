@@ -4,41 +4,61 @@
  *
  * ## Problem
  *
- * OTel's BatchSpanProcessor exports spans individually. A single trace
+ * OTel's BatchSpanProcessor exports spans individually in batches. A single trace
  * (e.g. GET /api/users that calls MongoDB, Redis, and an external API)
- * produces 4+ separate span events. These arrive at the backend as flat,
- * disconnected events — the backend must reconstruct the tree by grouping
- * on traceId and linking via parentSpanId.
+ * produces multiple separate span events.
  *
- * ## Solution
+ * Previously, the aggregator assumed:
+ *   root span arrives = trace is immediately complete
  *
- * This aggregator buffers spans by traceId. When the **root span** arrives
- * (the span with no parentSpanId), we know the trace is complete because
- * in Node.js's synchronous request lifecycle, child spans always end
- * before the parent. At that point, we build the tree and emit a single
- * `trace` event with the full hierarchy.
+ * In asynchronous Node.js execution, child spans often arrive in later batches or
+ * after the root span arrives. Flushing immediately caused late child spans to
+ * form orphaned partial traces. Furthermore, if a trace was not head-sampled,
+ * discarding child spans individually destroyed tail-sampling (error and slow-trace capture).
  *
- * ## Safety
+ * ## Solution: Bounded Finalization Coordinator
  *
- * - **Memory bounded**: Maximum pending traces (default: 1000), LRU eviction
+ * 1. This aggregator buffers spans by traceId.
+ * 2. When the root span arrives, we start a bounded grace debounce timer
+ *    (default: 100ms debounce, capped at 250ms hard deadline from root arrival).
+ * 3. Any in-flight or next-batch child spans joining within this window are merged
+ *    into the trace tree.
+ * 4. At finalization, the SDK makes the authoritative trace-level sampling decision:
+ *    - KEEP if: root was head-sampled OR any span has an error/exception OR total duration >= threshold
+ *    - DISCARD if: unsampled normal trace
+ * 5. `spanDurationTracker.cleanupTrace(traceId)` is invoked only after the trace is finalized.
+ *
+ * ## Safety & Bounded Resource Controls
+ *
+ * - **Memory bounded**: Maximum pending traces (default: 2000), LRU eviction
  * - **Timeout safety**: Orphaned traces (no root arrives) are flushed after
  *   a configurable timeout (default: 30s) as partial traces
- * - **Thread-safe**: Single-threaded Node.js, no locks needed
- * - **Graceful shutdown**: flushAll() emits whatever is buffered
+ * - **Deterministic timers**: Debounce timers are unref'd so they do not block process exit
+ * - **Graceful shutdown**: `flushAll()` immediately cancels pending timers and flushes all traces
  */
 import { getLogger } from '../utils/logger.js';
 import { processEvent } from '../core/event-pipeline.js';
+import { spanDurationTracker } from './span-duration.js';
 // ─── TraceAggregator ────────────────────────────────────────────────────────
 export class TraceAggregator {
     pending = new Map();
+    finalizedTraces = new Set();
+    finalizedOrder = [];
+    maxFinalizedHistory = 10_000;
     maxPendingTraces;
     orphanTimeoutMs;
     sweepIntervalMs;
+    gracePeriodMs;
+    maxFinalizationDelayMs;
+    slowTraceThresholdMs;
     sweepTimer = null;
     constructor(config = {}) {
-        this.maxPendingTraces = config.maxPendingTraces ?? 1000;
+        this.maxPendingTraces = config.maxPendingTraces ?? 2000;
         this.orphanTimeoutMs = config.orphanTimeoutMs ?? 30_000;
         this.sweepIntervalMs = config.sweepIntervalMs ?? 10_000;
+        this.gracePeriodMs = config.gracePeriodMs ?? 100;
+        this.maxFinalizationDelayMs = config.maxFinalizationDelayMs ?? 250;
+        this.slowTraceThresholdMs = config.slowTraceThresholdMs ?? 1000;
     }
     /**
      * Start the background sweep timer for orphaned traces.
@@ -61,11 +81,194 @@ export class TraceAggregator {
         }
     }
     /**
+     * Record that a trace has been finalized.
+     * Protects against resurrecting finalized traces into duplicate partial traces.
+     */
+    markFinalized(traceId) {
+        this.finalizedTraces.add(traceId);
+        this.finalizedOrder.push(traceId);
+        if (this.finalizedOrder.length > this.maxFinalizedHistory) {
+            const oldest = this.finalizedOrder.shift();
+            if (oldest)
+                this.finalizedTraces.delete(oldest);
+        }
+    }
+    /**
+     * Check whether a trace has already been finalized.
+     */
+    isFinalized(traceId) {
+        return this.finalizedTraces.has(traceId);
+    }
+    /**
+     * Invoked synchronously via SpanProcessor.onStart() when a span begins execution.
+     * Increments activeSpanCount and tracks activity.
+     * Protects against resurrecting finalized traces.
+     */
+    onSpanStart(traceId, spanId) {
+        if (!traceId)
+            return;
+        // Protection: No trace resurrection!
+        if (this.finalizedTraces.has(traceId)) {
+            getLogger().debug('Span started for already-finalized trace — ignoring to prevent resurrection', {
+                traceId,
+                spanId,
+            });
+            return;
+        }
+        let trace = this.pending.get(traceId);
+        if (!trace) {
+            if (this.pending.size >= this.maxPendingTraces) {
+                this.evictOldest();
+            }
+            trace = {
+                traceId,
+                state: 'OPEN',
+                activeSpanCount: 0,
+                rootEnded: false,
+                lastActivityAt: Date.now(),
+                finalizationDeadline: null,
+                spans: new Map(),
+                rootSpan: null,
+                createdAt: Date.now(),
+                quiescingTimer: null,
+                deadlineTimer: null,
+            };
+            this.pending.set(traceId, trace);
+        }
+        trace.activeSpanCount++;
+        trace.lastActivityAt = Date.now();
+        // If new span starts while quiescing, cancel quiescing and return to active state!
+        if (trace.state === 'QUIESCING') {
+            if (trace.quiescingTimer) {
+                clearTimeout(trace.quiescingTimer);
+                trace.quiescingTimer = null;
+            }
+            trace.state = trace.rootEnded ? 'ROOT_ENDED' : 'OPEN';
+        }
+    }
+    /**
+     * Invoked synchronously via SpanProcessor.onEnd() when a span completes execution.
+     * Decrements activeSpanCount and evaluates state transition:
+     * ROOT_ENDED -> QUIESCING -> FINALIZED
+     */
+    onSpanEnd(traceId, spanId, isRoot) {
+        if (!traceId || this.finalizedTraces.has(traceId))
+            return;
+        const trace = this.pending.get(traceId);
+        if (!trace)
+            return;
+        if (trace.activeSpanCount > 0) {
+            trace.activeSpanCount--;
+        }
+        trace.lastActivityAt = Date.now();
+        if (isRoot) {
+            trace.rootEnded = true;
+            if (!trace.finalizationDeadline) {
+                trace.finalizationDeadline = Date.now() + this.maxFinalizationDelayMs;
+                trace.deadlineTimer = setTimeout(() => {
+                    this.flushTrace(traceId);
+                }, this.maxFinalizationDelayMs);
+                trace.deadlineTimer.unref?.();
+            }
+        }
+        // Evaluate state machine transitions
+        if (trace.rootEnded) {
+            if (trace.activeSpanCount <= 0) {
+                trace.state = 'QUIESCING';
+                if (trace.quiescingTimer) {
+                    clearTimeout(trace.quiescingTimer);
+                }
+                trace.quiescingTimer = setTimeout(() => {
+                    this.flushTrace(traceId);
+                }, this.gracePeriodMs);
+                trace.quiescingTimer.unref?.();
+            }
+            else {
+                trace.state = 'ROOT_ENDED';
+            }
+        }
+        // If listeners are waiting for in-flight children to complete before ending root span
+        if (trace.activeSpanCount <= 1 && trace.childCompletionListeners && trace.childCompletionListeners.length > 0) {
+            setImmediate(() => {
+                if (trace.activeSpanCount <= 1 && trace.childCompletionListeners && trace.childCompletionListeners.length > 0) {
+                    const listeners = trace.childCompletionListeners.splice(0);
+                    for (const listener of listeners) {
+                        try {
+                            listener();
+                        }
+                        catch (err) {
+                            getLogger().error('Error in childCompletionListener', { error: err });
+                        }
+                    }
+                }
+            });
+        }
+    }
+    /**
+     * Explicitly notify aggregator that root server span has ended.
+     */
+    onRootEnd(traceId) {
+        this.onSpanEnd(traceId, undefined, true);
+    }
+    /**
+     * Get the count of currently in-flight spans for a trace.
+     */
+    getActiveSpanCount(traceId) {
+        if (!traceId)
+            return 0;
+        const trace = this.pending.get(traceId);
+        return trace ? trace.activeSpanCount : 0;
+    }
+    /**
+     * Register a callback to be invoked when all active child spans for a trace complete.
+     * If there are currently no active child spans (activeSpanCount <= 1), invokes callback after setImmediate.
+     * Includes a safety timeout to guarantee execution even if child spans fail to end.
+     */
+    waitForActiveChildren(traceId, callback, maxWaitMs = 5000) {
+        if (!traceId) {
+            callback();
+            return;
+        }
+        const trace = this.pending.get(traceId);
+        if (!trace || trace.activeSpanCount <= 1) {
+            setImmediate(() => {
+                const t = this.pending.get(traceId);
+                if (!t || t.activeSpanCount <= 1) {
+                    callback();
+                }
+                else {
+                    this.waitForActiveChildren(traceId, callback, maxWaitMs);
+                }
+            });
+            return;
+        }
+        if (!trace.childCompletionListeners) {
+            trace.childCompletionListeners = [];
+        }
+        let invoked = false;
+        const wrappedCallback = () => {
+            if (invoked)
+                return;
+            invoked = true;
+            clearTimeout(safetyTimer);
+            callback();
+        };
+        trace.childCompletionListeners.push(wrappedCallback);
+        const safetyTimer = setTimeout(() => {
+            getLogger().warn('waitForActiveChildren reached safety timeout; invoking callback', {
+                traceId,
+                activeSpanCount: trace.activeSpanCount,
+                maxWaitMs,
+            });
+            wrappedCallback();
+        }, maxWaitMs);
+        safetyTimer.unref?.();
+    }
+    /**
      * Add a span event to the aggregator.
      *
-     * If this span is the root (no parentSpanId), it triggers immediate
-     * trace assembly and emission. Otherwise, the span is buffered until
-     * the root arrives or the orphan timeout fires.
+     * Buffers the span by traceId. Rejects spans belonging to finalized traces
+     * to guarantee no trace resurrection.
      *
      * @param spanEvent - The flat span event from PipelineSpanExporter
      */
@@ -75,38 +278,88 @@ export class TraceAggregator {
         const parentSpanId = spanEvent.parentSpanId;
         if (!traceId || !spanId)
             return;
+        // Protection: No trace resurrection!
+        if (this.finalizedTraces.has(traceId)) {
+            getLogger().debug('Late span arrived after trace finalized — dropping to prevent resurrection', {
+                traceId,
+                spanId,
+                spanName: spanEvent.name,
+            });
+            return;
+        }
         let trace = this.pending.get(traceId);
         if (!trace) {
-            // Enforce memory bound — evict oldest if at capacity
             if (this.pending.size >= this.maxPendingTraces) {
                 this.evictOldest();
             }
             trace = {
+                traceId,
+                state: 'OPEN',
+                activeSpanCount: 0,
+                rootEnded: false,
+                lastActivityAt: Date.now(),
+                finalizationDeadline: null,
                 spans: new Map(),
                 rootSpan: null,
                 createdAt: Date.now(),
+                quiescingTimer: null,
+                deadlineTimer: null,
             };
             this.pending.set(traceId, trace);
         }
         trace.spans.set(spanId, spanEvent);
-        // Root span detection: no parentSpanId means this is the root.
+        trace.lastActivityAt = Date.now();
+        // Root span detection
         if (!parentSpanId) {
             trace.rootSpan = spanEvent;
+            trace.rootEnded = true;
+            if (!trace.finalizationDeadline) {
+                trace.finalizationDeadline = Date.now() + this.maxFinalizationDelayMs;
+                trace.deadlineTimer = setTimeout(() => {
+                    this.flushTrace(traceId);
+                }, this.maxFinalizationDelayMs);
+                trace.deadlineTimer.unref?.();
+            }
+        }
+        // If root ended and active child spans are 0, trigger quiescing
+        if (trace.rootEnded && trace.activeSpanCount <= 0) {
+            trace.state = 'QUIESCING';
+            if (trace.quiescingTimer) {
+                clearTimeout(trace.quiescingTimer);
+            }
+            trace.quiescingTimer = setTimeout(() => {
+                this.flushTrace(traceId);
+            }, this.gracePeriodMs);
+            trace.quiescingTimer.unref?.();
         }
     }
     /**
-     * Flush the trace if its root span has arrived.
-     * This is called by the exporter at the end of a batch process to ensure
-     * all spans from the same batch are buffered before the trace is assembled.
+     * Called by the exporter at the end of a batch process.
+     * Ensures the trace is evaluated within the grace period if root has ended.
      */
     flushIfComplete(traceId) {
         const trace = this.pending.get(traceId);
-        if (trace && trace.rootSpan) {
-            this.flushTrace(traceId);
+        if (!trace || !trace.rootEnded)
+            return;
+        if (trace.activeSpanCount <= 0) {
+            trace.state = 'QUIESCING';
+            if (trace.quiescingTimer)
+                clearTimeout(trace.quiescingTimer);
+            trace.quiescingTimer = setTimeout(() => {
+                this.flushTrace(traceId);
+            }, this.gracePeriodMs);
+            trace.quiescingTimer.unref?.();
         }
     }
     /**
-     * Flush all pending traces (for shutdown).
+     * Immediately flush a specific trace without waiting for the grace period.
+     * Useful for testing and synchronous completion scenarios.
+     */
+    flushTraceImmediately(traceId) {
+        this.flushTrace(traceId);
+    }
+    /**
+     * Flush all pending traces (for shutdown or test tear-down).
      * Emits whatever is buffered, marking incomplete traces as partial.
      */
     flushAll() {
@@ -121,16 +374,49 @@ export class TraceAggregator {
     get pendingCount() {
         return this.pending.size;
     }
+    /**
+     * Get the current state of a trace.
+     */
+    getTraceState(traceId) {
+        if (this.finalizedTraces.has(traceId))
+            return 'FINALIZED';
+        const trace = this.pending.get(traceId);
+        return trace ? trace.state : 'UNKNOWN';
+    }
     // ─── Private ──────────────────────────────────────────────────────────────
     /**
-     * Build the span tree and emit a complete trace event.
+     * Build the span tree, evaluate tail-sampling, and emit or discard the trace.
      */
     flushTrace(traceId) {
         const trace = this.pending.get(traceId);
         if (!trace)
             return;
+        if (trace.quiescingTimer) {
+            clearTimeout(trace.quiescingTimer);
+            trace.quiescingTimer = null;
+        }
+        if (trace.deadlineTimer) {
+            clearTimeout(trace.deadlineTimer);
+            trace.deadlineTimer = null;
+        }
+        if (trace.childCompletionListeners && trace.childCompletionListeners.length > 0) {
+            const listeners = trace.childCompletionListeners.splice(0);
+            for (const listener of listeners) {
+                try {
+                    listener();
+                }
+                catch { }
+            }
+        }
+        trace.state = 'FINALIZED';
         // Remove from pending before processing to prevent re-entry
         this.pending.delete(traceId);
+        this.markFinalized(traceId);
+        // Clean up span duration tracker now that the trace is finalized
+        try {
+            spanDurationTracker.cleanupTrace(traceId);
+        }
+        catch { }
         const logger = getLogger();
         try {
             const spans = Array.from(trace.spans.values());
@@ -150,9 +436,7 @@ export class TraceAggregator {
                     return sStart < eStart ? s : earliest;
                 });
             }
-            // Build the tree. Index children by parentSpanId once (O(n)) instead
-            // of filtering the full span list at every recursion level (O(n²)) —
-            // traces with thousands of spans would otherwise stall the event loop.
+            // Build the tree: Index children by parentSpanId once (O(n))
             const childrenByParent = new Map();
             for (const span of spans) {
                 const parentId = span.parentSpanId;
@@ -170,8 +454,31 @@ export class TraceAggregator {
                 list.sort((a, b) => a.startTime - b.startTime);
             }
             const rootAggregated = this.buildTree(rootSpanEvent, childrenByParent);
-            // Calculate total duration from root
+            // Calculate total duration from root (or max child end minus min start for partials)
             const totalDuration = rootSpanEvent.duration ?? 0;
+            // Tail-sampling decision:
+            // 1. Was root head-sampled?
+            const isHeadSampled = Boolean(rootSpanEvent['isSampled'] ??
+                (rootSpanEvent.traceFlags !== undefined ? (rootSpanEvent.traceFlags & 1) === 1 : false));
+            // 2. Did ANY span in the trace encounter an error or exception?
+            const hasError = spans.some(s => s.status === 'error' ||
+                (Array.isArray(s.events) && s.events.some((e) => e.name === 'exception')));
+            // 3. Did total duration exceed the slow trace threshold?
+            const isSlow = totalDuration >= this.slowTraceThresholdMs;
+            // Tail-sampling rule: keep if head-sampled, has errors, or is slow
+            const shouldKeep = isHeadSampled || hasError || isSlow;
+            if (!shouldKeep) {
+                logger.debug('Trace dropped by tail sampling (unsampled, no errors, normal duration)', {
+                    traceId,
+                    isHeadSampled,
+                    hasError,
+                    isSlow,
+                    totalDuration,
+                    spanCount: spans.length,
+                });
+                return;
+            }
+            const isTailPromoted = !isHeadSampled && (hasError || isSlow);
             const traceDocument = {
                 type: 'trace',
                 eventId: `trace_${traceId}`,
@@ -185,8 +492,22 @@ export class TraceAggregator {
                 sessionId: rootSpanEvent.sessionId,
                 userId: rootSpanEvent.userId,
                 tenantId: rootSpanEvent.tenantId,
+                tailSampled: isTailPromoted,
+                hasError,
+                isSlow,
                 __pulseInternal: true,
             };
+            // If this trace was unsampled at head time but promoted by tail-sampling,
+            // also emit the individual spans marked with tailSampled so they pass pipeline checks.
+            if (isTailPromoted) {
+                for (const span of spans) {
+                    try {
+                        const spanToEmit = { ...span, tailSampled: true, __pulseInternal: true };
+                        processEvent(spanToEmit);
+                    }
+                    catch { }
+                }
+            }
             // Emit the aggregated trace event
             processEvent(traceDocument);
             logger.debug('Trace aggregated and emitted', {
@@ -194,6 +515,7 @@ export class TraceAggregator {
                 spanCount: spans.length,
                 isPartial,
                 totalDuration,
+                tailSampled: isTailPromoted,
             });
         }
         catch (err) {
@@ -211,6 +533,7 @@ export class TraceAggregator {
             .map(child => this.buildTree(child, childrenByParent));
         return {
             spanId: rootSpanId,
+            traceId: rootEvent.traceId,
             parentSpanId: rootEvent.parentSpanId,
             name: rootEvent.name,
             kind: rootEvent.kind,
@@ -251,9 +574,17 @@ export class TraceAggregator {
      * Evict the oldest pending trace to make room for a new one.
      */
     evictOldest() {
-        // Map iteration order is insertion order — first key is oldest
         const oldestTraceId = this.pending.keys().next().value;
         if (oldestTraceId) {
+            const trace = this.pending.get(oldestTraceId);
+            if (trace?.quiescingTimer) {
+                clearTimeout(trace.quiescingTimer);
+                trace.quiescingTimer = null;
+            }
+            if (trace?.deadlineTimer) {
+                clearTimeout(trace.deadlineTimer);
+                trace.deadlineTimer = null;
+            }
             getLogger().debug('Evicting oldest pending trace due to buffer overflow', {
                 traceId: oldestTraceId,
             });

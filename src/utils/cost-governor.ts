@@ -99,6 +99,18 @@ export class CostGovernor {
     }
 
     /**
+     * Reset internal tracking maps and metrics for testing or between SDK lifetimes.
+     */
+    reset(): void {
+        this.traceSpanCounts.clear()
+        this.traceTimestamps.clear()
+        this.byteWindows.length = 0
+        this.totalBytesSent = 0
+        this.totalSpansBlocked = 0
+        this.totalBudgetExceeded = 0
+    }
+
+    /**
      * Check if a new span can be created for the given trace.
      * Returns false if the trace has exceeded its span limit.
      */
@@ -212,14 +224,6 @@ export class CostGovernor {
         }
     }
 
-    reset(): void {
-        this.traceSpanCounts.clear()
-        this.traceTimestamps.clear()
-        this.byteWindows.length = 0
-        this.totalBytesSent = 0
-        this.totalSpansBlocked = 0
-        this.totalBudgetExceeded = 0
-    }
 
     shutdown(): void {
         if (this.cleanupTimer) {

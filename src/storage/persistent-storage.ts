@@ -258,7 +258,7 @@ class PersistentStorage {
       await this.checkAndRotate()
 
       const content = entries.join('\n') + '\n'
-      await this.enqueueWrite(() => appendFile(this.dataFile, content, { encoding: 'utf8' }))
+      await this.enqueueWrite(() => appendFile(this.dataFile, content, { encoding: 'utf8', mode: 0o600 }))
 
       this.totalPersisted += this.buffer.length
       this.buffer = []
@@ -542,7 +542,7 @@ class PersistentStorage {
 
   private async ensureDirectory(): Promise<void> {
     if (!existsSync(this.directory)) {
-      await mkdir(this.directory, { recursive: true })
+      await mkdir(this.directory, { recursive: true, mode: 0o700 })
     }
   }
 
@@ -603,7 +603,7 @@ class PersistentStorage {
         return
       }
 
-      await writeFile(this.tempFile, content, { encoding: 'utf8' })
+      await writeFile(this.tempFile, content, { encoding: 'utf8', mode: 0o600 })
       await rename(this.tempFile, this.dataFile)
     })
   }

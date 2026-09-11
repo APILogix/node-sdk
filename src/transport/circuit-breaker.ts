@@ -40,6 +40,9 @@ export class CircuitBreaker {
     this.failureThreshold = options.failureThreshold ?? 5
     this.resetTimeoutMs = options.resetTimeoutMs ?? 30_000
     this.halfOpenMaxProbes = options.halfOpenMaxProbes ?? 1
+    this.failureThreshold = Number.isFinite(options?.failureThreshold) ? Math.max(1, Math.floor(options.failureThreshold!)) : 5
+    this.resetTimeoutMs = Number.isFinite(options?.resetTimeoutMs) ? Math.max(10, Math.floor(options.resetTimeoutMs!)) : 30_000
+    this.halfOpenMaxProbes = Number.isFinite(options?.halfOpenMaxProbes) ? Math.max(1, Math.floor(options.halfOpenMaxProbes!)) : 1
   }
 
   /**
@@ -57,7 +60,7 @@ export class CircuitBreaker {
         // Check if it's time to probe
         if (Date.now() - this.lastFailureTime >= this.resetTimeoutMs) {
           this.transitionTo('HALF_OPEN')
-          this.halfOpenProbeCount = 0
+          this.halfOpenProbeCount = 1
           logger.info('Circuit breaker transitioning to HALF_OPEN for probe')
           return true
         }

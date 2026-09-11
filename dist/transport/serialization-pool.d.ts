@@ -1,17 +1,21 @@
 import type { CompressionAlgorithm } from '../utils/compression.js';
 export declare class SerializationPool {
+    private readonly poolSize;
     private workers;
+    private readyWorkers;
     private roundRobinIndex;
     private pendingRequests;
     private destroyed;
     private static instance;
     private nextId;
+    private started;
     constructor(poolSize?: number);
+    private startWorkers;
     private addWorker;
     private handleWorkerCrash;
     static initialize(poolSize?: number): void;
     static getInstance(): SerializationPool | null;
-    serialize(events: unknown[], compression: CompressionAlgorithm): Promise<{
+    serialize(events: unknown, compression: CompressionAlgorithm): Promise<{
         buffer: Buffer;
         algorithm: CompressionAlgorithm;
         originalSize: number;

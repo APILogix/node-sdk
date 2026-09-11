@@ -10,9 +10,15 @@ describe('SDK initialization option boundary', () => {
             maxBreadcrumbs: 100,
             debug: true,
             shutdownTimeoutMs: 5_000,
+            initTimeoutMs: 500,
             sourceMaps: { paths: ['./dist'], allowRemote: false },
         });
         assert.equal(result.success, true);
+    });
+    it('rejects invalid startup deadlines', () => {
+        for (const initTimeoutMs of [0, -1, 99, 30_001, Infinity, NaN, 100.5]) {
+            assert.equal(sdkInitOptionsSchema.safeParse({ apiKey: 'test-key', initTimeoutMs }).success, false);
+        }
     });
     for (const [name, value] of Object.entries({
         baseUrl: 'https://api.example.test',

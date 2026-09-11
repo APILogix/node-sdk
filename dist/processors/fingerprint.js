@@ -93,10 +93,15 @@ export function generateFingerprint(error, stackFrames, customFingerprint) {
  * - Normalize path separators
  */
 function normalizeForFingerprint(filename) {
+    if (!filename)
+        return '<unknown>';
     return filename
         .replace(/[?#].*$/, '') // Strip query params and hash
         .replace(/:\d+:\d+$/, '') // Strip :line:col
         .replace(/\\/g, '/'); // Normalize separators
+}
+export function resetFingerprintCache() {
+    fingerprintCache.clear();
 }
 /**
  * Normalize an error message for fingerprinting:
@@ -106,6 +111,8 @@ function normalizeForFingerprint(filename) {
  * - Replace hex hashes with <H>
  */
 function normalizeErrorMessage(message) {
+    if (!message || typeof message !== 'string')
+        return '';
     return message
         .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, '<UUID>')
         .replace(/\b[0-9a-f]{40}\b/gi, '<H>') // SHA1 hashes

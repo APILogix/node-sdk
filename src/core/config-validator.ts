@@ -233,8 +233,15 @@ function validateSampling(value: unknown, errors: string[]): void {
 
 function validateInstrumentation(value: unknown, errors: string[]): void {
   if (!section(value, 'instrumentation', errors)) return
-  for (const key of ['http', 'https', 'fetch', 'axios', 'mongodb', 'redis', 'eventEmitterPatch'] as const) {
+  for (const key of ['http', 'https', 'fetch', 'axios', 'mongodb', 'eventEmitterPatch'] as const) {
     boolean(value, key, `instrumentation.${key}`, errors)
+  }
+  booleanOrObject(value, 'redis', ['enabled'], errors)
+  if (isRecord(value['redis']) && value['redis']['keyPolicy'] !== undefined) {
+    const kp = String(value['redis']['keyPolicy'])
+    if (!['command-only', 'sanitized-key', 'full', 'hash'].includes(kp)) {
+      errors.push('instrumentation.redis.keyPolicy is invalid')
+    }
   }
   booleanOrObject(value, 'express', ['enabled'], errors)
   booleanOrObject(value, 'fastify', ['enabled', 'captureHooks', 'captureValidationErrors'], errors)

@@ -13,6 +13,7 @@ export interface InitResponse {
 }
 interface RemoteConfigClientOptions {
     readonly apiKey: string;
+    readonly initTimeoutMs?: number | undefined;
     readonly baseUrl?: string | undefined;
     readonly timeoutMs?: number | undefined;
     readonly fetchImpl?: typeof fetch | undefined;
@@ -27,6 +28,7 @@ export declare class RemoteConfigClient {
     private readonly apiKey;
     private readonly baseUrl;
     private readonly timeoutMs;
+    private readonly initTimeoutMs;
     private readonly fetchImpl;
     constructor(options: RemoteConfigClientOptions);
     /** Perform the one and only startup request. */

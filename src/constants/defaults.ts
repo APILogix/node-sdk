@@ -250,7 +250,7 @@ export const DEFAULT_INSTRUMENTATION: Readonly<InstrumentationConfig> = Object.f
   bullmq: true,
   pg: true,
   mysql2: true,
-  eventEmitterPatch: true,
+  eventEmitterPatch: false,
 })
 
 export const DEFAULT_ENTITLEMENTS: Readonly<EntitlementsConfig> = Object.freeze({

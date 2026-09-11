@@ -1,0 +1,958 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pulse APM Node.js SDK (v8.1.0) — Developer Guide & Implementation Manual</title>
+  <script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>
+  <style>
+    :root {
+      --bg: #090d16;
+      --card: #0f172a;
+      --card-alt: #1e293b;
+      --border: #334155;
+      --primary: #38bdf8;
+      --primary-glow: rgba(56, 189, 248, 0.15);
+      --accent: #818cf8;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --code-bg: #030712;
+      --success: #34d399;
+      --warning: #fbbf24;
+      --danger: #f87171;
+    }
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      scroll-behavior: smooth;
+    }
+    pre {
+      background-color: var(--code-bg);
+      border: 1px solid #1f293d;
+      border-radius: 0.5rem;
+      padding: 1rem;
+      overflow-x: auto;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 0.875rem;
+      line-height: 1.5;
+    }
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+    .token-keyword { color: #f472b6; }
+    .token-function { color: #60a5fa; }
+    .token-string { color: #34d399; }
+    .token-comment { color: #64748b; font-style: italic; }
+    .token-type { color: #a78bfa; }
+    .token-param { color: #fb923c; }
+    .token-number { color: #fbbf24; }
+
+    /* Tab switcher animations */
+    .tab-btn.active {
+      background-color: var(--card-alt);
+      color: var(--primary);
+      border-color: var(--primary);
+    }
+  </style>
+</head>
+<body class="antialiased min-h-screen">
+
+  <!-- Sticky Top Header -->
+  <header class="sticky top-0 z-50 bg-[#090d16]/90 backdrop-blur-md border-b border-[#1e293b] px-6 py-4">
+    <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-4">
+      <div class="flex items-center space-x-3">
+        <div class="w-9 h-9 rounded-lg bg-gradient-to-tr from-sky-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-sky-500/20">
+          <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+          </svg>
+        </div>
+        <div>
+          <span class="font-bold text-lg tracking-tight text-white">Pulse APM Node.js SDK</span>
+          <span class="ml-2 text-xs px-2.5 py-0.5 rounded-full font-mono bg-sky-500/10 text-sky-400 border border-sky-500/20">v8.1.0</span>
+        </div>
+      </div>
+
+      <!-- Global Format Switcher -->
+      <div class="flex items-center space-x-2 bg-slate-900/90 border border-slate-700/60 rounded-xl p-1.5 shadow-inner">
+        <span class="text-xs font-semibold px-2 text-slate-400">Default Syntax:</span>
+        <button id="global-esm-btn" onclick="setGlobalFormat('esm')" class="px-3 py-1.5 text-xs font-medium rounded-lg transition-all duration-200 bg-sky-500 text-slate-950 font-semibold shadow-sm">
+          ESM (<span class="font-mono">import</span>)
+        </button>
+        <button id="global-cjs-btn" onclick="setGlobalFormat('cjs')" class="px-3 py-1.5 text-xs font-medium rounded-lg transition-all duration-200 text-slate-400 hover:text-white">
+          CommonJS (<span class="font-mono">require</span>)
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <div class="max-w-7xl mx-auto px-6 py-10 grid grid-cols-1 lg:grid-cols-12 gap-8">
+
+    <!-- Left Navigation Sidebar -->
+    <aside class="hidden lg:block lg:col-span-3">
+      <nav class="sticky top-28 space-y-1 text-sm bg-slate-900/60 border border-slate-800 rounded-2xl p-4">
+        <div class="px-3 py-2 text-xs font-bold uppercase tracking-wider text-slate-400">Quick Navigation</div>
+        <a href="#overview" class="block px-3 py-2 rounded-lg text-slate-300 hover:bg-slate-800/80 hover:text-sky-400 transition">1. Overview & Architecture</a>
+        <a href="#installation" class="block px-3 py-2 rounded-lg text-slate-300 hover:bg-slate-800/80 hover:text-sky-400 transition">2. Installation & Preload</a>
+        <a href="#initialization" class="block px-3 py-2 rounded-lg text-slate-300 hover:bg-slate-800/80 hover:text-sky-400 transition">3. SDK Initialization</a>
+        <a href="#frameworks" class="block px-3 py-2 rounded-lg text-slate-300 hover:bg-slate-800/80 hover:text-sky-400 transition">4. Express & Fastify</a>
+        <a href="#autoinstrumentation" class="block px-3 py-2 rounded-lg text-slate-300 hover:bg-slate-800/80 hover:text-sky-400 transition">5. Database & Cache Matrix</a>
+        <a href="#custom-spans" class="block px-3 py-2 rounded-lg text-slate-300 hover:bg-slate-800/80 hover:text-sky-400 transition">6. Custom Tracing (<span class="font-mono text-xs">withSpan</span>)</a>
+        <a href="#background-spans" class="block px-3 py-2 rounded-lg text-slate-300 hover:bg-slate-800/80 hover:text-sky-400 transition">7. Detached Background Tasks</a>
+        <a href="#db-spans" class="block px-3 py-2 rounded-lg text-slate-300 hover:bg-slate-800/80 hover:text-sky-400 transition">8. Custom DB Spans (<span class="font-mono text-xs">withDbSpan</span>)</a>
+        <a href="#errors-context" class="block px-3 py-2 rounded-lg text-slate-300 hover:bg-slate-800/80 hover:text-sky-400 transition">9. Errors & Context Enrichment</a>
+        <a href="#metrics" class="block px-3 py-2 rounded-lg text-slate-300 hover:bg-slate-800/80 hover:text-sky-400 transition">10. Metrics & Events</a>
+        <a href="#api-reference" class="block px-3 py-2 rounded-lg text-slate-300 hover:bg-slate-800/80 hover:text-sky-400 transition">11. Interactive API Reference</a>
+      </nav>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="lg:col-span-9 space-y-14">
+
+      <!-- Section 1: Overview -->
+      <section id="overview" class="space-y-4">
+        <div class="inline-flex items-center space-x-2 px-3 py-1 rounded-full text-xs font-semibold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+          <span>Production Ready v8.1.0</span>
+          <span>•</span>
+          <span>415/415 Tests 100% Passing</span>
+        </div>
+        <h1 class="text-4xl font-extrabold tracking-tight text-white">
+          Pulse APM Node.js SDK
+        </h1>
+        <p class="text-lg text-slate-400 leading-relaxed">
+          An enterprise-grade observability and distributed tracing SDK built on OpenTelemetry with automated database interception, truthful timing attribution, synchronous ESM loader hooks, and first-class detached background trace support.
+        </p>
+
+        <!-- Feature Badges -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
+          <div class="bg-slate-900/80 border border-slate-800 p-4 rounded-xl">
+            <div class="text-sky-400 font-semibold mb-1 flex items-center space-x-2">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+              <span>Turnkey Auto-Tracing</span>
+            </div>
+            <p class="text-xs text-slate-400">Automatic interception for PG, Redis, Mongo, MySQL, Prisma, HTTP clients, and frameworks with zero manual spans.</p>
+          </div>
+          <div class="bg-slate-900/80 border border-slate-800 p-4 rounded-xl">
+            <div class="text-indigo-400 font-semibold mb-1 flex items-center space-x-2">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+              <span>Truthful Timing Attribution</span>
+            </div>
+            <p class="text-xs text-slate-400">Zero synthetic clamping. Mathematical interval unions calculate genuine Node.js CPU vs database wait time.</p>
+          </div>
+          <div class="bg-slate-900/80 border border-slate-800 p-4 rounded-xl">
+            <div class="text-emerald-400 font-semibold mb-1 flex items-center space-x-2">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
+              <span>Detached Background Traces</span>
+            </div>
+            <p class="text-xs text-slate-400">Post-response jobs (emails, webhooks) run as independent root traces connected by causal OTel <code class="text-xs text-emerald-300">SpanLink</code>.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Section 2: Installation & Preload -->
+      <section id="installation" class="space-y-4">
+        <h2 class="text-2xl font-bold text-white flex items-center space-x-2 border-b border-slate-800 pb-3">
+          <span>2. Installation & Module Preload</span>
+        </h2>
+        <div class="space-y-3">
+          <p class="text-slate-300 text-sm">Install the package from npm:</p>
+          <div class="relative">
+            <pre><code class="text-sky-300">npm install @pulse-apm/node</code></pre>
+            <button onclick="copyCode(this)" class="absolute top-3 right-3 text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-2.5 py-1 rounded border border-slate-700 transition">Copy</button>
+          </div>
+        </div>
+
+        <!-- Callout Alert for ESM Preload -->
+        <div class="bg-sky-950/40 border border-sky-800/60 rounded-xl p-5 space-y-2">
+          <div class="flex items-center space-x-2 text-sky-400 font-semibold text-sm">
+            <svg class="w-5 h-5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"></path></svg>
+            <span>Crucial for Native ESM Applications (<code class="text-sky-300">"type": "module"</code>)</span>
+          </div>
+          <p class="text-slate-300 text-xs leading-relaxed">
+            In Node.js (&gt;= 18.19.0 / &gt;= 20.6.0), static <code class="text-sky-300">import</code> statements are resolved before your application code runs. To enable automatic interception for drivers like <code class="text-sky-300">pg</code>, <code class="text-sky-300">redis</code>, and <code class="text-sky-300">ioredis</code>, launch Node with the <code class="text-sky-300">--import</code> flag:
+          </p>
+          <div class="relative mt-2">
+            <pre><code class="text-amber-300">node --import @pulse-apm/node/register server.js</code></pre>
+            <button onclick="copyCode(this)" class="absolute top-3 right-3 text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-2.5 py-1 rounded border border-slate-700 transition">Copy</button>
+          </div>
+          <p class="text-xs text-slate-400">
+            For CommonJS projects (<code class="text-slate-300">require</code>), this flag is not needed; simply run <code class="text-slate-300">node server.js</code>.
+          </p>
+        </div>
+      </section>
+
+      <!-- Section 3: SDK Initialization -->
+      <section id="initialization" class="space-y-4">
+        <h2 class="text-2xl font-bold text-white flex items-center space-x-2 border-b border-slate-800 pb-3">
+          <span>3. SDK Initialization & Startup</span>
+        </h2>
+        <p class="text-slate-300 text-sm">
+          Call <code class="text-sky-400">createSDK()</code> at the very beginning of your application entry point before importing or creating database connection pools.
+        </p>
+
+        <!-- Code Block Container with Tabs -->
+        <div class="code-container bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
+          <div class="flex items-center justify-between bg-slate-950 px-4 py-2 border-b border-slate-800">
+            <div class="flex space-x-2">
+              <button onclick="switchTab(this, 'init-esm')" class="tab-btn active px-3 py-1 text-xs font-semibold rounded border border-transparent">ESM (<span class="font-mono">import</span>)</button>
+              <button onclick="switchTab(this, 'init-cjs')" class="tab-btn px-3 py-1 text-xs font-semibold rounded border border-transparent text-slate-400">CommonJS (<span class="font-mono">require</span>)</button>
+            </div>
+            <button onclick="copyTabCode(this)" class="text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-2.5 py-1 rounded border border-slate-700 transition">Copy</button>
+          </div>
+
+          <!-- ESM Tab Content -->
+          <div id="init-esm" class="tab-content block">
+            <pre><code><span class="token-comment">// server.js or app.ts (ESM)</span>
+<span class="token-keyword">import</span> { <span class="token-function">createSDK</span> } <span class="token-keyword">from</span> <span class="token-string">'@pulse-apm/node'</span>
+
+<span class="token-comment">// 1. Initialize the SDK before starting your server</span>
+<span class="token-keyword">await</span> <span class="token-function">createSDK</span>({
+  apiKey: process.env.<span class="token-param">PULSE_API_KEY</span> || <span class="token-string">'pk_live_your_api_key_here'</span>,
+  applicationName: <span class="token-string">'billing-service'</span>,
+  environment: process.env.<span class="token-param">NODE_ENV</span> || <span class="token-string">'production'</span>,
+  release: <span class="token-string">'1.2.0'</span>,
+  debug: <span class="token-keyword">false</span>,
+})
+
+<span class="token-comment">// 2. Import frameworks and database drivers AFTER initialization</span>
+<span class="token-keyword">import</span> express <span class="token-keyword">from</span> <span class="token-string">'express'</span>
+<span class="token-keyword">import</span> pg <span class="token-keyword">from</span> <span class="token-string">'pg'</span>
+
+<span class="token-keyword">const</span> app = <span class="token-function">express</span>()
+<span class="token-comment">// ... continue application setup</span></code></pre>
+          </div>
+
+          <!-- CJS Tab Content -->
+          <div id="init-cjs" class="tab-content hidden">
+            <pre><code><span class="token-comment">// server.js (CommonJS)</span>
+<span class="token-keyword">const</span> { <span class="token-function">createSDK</span> } = <span class="token-function">require</span>(<span class="token-string">'@pulse-apm/node'</span>)
+
+<span class="token-keyword">async</span> <span class="token-keyword">function</span> <span class="token-function">bootstrap</span>() {
+  <span class="token-comment">// 1. Initialize SDK at top of process</span>
+  <span class="token-keyword">await</span> <span class="token-function">createSDK</span>({
+    apiKey: process.env.<span class="token-param">PULSE_API_KEY</span> || <span class="token-string">'pk_live_your_api_key_here'</span>,
+    applicationName: <span class="token-string">'billing-service'</span>,
+    environment: process.env.<span class="token-param">NODE_ENV</span> || <span class="token-string">'production'</span>,
+    release: <span class="token-string">'1.2.0'</span>,
+  })
+
+  <span class="token-comment">// 2. Require dependencies AFTER initialization</span>
+  <span class="token-keyword">const</span> express = <span class="token-function">require</span>(<span class="token-string">'express'</span>)
+  <span class="token-keyword">const</span> { Pool } = <span class="token-function">require</span>(<span class="token-string">'pg'</span>)
+
+  <span class="token-keyword">const</span> app = <span class="token-function">express</span>()
+  <span class="token-comment">// ... continue application setup</span>
+}
+
+<span class="token-function">bootstrap</span>().<span class="token-function">catch</span>(console.error)</code></pre>
+          </div>
+        </div>
+      </section>
+
+      <!-- Section 4: Frameworks (Express & Fastify) -->
+      <section id="frameworks" class="space-y-4">
+        <h2 class="text-2xl font-bold text-white flex items-center space-x-2 border-b border-slate-800 pb-3">
+          <span>4. Framework Integration: Express.js & Fastify</span>
+        </h2>
+        <p class="text-slate-300 text-sm">
+          Mount <code class="text-sky-400">monitorMiddleware()</code> at the top of your middleware chain to capture request latency, body snapshots, route patterns, and HTTP headers. Mount <code class="text-sky-400">expressErrorHandler()</code> after all routes to capture unhandled exceptions with full trace correlation.
+        </p>
+
+        <!-- Express Example -->
+        <div class="code-container bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
+          <div class="flex items-center justify-between bg-slate-950 px-4 py-2 border-b border-slate-800">
+            <div class="flex space-x-2">
+              <button onclick="switchTab(this, 'express-esm')" class="tab-btn active px-3 py-1 text-xs font-semibold rounded border border-transparent">Express (ESM)</button>
+              <button onclick="switchTab(this, 'express-cjs')" class="tab-btn px-3 py-1 text-xs font-semibold rounded border border-transparent text-slate-400">Express (CommonJS)</button>
+              <button onclick="switchTab(this, 'fastify-esm')" class="tab-btn px-3 py-1 text-xs font-semibold rounded border border-transparent text-slate-400">Fastify Plugin</button>
+            </div>
+            <button onclick="copyTabCode(this)" class="text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-2.5 py-1 rounded border border-slate-700 transition">Copy</button>
+          </div>
+
+          <!-- Express ESM Tab -->
+          <div id="express-esm" class="tab-content block">
+            <pre><code><span class="token-keyword">import</span> { <span class="token-function">createSDK</span>, <span class="token-function">monitorMiddleware</span>, <span class="token-function">expressErrorHandler</span> } <span class="token-keyword">from</span> <span class="token-string">'@pulse-apm/node'</span>
+<span class="token-keyword">import</span> express <span class="token-keyword">from</span> <span class="token-string">'express'</span>
+<span class="token-keyword">import</span> pg <span class="token-keyword">from</span> <span class="token-string">'pg'</span>
+
+<span class="token-keyword">await</span> <span class="token-function">createSDK</span>({ apiKey: process.env.<span class="token-param">PULSE_API_KEY</span>! })
+
+<span class="token-keyword">const</span> pool = <span class="token-keyword">new</span> pg.<span class="token-type">Pool</span>({ connectionString: process.env.<span class="token-param">DATABASE_URL</span> })
+<span class="token-keyword">const</span> app = <span class="token-function">express</span>()
+
+app.<span class="token-function">use</span>(express.<span class="token-function">json</span>())
+
+<span class="token-comment">// Mount early: records request lifecycle & binds AsyncLocalStorage</span>
+app.<span class="token-function">use</span>(<span class="token-function">monitorMiddleware</span>())
+
+<span class="token-comment">// Standard route — database queries are automatically captured as child spans!</span>
+app.<span class="token-function">get</span>(<span class="token-string">'/api/users/:id'</span>, <span class="token-keyword">async</span> (req, res) =&gt; {
+  <span class="token-keyword">const</span> { rows } = <span class="token-keyword">await</span> pool.<span class="token-function">query</span>(<span class="token-string">'SELECT id, name, email FROM users WHERE id = $1'</span>, [req.params.id])
+  <span class="token-keyword">if</span> (rows.length === 0) <span class="token-keyword">return</span> res.<span class="token-function">status</span>(404).<span class="token-function">json</span>({ error: <span class="token-string">'Not found'</span> })
+  res.<span class="token-function">json</span>({ user: rows[0] })
+})
+
+<span class="token-comment">// Mount after all routes: correlates uncaught errors to the active trace</span>
+app.<span class="token-function">use</span>(<span class="token-function">expressErrorHandler</span>())
+
+app.<span class="token-function">listen</span>(3000, () =&gt; console.<span class="token-function">log</span>(<span class="token-string">'Server listening on port 3000'</span>))</code></pre>
+          </div>
+
+          <!-- Express CJS Tab -->
+          <div id="express-cjs" class="tab-content hidden">
+            <pre><code><span class="token-keyword">const</span> { <span class="token-function">createSDK</span>, <span class="token-function">monitorMiddleware</span>, <span class="token-function">expressErrorHandler</span> } = <span class="token-function">require</span>(<span class="token-string">'@pulse-apm/node'</span>)
+<span class="token-keyword">const</span> express = <span class="token-function">require</span>(<span class="token-string">'express'</span>)
+<span class="token-keyword">const</span> { Pool } = <span class="token-function">require</span>(<span class="token-string">'pg'</span>)
+
+<span class="token-keyword">async</span> <span class="token-keyword">function</span> <span class="token-function">start</span>() {
+  <span class="token-keyword">await</span> <span class="token-function">createSDK</span>({ apiKey: process.env.<span class="token-param">PULSE_API_KEY</span> })
+
+  <span class="token-keyword">const</span> pool = <span class="token-keyword">new</span> <span class="token-type">Pool</span>({ connectionString: process.env.<span class="token-param">DATABASE_URL</span> })
+  <span class="token-keyword">const</span> app = <span class="token-function">express</span>()
+
+  app.<span class="token-function">use</span>(express.<span class="token-function">json</span>())
+  app.<span class="token-function">use</span>(<span class="token-function">monitorMiddleware</span>())
+
+  app.<span class="token-function">get</span>(<span class="token-string">'/api/orders/:id'</span>, <span class="token-keyword">async</span> (req, res) =&gt; {
+    <span class="token-keyword">const</span> { rows } = <span class="token-keyword">await</span> pool.<span class="token-function">query</span>(<span class="token-string">'SELECT * FROM orders WHERE id = $1'</span>, [req.params.id])
+    res.<span class="token-function">json</span>({ order: rows[0] })
+  })
+
+  app.<span class="token-function">use</span>(<span class="token-function">expressErrorHandler</span>())
+  app.<span class="token-function">listen</span>(3000, () =&gt; console.<span class="token-function">log</span>(<span class="token-string">'Server listening on port 3000'</span>))
+}
+
+<span class="token-function">start</span>()</code></pre>
+          </div>
+
+          <!-- Fastify Tab -->
+          <div id="fastify-esm" class="tab-content hidden">
+            <pre><code><span class="token-keyword">import</span> { <span class="token-function">createSDK</span>, <span class="token-function">fastifyPulsePlugin</span> } <span class="token-keyword">from</span> <span class="token-string">'@pulse-apm/node'</span>
+<span class="token-keyword">import</span> Fastify <span class="token-keyword">from</span> <span class="token-string">'fastify'</span>
+
+<span class="token-keyword">await</span> <span class="token-function">createSDK</span>({ apiKey: process.env.<span class="token-param">PULSE_API_KEY</span>! })
+
+<span class="token-keyword">const</span> fastify = <span class="token-function">Fastify</span>({ logger: <span class="token-keyword">true</span> })
+
+<span class="token-comment">// Register the Pulse plugin</span>
+<span class="token-keyword">await</span> fastify.<span class="token-function">register</span>(fastifyPulsePlugin)
+
+fastify.<span class="token-function">get</span>(<span class="token-string">'/api/health'</span>, <span class="token-keyword">async</span> () =&gt; ({ status: <span class="token-string">'healthy'</span> }))
+
+<span class="token-keyword">await</span> fastify.<span class="token-function">listen</span>({ port: 3000 })</code></pre>
+          </div>
+        </div>
+      </section>
+
+      <!-- Section 5: Database Auto-Instrumentation Matrix -->
+      <section id="autoinstrumentation" class="space-y-4">
+        <h2 class="text-2xl font-bold text-white flex items-center space-x-2 border-b border-slate-800 pb-3">
+          <span>5. Database & Cache Auto-Instrumentation</span>
+        </h2>
+        <p class="text-slate-300 text-sm">
+          No manual spans are needed for database operations. The SDK automatically hooks into driver internals to record exact query latency, sanitized SQL queries, and error statuses:
+        </p>
+
+        <!-- Driver Table -->
+        <div class="overflow-x-auto border border-slate-800 rounded-xl">
+          <table class="w-full text-left text-sm text-slate-300">
+            <thead class="bg-slate-950 text-xs font-semibold uppercase text-slate-400 border-b border-slate-800">
+              <tr>
+                <th class="px-4 py-3">Driver / Store</th>
+                <th class="px-4 py-3">Supported Clients</th>
+                <th class="px-4 py-3">ESM Support</th>
+                <th class="px-4 py-3">Telemetry Recorded</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-800/60 bg-slate-900/50 text-xs">
+              <tr>
+                <td class="px-4 py-3 font-semibold text-white">PostgreSQL</td>
+                <td class="px-4 py-3 font-mono text-sky-300">pg, pg-pool</td>
+                <td class="px-4 py-3 text-emerald-400">Automatic (<code class="text-slate-400">--import</code>)</td>
+                <td class="px-4 py-3">Sanitized query, table, connection pool latency, execution time</td>
+              </tr>
+              <tr>
+                <td class="px-4 py-3 font-semibold text-white">Redis & IORedis</td>
+                <td class="px-4 py-3 font-mono text-sky-300">redis (v4+), ioredis (v4, v5)</td>
+                <td class="px-4 py-3 text-emerald-400">Automatic (<code class="text-slate-400">--import</code>)</td>
+                <td class="px-4 py-3">Command name, sanitized keys, pipelines, multi/exec blocks</td>
+              </tr>
+              <tr>
+                <td class="px-4 py-3 font-semibold text-white">MongoDB</td>
+                <td class="px-4 py-3 font-mono text-sky-300">mongodb (v4, v5, v6)</td>
+                <td class="px-4 py-3 text-emerald-400">Native (Command Monitoring)</td>
+                <td class="px-4 py-3">Collection name, operation (<code class="text-slate-400">find, update</code>), latency</td>
+              </tr>
+              <tr>
+                <td class="px-4 py-3 font-semibold text-white">MySQL</td>
+                <td class="px-4 py-3 font-mono text-sky-300">mysql2</td>
+                <td class="px-4 py-3 text-emerald-400">Automatic via CJS bridge</td>
+                <td class="px-4 py-3">Sanitized SQL, query duration, connection events</td>
+              </tr>
+              <tr>
+                <td class="px-4 py-3 font-semibold text-white">Prisma</td>
+                <td class="px-4 py-3 font-mono text-sky-300">@prisma/client</td>
+                <td class="px-4 py-3 text-emerald-400">Native (Prisma Engine Events)</td>
+                <td class="px-4 py-3">Model, action, generated SQL query, timing breakdown</td>
+              </tr>
+              <tr>
+                <td class="px-4 py-3 font-semibold text-white">HTTP Outbound</td>
+                <td class="px-4 py-3 font-mono text-sky-300">axios, fetch, undici, http</td>
+                <td class="px-4 py-3 text-emerald-400">Native / Interceptors</td>
+                <td class="px-4 py-3">Outgoing URL, status code, latency, W3C traceparent injection</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Section 6: Custom Tracing (withSpan) -->
+      <section id="custom-spans" class="space-y-4">
+        <h2 class="text-2xl font-bold text-white flex items-center space-x-2 border-b border-slate-800 pb-3">
+          <span>6. Custom Function & Business Logic Tracing (<code class="text-sky-400 font-mono">withSpan</code>)</span>
+        </h2>
+        <p class="text-slate-300 text-sm">
+          Use <code class="text-sky-400">withSpan</code> to measure specific functions, algorithms, or external service integrations within an active request:
+        </p>
+
+        <div class="code-container bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
+          <div class="flex items-center justify-between bg-slate-950 px-4 py-2 border-b border-slate-800">
+            <div class="flex space-x-2">
+              <button onclick="switchTab(this, 'span-esm')" class="tab-btn active px-3 py-1 text-xs font-semibold rounded border border-transparent">withSpan (ESM)</button>
+              <button onclick="switchTab(this, 'span-cjs')" class="tab-btn px-3 py-1 text-xs font-semibold rounded border border-transparent text-slate-400">withSpan (CommonJS)</button>
+              <button onclick="switchTab(this, 'span-sync')" class="tab-btn px-3 py-1 text-xs font-semibold rounded border border-transparent text-slate-400">withSpanSync (Synchronous)</button>
+            </div>
+            <button onclick="copyTabCode(this)" class="text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-2.5 py-1 rounded border border-slate-700 transition">Copy</button>
+          </div>
+
+          <div id="span-esm" class="tab-content block">
+            <pre><code><span class="token-keyword">import</span> { <span class="token-function">withSpan</span> } <span class="token-keyword">from</span> <span class="token-string">'@pulse-apm/node'</span>
+
+<span class="token-keyword">export</span> <span class="token-keyword">async</span> <span class="token-keyword">function</span> <span class="token-function">processPayment</span>(orderId: <span class="token-type">string</span>, amount: <span class="token-type">number</span>) {
+  <span class="token-keyword">return</span> <span class="token-keyword">await</span> <span class="token-function">withSpan</span>(<span class="token-string">'payments.process'</span>, <span class="token-keyword">async</span> (span) =&gt; {
+    <span class="token-comment">// 1. Enrich with searchable attributes</span>
+    span.<span class="token-function">setAttribute</span>(<span class="token-string">'payment.order_id'</span>, orderId)
+    span.<span class="token-function">setAttribute</span>(<span class="token-string">'payment.amount'</span>, amount)
+    span.<span class="token-function">setAttribute</span>(<span class="token-string">'payment.currency'</span>, <span class="token-string">'USD'</span>)
+
+    <span class="token-comment">// 2. Execute business logic</span>
+    <span class="token-keyword">const</span> gatewayResponse = <span class="token-keyword">await</span> <span class="token-function">callPaymentGateway</span>(orderId, amount)
+
+    <span class="token-comment">// 3. Authoritatively record status</span>
+    <span class="token-keyword">if</span> (gatewayResponse.success) {
+      span.<span class="token-function">setStatus</span>(<span class="token-string">'ok'</span>)
+      span.<span class="token-function">setAttribute</span>(<span class="token-string">'payment.transaction_id'</span>, gatewayResponse.txnId)
+      <span class="token-keyword">return</span> gatewayResponse
+    } <span class="token-keyword">else</span> {
+      span.<span class="token-function">setStatus</span>(<span class="token-string">'error'</span>, gatewayResponse.declineReason)
+      <span class="token-keyword">throw</span> <span class="token-keyword">new</span> <span class="token-type">Error</span>(<span class="token-string">`Payment declined: ${gatewayResponse.declineReason}`</span>)
+    }
+  })
+}</code></pre>
+          </div>
+
+          <div id="span-cjs" class="tab-content hidden">
+            <pre><code><span class="token-keyword">const</span> { <span class="token-function">withSpan</span> } = <span class="token-function">require</span>(<span class="token-string">'@pulse-apm/node'</span>)
+
+<span class="token-keyword">async</span> <span class="token-keyword">function</span> <span class="token-function">calculateRiskScore</span>(userProfile) {
+  <span class="token-keyword">return</span> <span class="token-keyword">await</span> <span class="token-function">withSpan</span>(<span class="token-string">'fraud.calculate_risk'</span>, <span class="token-keyword">async</span> (span) =&gt; {
+    span.<span class="token-function">setAttribute</span>(<span class="token-string">'user.id'</span>, userProfile.id)
+    span.<span class="token-function">setAttribute</span>(<span class="token-string">'user.country'</span>, userProfile.country)
+
+    <span class="token-keyword">try</span> {
+      <span class="token-keyword">const</span> score = <span class="token-keyword">await</span> <span class="token-function">runFraudModel</span>(userProfile)
+      span.<span class="token-function">setAttribute</span>(<span class="token-string">'fraud.risk_score'</span>, score)
+      span.<span class="token-function">setStatus</span>(<span class="token-string">'ok'</span>)
+      <span class="token-keyword">return</span> score
+    } <span class="token-keyword">catch</span> (err) {
+      span.<span class="token-function">recordError</span>(err)
+      span.<span class="token-function">setStatus</span>(<span class="token-string">'error'</span>, err.message)
+      <span class="token-keyword">throw</span> err
+    }
+  })
+}
+
+module.exports = { calculateRiskScore }</code></pre>
+          </div>
+
+          <div id="span-sync" class="tab-content hidden">
+            <pre><code><span class="token-keyword">import</span> { <span class="token-function">withSpanSync</span> } <span class="token-keyword">from</span> <span class="token-string">'@pulse-apm/node'</span>
+
+<span class="token-keyword">const</span> decryptedData = <span class="token-function">withSpanSync</span>(<span class="token-string">'crypto.decrypt_payload'</span>, (span) =&gt; {
+  span.<span class="token-function">setAttribute</span>(<span class="token-string">'crypto.algorithm'</span>, <span class="token-string">'aes-256-gcm'</span>)
+  <span class="token-keyword">const</span> result = <span class="token-function">decrypt</span>(payload, secretKey)
+  span.<span class="token-function">setStatus</span>(<span class="token-string">'ok'</span>)
+  <span class="token-keyword">return</span> result
+})</code></pre>
+          </div>
+        </div>
+      </section>
+
+      <!-- Section 7: Detached Background Tasks (withBackgroundSpan) -->
+      <section id="background-spans" class="space-y-4">
+        <h2 class="text-2xl font-bold text-white flex items-center space-x-2 border-b border-slate-800 pb-3">
+          <span>7. Detached Background Work (<code class="text-sky-400 font-mono">withBackgroundSpan</code>)</span>
+        </h2>
+        <p class="text-slate-300 text-sm">
+          When an asynchronous operation outlives the HTTP response (e.g. fire-and-forget emails, webhooks, event ingestion), wrapping it with <code class="text-sky-400 font-mono">withBackgroundSpan</code> prevents dropped spans and avoids memory leaks.
+        </p>
+
+        <!-- Architecture Breakdown Card -->
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-3">
+          <div class="text-sm font-semibold text-emerald-400 flex items-center space-x-2">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+            <span>Why Not Use Regular <code class="text-sky-300 font-mono">withSpan</code> For Background Jobs?</span>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs text-slate-300 pt-1">
+            <div class="bg-slate-950 p-3.5 rounded-lg border border-red-900/40">
+              <span class="font-bold text-red-400 block mb-1">Standard withSpan (In-Request Only):</span>
+              Tied to the HTTP request trace. When the response finishes, the trace enters a 250ms quiescing deadline and finalizes. Any span executing after 250ms is permanently dropped to protect server memory.
+            </div>
+            <div class="bg-slate-950 p-3.5 rounded-lg border border-emerald-900/40">
+              <span class="font-bold text-emerald-400 block mb-1">withBackgroundSpan (Detached Execution):</span>
+              Spawns a new independent root trace with a fresh <code class="text-emerald-300">traceId</code> and an isolated breadcrumb ring-buffer. Causally connects back to the originating HTTP trace using OpenTelemetry <code class="text-emerald-300">SpanLink ('caused_by')</code>.
+            </div>
+          </div>
+        </div>
+
+        <div class="code-container bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
+          <div class="flex items-center justify-between bg-slate-950 px-4 py-2 border-b border-slate-800">
+            <div class="flex space-x-2">
+              <button onclick="switchTab(this, 'bg-esm')" class="tab-btn active px-3 py-1 text-xs font-semibold rounded border border-transparent">withBackgroundSpan (ESM)</button>
+              <button onclick="switchTab(this, 'bg-cjs')" class="tab-btn px-3 py-1 text-xs font-semibold rounded border border-transparent text-slate-400">withBackgroundSpan (CommonJS)</button>
+            </div>
+            <button onclick="copyTabCode(this)" class="text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-2.5 py-1 rounded border border-slate-700 transition">Copy</button>
+          </div>
+
+          <div id="bg-esm" class="tab-content block">
+            <pre><code><span class="token-keyword">import</span> { <span class="token-function">withBackgroundSpan</span> } <span class="token-keyword">from</span> <span class="token-string">'@pulse-apm/node'</span>
+<span class="token-keyword">import</span> express <span class="token-keyword">from</span> <span class="token-string">'express'</span>
+
+<span class="token-keyword">const</span> app = <span class="token-function">express</span>()
+
+app.<span class="token-function">post</span>(<span class="token-string">'/api/register'</span>, <span class="token-keyword">async</span> (req, res) =&gt; {
+  <span class="token-comment">// 1. Perform in-request database work</span>
+  <span class="token-keyword">const</span> user = <span class="token-keyword">await</span> db.<span class="token-function">createUser</span>(req.body)
+
+  <span class="token-comment">// 2. Send response immediately (client doesn't wait for email)</span>
+  res.<span class="token-function">status</span>(201).<span class="token-function">json</span>({ success: <span class="token-keyword">true</span>, userId: user.id })
+
+  <span class="token-comment">// 3. Detached background task with 10-second fail-open safety timeout</span>
+  <span class="token-keyword">void</span> <span class="token-function">withBackgroundSpan</span>(<span class="token-string">'jobs.send_welcome_email'</span>, {
+    timeoutMs: 10_000,
+    attributes: {
+      <span class="token-string">'user.id'</span>: user.id,
+      <span class="token-string">'email.type'</span>: <span class="token-string">'welcome_v2'</span>,
+    }
+  }, <span class="token-keyword">async</span> (span) =&gt; {
+    <span class="token-comment">// Connected causally to the HTTP request via SpanLink!</span>
+    <span class="token-comment">// Database and outgoing HTTP calls inside here are automatically traced</span>
+    <span class="token-keyword">await</span> emailService.<span class="token-function">send</span>(user.email, <span class="token-string">'Welcome to Pulse!'</span>)
+    <span class="token-keyword">await</span> auditLog.<span class="token-function">record</span>(user.id, <span class="token-string">'email_dispatched'</span>)
+    span.<span class="token-function">setStatus</span>(<span class="token-string">'ok'</span>)
+  }).<span class="token-function">catch</span>(err =&gt; {
+    console.<span class="token-function">error</span>(<span class="token-string">'Background email failed:'</span>, err)
+  })
+})</code></pre>
+          </div>
+
+          <div id="bg-cjs" class="tab-content hidden">
+            <pre><code><span class="token-keyword">const</span> { <span class="token-function">withBackgroundSpan</span> } = <span class="token-function">require</span>(<span class="token-string">'@pulse-apm/node'</span>)
+<span class="token-keyword">const</span> axios = <span class="token-function">require</span>(<span class="token-string">'axios'</span>)
+
+<span class="token-keyword">function</span> <span class="token-function">dispatchWebhook</span>(eventPayload) {
+  <span class="token-function">withBackgroundSpan</span>(<span class="token-string">'webhooks.dispatch'</span>, {
+    timeoutMs: 15_000,
+    attributes: {
+      <span class="token-string">'webhook.event'</span>: eventPayload.type,
+      <span class="token-string">'webhook.target_url'</span>: eventPayload.url,
+    }
+  }, <span class="token-keyword">async</span> (span) =&gt; {
+    <span class="token-keyword">const</span> response = <span class="token-keyword">await</span> axios.<span class="token-function">post</span>(eventPayload.url, eventPayload.data, { timeout: 10000 })
+    span.<span class="token-function">setAttribute</span>(<span class="token-string">'http.status_code'</span>, response.status)
+    span.<span class="token-function">setStatus</span>(<span class="token-string">'ok'</span>)
+  }).<span class="token-function">catch</span>(err =&gt; {
+    console.<span class="token-function">error</span>(<span class="token-string">'Webhook delivery failed:'</span>, err.message)
+  })
+}
+
+module.exports = { dispatchWebhook }</code></pre>
+          </div>
+        </div>
+      </section>
+
+      <!-- Section 8: Custom DB Spans (withDbSpan) -->
+      <section id="db-spans" class="space-y-4">
+        <h2 class="text-2xl font-bold text-white flex items-center space-x-2 border-b border-slate-800 pb-3">
+          <span>8. Custom Database Spans (<code class="text-sky-400 font-mono">withDbSpan</code>)</span>
+        </h2>
+        <p class="text-slate-300 text-sm">
+          If you are using raw socket connections, internal database wrappers, or specialized databases (ClickHouse, Cassandra, SQLite):
+        </p>
+
+        <div class="code-container bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
+          <div class="flex items-center justify-between bg-slate-950 px-4 py-2 border-b border-slate-800">
+            <div class="flex space-x-2">
+              <button onclick="switchTab(this, 'db-esm')" class="tab-btn active px-3 py-1 text-xs font-semibold rounded border border-transparent">ClickHouse (ESM)</button>
+              <button onclick="switchTab(this, 'db-cjs')" class="tab-btn px-3 py-1 text-xs font-semibold rounded border border-transparent text-slate-400">Cassandra (CommonJS)</button>
+            </div>
+            <button onclick="copyTabCode(this)" class="text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-2.5 py-1 rounded border border-slate-700 transition">Copy</button>
+          </div>
+
+          <div id="db-esm" class="tab-content block">
+            <pre><code><span class="token-keyword">import</span> { <span class="token-function">withDbSpan</span> } <span class="token-keyword">from</span> <span class="token-string">'@pulse-apm/node'</span>
+
+<span class="token-keyword">export</span> <span class="token-keyword">async</span> <span class="token-keyword">function</span> <span class="token-function">queryAnalytics</span>(sql: <span class="token-type">string</span>) {
+  <span class="token-keyword">return</span> <span class="token-keyword">await</span> <span class="token-function">withDbSpan</span>(<span class="token-string">'other'</span>, <span class="token-string">'SELECT'</span>, <span class="token-keyword">async</span> (span) =&gt; {
+    span.<span class="token-function">setAttribute</span>(<span class="token-string">'db.name'</span>, <span class="token-string">'analytics'</span>)
+    span.<span class="token-function">setAttribute</span>(<span class="token-string">'db.sql.table'</span>, <span class="token-string">'events'</span>)
+
+    <span class="token-keyword">const</span> result = <span class="token-keyword">await</span> clickhouseClient.<span class="token-function">query</span>(sql)
+    <span class="token-keyword">return</span> result
+  }, {
+    statement: sql, <span class="token-comment">// Automatically sanitized / redacted</span>
+    captureStatement: <span class="token-keyword">true</span>,
+  })
+}</code></pre>
+          </div>
+
+          <div id="db-cjs" class="tab-content hidden">
+            <pre><code><span class="token-keyword">const</span> { <span class="token-function">withDbSpan</span> } = <span class="token-function">require</span>(<span class="token-string">'@pulse-apm/node'</span>)
+
+<span class="token-keyword">async</span> <span class="token-keyword">function</span> <span class="token-function">queryCassandra</span>(queryStr, params) {
+  <span class="token-keyword">return</span> <span class="token-keyword">await</span> <span class="token-function">withDbSpan</span>(<span class="token-string">'cassandra'</span>, <span class="token-string">'SELECT'</span>, <span class="token-keyword">async</span> (span) =&gt; {
+    span.<span class="token-function">setAttribute</span>(<span class="token-string">'db.name'</span>, <span class="token-string">'orders_keyspace'</span>)
+    span.<span class="token-function">setAttribute</span>(<span class="token-string">'db.cassandra.consistency_level'</span>, <span class="token-string">'LOCAL_QUORUM'</span>)
+
+    <span class="token-keyword">const</span> result = <span class="token-keyword">await</span> cassandraClient.<span class="token-function">execute</span>(queryStr, params)
+    <span class="token-keyword">return</span> result
+  }, {
+    statement: queryStr,
+  })
+}
+
+module.exports = { queryCassandra }</code></pre>
+          </div>
+        </div>
+      </section>
+
+      <!-- Section 9: Error Tracking & Context Enrichment -->
+      <section id="errors-context" class="space-y-4">
+        <h2 class="text-2xl font-bold text-white flex items-center space-x-2 border-b border-slate-800 pb-3">
+          <span>9. Errors, Breadcrumbs & User Identity</span>
+        </h2>
+        <p class="text-slate-300 text-sm">
+          Correlate diagnostic breadcrumbs, user profiles, and custom contextual tags with all outgoing errors and traces:
+        </p>
+
+        <div class="code-container bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
+          <div class="flex items-center justify-between bg-slate-950 px-4 py-2 border-b border-slate-800">
+            <div class="flex space-x-2">
+              <button onclick="switchTab(this, 'err-esm')" class="tab-btn active px-3 py-1 text-xs font-semibold rounded border border-transparent">Error & Context (ESM)</button>
+              <button onclick="switchTab(this, 'err-cjs')" class="tab-btn px-3 py-1 text-xs font-semibold rounded border border-transparent text-slate-400">Error & Context (CommonJS)</button>
+            </div>
+            <button onclick="copyTabCode(this)" class="text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-2.5 py-1 rounded border border-slate-700 transition">Copy</button>
+          </div>
+
+          <div id="err-esm" class="tab-content block">
+            <pre><code><span class="token-keyword">import</span> { <span class="token-function">captureError</span>, <span class="token-function">addBreadcrumb</span>, <span class="token-function">setUser</span>, <span class="token-function">setTag</span>, <span class="token-function">setExtra</span> } <span class="token-keyword">from</span> <span class="token-string">'@pulse-apm/node'</span>
+
+<span class="token-comment">// 1. Identify user in auth middleware or handler</span>
+<span class="token-function">setUser</span>({
+  id: <span class="token-string">'usr_9821'</span>,
+  email: <span class="token-string">'developer@company.com'</span>,
+  tenantId: <span class="token-string">'tenant_acme'</span>,
+})
+
+<span class="token-comment">// 2. Add sequential breadcrumbs</span>
+<span class="token-function">addBreadcrumb</span>({
+  category: <span class="token-string">'auth'</span>,
+  message: <span class="token-string">'User completed MFA challenge'</span>,
+  level: <span class="token-string">'info'</span>,
+  data: { method: <span class="token-string">'totp'</span> },
+})
+
+<span class="token-function">setTag</span>(<span class="token-string">'region'</span>, <span class="token-string">'us-east-1'</span>)
+<span class="token-function">setExtra</span>(<span class="token-string">'active_feature_flags'</span>, [<span class="token-string">'checkout_v2'</span>, <span class="token-string">'fast_pay'</span>])
+
+<span class="token-comment">// 3. Capture caught exceptions with metadata</span>
+<span class="token-keyword">try</span> {
+  <span class="token-keyword">await</span> <span class="token-function">executeOperation</span>()
+} <span class="token-keyword">catch</span> (err) {
+  <span class="token-function">captureError</span>(err, {
+    extra: { attempt: 3 },
+    tags: { severity: <span class="token-string">'critical'</span> },
+    fingerprint: [<span class="token-string">'gateway'</span>, <span class="token-string">'timeout'</span>],
+  })
+}</code></pre>
+          </div>
+
+          <div id="err-cjs" class="tab-content hidden">
+            <pre><code><span class="token-keyword">const</span> { <span class="token-function">captureError</span>, <span class="token-function">addBreadcrumb</span>, <span class="token-function">setUser</span>, <span class="token-function">setTag</span> } = <span class="token-function">require</span>(<span class="token-string">'@pulse-apm/node'</span>)
+
+<span class="token-function">setUser</span>({ id: <span class="token-string">'usr_102'</span>, email: <span class="token-string">'user@test.com'</span> })
+<span class="token-function">addBreadcrumb</span>({ category: <span class="token-string">'checkout'</span>, message: <span class="token-string">'User clicked pay'</span> })
+<span class="token-function">setTag</span>(<span class="token-string">'app_version'</span>, <span class="token-string">'8.1.0'</span>)
+
+<span class="token-keyword">try</span> {
+  <span class="token-function">unstableCall</span>()
+} <span class="token-keyword">catch</span> (err) {
+  <span class="token-function">captureError</span>(err)
+}</code></pre>
+          </div>
+        </div>
+      </section>
+
+      <!-- Section 10: Metrics -->
+      <section id="metrics" class="space-y-4">
+        <h2 class="text-2xl font-bold text-white flex items-center space-x-2 border-b border-slate-800 pb-3">
+          <span>10. Custom Metrics & Shutdown</span>
+        </h2>
+        <p class="text-slate-300 text-sm">
+          Emit high-performance OpenTelemetry metrics, and flush telemetry safely during container termination:
+        </p>
+
+        <div class="code-container bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
+          <div class="flex items-center justify-between bg-slate-950 px-4 py-2 border-b border-slate-800">
+            <div class="flex space-x-2">
+              <button onclick="switchTab(this, 'met-esm')" class="tab-btn active px-3 py-1 text-xs font-semibold rounded border border-transparent">Metrics & Signals (ESM)</button>
+              <button onclick="switchTab(this, 'met-cjs')" class="tab-btn px-3 py-1 text-xs font-semibold rounded border border-transparent text-slate-400">CommonJS</button>
+            </div>
+            <button onclick="copyTabCode(this)" class="text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-2.5 py-1 rounded border border-slate-700 transition">Copy</button>
+          </div>
+
+          <div id="met-esm" class="tab-content block">
+            <pre><code><span class="token-keyword">import</span> { <span class="token-function">incrementCounter</span>, <span class="token-function">recordHistogram</span>, <span class="token-function">setGauge</span>, <span class="token-function">shutdown</span> } <span class="token-keyword">from</span> <span class="token-string">'@pulse-apm/node'</span>
+
+<span class="token-comment">// Counters</span>
+<span class="token-function">incrementCounter</span>(<span class="token-string">'orders.completed'</span>, 1, { plan: <span class="token-string">'enterprise'</span>, region: <span class="token-string">'us-east-1'</span> })
+
+<span class="token-comment">// Histograms (latencies, payload sizes)</span>
+<span class="token-function">recordHistogram</span>(<span class="token-string">'payload.size_bytes'</span>, 48291, { route: <span class="token-string">'/api/upload'</span> })
+
+<span class="token-comment">// Gauges (active connections, memory)</span>
+<span class="token-function">setGauge</span>(<span class="token-string">'worker.active_connections'</span>, 42)
+
+<span class="token-comment">// Clean container shutdown on SIGTERM / SIGINT</span>
+process.<span class="token-function">on</span>(<span class="token-string">'SIGTERM'</span>, <span class="token-keyword">async</span> () =&gt; {
+  console.<span class="token-function">log</span>(<span class="token-string">'Flushing telemetry before exit...'</span>)
+  <span class="token-keyword">await</span> <span class="token-function">shutdown</span>(2000) <span class="token-comment">// 2000ms maximum wait</span>
+  process.<span class="token-function">exit</span>(0)
+})</code></pre>
+          </div>
+
+          <div id="met-cjs" class="tab-content hidden">
+            <pre><code><span class="token-keyword">const</span> { <span class="token-function">incrementCounter</span>, <span class="token-function">shutdown</span> } = <span class="token-function">require</span>(<span class="token-string">'@pulse-apm/node'</span>)
+
+<span class="token-function">incrementCounter</span>(<span class="token-string">'jobs.processed'</span>, 1)
+
+process.<span class="token-function">on</span>(<span class="token-string">'SIGTERM'</span>, <span class="token-keyword">async</span> () =&gt; {
+  <span class="token-keyword">await</span> <span class="token-function">shutdown</span>(2000)
+  process.<span class="token-function">exit</span>(0)
+})</code></pre>
+          </div>
+        </div>
+      </section>
+
+      <!-- Section 11: Interactive API Reference -->
+      <section id="api-reference" class="space-y-4">
+        <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+          <h2 class="text-2xl font-bold text-white flex items-center space-x-2">
+            <span>11. Searchable API Reference</span>
+          </h2>
+          <input type="text" id="api-search" placeholder="Search API methods..." onkeyup="filterApiTable()" class="bg-slate-900 border border-slate-700 text-xs text-white px-3 py-1.5 rounded-lg focus:outline-none focus:border-sky-500 w-48 sm:w-64">
+        </div>
+
+        <div class="overflow-x-auto border border-slate-800 rounded-xl">
+          <table id="api-table" class="w-full text-left text-sm text-slate-300">
+            <thead class="bg-slate-950 text-xs font-semibold uppercase text-slate-400 border-b border-slate-800">
+              <tr>
+                <th class="px-4 py-3">Exported Symbol</th>
+                <th class="px-4 py-3">Signature / Type</th>
+                <th class="px-4 py-3">Purpose & Description</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-800/60 bg-slate-900/50 text-xs font-mono">
+              <tr class="api-row">
+                <td class="px-4 py-3 font-semibold text-sky-400">createSDK(options)</td>
+                <td class="px-4 py-3 text-slate-400">(options: SDKInitOptions) =&gt; Promise</td>
+                <td class="px-4 py-3 text-slate-300 font-sans">Recommended top-level initialization function for the SDK.</td>
+              </tr>
+              <tr class="api-row">
+                <td class="px-4 py-3 font-semibold text-sky-400">init(options)</td>
+                <td class="px-4 py-3 text-slate-400">(options: SDKInitOptions) =&gt; Promise</td>
+                <td class="px-4 py-3 text-slate-300 font-sans">Canonical initialization function (alias to createSDK).</td>
+              </tr>
+              <tr class="api-row">
+                <td class="px-4 py-3 font-semibold text-sky-400">monitorMiddleware(options?)</td>
+                <td class="px-4 py-3 text-slate-400">() =&gt; (req, res, next) =&gt; void</td>
+                <td class="px-4 py-3 text-slate-300 font-sans">Express middleware: captures HTTP requests, routes, bodies, and context.</td>
+              </tr>
+              <tr class="api-row">
+                <td class="px-4 py-3 font-semibold text-sky-400">expressErrorHandler()</td>
+                <td class="px-4 py-3 text-slate-400">() =&gt; (err, req, res, next) =&gt; void</td>
+                <td class="px-4 py-3 text-slate-300 font-sans">Express error middleware: captures unhandled route errors and links trace.</td>
+              </tr>
+              <tr class="api-row">
+                <td class="px-4 py-3 font-semibold text-sky-400">fastifyPulsePlugin</td>
+                <td class="px-4 py-3 text-slate-400">FastifyPluginAsync</td>
+                <td class="px-4 py-3 text-slate-300 font-sans">Fastify framework plugin for automated request tracing and lifecycle monitoring.</td>
+              </tr>
+              <tr class="api-row">
+                <td class="px-4 py-3 font-semibold text-sky-400">withSpan(name, fn, opts?)</td>
+                <td class="px-4 py-3 text-slate-400">&lt;T&gt;(name, fn: (span) =&gt; Promise&lt;T&gt;) =&gt; Promise&lt;T&gt;</td>
+                <td class="px-4 py-3 text-slate-300 font-sans">Executes asynchronous function inside an in-request child span.</td>
+              </tr>
+              <tr class="api-row">
+                <td class="px-4 py-3 font-semibold text-sky-400">withSpanSync(name, fn, opts?)</td>
+                <td class="px-4 py-3 text-slate-400">&lt;T&gt;(name, fn: (span) =&gt; T) =&gt; T</td>
+                <td class="px-4 py-3 text-slate-300 font-sans">Executes synchronous CPU-bound function inside an in-request child span.</td>
+              </tr>
+              <tr class="api-row">
+                <td class="px-4 py-3 font-semibold text-sky-400">withBackgroundSpan(name, opts?, fn)</td>
+                <td class="px-4 py-3 text-slate-400">&lt;T&gt;(name, opts, fn: (span) =&gt; Promise&lt;T&gt;) =&gt; Promise&lt;T&gt;</td>
+                <td class="px-4 py-3 text-slate-300 font-sans">Detached background task with causal SpanLink to originating HTTP trace.</td>
+              </tr>
+              <tr class="api-row">
+                <td class="px-4 py-3 font-semibold text-sky-400">withDbSpan(system, op, fn, opts?)</td>
+                <td class="px-4 py-3 text-slate-400">&lt;T&gt;(system, op, fn) =&gt; Promise&lt;T&gt;</td>
+                <td class="px-4 py-3 text-slate-300 font-sans">Manual database query span helper for custom drivers and wrappers.</td>
+              </tr>
+              <tr class="api-row">
+                <td class="px-4 py-3 font-semibold text-sky-400">captureError(err, context?)</td>
+                <td class="px-4 py-3 text-slate-400">(err: unknown, context?: ErrorContext) =&gt; void</td>
+                <td class="px-4 py-3 text-slate-300 font-sans">Authoritative error recording API with breadcrumbs and trace correlation.</td>
+              </tr>
+              <tr class="api-row">
+                <td class="px-4 py-3 font-semibold text-sky-400">addBreadcrumb(crumb)</td>
+                <td class="px-4 py-3 text-slate-400">(crumb: Breadcrumb) =&gt; void</td>
+                <td class="px-4 py-3 text-slate-300 font-sans">Appends a diagnostic breadcrumb to the active request context.</td>
+              </tr>
+              <tr class="api-row">
+                <td class="px-4 py-3 font-semibold text-sky-400">setUser(user)</td>
+                <td class="px-4 py-3 text-slate-400">(user: User | null) =&gt; void</td>
+                <td class="px-4 py-3 text-slate-300 font-sans">Sets active user identity (id, email, tenantId) for current context.</td>
+              </tr>
+              <tr class="api-row">
+                <td class="px-4 py-3 font-semibold text-sky-400">incrementCounter(name, val?, tags?)</td>
+                <td class="px-4 py-3 text-slate-400">(name: string, value?: number, tags?: Record) =&gt; void</td>
+                <td class="px-4 py-3 text-slate-300 font-sans">Emits an OpenTelemetry monotonic counter metric.</td>
+              </tr>
+              <tr class="api-row">
+                <td class="px-4 py-3 font-semibold text-sky-400">recordHistogram(name, val, tags?)</td>
+                <td class="px-4 py-3 text-slate-400">(name: string, value: number, tags?: Record) =&gt; void</td>
+                <td class="px-4 py-3 text-slate-300 font-sans">Records a latency or value distribution in an OpenTelemetry histogram.</td>
+              </tr>
+              <tr class="api-row">
+                <td class="px-4 py-3 font-semibold text-sky-400">shutdown(timeoutMs?)</td>
+                <td class="px-4 py-3 text-slate-400">(timeoutMs?: number) =&gt; Promise&lt;void&gt;</td>
+                <td class="px-4 py-3 text-slate-300 font-sans">Flushes all pending traces, metrics, and transport queues before process exit.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <!-- Footer -->
+  <footer class="mt-20 border-t border-slate-800/80 py-8 text-center text-xs text-slate-400">
+    <p>Pulse APM Node.js SDK (v8.1.0) • Licensed under ISC • Enterprise Production Ready</p>
+  </footer>
+
+  <!-- Interactive JavaScript Logic -->
+  <script>
+    // Tab switcher logic
+    function switchTab(btn, targetId) {
+      const container = btn.closest('.code-container');
+      container.querySelectorAll('.tab-btn').forEach(b => {
+        b.classList.remove('active');
+        b.classList.add('text-slate-400');
+      });
+      btn.classList.add('active');
+      btn.classList.remove('text-slate-400');
+
+      container.querySelectorAll('.tab-content').forEach(c => {
+        c.classList.add('hidden');
+        c.classList.remove('block');
+      });
+      const target = document.getElementById(targetId);
+      if (target) {
+        target.classList.remove('hidden');
+        target.classList.add('block');
+      }
+    }
+
+    // Global format switcher (ESM vs CommonJS)
+    function setGlobalFormat(format) {
+      const esmBtn = document.getElementById('global-esm-btn');
+      const cjsBtn = document.getElementById('global-cjs-btn');
+
+      if (format === 'esm') {
+        esmBtn.className = 'px-3 py-1.5 text-xs font-semibold rounded-lg bg-sky-500 text-slate-950 shadow-sm';
+        cjsBtn.className = 'px-3 py-1.5 text-xs font-medium rounded-lg text-slate-400 hover:text-white';
+        // Auto-switch tabs to ESM
+        document.querySelectorAll('.tab-btn').forEach(b => {
+          if (b.textContent.includes('ESM') || b.textContent.includes('import')) {
+            b.click();
+          }
+        });
+      } else {
+        cjsBtn.className = 'px-3 py-1.5 text-xs font-semibold rounded-lg bg-sky-500 text-slate-950 shadow-sm';
+        esmBtn.className = 'px-3 py-1.5 text-xs font-medium rounded-lg text-slate-400 hover:text-white';
+        // Auto-switch tabs to CommonJS
+        document.querySelectorAll('.tab-btn').forEach(b => {
+          if (b.textContent.includes('CommonJS') || b.textContent.includes('require')) {
+            b.click();
+          }
+        });
+      }
+    }
+
+    // Copy to clipboard helper
+    function copyCode(btn) {
+      const pre = btn.parentElement.querySelector('pre');
+      const text = pre.innerText;
+      navigator.clipboard.writeText(text).then(() => {
+        const originalText = btn.textContent;
+        btn.textContent = 'Copied!';
+        btn.classList.add('text-emerald-400', 'border-emerald-500');
+        setTimeout(() => {
+          btn.textContent = originalText;
+          btn.classList.remove('text-emerald-400', 'border-emerald-500');
+        }, 1500);
+      });
+    }
+
+    function copyTabCode(btn) {
+      const container = btn.closest('.code-container');
+      const activeContent = container.querySelector('.tab-content.block') || container.querySelector('.tab-content:not(.hidden)');
+      if (activeContent) {
+        const text = activeContent.querySelector('pre').innerText;
+        navigator.clipboard.writeText(text).then(() => {
+          const originalText = btn.textContent;
+          btn.textContent = 'Copied!';
+          btn.classList.add('text-emerald-400', 'border-emerald-500');
+          setTimeout(() => {
+            btn.textContent = originalText;
+            btn.classList.remove('text-emerald-400', 'border-emerald-500');
+          }, 1500);
+        });
+      }
+    }
+
+    // Search filter for API table
+    function filterApiTable() {
+      const input = document.getElementById('api-search').value.toLowerCase();
+      const rows = document.querySelectorAll('#api-table .api-row');
+      rows.forEach(row => {
+        const text = row.textContent.toLowerCase();
+        row.style.display = text.includes(input) ? '' : 'none';
+      });
+    }
+  </script>
+</body>
+</html>
+

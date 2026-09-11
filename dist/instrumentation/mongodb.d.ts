@@ -17,6 +17,7 @@ export interface MongoDBInstrumentationOptions {
     dbStatementSerializer?: (command: Record<string, unknown>) => string;
     addStatementAttribute?: boolean;
     captureCommandArguments?: boolean;
+    requireParentSpan?: boolean;
 }
 export declare function createMongoDBInstrumentation(enabled: boolean, mergedOptions?: Partial<MongoDBInstrumentationOptions>, captureConfig?: PrivacyCaptureConfig): OTelMongoDBInstrumentation | null;
 export interface MongoDBSpanAttributes {

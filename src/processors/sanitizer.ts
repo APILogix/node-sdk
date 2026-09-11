@@ -31,7 +31,9 @@ const DEFAULT_SENSITIVE_HEADERS = ['authorization', 'cookie', 'set-cookie', 'x-a
  */
 const PII_PATTERNS: ReadonlyArray<{ pattern: RegExp; replacement: string }> = Object.freeze([
   // ─── Identity / contact PII ─────────────────────────────────────────
-  { pattern: /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, replacement: '[email]' },
+  // Start only at the beginning of a local-part run. Retrying at every
+  // character of a long non-email string otherwise takes quadratic time.
+  { pattern: /(?<![a-zA-Z0-9._%+-])[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, replacement: '[email]' },
   { pattern: /\b(?:\d{4}[-\s]?){3}\d{4}\b/g, replacement: '[card]' },
   { pattern: /\b\d{3}-\d{2}-\d{4}\b/g, replacement: '[ssn]' },
   { pattern: /\b(?:\+1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/g, replacement: '[phone]' },

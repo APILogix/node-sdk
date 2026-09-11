@@ -207,7 +207,7 @@ export const DEFAULT_INSTRUMENTATION = Object.freeze({
     bullmq: true,
     pg: true,
     mysql2: true,
-    eventEmitterPatch: true,
+    eventEmitterPatch: false,
 });
 export const DEFAULT_ENTITLEMENTS = Object.freeze({
     customSpans: true,

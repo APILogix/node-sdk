@@ -84,11 +84,6 @@ export function captureError(
       } else if (typeof (ctx.extra as Record<string, unknown>)['statusCode'] === 'number') {
         statusCode = (ctx.extra as Record<string, unknown>)['statusCode'] as number
       }
-      if (!statusCode && typeof (normalized as unknown as Record<string, unknown>)['statusCode'] === 'number') {
-        statusCode = (normalized as unknown as Record<string, unknown>)['statusCode'] as number
-      } else if (!statusCode && typeof (normalized as unknown as Record<string, unknown>)['status'] === 'number') {
-        statusCode = (normalized as unknown as Record<string, unknown>)['status'] as number
-      }
       if (typeof ctx.extra.getMethod === 'function') {
         try { method = ctx.extra.getMethod() } catch {}
       }
@@ -104,6 +99,12 @@ export function captureError(
       if (typeof ctx.extra.handled === 'boolean') {
         handled = ctx.extra.handled
       }
+    }
+
+    if (!statusCode && typeof (normalized as unknown as Record<string, unknown>)['statusCode'] === 'number') {
+      statusCode = (normalized as unknown as Record<string, unknown>)['statusCode'] as number
+    } else if (!statusCode && typeof (normalized as unknown as Record<string, unknown>)['status'] === 'number') {
+      statusCode = (normalized as unknown as Record<string, unknown>)['status'] as number
     }
 
     // Centralized classification derived deterministically from source facts

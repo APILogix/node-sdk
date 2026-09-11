@@ -6,6 +6,6 @@ export { monitorMiddleware } from './express.js';
 export { createGraphQLInstrumentation } from './graphql.js';
 export { createPrismaInstrumentation } from './prisma.js';
 export { createMongoDBInstrumentation } from './mongodb.js';
-export { createRedisInstrumentation } from './redis.js';
+export { createRedisInstrumentation, createIORedisInstrumentation, createRedisStatementSerializer } from './redis.js';
 export { createBullMQInstrumentation } from './bullmq.js';
 export { createAxiosInstrumentation } from './axios.js';

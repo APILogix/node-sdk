@@ -16,6 +16,7 @@ import { HealthMonitor } from './health-monitor.js'
 import { RouteRegistry, TransportConfigurationError, type EnterpriseRoute } from './route-registry.js'
 import { TransportEventQueue, type QueueDropInfo, type QueuePriority } from './transport-event-queue.js'
 import { validateApiKey } from '../core/api-key.js'
+import { SerializationPool } from './serialization-pool.js'
 
 interface TransportRuntime {
   readonly registry: RouteRegistry
@@ -105,6 +106,7 @@ export class TransportRouter {
       }
       TransportRouter.instance = null
     }
+    SerializationPool.initialize(2)
     const router = new TransportRouter(config, apiKey, fetchImpl ?? fetch, limitsConfig)
     router.sendBatch(residual)
     TransportRouter.instance = router
@@ -316,6 +318,7 @@ export class TransportRouter {
     if (TransportRouter.instance === this) {
       TransportRouter.instance = null
     }
+    await SerializationPool.reset()
     return residual
   }
 

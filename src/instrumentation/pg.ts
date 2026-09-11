@@ -18,6 +18,8 @@ export interface PgInstrumentationOptions {
   enabled: boolean
   captureQueries?: boolean
   captureParams?: boolean
+  requireParentSpan?: boolean
+  ignoreConnectSpans?: boolean
 }
 
 export function createPgInstrumentation(
@@ -33,8 +35,10 @@ export function createPgInstrumentation(
 
   const instrumentationOptions: OTelPgInstrumentationConfig = {
     enabled: true,
-    enhancedDatabaseReporting: mergedOptions?.captureQueries ?? captureBody,
+    enhancedDatabaseReporting: mergedOptions?.captureParams ?? mergedOptions?.captureQueries ?? captureBody,
     addSqlCommenterCommentToQueries: false,
+    ...(mergedOptions?.requireParentSpan !== undefined ? { requireParentSpan: mergedOptions.requireParentSpan } : {}),
+    ...(mergedOptions?.ignoreConnectSpans !== undefined ? { ignoreConnectSpans: mergedOptions.ignoreConnectSpans } : {}),
   }
 
   return new OTelPgInstrumentation(instrumentationOptions)

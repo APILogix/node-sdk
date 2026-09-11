@@ -5,6 +5,7 @@ import { SDKError, toError } from './errors.js';
 import { validateApiKey } from './api-key.js';
 import { getLogger } from '../utils/logger.js';
 const CONTROL_PLANE_TIMEOUT_MS = 5_000;
+const INIT_TIMEOUT_MS = 1_500;
 const CONTROL_PLANE_PATH_PREFIX = '';
 /**
  * The SDK's sole control-plane network client.
@@ -16,12 +17,14 @@ export class RemoteConfigClient {
     apiKey;
     baseUrl;
     timeoutMs;
+    initTimeoutMs;
     fetchImpl;
     constructor(options) {
         validateApiKey(options.apiKey);
         this.apiKey = options.apiKey;
         this.baseUrl = normalizeBaseUrl(options.baseUrl ?? resolveApiBaseUrl());
         this.timeoutMs = options.timeoutMs ?? CONTROL_PLANE_TIMEOUT_MS;
+        this.initTimeoutMs = options.initTimeoutMs ?? options.timeoutMs ?? INIT_TIMEOUT_MS;
         this.fetchImpl = options.fetchImpl ?? fetch;
     }
     /** Perform the one and only startup request. */
@@ -62,8 +65,15 @@ export class RemoteConfigClient {
     }
     async post(path) {
         const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), this.timeoutMs);
-        timer.unref?.();
+        const timeoutMs = path === '/v1/init' ? this.initTimeoutMs : this.timeoutMs;
+        let timer;
+        const deadline = new Promise((_resolve, reject) => {
+            timer = setTimeout(() => {
+                reject(new SDKError('Control-plane request timed out', 'NETWORK_ERROR', { reason: 'timeout', timeoutMs }));
+                controller.abort();
+            }, timeoutMs);
+        });
+        // Keep startup alive until its bounded result, including top-level await.
         const url = `${this.baseUrl}${CONTROL_PLANE_PATH_PREFIX}${path}`;
         try {
             const startedAt = Date.now();
@@ -74,19 +84,19 @@ export class RemoteConfigClient {
             });
             // Application metadata, capabilities, versions, and local overrides are
             // not configuration inputs; the backend resolves all policy from the API key.
-            const response = await context.with(suppressTracing(context.active()), () => this.fetchImpl(url, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'x-pulse-internal': '1',
-                    'X-API-Key': this.apiKey,
-                },
-                body: JSON.stringify({}),
-                signal: controller.signal,
-                redirect: 'manual',
-            }));
+            const response = await Promise.race([deadline, context.with(suppressTracing(context.active()), () => this.fetchImpl(url, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'x-pulse-internal': '1',
+                        'X-API-Key': this.apiKey,
+                    },
+                    body: JSON.stringify({}),
+                    signal: controller.signal,
+                    redirect: 'manual',
+                }))]);
+            const text = await Promise.race([deadline, response.text()]);
             const latencyMs = Date.now() - startedAt;
-            const text = await response.text();
             getLogger().info('[RemoteConfigClient] Control-plane response received', {
                 endpoint: `${CONTROL_PLANE_PATH_PREFIX}${path}`,
                 statusCode: response.status,

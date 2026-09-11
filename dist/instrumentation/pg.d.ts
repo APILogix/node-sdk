@@ -15,6 +15,8 @@ export interface PgInstrumentationOptions {
     enabled: boolean;
     captureQueries?: boolean;
     captureParams?: boolean;
+    requireParentSpan?: boolean;
+    ignoreConnectSpans?: boolean;
 }
 export declare function createPgInstrumentation(enabled: boolean, mergedOptions?: Partial<PgInstrumentationOptions>, captureConfig?: PrivacyCaptureConfig): OTelPgInstrumentation | null;
 export interface PgSpanAttributes {

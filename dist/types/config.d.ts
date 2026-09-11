@@ -104,7 +104,7 @@ export interface InstrumentationConfig {
     readonly graphql: GraphQLInstrumentationConfig | boolean;
     readonly prisma: PrismaInstrumentationConfig | boolean;
     readonly mongodb: boolean;
-    readonly redis: boolean;
+    readonly redis: RedisInstrumentationConfig | boolean;
     readonly bullmq: BullMQInstrumentationConfig | boolean;
     readonly pg: PgInstrumentationConfig | boolean;
     readonly mysql2: MySQLInstrumentationConfig | boolean;
@@ -144,6 +144,10 @@ export interface PgInstrumentationConfig {
 export interface MySQLInstrumentationConfig {
     readonly enabled: boolean;
     readonly captureQueries: boolean;
+}
+export interface RedisInstrumentationConfig {
+    readonly enabled: boolean;
+    readonly keyPolicy?: 'command-only' | 'sanitized-key' | 'full' | 'hash';
 }
 /**
  * Combined PII / scrubbing config. Replaces the older `security` block.
@@ -434,6 +438,8 @@ export declare function isMemoryLimit(mem: unknown): mem is MemoryLimit;
  */
 export interface SDKInitOptions {
     readonly apiKey: string;
+    /** Startup request deadline in milliseconds (default: 1500). Failure leaves telemetry disabled. */
+    readonly initTimeoutMs?: number | undefined;
     readonly applicationName?: string | undefined;
     readonly applicationVersion?: string | undefined;
     readonly packageJsonPath?: string | undefined;
@@ -453,6 +459,7 @@ export interface SDKInitOptions {
 }
 export declare const sdkInitOptionsSchema: z.ZodObject<{
     apiKey: z.ZodString;
+    initTimeoutMs: z.ZodOptional<z.ZodNumber>;
     applicationName: z.ZodOptional<z.ZodString>;
     applicationVersion: z.ZodOptional<z.ZodString>;
     packageJsonPath: z.ZodOptional<z.ZodString>;

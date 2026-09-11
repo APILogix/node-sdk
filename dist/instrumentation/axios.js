@@ -17,8 +17,9 @@
  * already captures these requests. This module adds axios-specific attributes
  * and ensures proper span naming conventions.
  */
-import { trace, SpanKind, SpanStatusCode, context } from '@opentelemetry/api';
+import { trace, SpanKind, SpanStatusCode, context, createContextKey, propagation } from '@opentelemetry/api';
 import { getLogger } from '../utils/logger.js';
+export const SUPPRESS_INNER_HTTP = createContextKey('pulse.suppress_inner_http');
 const AXIOS_TRACER = trace.getTracer('@pulse-sdk/axios', '1.0.0');
 export function createAxiosInstrumentation(enabled, mergedOptions, captureConfig) {
     if (!enabled) {
@@ -41,24 +42,25 @@ export function createAxiosInstrumentation(enabled, mergedOptions, captureConfig
         if (typeof globalThis === 'undefined')
             return;
         try {
-            const axiosModule = await loadAxios();
-            if (!axiosModule) {
+            const axiosModules = await loadAxiosInstances();
+            if (axiosModules.length === 0) {
                 logger.debug('Axios not found, skipping instrumentation');
                 return;
             }
-            // Patch Axios.prototype.request so the default instance AND every
-            // user-created instance (axios.create()) is covered — they all
-            // inherit the prototype method. The previous code patched a `request`
-            // property on the Axios constructor itself, which real calls never
-            // go through, so no spans were ever produced.
-            const axiosCtor = axiosModule.Axios;
             const patchTargets = [];
-            if (axiosCtor?.prototype && typeof axiosCtor.prototype['request'] === 'function') {
-                patchTargets.push(axiosCtor.prototype);
-            }
-            else if (typeof axiosModule['request'] === 'function') {
-                // No reachable prototype (unusual bundling) — patch the module object.
-                patchTargets.push(axiosModule);
+            const seenTargets = new Set();
+            for (const axiosModule of axiosModules) {
+                const axiosCtor = axiosModule.Axios;
+                if (axiosCtor?.prototype && typeof axiosCtor.prototype['request'] === 'function') {
+                    if (!seenTargets.has(axiosCtor.prototype)) {
+                        seenTargets.add(axiosCtor.prototype);
+                        patchTargets.push(axiosCtor.prototype);
+                    }
+                }
+                else if (typeof axiosModule['request'] === 'function' && !seenTargets.has(axiosModule)) {
+                    seenTargets.add(axiosModule);
+                    patchTargets.push(axiosModule);
+                }
             }
             if (patchTargets.length === 0)
                 return;
@@ -74,9 +76,11 @@ export function createAxiosInstrumentation(enabled, mergedOptions, captureConfig
                             'http.scheme': extractScheme(config.baseURL ?? config.url ?? ''),
                             'http.user_agent': 'axios',
                             'http.axios.request_timeout': config.timeout ?? options.requestTimeout,
-                            'db.system': 'http',
                         },
                     });
+                    if (!config.headers) {
+                        config.headers = {};
+                    }
                     if (captureHeaders && config.headers) {
                         const safeHeaders = {};
                         for (const [key, value] of Object.entries(config.headers)) {
@@ -87,7 +91,38 @@ export function createAxiosInstrumentation(enabled, mergedOptions, captureConfig
                     if (options.captureRequestData && config.params) {
                         span.setAttribute('http.request.query', JSON.stringify(config.params).slice(0, options.maxBodySize));
                     }
-                    return context.with(trace.setSpan(context.active(), span), async () => {
+                    const activeContext = trace.setSpan(context.active(), span).setValue(SUPPRESS_INNER_HTTP, true);
+                    // W3C Trace Context Propagation:
+                    // Inject traceparent and tracestate into outbound Axios request headers using the active OTel context.
+                    // Respect existing headers and do not overwrite an explicitly supplied valid propagation header.
+                    let hasExplicitTraceparent = false;
+                    if (config.headers) {
+                        const h = config.headers;
+                        if (typeof h.has === 'function') {
+                            hasExplicitTraceparent = Boolean(h.has('traceparent') || h.has('Traceparent'));
+                        }
+                        else if (typeof h.get === 'function') {
+                            hasExplicitTraceparent = h.get('traceparent') != null || h.get('Traceparent') != null;
+                        }
+                        else if (typeof h === 'object') {
+                            hasExplicitTraceparent = Object.keys(h).some(k => k.toLowerCase() === 'traceparent' && h[k] != null);
+                        }
+                    }
+                    if (!hasExplicitTraceparent) {
+                        propagation.inject(activeContext, config.headers, {
+                            set(carrier, key, value) {
+                                if (!carrier)
+                                    return;
+                                if (typeof carrier.set === 'function') {
+                                    carrier.set(key, value);
+                                }
+                                else {
+                                    carrier[key] = value;
+                                }
+                            },
+                        });
+                    }
+                    return context.with(activeContext, async () => {
                         try {
                             const response = await originalRequest.call(this, config);
                             span.setAttribute('http.status_code', response.status ?? 0);
@@ -174,41 +209,47 @@ export function createAxiosInstrumentation(enabled, mergedOptions, captureConfig
  * as a dependency, axios lives in the *consumer's* node_modules and neither
  * path finds it.
  */
-async function loadAxios() {
+async function loadAxiosInstances() {
     const logger = getLogger();
-    // Strategy 1: Resolve from the consuming application's working directory.
-    // This is the most reliable path when the SDK is a dependency and axios
-    // is installed as a peer dependency in the consumer's node_modules.
+    const instances = [];
+    // Strategy 1: ESM dynamic import — essential for ESM applications and modern test runners
     try {
-        const { createRequire } = await import('node:module');
-        const cwdRequire = createRequire(process.cwd() + '/package.json');
-        const mod = cwdRequire('axios');
-        return (mod.default ?? mod);
-    }
-    catch {
-        // Not found in cwd — try other strategies
-    }
-    // Strategy 2: ESM dynamic import — works when Node's module resolution
-    // can find axios (e.g. hoisted in a monorepo root).
-    try {
-        // @ts-expect-error — axios is an optional peer dependency; types may not be installed
         const mod = await import('axios');
-        return (mod.default ?? mod);
+        const resolved = (mod.default ?? mod);
+        if (resolved)
+            instances.push(resolved);
     }
     catch {
         // ESM resolution failed
     }
-    // Strategy 3: createRequire relative to the SDK itself — last resort for
-    // cases where axios is bundled alongside the SDK.
+    // Strategy 2: CommonJS from the consuming application's working directory
+    try {
+        const { createRequire } = await import('node:module');
+        const cwdRequire = createRequire(process.cwd() + '/package.json');
+        const mod = cwdRequire('axios');
+        const resolved = (mod.default ?? mod);
+        if (resolved && !instances.includes(resolved))
+            instances.push(resolved);
+    }
+    catch {
+        // Not found in cwd
+    }
+    // Strategy 3: CommonJS relative to the SDK itself
     try {
         const { createRequire } = await import('node:module');
         const req = createRequire(import.meta.url);
-        return req('axios');
+        const mod = req('axios');
+        const resolved = (mod.default ?? mod);
+        if (resolved && !instances.includes(resolved))
+            instances.push(resolved);
     }
     catch {
-        logger.debug('Axios module not found in any resolution path');
-        return null;
+        // Not found relative to SDK
     }
+    if (instances.length === 0) {
+        logger.debug('Axios module not found in any resolution path');
+    }
+    return instances;
 }
 function buildUrl(baseURL, url) {
     if (url.startsWith('http://') || url.startsWith('https://')) {

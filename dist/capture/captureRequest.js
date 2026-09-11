@@ -25,6 +25,7 @@ export function captureRequest(event) {
         const requestId = event.requestId || ctx?.requestId;
         const enriched = {
             ...event,
+            type: 'request',
             ...(traceId ? { traceId } : {}),
             ...(spanId ? { spanId } : {}),
             ...(requestId ? { requestId } : {}),

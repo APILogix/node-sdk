@@ -72,6 +72,8 @@ export interface DurationBreakdown {
  * // result.exclusiveDuration === 90
  * ```
  */
+import { getLogger } from '../utils/logger.js'
+
 export function computeExclusiveDuration(
   parentStartMs: number,
   parentEndMs: number,
@@ -83,27 +85,34 @@ export function computeExclusiveDuration(
     return { inclusiveDuration, exclusiveDuration: inclusiveDuration, childDuration: 0 }
   }
 
-  // Step 1: Clamp child intervals to parent boundaries and filter invalids
-  const clamped: Array<{ start: number; end: number }> = []
+  // Step 1: Collect valid child intervals truthfully without clamping.
+  // P0.4: Do not modify or clamp child start/end to hide lifecycle defects.
+  const validIntervals: Array<{ start: number; end: number }> = []
   for (const child of childIntervals) {
-    const start = Math.max(child.startTime, parentStartMs)
-    const end = Math.min(child.endTime, parentEndMs)
-    if (start < end) {
-      clamped.push({ start, end })
+    if (child.startTime < parentStartMs || child.endTime > parentEndMs) {
+      getLogger().warn('Span timing anomaly: child interval exceeds parent boundaries', {
+        parentStartMs,
+        parentEndMs,
+        childStartTime: child.startTime,
+        childEndTime: child.endTime,
+      })
+    }
+    if (child.startTime < child.endTime) {
+      validIntervals.push({ start: child.startTime, end: child.endTime })
     }
   }
 
-  if (clamped.length === 0) {
+  if (validIntervals.length === 0) {
     return { inclusiveDuration, exclusiveDuration: inclusiveDuration, childDuration: 0 }
   }
 
   // Step 2: Sort by start time (ties broken by earlier end time)
-  clamped.sort((a, b) => a.start - b.start || a.end - b.end)
+  validIntervals.sort((a, b) => a.start - b.start || a.end - b.end)
 
   // Step 3: Merge overlapping intervals
-  const merged: Array<{ start: number; end: number }> = [clamped[0]!]
-  for (let i = 1; i < clamped.length; i++) {
-    const current = clamped[i]!
+  const merged: Array<{ start: number; end: number }> = [validIntervals[0]!]
+  for (let i = 1; i < validIntervals.length; i++) {
+    const current = validIntervals[i]!
     const last = merged[merged.length - 1]!
 
     if (current.start <= last.end) {

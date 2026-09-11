@@ -5,16 +5,22 @@ import { compress } from '../utils/compression.js'
 
 export class SerializationPool {
   private workers: Worker[] = []
+  private readyWorkers = new Set<Worker>()
   private roundRobinIndex = 0
   private pendingRequests = new Map<number, { resolve: (val: any) => void, reject: (err: any) => void, timer: NodeJS.Timeout }>()
   private destroyed = false
   private static instance: SerializationPool | null = null
   private nextId = 0
+  private started = false
 
-  constructor(poolSize = 2) {
+  constructor(private readonly poolSize = 2) {}
+
+  private startWorkers(): void {
+    if (this.started || this.destroyed) return
+    this.started = true
     try {
       const workerUrl = new URL('./serialization-worker.js', import.meta.url)
-      for (let i = 0; i < poolSize; i++) {
+      for (let i = 0; i < this.poolSize; i++) {
         this.addWorker(workerUrl)
       }
     } catch (err) {
@@ -24,33 +30,38 @@ export class SerializationPool {
 
   private addWorker(workerUrl: URL) {
     const worker = new Worker(workerUrl)
+    worker.once('online', () => {
+      if (!this.destroyed && this.workers.includes(worker)) this.readyWorkers.add(worker)
+    })
     worker.on('message', (msg) => {
       const req = this.pendingRequests.get(msg.id)
       if (req) {
         clearTimeout(req.timer)
         this.pendingRequests.delete(msg.id)
         if (msg.error) req.reject(new Error(msg.error))
-        else req.resolve({ buffer: msg.buffer, algorithm: msg.algorithm, originalSize: msg.originalSize, compressedSize: msg.compressedSize })
+        else req.resolve({ buffer: Buffer.isBuffer(msg.buffer) ? msg.buffer : Buffer.from(msg.buffer), algorithm: msg.algorithm, originalSize: msg.originalSize, compressedSize: msg.compressedSize })
       }
     })
     worker.on('error', (err) => {
       getLogger().error('Serialization worker error', { error: err })
-      this.handleWorkerCrash(worker, workerUrl)
+      this.handleWorkerCrash(worker)
     })
     worker.on('exit', (code) => {
+      this.handleWorkerCrash(worker)
       if (code !== 0 && !this.destroyed) {
         getLogger().error('Serialization worker exited unexpectedly', { code })
-        this.handleWorkerCrash(worker, workerUrl)
       }
     })
     this.workers.push(worker)
   }
 
-  private handleWorkerCrash(worker: Worker, workerUrl: URL) {
+  private handleWorkerCrash(worker: Worker) {
     this.workers = this.workers.filter(w => w !== worker)
-    if (!this.destroyed) {
-      setTimeout(() => this.addWorker(workerUrl), 1000)
-    }
+    this.readyWorkers.delete(worker)
+    this.roundRobinIndex = 0
+    // An error is followed by exit. Automatic replacement from both handlers
+    // amplified failures into an unbounded worker restart loop. Degrade to
+    // remaining workers/main-thread serialization until the next SDK lifecycle.
   }
 
   static initialize(poolSize = 2) {
@@ -63,13 +74,15 @@ export class SerializationPool {
     return SerializationPool.instance
   }
 
-  async serialize(events: unknown[], compression: CompressionAlgorithm): Promise<{ buffer: Buffer, algorithm: CompressionAlgorithm, originalSize: number, compressedSize: number }> {
-    if (this.workers.length === 0 || this.destroyed) {
+  async serialize(events: unknown, compression: CompressionAlgorithm): Promise<{ buffer: Buffer, algorithm: CompressionAlgorithm, originalSize: number, compressedSize: number }> {
+    this.startWorkers()
+    const ready = [...this.readyWorkers]
+    if (ready.length === 0 || this.destroyed) {
       return this.fallbackSerialize(events, compression)
     }
 
-    const worker = this.workers[this.roundRobinIndex]!
-    this.roundRobinIndex = (this.roundRobinIndex + 1) % this.workers.length
+    const worker = ready[this.roundRobinIndex % ready.length]!
+    this.roundRobinIndex = (this.roundRobinIndex + 1) % ready.length
 
     const id = this.nextId++
     return new Promise<{ buffer: Buffer, algorithm: CompressionAlgorithm, originalSize: number, compressedSize: number }>((resolve, reject) => {
@@ -86,7 +99,7 @@ export class SerializationPool {
     })
   }
 
-  private async fallbackSerialize(events: unknown[], compression: CompressionAlgorithm) {
+  private async fallbackSerialize(events: unknown, compression: CompressionAlgorithm) {
     const jsonStr = JSON.stringify(events)
     const buf = Buffer.from(jsonStr)
     const result = await compress(buf, compression)
@@ -102,6 +115,7 @@ export class SerializationPool {
     this.pendingRequests.clear()
     await Promise.all(this.workers.map(w => w.terminate()))
     this.workers = []
+    this.readyWorkers.clear()
   }
 
   /**

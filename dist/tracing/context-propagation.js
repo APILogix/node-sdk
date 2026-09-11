@@ -7,6 +7,7 @@
  * OTel samplers, propagators, and context managers remain in control.
  */
 import { propagation, trace, context as otelContext, } from '@opentelemetry/api';
+import { W3CTraceContextPropagator } from '@opentelemetry/core';
 import { getLogger } from '../utils/logger.js';
 import { ConfigManager } from '../core/config-manager.js';
 import { TRACING_DEFAULTS } from '../constants/internal-defaults.js';
@@ -16,6 +17,7 @@ const TRACESTATE_HEADER = 'tracestate';
 const PULSE_TRACE_ID_HEADER = 'x-pulse-trace-id';
 const PULSE_SPAN_ID_HEADER = 'x-pulse-span-id';
 const PULSE_SAMPLED_HEADER = 'x-pulse-sampled';
+const fallbackW3CPropagator = new W3CTraceContextPropagator();
 // ─── Text Map Carrier Helpers ───────────────────────────────────────────────
 /**
  * Standard getter for extracting headers from an incoming request.
@@ -23,13 +25,29 @@ const PULSE_SAMPLED_HEADER = 'x-pulse-sampled';
  */
 export const headerGetter = {
     keys(carrier) {
+        if (!carrier || typeof carrier !== 'object')
+            return [];
         return Object.keys(carrier);
     },
     get(carrier, key) {
-        const value = carrier[key] ?? carrier[key.toLowerCase()];
-        if (Array.isArray(value))
-            return value[0];
-        return value;
+        if (!carrier || typeof carrier !== 'object')
+            return undefined;
+        if (key in carrier) {
+            const value = carrier[key];
+            return Array.isArray(value) ? value[0] : value;
+        }
+        const lowerKey = key.toLowerCase();
+        if (lowerKey in carrier) {
+            const value = carrier[lowerKey];
+            return Array.isArray(value) ? value[0] : value;
+        }
+        for (const k of Object.keys(carrier)) {
+            if (k.toLowerCase() === lowerKey) {
+                const value = carrier[k];
+                return Array.isArray(value) ? value[0] : value;
+            }
+        }
+        return undefined;
     },
 };
 /**
@@ -37,6 +55,8 @@ export const headerGetter = {
  */
 export const headerSetter = {
     set(carrier, key, value) {
+        if (!carrier || typeof carrier !== 'object')
+            return;
         carrier[key] = value;
     },
 };
@@ -49,10 +69,40 @@ export const headerSetter = {
  * @returns OTel Context with propagated trace info
  */
 export function extractTraceContext(headers) {
+    if (!headers || typeof headers !== 'object') {
+        return otelContext.active();
+    }
     const logger = getLogger();
     try {
-        const extracted = propagation.extract(otelContext.active(), headers, headerGetter);
-        const spanContext = trace.getSpanContext(extracted);
+        let extracted = propagation.extract(otelContext.active(), headers, headerGetter);
+        let spanContext = trace.getSpanContext(extracted);
+        if (!spanContext || !trace.isSpanContextValid(spanContext)) {
+            const direct = fallbackW3CPropagator.extract(otelContext.active(), headers, headerGetter);
+            const directSpanContext = trace.getSpanContext(direct);
+            if (directSpanContext && trace.isSpanContextValid(directSpanContext)) {
+                extracted = direct;
+                spanContext = directSpanContext;
+            }
+        }
+        if (!spanContext || !trace.isSpanContextValid(spanContext)) {
+            const pulseTraceId = headerGetter.get(headers, PULSE_TRACE_ID_HEADER);
+            const pulseSpanId = headerGetter.get(headers, PULSE_SPAN_ID_HEADER);
+            if (typeof pulseTraceId === 'string' &&
+                typeof pulseSpanId === 'string' &&
+                /^[0-9a-f]{32}$/i.test(pulseTraceId) &&
+                /^[0-9a-f]{16}$/i.test(pulseSpanId)) {
+                const pulseSampled = headerGetter.get(headers, PULSE_SAMPLED_HEADER);
+                const traceFlags = pulseSampled === '1' || pulseSampled === 'true' ? 1 : 0;
+                const pulseSpanContext = {
+                    traceId: pulseTraceId.toLowerCase(),
+                    spanId: pulseSpanId.toLowerCase(),
+                    traceFlags,
+                    isRemote: true,
+                };
+                extracted = trace.setSpanContext(extracted, pulseSpanContext);
+                spanContext = pulseSpanContext;
+            }
+        }
         if (spanContext) {
             logger.debug('Trace context extracted from headers', {
                 traceId: spanContext.traceId,
@@ -76,6 +126,8 @@ export function extractTraceContext(headers) {
  * @param ctx - Optional OTel context (defaults to active context)
  */
 export function injectTraceContext(headers, ctx) {
+    if (!headers || typeof headers !== 'object')
+        return;
     const logger = getLogger();
     try {
         const activeCtx = ctx ?? otelContext.active();
@@ -86,10 +138,13 @@ export function injectTraceContext(headers, ctx) {
         const shouldInjectW3C = TRACING_DEFAULTS.propagation.w3c;
         if (shouldInjectW3C) {
             propagation.inject(activeCtx, headers, headerSetter);
+            if (!headers[TRACEPARENT_HEADER]) {
+                fallbackW3CPropagator.inject(activeCtx, headers, headerSetter);
+            }
         }
         // Also inject Pulse custom headers for non-OTel consumers
         const spanContext = trace.getSpanContext(activeCtx);
-        if (spanContext) {
+        if (spanContext && trace.isSpanContextValid(spanContext)) {
             headers[PULSE_TRACE_ID_HEADER] = spanContext.traceId;
             headers[PULSE_SPAN_ID_HEADER] = spanContext.spanId;
             headers[PULSE_SAMPLED_HEADER] = (spanContext.traceFlags & 1) === 1 ? '1' : '0';

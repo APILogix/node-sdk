@@ -12,6 +12,7 @@ import { HealthMonitor } from './health-monitor.js';
 import { RouteRegistry, TransportConfigurationError } from './route-registry.js';
 import { TransportEventQueue } from './transport-event-queue.js';
 import { validateApiKey } from '../core/api-key.js';
+import { SerializationPool } from './serialization-pool.js';
 /** Map the wire priority onto the queue's three-tier priority. */
 function toQueuePriority(priority) {
     if (priority === 'critical' || priority === 'high')
@@ -86,6 +87,7 @@ export class TransportRouter {
             }
             TransportRouter.instance = null;
         }
+        SerializationPool.initialize(2);
         const router = new TransportRouter(config, apiKey, fetchImpl ?? fetch, limitsConfig);
         router.sendBatch(residual);
         TransportRouter.instance = router;
@@ -277,6 +279,7 @@ export class TransportRouter {
         if (TransportRouter.instance === this) {
             TransportRouter.instance = null;
         }
+        await SerializationPool.reset();
         return residual;
     }
     static async reset() {

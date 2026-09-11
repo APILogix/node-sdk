@@ -36,6 +36,8 @@ export async function resetSdkState(): Promise<ShutdownResult> {
     }
   }
 
+  delete process.env['SDK_BASE_URL']
+  delete process.env['PULSE_BASE_URL']
   ConfigManager.reset()
   client.clear()
   return result
@@ -50,6 +52,7 @@ export async function setupTestSdk(
   customOptions: Partial<SDKInitOptions> = {},
 ): Promise<Readonly<RemoteConfigResponse> | undefined> {
   await resetSdkState()
+  process.env['SDK_BASE_URL'] = server.url
   return await init({
     apiKey: 'test-e2e-api-key',
     debug: false,
@@ -64,6 +67,7 @@ export async function initSdkForTest(
   server: RemoteConfigMockServer,
   options: Partial<SDKInitOptions> = {},
 ): Promise<Readonly<RemoteConfigResponse> | undefined> {
+  process.env['SDK_BASE_URL'] = server.url
   return await init({
     apiKey: 'test-e2e-api-key',
     debug: false,

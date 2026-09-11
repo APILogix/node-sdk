@@ -30,10 +30,12 @@ import { client } from '../core/client.js';
 import { attachRequestContextToActiveSpan, createContextStore, withContext, getRequestContext, getTraceId, getSpanId, } from '../core/context.js';
 import { FeatureController } from '../core/feature-controller.js';
 import { KillswitchEngine } from '../core/killswitch-engine.js';
+import { ConfigManager } from '../core/config-manager.js';
 import { SDK_NAME, SDK_VERSION } from '../constants/version.js';
 import { getLogger } from '../utils/logger.js';
 import { generateId } from '../utils/uuid.js';
 import { extractTraceContext } from '../tracing/context-propagation.js';
+import { getTraceAggregator } from '../tracing/trace-aggregator.js';
 import { captureBodySnapshot, evaluateCaptureGate, headerString, matchesIgnoredPath, resolveClientIp, scrubHeaders, scrubQuery, } from './request-capture-utils.js';
 export function monitorMiddleware(options = {}) {
     return function pulseExpressMiddleware(req, res, next) {
@@ -49,12 +51,13 @@ export function monitorMiddleware(options = {}) {
         }
         // Resolve request identity *before* the gate so the sampling engine
         // can use a stable id to make a deterministic decision.
-        const requestId = headerString(req.headers['x-request-id'])
-            ?? headerString(req.headers['x-correlation-id'])
+        const headers = req.headers || {};
+        const requestId = headerString(headers['x-request-id'])
+            ?? headerString(headers['x-correlation-id'])
             ?? generateId();
         // Tenant id is needed by the gate; resolve it first so admission control
         // can reject before any allocation.
-        const tenantId = headerString(req.headers['x-tenant-id']);
+        const tenantId = headerString(headers['x-tenant-id']);
         const decision = evaluateCaptureGate({
             path,
             method: req.method,
@@ -70,10 +73,10 @@ export function monitorMiddleware(options = {}) {
         // we resolve them after the gate to avoid wasting work on dropped
         // requests.
         const userId = readUserId(req);
-        const sessionId = headerString(req.headers['x-session-id']);
-        const userAgent = headerString(req.headers['user-agent']);
-        const referer = headerString(req.headers['referer'] ?? req.headers['referrer']);
-        const clientIp = resolveClientIp(req.headers, req.socket?.remoteAddress, options.trustedProxies, decision.maskIp);
+        const sessionId = headerString(headers['x-session-id']);
+        const userAgent = headerString(headers['user-agent']);
+        const referer = headerString(headers['referer'] ?? headers['referrer']);
+        const clientIp = resolveClientIp(headers, req.socket?.remoteAddress, options.trustedProxies, decision.maskIp);
         const startTime = Date.now();
         const store = createContextStore(requestId, options.maxBreadcrumbs ?? client.options?.maxBreadcrumbs ?? 100, {
             userId,
@@ -91,15 +94,18 @@ export function monitorMiddleware(options = {}) {
         const captureHeaders = decision.allowHeaders;
         const captureQuery = decision.allowQuery;
         const captureBody = decision.allowBody;
-        const tracer = trace.getTracer(SDK_NAME, SDK_VERSION);
-        let activeSpan = trace.getActiveSpan();
+        const configManager = ConfigManager.getInstance();
+        const httpInstrumentationEnabled = Boolean(configManager.getConfig().instrumentation.http);
+        let activeSpan = trace.getActiveSpan() ?? req?.__pulseServerSpan;
         let createdServerSpan = false;
         const featureCtrl = FeatureController.getInstance();
         const killswitchEngine = KillswitchEngine.getInstance();
         const isTracingActive = !killswitchEngine?.isKilled('disableTracing') && (!featureCtrl || featureCtrl.isEnabled('tracing'));
-        const parentContext = extractTraceContext(req.headers);
+        const parentContext = extractTraceContext(headers);
+        // Create server span if no active span exists (e.g. direct middleware invocation, synthetic tests, or custom server)
         if (!activeSpan && isTracingActive) {
             try {
+                const tracer = trace.getTracer(SDK_NAME, SDK_VERSION);
                 activeSpan = tracer.startSpan(`HTTP ${req.method} ${path}`, {
                     kind: SpanKind.SERVER,
                     attributes: {
@@ -108,10 +114,11 @@ export function monitorMiddleware(options = {}) {
                         'http.route': path,
                         'http.target': req.url,
                         ...(req.headers.host ? { 'http.host': req.headers.host } : {}),
+                        ...(headers['host'] ? { 'http.host': String(headers['host']) } : {}),
                         ...(userAgent ? { 'http.user_agent': userAgent } : {}),
                         ...(clientIp ? { 'http.client_ip': clientIp } : {}),
                     },
-                }, parentContext);
+                }, parentContext ?? context.active());
                 createdServerSpan = true;
             }
             catch {
@@ -133,6 +140,10 @@ export function monitorMiddleware(options = {}) {
                             const currentActiveSpan = trace.getActiveSpan() ?? activeSpan;
                             if (currentActiveSpan) {
                                 const route = normalizedRoute(req);
+                                if (typeof currentActiveSpan.updateName === 'function') {
+                                    ;
+                                    currentActiveSpan.updateName(`HTTP ${req.method} ${route}`);
+                                }
                                 const enrichmentAttrs = {
                                     'http.route': route,
                                     'http.status_code': res.statusCode,
@@ -164,11 +175,30 @@ export function monitorMiddleware(options = {}) {
                                 }
                             }
                             if (createdServerSpan && activeSpan) {
-                                try {
-                                    activeSpan.end();
+                                const serverSpan = activeSpan;
+                                const traceId = serverSpan.spanContext().traceId;
+                                const endServerSpan = () => {
+                                    try {
+                                        serverSpan.end();
+                                    }
+                                    catch (endErr) {
+                                        getLogger().error('Failed to end server span', { error: endErr });
+                                    }
+                                };
+                                const aggregator = getTraceAggregator();
+                                if (aggregator.getActiveSpanCount(traceId) > 1) {
+                                    aggregator.waitForActiveChildren(traceId, endServerSpan, 10000);
                                 }
-                                catch (endErr) {
-                                    getLogger().error('Failed to end server span', { error: endErr });
+                                else {
+                                    setImmediate(() => {
+                                        if (aggregator.getActiveSpanCount(traceId) > 1) {
+                                            aggregator.waitForActiveChildren(traceId, endServerSpan, 10000);
+                                        }
+                                        else {
+                                            endServerSpan();
+                                        }
+                                    });
+                                    endServerSpan();
                                 }
                             }
                             // Emit the discrete request event to the canonical requests route.
@@ -189,6 +219,7 @@ export function monitorMiddleware(options = {}) {
                                 ...(userAgent ? { userAgent } : {}),
                                 ...(referer ? { referer } : {}),
                                 ...(captureHeaders ? { headers: scrubHeadersSafe(req.headers) } : {}),
+                                ...(captureHeaders ? { headers: scrubHeadersSafe(headers) } : {}),
                                 ...(captureQuery && isRecord(req.query) ? { query: scrubQuery(req.query) } : {}),
                                 ...(bodySnapshot.body ? { body: bodySnapshot.body } : {}),
                                 ...(bodySnapshot.bodySize !== undefined ? { bodySize: bodySnapshot.bodySize } : {}),
@@ -256,7 +287,7 @@ export function monitorMiddleware(options = {}) {
                 wrappedNext();
             });
         };
-        if (createdServerSpan && activeSpan) {
+        if (activeSpan) {
             context.with(trace.setSpan(parentContext ?? context.active(), activeSpan), runInScope);
         }
         else {
@@ -287,6 +318,14 @@ export function expressErrorHandler() {
                 }
                 const error = err instanceof Error ? err : new Error(String(err));
                 captureError(error);
+                const activeSpan = trace.getActiveSpan();
+                if (activeSpan) {
+                    try {
+                        activeSpan.recordException(error);
+                        activeSpan.setStatus({ code: SpanStatusCode.ERROR, message: error.message });
+                    }
+                    catch { /* fail-open */ }
+                }
             }
             catch {
                 // Error capture must remain fail-open
@@ -330,6 +369,8 @@ function readContentLength(value) {
     return undefined;
 }
 function scrubHeadersSafe(headers) {
+    if (!headers || typeof headers !== 'object')
+        return {};
     try {
         const clone = {};
         for (const [key, value] of Object.entries(headers))

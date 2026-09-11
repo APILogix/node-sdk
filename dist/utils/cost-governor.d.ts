@@ -57,6 +57,10 @@ export declare class CostGovernor {
      */
     updateFromConfig(options: Pick<CostGovernorOptions, 'maxSpansPerTrace' | 'maxTraceDurationMs'>): void;
     /**
+     * Reset internal tracking maps and metrics for testing or between SDK lifetimes.
+     */
+    reset(): void;
+    /**
      * Check if a new span can be created for the given trace.
      * Returns false if the trace has exceeded its span limit.
      */
@@ -80,7 +84,6 @@ export declare class CostGovernor {
      */
     shouldReduceTelemetry(): boolean;
     getStats(): CostStats;
-    reset(): void;
     shutdown(): void;
     private getCurrentBytesPerMinute;
     private evictOldestTraces;

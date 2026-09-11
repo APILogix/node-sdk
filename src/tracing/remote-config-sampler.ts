@@ -58,3 +58,34 @@ export class RemoteConfigSampler {
     return 'RemoteConfigSampler'
   }
 }
+
+/**
+ * LocalRecordSampler — sampler used by ParentBasedSampler for local child spans
+ * whose parent was recorded (SamplingDecision.RECORD) but not export-sampled.
+ *
+ * OpenTelemetry's default ParentBasedSampler routes `localParentNotSampled` to
+ * `AlwaysOffSampler` (which drops spans via `NOT_RECORD`).
+ *
+ * By using `LocalRecordSampler` returning `SamplingDecision.RECORD`, all child spans
+ * created within the Node.js process under an unsampled root span are preserved in memory
+ * and delivered to `PipelineSpanExporter` and `TraceAggregator`. This allows the SDK to
+ * make reliable tail-sampling decisions (retaining traces that encounter errors, exceptions,
+ * or exceed latency thresholds) without losing child spans.
+ */
+export class LocalRecordSampler {
+  shouldSample(
+    _context: Context,
+    _traceId: string,
+    _spanName: string,
+    _spanKind: SpanKind,
+    _attributes: Attributes,
+    _links: Link[]
+  ): SamplingResult {
+    return { decision: SamplingDecision.RECORD }
+  }
+
+  toString(): string {
+    return 'LocalRecordSampler'
+  }
+}
+

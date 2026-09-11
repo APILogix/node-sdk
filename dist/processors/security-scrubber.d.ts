@@ -36,10 +36,15 @@ export declare class SecurityScrubber {
     scrub<T extends SDKEvent>(event: T): T;
     scrubBatch<T extends SDKEvent>(events: T[]): T[];
     /**
+     * Determine if a field or attribute key matches sensitive field/header rules.
+     * Checks full key as well as trailing component (e.g. `http.request.header.authorization` -> `authorization`).
+     */
+    private isKeySensitive;
+    /**
      * Scrub an arbitrary value (object, array, or string) with the active
      * field-redaction and PII rules. Used for payload sections that are not
      * part of the fixed event shape — e.g. `LogEvent.args`,
-     * `ReplayEvent.events`, profile payloads. Returns a new value; never
+     * `ReplayEvent.events`, profile payloads, aggregated trace spans. Returns a new value; never
      * mutates the input. Never throws.
      */
     scrubValue(value: unknown, depth?: number): unknown;

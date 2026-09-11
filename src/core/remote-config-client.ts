@@ -7,6 +7,7 @@ import { validateApiKey } from './api-key.js'
 import { getLogger } from '../utils/logger.js'
 
 const CONTROL_PLANE_TIMEOUT_MS = 5_000
+const INIT_TIMEOUT_MS = 1_500
 const CONTROL_PLANE_PATH_PREFIX = ''
 
 export interface InitResponse {
@@ -24,6 +25,7 @@ export interface InitResponse {
 
 interface RemoteConfigClientOptions {
   readonly apiKey: string
+  readonly initTimeoutMs?: number | undefined
   readonly baseUrl?: string | undefined
   readonly timeoutMs?: number | undefined
   readonly fetchImpl?: typeof fetch | undefined
@@ -39,6 +41,7 @@ export class RemoteConfigClient {
   private readonly apiKey: string
   private readonly baseUrl: string
   private readonly timeoutMs: number
+  private readonly initTimeoutMs: number
   private readonly fetchImpl: typeof fetch
 
   constructor(options: RemoteConfigClientOptions) {
@@ -46,6 +49,7 @@ export class RemoteConfigClient {
     this.apiKey = options.apiKey
     this.baseUrl = normalizeBaseUrl(options.baseUrl ?? resolveApiBaseUrl())
     this.timeoutMs = options.timeoutMs ?? CONTROL_PLANE_TIMEOUT_MS
+    this.initTimeoutMs = options.initTimeoutMs ?? options.timeoutMs ?? INIT_TIMEOUT_MS
     this.fetchImpl = options.fetchImpl ?? fetch
   }
 
@@ -97,8 +101,15 @@ export class RemoteConfigClient {
 
   private async post(path: '/v1/init' | '/v1/sdk-config'): Promise<unknown> {
     const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), this.timeoutMs)
-    timer.unref?.()
+    const timeoutMs = path === '/v1/init' ? this.initTimeoutMs : this.timeoutMs
+    let timer: ReturnType<typeof setTimeout>
+    const deadline = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => {
+        reject(new SDKError('Control-plane request timed out', 'NETWORK_ERROR', { reason: 'timeout', timeoutMs }))
+        controller.abort()
+      }, timeoutMs)
+    })
+    // Keep startup alive until its bounded result, including top-level await.
     const url = `${this.baseUrl}${CONTROL_PLANE_PATH_PREFIX}${path}`
 
     try {
@@ -111,7 +122,7 @@ export class RemoteConfigClient {
 
       // Application metadata, capabilities, versions, and local overrides are
       // not configuration inputs; the backend resolves all policy from the API key.
-      const response = await context.with(suppressTracing(context.active()), () =>
+      const response = await Promise.race([deadline, context.with(suppressTracing(context.active()), () =>
         this.fetchImpl(url, {
           method: 'POST',
           headers: {
@@ -123,10 +134,10 @@ export class RemoteConfigClient {
           signal: controller.signal,
           redirect: 'manual',
         }),
-      )
-      const latencyMs = Date.now() - startedAt
+      )])
 
-      const text = await response.text()
+      const text = await Promise.race([deadline, response.text()])
+      const latencyMs = Date.now() - startedAt
       getLogger().info('[RemoteConfigClient] Control-plane response received', {
         endpoint: `${CONTROL_PLANE_PATH_PREFIX}${path}`,
         statusCode: response.status,
@@ -163,7 +174,7 @@ export class RemoteConfigClient {
         reason: normalized.name === 'AbortError' ? 'timeout' : normalized.message,
       }, normalized)
     } finally {
-      clearTimeout(timer)
+      clearTimeout(timer!)
     }
   }
 }

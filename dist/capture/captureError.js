@@ -72,12 +72,6 @@ export function captureError(error, severity) {
             else if (typeof ctx.extra['statusCode'] === 'number') {
                 statusCode = ctx.extra['statusCode'];
             }
-            if (!statusCode && typeof normalized['statusCode'] === 'number') {
-                statusCode = normalized['statusCode'];
-            }
-            else if (!statusCode && typeof normalized['status'] === 'number') {
-                statusCode = normalized['status'];
-            }
             if (typeof ctx.extra.getMethod === 'function') {
                 try {
                     method = ctx.extra.getMethod();
@@ -102,6 +96,12 @@ export function captureError(error, severity) {
             if (typeof ctx.extra.handled === 'boolean') {
                 handled = ctx.extra.handled;
             }
+        }
+        if (!statusCode && typeof normalized['statusCode'] === 'number') {
+            statusCode = normalized['statusCode'];
+        }
+        else if (!statusCode && typeof normalized['status'] === 'number') {
+            statusCode = normalized['status'];
         }
         // Centralized classification derived deterministically from source facts
         const classification = classifyError(handled, mechanism, resolvedSeverity);

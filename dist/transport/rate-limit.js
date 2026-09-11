@@ -16,8 +16,8 @@ export class TokenBucketRateLimiter {
     refillRate;
     lastRefillTime;
     constructor(options) {
-        this.capacity = Math.max(1, Math.floor(options.capacity));
-        this.refillRate = Math.max(0.1, options.refillRate);
+        this.capacity = Number.isFinite(options?.capacity) ? Math.max(1, Math.floor(options.capacity)) : 10;
+        this.refillRate = Number.isFinite(options?.refillRate) ? Math.max(0.1, options.refillRate) : 1;
         this.tokens = this.capacity;
         this.lastRefillTime = Date.now();
     }
@@ -60,8 +60,8 @@ export class SlidingWindowRateLimiter {
     windowMs;
     timestamps = [];
     constructor(options) {
-        this.maxRequests = Math.max(1, Math.floor(options.maxRequests));
-        this.windowMs = Math.max(100, Math.floor(options.windowMs));
+        this.maxRequests = Number.isFinite(options?.maxRequests) ? Math.max(1, Math.floor(options.maxRequests)) : 10;
+        this.windowMs = Number.isFinite(options?.windowMs) ? Math.max(100, Math.floor(options.windowMs)) : 1000;
     }
     tryAcquire() {
         const now = Date.now();
