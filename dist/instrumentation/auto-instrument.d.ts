@@ -29,6 +29,7 @@ export declare function waitForPendingInstrumentations(): Promise<void>;
 /**
  * Register all configured auto-instrumentations.
  * Idempotent: a second call without an intervening reset is a no-op.
+ * Upgrades bootstrap hooks in-place without unregistering or losing loaded module monkey-patches.
  */
 export declare function registerAutoInstrumentations(): void;
 /**
@@ -40,6 +41,8 @@ export declare function registerAutoInstrumentations(): void;
  * a no-op/proxy tracer until `initTracer()` installs the real provider. Once
  * remote config arrives, `registerAutoInstrumentations()` rebuilds the same
  * hooks from the authoritative backend snapshot.
+ * remote config arrives, `registerAutoInstrumentations()` upgrades the same
+ * hooks in-place without unregistering or unwrapping modules.
  */
 export declare function registerBootstrapAutoInstrumentations(): void;
 /**

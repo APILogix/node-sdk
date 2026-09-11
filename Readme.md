@@ -104,6 +104,9 @@ const app = express()
 // ... continue setting up your app
 ```
 
+> 📖 **Need architectural recipes for NestJS, Fastify, BullMQ, TypeScript, or Docker?**  
+> Check out the [Complete Initialization & Load-Order Guide](docs/INITIALIZATION_GUIDE.md) for step-by-step patterns and anti-pattern prevention.
+
 ---
 
 ### 2. CommonJS (CJS)

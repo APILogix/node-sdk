@@ -1,7 +1,6 @@
 {
     "name": "@pulse-apm/node",
-    "version": "8.0.2",
-    "version": "8.1.0",
+    "version": "8.1.1",
     "description": "Enterprise-grade observability SDK with error tracking, tracing, metrics, and breadcrumbs",
     "main": "dist/index.js",
     "types": "dist/index.d.ts",

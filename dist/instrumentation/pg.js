@@ -20,6 +20,7 @@ export function createPgInstrumentation(enabled, mergedOptions, captureConfig) {
         enhancedDatabaseReporting: mergedOptions?.captureParams ?? mergedOptions?.captureQueries ?? captureBody,
         addSqlCommenterCommentToQueries: false,
         ...(mergedOptions?.requireParentSpan !== undefined ? { requireParentSpan: mergedOptions.requireParentSpan } : {}),
+        requireParentSpan: mergedOptions?.requireParentSpan ?? false,
         ...(mergedOptions?.ignoreConnectSpans !== undefined ? { ignoreConnectSpans: mergedOptions.ignoreConnectSpans } : {}),
     };
     return new OTelPgInstrumentation(instrumentationOptions);

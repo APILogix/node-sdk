@@ -19,6 +19,7 @@ export function createMongoDBInstrumentation(enabled, mergedOptions, captureConf
         enabled: true,
         enhancedDatabaseReporting: mergedOptions?.enhancedDatabaseReporting ?? false,
         ...(mergedOptions?.requireParentSpan !== undefined ? { requireParentSpan: mergedOptions.requireParentSpan } : {}),
+        requireParentSpan: mergedOptions?.requireParentSpan ?? false,
         dbStatementSerializer: mergedOptions?.dbStatementSerializer ?? ((command) => {
             if (!captureBody) {
                 return '[REDACTED]';

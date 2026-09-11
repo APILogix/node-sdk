@@ -16,7 +16,7 @@
  * Architecture:
  *   OTel Instrumentation → Pulse SpanProcessor → PipelineSpanExporter → EventPipeline
  */
-import { context, SpanKind } from '@opentelemetry/api';
+import { context, SpanKind, trace } from '@opentelemetry/api';
 import { getTraceAggregator } from '../tracing/trace-aggregator.js';
 import { registerInstrumentations } from '@opentelemetry/instrumentation';
 import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
@@ -36,6 +36,7 @@ import { createAxiosInstrumentation, SUPPRESS_INNER_HTTP } from './axios.js';
 import { createPgInstrumentation } from './pg.js';
 import { createMySQLInstrumentation } from './mysql.js';
 import { createMongoDBInstrumentation } from './mongodb.js';
+import { createMongooseInstrumentation, MongooseInstrumentation } from './mongoose.js';
 import { createRedisInstrumentation, createIORedisInstrumentation } from './redis.js';
 import { createBullMQInstrumentation } from './bullmq.js';
 import { createGraphQLInstrumentation } from './graphql.js';
@@ -52,6 +53,7 @@ const INSTRUMENTATION_GUARD = Symbol.for('pulse-sdk.auto-instrumentation.registe
 const TEARDOWN_REGISTRY = Symbol.for('pulse-sdk.auto-instrumentation.teardowns');
 const UNREGISTER_FN = Symbol.for('pulse-sdk.auto-instrumentation.unregister');
 const BOOTSTRAP_GUARD = Symbol.for('pulse-sdk.auto-instrumentation.bootstrap');
+const ACTIVE_REGISTRY = Symbol.for('pulse-sdk.auto-instrumentation.registry');
 function getGlobalState() {
     return globalThis;
 }
@@ -139,7 +141,9 @@ function resolveInstrumentationOptions() {
         prisma: prismaConfig.enabled && automaticTracingAllowed,
         prismaConfig,
         mongodb: mongodbEnabled && automaticTracingAllowed,
+        mongoose: mongodbEnabled && automaticTracingAllowed,
         redis: redisEnabled && automaticTracingAllowed,
+        ioredis: redisEnabled && automaticTracingAllowed,
         redisConfig,
         bullmq: bullmqConfig.enabled && automaticTracingAllowed,
         bullmqConfig,
@@ -156,234 +160,314 @@ function resolveInstrumentationOptions() {
         captureConfig,
     };
 }
+function createHttpInstrumentationInstance(httpEnabled, httpsEnabled) {
+    return new HttpInstrumentation({
+        ignoreOutgoingRequestHook: (request) => {
+            if (context.active().getValue(SUPPRESS_INNER_HTTP) === true)
+                return true;
+            if (!client.initialized)
+                return false;
+            try {
+                if (!isRequestProtocolEnabled(request, httpEnabled, httpsEnabled))
+                    return true;
+                const reqCheck = request;
+                if (typeof reqCheck.getHeader === 'function' && reqCheck.getHeader('x-pulse-internal') === '1') {
+                    return true;
+                }
+                if (reqCheck.headers && reqCheck.headers['x-pulse-internal'] === '1') {
+                    return true;
+                }
+                const routes = ConfigManager.getInstance().getConfig().transport.routes;
+                let target = null;
+                if (typeof request === 'string') {
+                    try {
+                        target = new URL(request);
+                    }
+                    catch { }
+                }
+                else if (request && typeof request === 'object') {
+                    const req = request;
+                    const candidate = String(req.href ?? req.url ?? '');
+                    if (candidate.startsWith('http://') || candidate.startsWith('https://')) {
+                        try {
+                            target = new URL(candidate);
+                        }
+                        catch { }
+                    }
+                    else {
+                        const host = String(req.host ?? req.hostname ?? 'localhost');
+                        const protocol = String(req.protocol ?? 'http:');
+                        const path = String(req.path ?? req.pathname ?? '/');
+                        try {
+                            target = new URL(`${protocol.endsWith(':') ? protocol : protocol + ':'}//${host}${path}`);
+                        }
+                        catch { }
+                    }
+                }
+                if (!target)
+                    return false;
+                return Object.values(routes).some(route => isInternalSdkUrl(target, new URL(route.url)));
+            }
+            catch {
+                return false;
+            }
+        },
+        ignoreIncomingRequestHook: (request) => !isRequestProtocolEnabled(request, httpEnabled, httpsEnabled),
+        // ─── Defensive Lifecycle Hooks ───────────────────────────────
+        // Guard against socket destruction race conditions in OTel's HTTP instrumentation.
+        requestHook: (span, request) => {
+            try {
+                const req = request;
+                req.__pulseServerSpan = span;
+                const socket = req.socket;
+                if (socket && (socket.destroyed === true || socket.writable === false)) {
+                    span.setAttribute('pulse.http.socket_state', 'destroyed');
+                }
+                // P0.3: Root HTTP Server Span Lifecycle Coordination
+                // Ensure root HTTP server span remains open until all request-scoped async operations
+                // (database queries, external calls, async route handler continuation) complete.
+                const spanAny = span;
+                const isServerSpan = spanAny['kind'] === SpanKind.SERVER || (!('getHeader' in request) && 'socket' in request);
+                if (isServerSpan && typeof span.end === 'function') {
+                    const ctx = span.spanContext();
+                    const traceId = ctx?.traceId;
+                    if (traceId) {
+                        const originalEnd = span.end.bind(span);
+                        let ended = false;
+                        span.end = function pulseInterceptedRootSpanEnd(...args) {
+                            if (ended)
+                                return;
+                            const aggregator = getTraceAggregator();
+                            const activeCount = aggregator.getActiveSpanCount(traceId);
+                            const executeEnd = () => {
+                                if (ended)
+                                    return;
+                                ended = true;
+                                originalEnd.apply(this, args.length > 0 ? args : undefined);
+                            };
+                            if (activeCount > 1) {
+                                aggregator.waitForActiveChildren(traceId, executeEnd, 10000);
+                            }
+                            else {
+                                setImmediate(() => {
+                                    const countNow = aggregator.getActiveSpanCount(traceId);
+                                    if (countNow > 1) {
+                                        aggregator.waitForActiveChildren(traceId, executeEnd, 10000);
+                                    }
+                                    else {
+                                        executeEnd();
+                                    }
+                                });
+                            }
+                        };
+                    }
+                }
+            }
+            catch {
+                // Never crash from a hook — isolated by design
+            }
+        },
+        responseHook: (span, response) => {
+            try {
+                const res = response;
+                if (res.statusCode == null) {
+                    span.setAttribute('pulse.http.incomplete_response', true);
+                }
+            }
+            catch {
+                // Never crash from a hook
+            }
+        },
+    });
+}
+function createUndiciInstrumentationInstance() {
+    return new UndiciInstrumentation({
+        ignoreRequestHook: (request) => {
+            if (context.active().getValue(SUPPRESS_INNER_HTTP) === true)
+                return true;
+            if (!client.initialized)
+                return false;
+            try {
+                const reqCheck = request;
+                if (reqCheck.headers) {
+                    if (Array.isArray(reqCheck.headers)) {
+                        for (let i = 0; i < reqCheck.headers.length; i += 2) {
+                            if (reqCheck.headers[i]?.toLowerCase() === 'x-pulse-internal' && reqCheck.headers[i + 1] === '1') {
+                                return true;
+                            }
+                        }
+                    }
+                    else if (reqCheck.headers['x-pulse-internal'] === '1') {
+                        return true;
+                    }
+                }
+                const routes = ConfigManager.getInstance().getConfig().transport.routes;
+                const req = request;
+                const rawOrigin = req.origin ?? req['origin'];
+                const rawPath = req.path ?? req['path'] ?? req.pathname;
+                const url = rawOrigin
+                    ? new URL(String(rawPath ?? '/'), String(rawOrigin))
+                    : new URL(String(req.url ?? ''));
+                return Object.values(routes).some(route => isInternalSdkUrl(url, new URL(route.url)));
+            }
+            catch {
+                return false;
+            }
+        },
+    });
+}
 /**
  * Register all configured auto-instrumentations.
  * Idempotent: a second call without an intervening reset is a no-op.
+ * Upgrades bootstrap hooks in-place without unregistering or losing loaded module monkey-patches.
  */
 export function registerAutoInstrumentations() {
     const g = getGlobalState();
     if (g[INSTRUMENTATION_GUARD] && !g[BOOTSTRAP_GUARD])
         return;
-    if (g[BOOTSTRAP_GUARD])
-        resetAutoInstrumentations();
+    const logger = getLogger();
+    const resolved = resolveInstrumentationOptions();
+    const activeTracerProvider = trace.getTracerProvider();
+    // ─── Case 1: Upgrading from bootstrap hooks (Preserve patches in-place) ──
+    if (g[BOOTSTRAP_GUARD] && g[ACTIVE_REGISTRY]) {
+        delete g[BOOTSTRAP_GUARD];
+        g[INSTRUMENTATION_GUARD] = true;
+        const registry = g[ACTIVE_REGISTRY];
+        for (const [name, inst] of Object.entries(registry)) {
+            if (!inst)
+                continue;
+            // 1. Attach active TracerProvider so all calls emit to the real provider
+            if (typeof inst.setTracerProvider === 'function') {
+                try {
+                    ;
+                    inst.setTracerProvider(activeTracerProvider);
+                }
+                catch { }
+            }
+            // 2. Reflect enabled/disabled status from remote config
+            const isEnabled = name === 'mongoose'
+                ? Boolean(resolved.mongodb)
+                : name === 'ioredis'
+                    ? Boolean(resolved.redis)
+                    : Boolean(resolved[name]);
+            if (!isEnabled) {
+                if (typeof inst.disable === 'function') {
+                    try {
+                        ;
+                        inst.disable();
+                    }
+                    catch { }
+                }
+            }
+            else {
+                if (typeof inst.enable === 'function' && typeof inst.isEnabled === 'function' && !inst.isEnabled()) {
+                    try {
+                        ;
+                        inst.enable();
+                    }
+                    catch { }
+                }
+                // 3. Update dynamic configs in-place without unwrapping module hooks
+                if (typeof inst.setConfig === 'function') {
+                    try {
+                        if (name === 'mongodb') {
+                            ;
+                            inst.setConfig({
+                                enabled: true,
+                                enhancedDatabaseReporting: resolved.captureConfig.body,
+                                requireParentSpan: false,
+                            });
+                        }
+                        else if (name === 'pg') {
+                            ;
+                            inst.setConfig({
+                                enabled: true,
+                                enhancedDatabaseReporting: resolved.pgConfig.captureParams || resolved.pgConfig.captureQueries || resolved.captureConfig.body,
+                                requireParentSpan: false,
+                            });
+                        }
+                        else if (name === 'prisma') {
+                            ;
+                            inst.setConfig({
+                                enabled: true,
+                                ...(resolved.prismaConfig.captureQueries ? {} : { ignoreSpanTypes: [/^prisma:engine:/] }),
+                            });
+                        }
+                    }
+                    catch { }
+                }
+                if (name === 'mongoose' && typeof inst.updateCaptureConfig === 'function') {
+                    try {
+                        ;
+                        inst.updateCaptureConfig(resolved.captureConfig);
+                    }
+                    catch { }
+                }
+            }
+        }
+        // 4. Setup Axios if enabled (async module setup not done in bootstrap)
+        if (resolved.axios && !registry.axios) {
+            const axiosInstrumentation = createAxiosInstrumentation(true, {
+                captureRequestData: resolved.captureConfig.body,
+                captureResponseData: resolved.captureConfig.response,
+            }, resolved.captureConfig);
+            if (axiosInstrumentation) {
+                g[TEARDOWN_REGISTRY].push(axiosInstrumentation.teardown);
+                registry.axios = axiosInstrumentation;
+                pendingAsyncSetup = axiosInstrumentation.setup().catch((err) => {
+                    logger.warn('Axios instrumentation setup failed', { error: String(err) });
+                });
+            }
+        }
+        if (resolved.eventEmitterPatch) {
+            patchEventEmitter();
+        }
+        installHttpLifecycleGuard();
+        logger.info('Auto-instrumentations upgraded from bootstrap with remote config', {
+            count: Object.keys(registry).length,
+            mongodb: resolved.mongodb,
+            pg: resolved.pg,
+            prisma: resolved.prisma,
+        });
+        return;
+    }
+    // ─── Case 2: Standalone init (Bootstrap was not run) ──────────────────────
     g[INSTRUMENTATION_GUARD] = true;
     delete g[BOOTSTRAP_GUARD];
     g[TEARDOWN_REGISTRY] = [];
-    // Ensure Node.js ESM customization hooks are registered so ESM modules are intercepted
     registerEsmLoaderHooks();
-    const logger = getLogger();
-    const resolved = resolveInstrumentationOptions();
-    const instrumentations = [];
+    const registry = {};
     if (resolved.http || resolved.https) {
-        instrumentations.push(new HttpInstrumentation({
-            ignoreOutgoingRequestHook: (request) => {
-                if (context.active().getValue(SUPPRESS_INNER_HTTP) === true)
-                    return true;
-                if (!client.initialized)
-                    return false;
-                try {
-                    if (!isRequestProtocolEnabled(request, resolved.http, resolved.https))
-                        return true;
-                    const reqCheck = request;
-                    if (typeof reqCheck.getHeader === 'function' && reqCheck.getHeader('x-pulse-internal') === '1') {
-                        return true;
-                    }
-                    if (reqCheck.headers && reqCheck.headers['x-pulse-internal'] === '1') {
-                        return true;
-                    }
-                    const routes = ConfigManager.getInstance().getConfig().transport.routes;
-                    let target = null;
-                    if (typeof request === 'string') {
-                        try {
-                            target = new URL(request);
-                        }
-                        catch { }
-                    }
-                    else if (request && typeof request === 'object') {
-                        const req = request;
-                        const candidate = String(req.href ?? req.url ?? '');
-                        if (candidate.startsWith('http://') || candidate.startsWith('https://')) {
-                            try {
-                                target = new URL(candidate);
-                            }
-                            catch { }
-                        }
-                        else {
-                            const host = String(req.host ?? req.hostname ?? 'localhost');
-                            const protocol = String(req.protocol ?? 'http:');
-                            const path = String(req.path ?? req.pathname ?? '/');
-                            try {
-                                target = new URL(`${protocol.endsWith(':') ? protocol : protocol + ':'}//${host}${path}`);
-                            }
-                            catch { }
-                        }
-                    }
-                    if (!target)
-                        return false;
-                    return Object.values(routes).some(route => isInternalSdkUrl(target, new URL(route.url)));
-                }
-                catch {
-                    return false;
-                }
-            },
-            ignoreIncomingRequestHook: (request) => !isRequestProtocolEnabled(request, resolved.http, resolved.https),
-            // ─── Defensive Lifecycle Hooks ───────────────────────────────
-            // Guard against the socket destruction race condition in OTel's
-            // HTTP instrumentation. These hooks fire inside OTel's
-            // safeExecuteInTheMiddle so exceptions are caught — but more
-            // importantly they ensure the span gets diagnostic attributes
-            // when the socket is in a degraded state, preventing the
-            // downstream utils from crashing on null properties.
-            requestHook: (span, request) => {
-                try {
-                    const req = request;
-                    req.__pulseServerSpan = span;
-                    const socket = req.socket;
-                    if (socket && (socket.destroyed === true || socket.writable === false)) {
-                        span.setAttribute('pulse.http.socket_state', 'destroyed');
-                    }
-                    // P0.3: Root HTTP Server Span Lifecycle Coordination
-                    // Ensure root HTTP server span remains open until all request-scoped async operations
-                    // (database queries, external calls, async route handler continuation) complete.
-                    const spanAny = span;
-                    const isServerSpan = spanAny['kind'] === SpanKind.SERVER || (!('getHeader' in request) && 'socket' in request);
-                    if (isServerSpan && typeof span.end === 'function') {
-                        const ctx = span.spanContext();
-                        const traceId = ctx?.traceId;
-                        if (traceId) {
-                            const originalEnd = span.end.bind(span);
-                            let ended = false;
-                            span.end = function pulseInterceptedRootSpanEnd(...args) {
-                                if (ended)
-                                    return;
-                                const aggregator = getTraceAggregator();
-                                const activeCount = aggregator.getActiveSpanCount(traceId);
-                                const executeEnd = () => {
-                                    if (ended)
-                                        return;
-                                    ended = true;
-                                    // Call originalEnd with truthful completion time, ensuring parent.end >= child.end
-                                    originalEnd.apply(this, args.length > 0 ? args : undefined);
-                                };
-                                if (activeCount > 1) {
-                                    // In-flight child spans detected; defer ending until child spans complete
-                                    aggregator.waitForActiveChildren(traceId, executeEnd, 10000);
-                                }
-                                else {
-                                    // Defer by setImmediate to give any async handler returning a Promise or chaining
-                                    // an unawaited microtask the opportunity to begin its child span
-                                    setImmediate(() => {
-                                        const countNow = aggregator.getActiveSpanCount(traceId);
-                                        if (countNow > 1) {
-                                            aggregator.waitForActiveChildren(traceId, executeEnd, 10000);
-                                        }
-                                        else {
-                                            executeEnd();
-                                        }
-                                    });
-                                }
-                            };
-                        }
-                    }
-                }
-                catch {
-                    // Never crash from a hook — isolated by design
-                }
-            },
-            responseHook: (span, response) => {
-                try {
-                    const res = response;
-                    // Guard: if response object is incomplete (socket died before
-                    // headers arrived), mark it so we can track in dashboards
-                    if (res.statusCode == null) {
-                        span.setAttribute('pulse.http.incomplete_response', true);
-                    }
-                }
-                catch {
-                    // Never crash from a hook
-                }
-            },
-        }));
+        registry.http = createHttpInstrumentationInstance(resolved.http, resolved.https);
     }
     if (resolved.express) {
-        instrumentations.push(new ExpressInstrumentation());
+        registry.express = new ExpressInstrumentation();
     }
     if (resolved.fastify) {
-        instrumentations.push(new FastifyOtelInstrumentation({
+        registry.fastify = new FastifyOtelInstrumentation({
             registerOnInitialization: true,
             instrumentHooks: resolved.fastifyConfig.captureHooks,
-        }));
+        });
     }
     if (resolved.undici) {
-        instrumentations.push(new UndiciInstrumentation({
-            ignoreRequestHook: (request) => {
-                if (context.active().getValue(SUPPRESS_INNER_HTTP) === true)
-                    return true;
-                if (!client.initialized)
-                    return false;
-                try {
-                    const reqCheck = request;
-                    if (reqCheck.headers) {
-                        // In undici, headers can be an array of strings or an object
-                        if (Array.isArray(reqCheck.headers)) {
-                            for (let i = 0; i < reqCheck.headers.length; i += 2) {
-                                if (reqCheck.headers[i]?.toLowerCase() === 'x-pulse-internal' && reqCheck.headers[i + 1] === '1') {
-                                    return true;
-                                }
-                            }
-                        }
-                        else if (reqCheck.headers['x-pulse-internal'] === '1') {
-                            return true;
-                        }
-                    }
-                    const routes = ConfigManager.getInstance().getConfig().transport.routes;
-                    const req = request;
-                    const rawOrigin = req.origin ?? req['origin'];
-                    const rawPath = req.path ?? req['path'] ?? req.pathname;
-                    const url = rawOrigin
-                        ? new URL(String(rawPath ?? '/'), String(rawOrigin))
-                        : new URL(String(req.url ?? ''));
-                    return Object.values(routes).some(route => isInternalSdkUrl(url, new URL(route.url)));
-                }
-                catch {
-                    return false;
-                }
-            },
-        }));
+        registry.undici = createUndiciInstrumentationInstance();
     }
     if (resolved.graphql) {
-        const graphqlInstrumentation = createGraphQLInstrumentation(resolved.graphqlConfig, resolved.graphqlConfig);
-        if (graphqlInstrumentation) {
-            instrumentations.push(graphqlInstrumentation);
-        }
+        registry.graphql = createGraphQLInstrumentation(resolved.graphqlConfig, resolved.graphqlConfig);
     }
     if (resolved.prisma) {
-        const prismaInstrumentation = createPrismaInstrumentation(resolved.prismaConfig, resolved.prismaConfig);
-        if (prismaInstrumentation) {
-            instrumentations.push(prismaInstrumentation);
-        }
+        registry.prisma = createPrismaInstrumentation(resolved.prismaConfig, resolved.prismaConfig);
     }
     if (resolved.mongodb) {
-        const mongoInstrumentation = createMongoDBInstrumentation(true, { enhancedDatabaseReporting: resolved.captureConfig.body }, resolved.captureConfig);
-        if (mongoInstrumentation) {
-            instrumentations.push(mongoInstrumentation);
-        }
+        registry.mongodb = createMongoDBInstrumentation(true, { enhancedDatabaseReporting: resolved.captureConfig.body, requireParentSpan: false }, resolved.captureConfig);
+        registry.mongoose = createMongooseInstrumentation(true, resolved.captureConfig);
     }
     if (resolved.redis) {
-        const redisInstrumentation = createRedisInstrumentation(true, resolved.redisConfig, resolved.captureConfig);
-        if (redisInstrumentation) {
-            instrumentations.push(redisInstrumentation);
-        }
-        const ioRedisInstrumentation = createIORedisInstrumentation(true, resolved.redisConfig, resolved.captureConfig);
-        if (ioRedisInstrumentation) {
-            instrumentations.push(ioRedisInstrumentation);
-        }
+        registry.redis = createRedisInstrumentation(true, resolved.redisConfig, resolved.captureConfig);
+        registry.ioredis = createIORedisInstrumentation(true, resolved.redisConfig, resolved.captureConfig);
     }
     if (resolved.bullmq) {
-        const bullmqInstrumentation = createBullMQInstrumentation(true, resolved.bullmqConfig, resolved.captureConfig);
-        if (bullmqInstrumentation) {
-            instrumentations.push(bullmqInstrumentation);
-        }
+        registry.bullmq = createBullMQInstrumentation(true, resolved.bullmqConfig, resolved.captureConfig);
     }
     if (resolved.axios) {
         const axiosInstrumentation = createAxiosInstrumentation(true, {
@@ -391,70 +475,37 @@ export function registerAutoInstrumentations() {
             captureResponseData: resolved.captureConfig.response,
         }, resolved.captureConfig);
         if (axiosInstrumentation) {
-            // Track teardown so reset() can fully unwind the patch.
             g[TEARDOWN_REGISTRY].push(axiosInstrumentation.teardown);
-            // setup() is async (ESM-safe module loading) — track promise to await in init
+            registry.axios = axiosInstrumentation;
             pendingAsyncSetup = axiosInstrumentation.setup().catch((err) => {
                 logger.warn('Axios instrumentation setup failed', { error: String(err) });
             });
         }
     }
     if (resolved.pg) {
-        const pgInstrumentation = createPgInstrumentation(true, { captureQueries: resolved.pgConfig.captureQueries, captureParams: resolved.pgConfig.captureParams }, resolved.captureConfig);
-        if (pgInstrumentation) {
-            instrumentations.push(pgInstrumentation);
-        }
+        registry.pg = createPgInstrumentation(true, { captureQueries: resolved.pgConfig.captureQueries, captureParams: resolved.pgConfig.captureParams, requireParentSpan: false }, resolved.captureConfig);
     }
     if (resolved.mysql2) {
-        const mysqlInstrumentation = createMySQLInstrumentation(true, { captureQueries: resolved.mysql2Config.captureQueries }, resolved.captureConfig);
-        if (mysqlInstrumentation) {
-            instrumentations.push(mysqlInstrumentation);
-        }
+        registry.mysql2 = createMySQLInstrumentation(true, { captureQueries: resolved.mysql2Config.captureQueries }, resolved.captureConfig);
     }
-    const registeredInstrumentations = instrumentations.filter(Boolean);
-    if (registeredInstrumentations.length > 0) {
-        // Each call to registerInstrumentations returns an unregister function
-        // that disables every instrumentation it registered. Capturing it lets
-        // resetAutoInstrumentations() fully unwind monkey-patches on the next
-        // shutdown — without this, the next init() would skip OTel registration
-        // because the guard symbol was cleared but the patches remained live.
-        const unregister = registerInstrumentations({
-            instrumentations: registeredInstrumentations,
+    g[ACTIVE_REGISTRY] = registry;
+    const otelInstrumentations = Object.values(registry).filter((inst) => Boolean(inst && typeof inst.setTracerProvider === 'function'));
+    if (otelInstrumentations.length > 0) {
+        g[UNREGISTER_FN] = registerInstrumentations({
+            instrumentations: otelInstrumentations,
+            tracerProvider: activeTracerProvider,
         });
-        g[UNREGISTER_FN] = unregister;
     }
-    logger.info('Auto-instrumentations registered (remote-config-driven)', {
-        http: resolved.http,
-        https: resolved.https,
-        express: resolved.express,
-        fastify: resolved.fastify,
-        undici: resolved.undici,
-        graphql: resolved.graphql,
-        prisma: resolved.prisma,
-        mongodb: resolved.mongodb,
-        redis: resolved.redis,
-        bullmq: resolved.bullmq,
-        axios: resolved.axios,
-        pg: resolved.pg,
-        mysql2: resolved.mysql2,
-        eventEmitterPatch: resolved.eventEmitterPatch,
-        fastifyCaptureHooks: resolved.fastifyConfig.captureHooks,
-        fastifyCaptureValidationErrors: resolved.fastifyConfig.captureValidationErrors,
-        graphqlCaptureResolvers: resolved.graphqlConfig.captureResolvers,
-        prismaCaptureQueries: resolved.prismaConfig.captureQueries,
-        prismaCaptureParams: resolved.prismaConfig.captureParams,
-        pgCaptureQueries: resolved.pgConfig.captureQueries,
-        mysql2CaptureQueries: resolved.mysql2Config.captureQueries,
-        count: registeredInstrumentations.length,
-    });
-    // Apply EventEmitter context binding patch so listeners preserve
-    // the async context (trace ID, span) that was active at registration time.
     if (resolved.eventEmitterPatch) {
         patchEventEmitter();
     }
-    // Install the HTTP lifecycle guard to protect against socket
-    // destruction race conditions in OTel's HTTP instrumentation.
     installHttpLifecycleGuard();
+    logger.info('Auto-instrumentations registered (remote-config-driven)', {
+        count: otelInstrumentations.length,
+        mongodb: resolved.mongodb,
+        pg: resolved.pg,
+        prisma: resolved.prisma,
+    });
 }
 /**
  * Install safe module-load hooks as soon as the SDK package is imported.
@@ -465,6 +516,8 @@ export function registerAutoInstrumentations() {
  * a no-op/proxy tracer until `initTracer()` installs the real provider. Once
  * remote config arrives, `registerAutoInstrumentations()` rebuilds the same
  * hooks from the authoritative backend snapshot.
+ * remote config arrives, `registerAutoInstrumentations()` upgrades the same
+ * hooks in-place without unregistering or unwrapping modules.
  */
 export function registerBootstrapAutoInstrumentations() {
     const g = getGlobalState();
@@ -482,37 +535,35 @@ export function registerBootstrapAutoInstrumentations() {
         query: false,
         cookies: false,
     };
-    const instrumentations = [
-        new HttpInstrumentation({
-            ignoreOutgoingRequestHook: () => context.active().getValue(SUPPRESS_INNER_HTTP) === true,
-        }),
-        new ExpressInstrumentation(),
-        new FastifyOtelInstrumentation({
-            registerOnInitialization: true,
-            instrumentHooks: true,
-        }),
-        new UndiciInstrumentation({
-            ignoreRequestHook: () => context.active().getValue(SUPPRESS_INNER_HTTP) === true,
-        }),
-        createGraphQLInstrumentation(true, { enabled: true, captureResolvers: true }),
-        createPrismaInstrumentation(true, { enabled: true, captureQueries: true, captureParams: false }),
-        createMongoDBInstrumentation(true, { enhancedDatabaseReporting: false }, captureConfig),
-        createRedisInstrumentation(true, {}, captureConfig),
-        createIORedisInstrumentation(true, {}, captureConfig),
-        createBullMQInstrumentation(true, {
-            enabled: true,
-            emitCreateSpansForBulk: true,
-            emitCreateSpansForFlow: true,
-            requireParentSpanForPublish: false,
-        }, captureConfig),
-        createPgInstrumentation(true, { captureQueries: false, captureParams: false }, captureConfig),
-        createMySQLInstrumentation(true, { captureQueries: false }, captureConfig),
-    ].filter(Boolean);
+    const registry = {};
+    registry.http = createHttpInstrumentationInstance(true, true);
+    registry.express = new ExpressInstrumentation();
+    registry.fastify = new FastifyOtelInstrumentation({
+        registerOnInitialization: true,
+        instrumentHooks: true,
+    });
+    registry.undici = createUndiciInstrumentationInstance();
+    registry.graphql = createGraphQLInstrumentation(true, { enabled: true, captureResolvers: true });
+    registry.prisma = createPrismaInstrumentation(true, { enabled: true, captureQueries: true, captureParams: false });
+    registry.mongodb = createMongoDBInstrumentation(true, { enhancedDatabaseReporting: false, requireParentSpan: false }, captureConfig);
+    registry.mongoose = createMongooseInstrumentation(true, captureConfig);
+    registry.redis = createRedisInstrumentation(true, {}, captureConfig);
+    registry.ioredis = createIORedisInstrumentation(true, {}, captureConfig);
+    registry.bullmq = createBullMQInstrumentation(true, {
+        enabled: true,
+        emitCreateSpansForBulk: true,
+        emitCreateSpansForFlow: true,
+        requireParentSpanForPublish: false,
+    }, captureConfig);
+    registry.pg = createPgInstrumentation(true, { captureQueries: false, captureParams: false, requireParentSpan: false }, captureConfig);
+    registry.mysql2 = createMySQLInstrumentation(true, { captureQueries: false }, captureConfig);
+    const instrumentations = Object.values(registry).filter((inst) => Boolean(inst && typeof inst.setTracerProvider === 'function'));
     if (instrumentations.length > 0) {
         g[UNREGISTER_FN] = registerInstrumentations({
             instrumentations: instrumentations,
         });
     }
+    g[ACTIVE_REGISTRY] = registry;
     // NOTE: patchEventEmitter() is intentionally NOT called during bootstrap.
     // Global prototype patching must be strictly governed by configuration.
     installHttpLifecycleGuard();
@@ -564,6 +615,7 @@ export function resetAutoInstrumentations() {
     delete g[BOOTSTRAP_GUARD];
     delete g[TEARDOWN_REGISTRY];
     delete g[UNREGISTER_FN];
+    delete g[ACTIVE_REGISTRY];
     pendingAsyncSetup = null;
     // Remove the EventEmitter context binding patch so the next register
     // call rebuilds from scratch with the latest configuration.

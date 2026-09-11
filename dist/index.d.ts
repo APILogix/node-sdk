@@ -53,10 +53,12 @@ export { registerAutoInstrumentations } from './instrumentation/auto-instrument.
 export { registerEsmLoaderHooks } from './instrumentation/esm-loader.js';
 export { createGraphQLInstrumentation } from './instrumentation/graphql.js';
 export type { GraphQLInstrumentationOptions } from './instrumentation/graphql.js';
-export { createPrismaInstrumentation } from './instrumentation/prisma.js';
+export { createPrismaInstrumentation, pulsePrismaExtension, instrumentPrismaClientInstance } from './instrumentation/prisma.js';
 export type { PrismaInstrumentationOptions } from './instrumentation/prisma.js';
 export { createMongoDBInstrumentation } from './instrumentation/mongodb.js';
 export type { MongoDBInstrumentationOptions } from './instrumentation/mongodb.js';
+export { createMongooseInstrumentation, MongooseInstrumentation } from './instrumentation/mongoose.js';
+export type { MongooseInstrumentationOptions } from './instrumentation/mongoose.js';
 export { createRedisInstrumentation } from './instrumentation/redis.js';
 export type { RedisInstrumentationOptions } from './instrumentation/redis.js';
 export { createBullMQInstrumentation } from './instrumentation/bullmq.js';
