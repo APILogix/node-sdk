@@ -188,7 +188,7 @@
           <span>3. SDK Initialization & Startup</span>
         </h2>
         <p class="text-slate-300 text-sm">
-          Call <code class="text-sky-400">createSDK()</code> at the very beginning of your application entry point before importing or creating database connection pools.
+          Call <code class="text-sky-400">init()</code> at the very beginning of your application entry point before importing or creating database connection pools. <strong><code class="text-sky-300">apiKey</code> is the only required option!</strong> The SDK automatically discovers your <code class="text-slate-300">applicationName</code> and <code class="text-slate-300">release</code> (version) directly from your project's <code class="text-sky-300 font-mono">package.json</code> file.
         </p>
 
         <!-- Code Block Container with Tabs -->
@@ -204,15 +204,11 @@
           <!-- ESM Tab Content -->
           <div id="init-esm" class="tab-content block">
             <pre><code><span class="token-comment">// server.js or app.ts (ESM)</span>
-<span class="token-keyword">import</span> { <span class="token-function">createSDK</span> } <span class="token-keyword">from</span> <span class="token-string">'@pulse-apm/node'</span>
+<span class="token-keyword">import</span> { <span class="token-function">init</span> } <span class="token-keyword">from</span> <span class="token-string">'@pulse-apm/node'</span>
 
-<span class="token-comment">// 1. Initialize the SDK before starting your server</span>
-<span class="token-keyword">await</span> <span class="token-function">createSDK</span>({
+<span class="token-comment">// 1. Initialize the SDK (apiKey is the only required parameter!)</span>
+<span class="token-keyword">await</span> <span class="token-function">init</span>({
   apiKey: process.env.<span class="token-param">PULSE_API_KEY</span> || <span class="token-string">'pk_live_your_api_key_here'</span>,
-  applicationName: <span class="token-string">'billing-service'</span>,
-  environment: process.env.<span class="token-param">NODE_ENV</span> || <span class="token-string">'production'</span>,
-  release: <span class="token-string">'1.2.0'</span>,
-  debug: <span class="token-keyword">false</span>,
 })
 
 <span class="token-comment">// 2. Import frameworks and database drivers AFTER initialization</span>
@@ -226,15 +222,12 @@
           <!-- CJS Tab Content -->
           <div id="init-cjs" class="tab-content hidden">
             <pre><code><span class="token-comment">// server.js (CommonJS)</span>
-<span class="token-keyword">const</span> { <span class="token-function">createSDK</span> } = <span class="token-function">require</span>(<span class="token-string">'@pulse-apm/node'</span>)
+<span class="token-keyword">const</span> { <span class="token-function">init</span> } = <span class="token-function">require</span>(<span class="token-string">'@pulse-apm/node'</span>)
 
 <span class="token-keyword">async</span> <span class="token-keyword">function</span> <span class="token-function">bootstrap</span>() {
-  <span class="token-comment">// 1. Initialize SDK at top of process</span>
-  <span class="token-keyword">await</span> <span class="token-function">createSDK</span>({
+  <span class="token-comment">// 1. Initialize SDK with apiKey only</span>
+  <span class="token-keyword">await</span> <span class="token-function">init</span>({
     apiKey: process.env.<span class="token-param">PULSE_API_KEY</span> || <span class="token-string">'pk_live_your_api_key_here'</span>,
-    applicationName: <span class="token-string">'billing-service'</span>,
-    environment: process.env.<span class="token-param">NODE_ENV</span> || <span class="token-string">'production'</span>,
-    release: <span class="token-string">'1.2.0'</span>,
   })
 
   <span class="token-comment">// 2. Require dependencies AFTER initialization</span>
@@ -246,6 +239,17 @@
 }
 
 <span class="token-function">bootstrap</span>().<span class="token-function">catch</span>(console.error)</code></pre>
+          </div>
+        </div>
+
+        <!-- Callout Alert for Process Singleton -->
+        <div class="bg-slate-900/90 border border-slate-800 rounded-xl p-4 flex items-start space-x-3 text-xs text-slate-300">
+          <div class="text-sky-400 font-bold mt-0.5">ℹ</div>
+          <div>
+            <span class="font-semibold text-white">Process-Wide Telemetry Singleton</span>
+            <p class="text-slate-400 mt-1">
+              <code class="text-sky-300">init()</code> starts the process-level telemetry runtime, sets up OpenTelemetry providers, and registers global unhandled error handlers. All trace spans, metric counters, and middlewares automatically hook into this initialized process singleton.
+            </p>
           </div>
         </div>
       </section>
@@ -272,11 +276,11 @@
 
           <!-- Express ESM Tab -->
           <div id="express-esm" class="tab-content block">
-            <pre><code><span class="token-keyword">import</span> { <span class="token-function">createSDK</span>, <span class="token-function">monitorMiddleware</span>, <span class="token-function">expressErrorHandler</span> } <span class="token-keyword">from</span> <span class="token-string">'@pulse-apm/node'</span>
+            <pre><code><span class="token-keyword">import</span> { <span class="token-function">init</span>, <span class="token-function">monitorMiddleware</span>, <span class="token-function">expressErrorHandler</span> } <span class="token-keyword">from</span> <span class="token-string">'@pulse-apm/node'</span>
 <span class="token-keyword">import</span> express <span class="token-keyword">from</span> <span class="token-string">'express'</span>
 <span class="token-keyword">import</span> pg <span class="token-keyword">from</span> <span class="token-string">'pg'</span>
 
-<span class="token-keyword">await</span> <span class="token-function">createSDK</span>({ apiKey: process.env.<span class="token-param">PULSE_API_KEY</span>! })
+<span class="token-keyword">await</span> <span class="token-function">init</span>({ apiKey: process.env.<span class="token-param">PULSE_API_KEY</span>! })
 
 <span class="token-keyword">const</span> pool = <span class="token-keyword">new</span> pg.<span class="token-type">Pool</span>({ connectionString: process.env.<span class="token-param">DATABASE_URL</span> })
 <span class="token-keyword">const</span> app = <span class="token-function">express</span>()
@@ -301,12 +305,12 @@ app.<span class="token-function">listen</span>(3000, () =&gt; console.<span clas
 
           <!-- Express CJS Tab -->
           <div id="express-cjs" class="tab-content hidden">
-            <pre><code><span class="token-keyword">const</span> { <span class="token-function">createSDK</span>, <span class="token-function">monitorMiddleware</span>, <span class="token-function">expressErrorHandler</span> } = <span class="token-function">require</span>(<span class="token-string">'@pulse-apm/node'</span>)
+            <pre><code><span class="token-keyword">const</span> { <span class="token-function">init</span>, <span class="token-function">monitorMiddleware</span>, <span class="token-function">expressErrorHandler</span> } = <span class="token-function">require</span>(<span class="token-string">'@pulse-apm/node'</span>)
 <span class="token-keyword">const</span> express = <span class="token-function">require</span>(<span class="token-string">'express'</span>)
 <span class="token-keyword">const</span> { Pool } = <span class="token-function">require</span>(<span class="token-string">'pg'</span>)
 
 <span class="token-keyword">async</span> <span class="token-keyword">function</span> <span class="token-function">start</span>() {
-  <span class="token-keyword">await</span> <span class="token-function">createSDK</span>({ apiKey: process.env.<span class="token-param">PULSE_API_KEY</span> })
+  <span class="token-keyword">await</span> <span class="token-function">init</span>({ apiKey: process.env.<span class="token-param">PULSE_API_KEY</span> })
 
   <span class="token-keyword">const</span> pool = <span class="token-keyword">new</span> <span class="token-type">Pool</span>({ connectionString: process.env.<span class="token-param">DATABASE_URL</span> })
   <span class="token-keyword">const</span> app = <span class="token-function">express</span>()
@@ -328,10 +332,10 @@ app.<span class="token-function">listen</span>(3000, () =&gt; console.<span clas
 
           <!-- Fastify Tab -->
           <div id="fastify-esm" class="tab-content hidden">
-            <pre><code><span class="token-keyword">import</span> { <span class="token-function">createSDK</span>, <span class="token-function">fastifyPulsePlugin</span> } <span class="token-keyword">from</span> <span class="token-string">'@pulse-apm/node'</span>
+            <pre><code><span class="token-keyword">import</span> { <span class="token-function">init</span>, <span class="token-function">fastifyPulsePlugin</span> } <span class="token-keyword">from</span> <span class="token-string">'@pulse-apm/node'</span>
 <span class="token-keyword">import</span> Fastify <span class="token-keyword">from</span> <span class="token-string">'fastify'</span>
 
-<span class="token-keyword">await</span> <span class="token-function">createSDK</span>({ apiKey: process.env.<span class="token-param">PULSE_API_KEY</span>! })
+<span class="token-keyword">await</span> <span class="token-function">init</span>({ apiKey: process.env.<span class="token-param">PULSE_API_KEY</span>! })
 
 <span class="token-keyword">const</span> fastify = <span class="token-function">Fastify</span>({ logger: <span class="token-keyword">true</span> })
 
@@ -775,14 +779,9 @@ process.<span class="token-function">on</span>(<span class="token-string">'SIGTE
             </thead>
             <tbody class="divide-y divide-slate-800/60 bg-slate-900/50 text-xs font-mono">
               <tr class="api-row">
-                <td class="px-4 py-3 font-semibold text-sky-400">createSDK(options)</td>
-                <td class="px-4 py-3 text-slate-400">(options: SDKInitOptions) =&gt; Promise</td>
-                <td class="px-4 py-3 text-slate-300 font-sans">Recommended top-level initialization function for the SDK.</td>
-              </tr>
-              <tr class="api-row">
                 <td class="px-4 py-3 font-semibold text-sky-400">init(options)</td>
-                <td class="px-4 py-3 text-slate-400">(options: SDKInitOptions) =&gt; Promise</td>
-                <td class="px-4 py-3 text-slate-300 font-sans">Canonical initialization function (alias to createSDK).</td>
+                <td class="px-4 py-3 text-slate-400">(options: SDKInitOptions) =&gt; Promise&lt;RemoteConfig&gt;</td>
+                <td class="px-4 py-3 text-slate-300 font-sans">Process-level initialization. Auto-reads package.json for application name and version.</td>
               </tr>
               <tr class="api-row">
                 <td class="px-4 py-3 font-semibold text-sky-400">monitorMiddleware(options?)</td>

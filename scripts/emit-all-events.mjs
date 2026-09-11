@@ -1,5 +1,5 @@
 import {
-  createSDK,
+  init,
   captureError,
   captureMessage,
   captureRequest,
@@ -21,7 +21,7 @@ process.env.SDK_BASE_URL = process.env.SDK_BASE_URL || 'http://127.0.0.1:5000';
 
 console.log('[SDK Emitter] Initializing SDK pointing to:', process.env.SDK_BASE_URL);
 
-const config = await createSDK({
+const config = await init({
   apiKey: 'pv_live_test_api_key_cubicle_1234567890',
   applicationName: 'cubicle-backend-demo',
   applicationVersion: '8.0.0',

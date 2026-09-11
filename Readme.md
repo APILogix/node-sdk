@@ -85,16 +85,15 @@ node --import @pulse-apm/node/register server.js
 
 #### Step 2: Initialize in Code
 
+All you need is your **`apiKey`**! The SDK automatically reads your `package.json` to detect `applicationName` and `release` (version). Environment and project settings are authoritatively managed via remote configuration.
+
 ```typescript
 // server.js or app.ts
-import { createSDK } from '@pulse-apm/node'
+import { init } from '@pulse-apm/node'
 
-// Initialize the SDK before starting your server
-await createSDK({
+// Initialize the SDK before starting your server (apiKey is the only required option!)
+await init({
   apiKey: process.env.PULSE_API_KEY || 'pk_live_your_api_key_here',
-  applicationName: 'billing-service',
-  environment: process.env.NODE_ENV || 'production',
-  release: '1.2.0',
 })
 
 // Import frameworks and database drivers AFTER initialization
@@ -113,15 +112,12 @@ If your project uses standard CommonJS (`require`):
 
 ```javascript
 // server.js
-const { createSDK } = require('@pulse-apm/node')
+const { init } = require('@pulse-apm/node')
 
 async function bootstrap() {
-  // 1. Initialize the SDK at the very top of your entrypoint
-  await createSDK({
+  // 1. Initialize the SDK with apiKey only
+  await init({
     apiKey: process.env.PULSE_API_KEY || 'pk_live_your_api_key_here',
-    applicationName: 'billing-service',
-    environment: process.env.NODE_ENV || 'production',
-    release: '1.2.0',
   })
 
   // 2. Require frameworks and database drivers AFTER initialization
@@ -151,12 +147,12 @@ To capture incoming HTTP requests, route parameters, response status codes, payl
 #### Express ESM Example
 
 ```typescript
-import { createSDK, monitorMiddleware, expressErrorHandler } from '@pulse-apm/node'
+import { init, monitorMiddleware, expressErrorHandler } from '@pulse-apm/node'
 import express from 'express'
 import pg from 'pg'
 
 // 1. Initialize SDK
-await createSDK({ apiKey: process.env.PULSE_API_KEY! })
+await init({ apiKey: process.env.PULSE_API_KEY! })
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL })
 const app = express()
@@ -190,12 +186,12 @@ app.listen(3000, () => {
 #### Express CommonJS Example
 
 ```javascript
-const { createSDK, monitorMiddleware, expressErrorHandler } = require('@pulse-apm/node')
+const { init, monitorMiddleware, expressErrorHandler } = require('@pulse-apm/node')
 const express = require('express')
 const { Pool } = require('pg')
 
 async function main() {
-  await createSDK({ apiKey: process.env.PULSE_API_KEY })
+  await init({ apiKey: process.env.PULSE_API_KEY })
 
   const pool = new Pool({ connectionString: process.env.DATABASE_URL })
   const app = express()
@@ -226,10 +222,10 @@ main().catch(console.error)
 Fastify applications use `fastifyPulsePlugin`:
 
 ```typescript
-import { createSDK, fastifyPulsePlugin } from '@pulse-apm/node'
+import { init, fastifyPulsePlugin } from '@pulse-apm/node'
 import Fastify from 'fastify'
 
-await createSDK({ apiKey: process.env.PULSE_API_KEY! })
+await init({ apiKey: process.env.PULSE_API_KEY! })
 
 const fastify = Fastify({ logger: true })
 
@@ -581,8 +577,7 @@ process.on('SIGINT', onSignal)
 
 | Function / Export | Purpose | Common Usage |
 |---|---|---|
-| `createSDK(options)` | Recommended SDK initialization function. | `await createSDK({ apiKey: '...' })` |
-| `init(options)` | Canonical initialization function (alias to `createSDK`). | `await init({ apiKey: '...' })` |
+| `init(options)` | Standard process-level SDK initialization function. Reads `package.json` for app metadata. | `await init({ apiKey: '...' })` |
 | `monitorMiddleware(options)` | Express request & context monitoring middleware. | `app.use(monitorMiddleware())` |
 | `expressErrorHandler()` | Express error capture middleware. | `app.use(expressErrorHandler())` |
 | `fastifyPulsePlugin` | Fastify request monitoring plugin. | `await fastify.register(fastifyPulsePlugin)` |

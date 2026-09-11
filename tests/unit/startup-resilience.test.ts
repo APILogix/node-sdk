@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { createSDK } from '../../src/index.js'
+import { init } from '../../src/index.js'
 import { client } from '../../src/core/client.js'
 import { SerializationPool } from '../../src/transport/serialization-pool.js'
 
@@ -14,7 +14,7 @@ describe('application startup with unavailable telemetry', () => {
       return new Promise<Response>(() => {})
     }
     try {
-      const results = await Promise.all(Array.from({ length: 20 }, () => createSDK({ apiKey: 'test-key', initTimeoutMs: 100 })))
+      const results = await Promise.all(Array.from({ length: 20 }, () => init({ apiKey: 'test-key', initTimeoutMs: 100 })))
       assert.ok(results.every(result => result === undefined))
       assert.equal(calls, 1)
       assert.equal(client.initialized, false)
@@ -34,7 +34,7 @@ describe('application startup with unavailable telemetry', () => {
       return new Response(JSON.stringify({ error: 'Server busy' }), { status: 503, headers: { 'Retry-After': '10' } })
     }
     try {
-      assert.equal(await createSDK({ apiKey: 'test-key' }), undefined)
+      assert.equal(await init({ apiKey: 'test-key' }), undefined)
       assert.equal(calls, 1)
       assert.equal(client.initialized, false)
     } finally {

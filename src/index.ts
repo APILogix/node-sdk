@@ -13,13 +13,13 @@
  *
  * Typical usage:
  *
- *     import { createSDK, captureError, monitorMiddleware } from '@vikasbaplawat1/pulse-sdk'
+ *     import { init, captureError, monitorMiddleware } from '@pulse-apm/node'
  *
- *     await createSDK({ apiKey: process.env.PULSE_API_KEY! })
+ *     await init({ apiKey: process.env.PULSE_API_KEY! })
  *     app.use(monitorMiddleware())
  */
 
-import { init } from './core/init.js'
+export { init } from './core/init.js'
 import type { SDKInitOptions, RemoteConfigResponse } from './types/config.js'
 import { registerBootstrapAutoInstrumentations } from './instrumentation/auto-instrument.js'
 
@@ -27,27 +27,10 @@ registerBootstrapAutoInstrumentations()
 
 // ─── Lifecycle ──────────────────────────────────────────────────────────────
 
-export { init } from './core/init.js'
 export { flush, shutdown, crashFlush } from './core/lifecycle.js'
 export { getConfig } from './core/config.js'
 export { SDKError } from './core/errors.js'
 export { SDK_NAME, SDK_VERSION } from './constants/version.js'
-
-/**
- * Create and initialize the SDK. Recommended entry point — equivalent to
- * `init()` with a more discoverable name.
- *
- * @example
- * ```ts
- * const sdk = await createSDK({
- *   apiKey: 'pk_live_...',
- *   applicationName: 'payments-service',
- * })
- * ```
- */
-export async function createSDK(options: SDKInitOptions): Promise<Readonly<RemoteConfigResponse> | undefined> {
-  return init(options)
-}
 
 // ─── Capture (the canonical event API) ──────────────────────────────────────
 

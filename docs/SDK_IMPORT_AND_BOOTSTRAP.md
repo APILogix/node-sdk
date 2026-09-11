@@ -2,16 +2,16 @@
 
 This guide is the recommended startup contract for applications using `@pulse-apm/node`.
 
-Auto-instrumentation in Node.js is load-order sensitive. Import Pulse before application frameworks, database clients, cache clients, queue libraries, GraphQL, Axios, Undici, and other modules you expect the SDK to patch. The root package import installs privacy-safe OpenTelemetry module-load hooks synchronously. `createSDK()` remains the async initialization boundary that fetches remote config, enables transport, applies privacy policy, and rebuilds instrumentation from backend policy.
+Auto-instrumentation in Node.js is load-order sensitive. Import Pulse before application frameworks, database clients, cache clients, queue libraries, GraphQL, Axios, Undici, and other modules you expect the SDK to patch. The root package import installs privacy-safe OpenTelemetry module-load hooks synchronously. `init()` remains the async initialization boundary that fetches remote config, enables transport, applies privacy policy, and rebuilds instrumentation from backend policy.
 
 ## Recommended Method
 
 The recommended method is:
 
 1. Import `@pulse-apm/node` as the first application import.
-2. Call and await `createSDK()` during startup.
+2. Call and await `init()` during startup.
 3. Import or construct frameworks, routers, DB clients, cache clients, queue clients, and HTTP clients only after the Pulse import has run.
-4. Start serving traffic only after `createSDK()` settles when startup telemetry matters.
+4. Start serving traffic only after `init()` settles when startup telemetry matters.
 
 Use `node --import @pulse-apm/node/register` only when you cannot control import order because a framework CLI, bundler, or generated wrapper loads your application modules first.
 
@@ -20,11 +20,11 @@ Use `node --import @pulse-apm/node/register` only when you cannot control import
 Use this shape when you control the application entrypoint:
 
 ```ts
-import { createSDK } from '@pulse-apm/node'
+import { init } from '@pulse-apm/node'
 import express from 'express'
 import { Pool } from 'pg'
 
-const sdkConfig = await createSDK({
+const sdkConfig = await init({
     apiKey: process.env.PULSE_API_KEY!
 })
 
@@ -47,7 +47,7 @@ app.get('/orgs', async (_req, res) => {
 Key rules:
 
 - Put the Pulse import first in the entrypoint.
-- Call `createSDK()` during startup before serving traffic.
+- Call `init()` during startup before serving traffic.
 - Do not wait to import Pulse until after Express, Fastify, PostgreSQL, MySQL2, MongoDB, Redis, Prisma, BullMQ, GraphQL, Axios, Undici, or HTTP clients are already loaded.
 - Treat a returned `undefined` config as telemetry unavailable; the SDK fails open and does not invent fallback telemetry policy.
 
@@ -56,11 +56,11 @@ Key rules:
 If top-level `await` is awkward, still import Pulse first and start initialization before composing the rest of the app:
 
 ```ts
-import { createSDK } from '@pulse-apm/node'
+import { init } from '@pulse-apm/node'
 import express from 'express'
 import { Pool } from 'pg'
 
-const sdkReady = createSDK({ apiKey: process.env.PULSE_API_KEY! })
+const sdkReady = init({ apiKey: process.env.PULSE_API_KEY! })
 
 const app = express()
 const pool = new Pool()
@@ -70,7 +70,7 @@ await sdkReady
 app.listen(3000)
 ```
 
-The import installs the early hooks. The `createSDK()` promise enables export, privacy policy, sampling, transport, and remote instrumentation policy. Do not serve traffic until it settles if you require telemetry for startup requests.
+The import installs the early hooks. The `init()` promise enables export, privacy policy, sampling, transport, and remote instrumentation policy. Do not serve traffic until it settles if you require telemetry for startup requests.
 
 ## Framework CLIs, Bundlers, And Generated Startup
 
@@ -83,9 +83,9 @@ node --import @pulse-apm/node/register server.js
 Then keep using the normal SDK API in application code:
 
 ```ts
-import { createSDK, withSpan, withDbSpan } from '@pulse-apm/node'
+import { init, withSpan, withDbSpan } from '@pulse-apm/node'
 
-await createSDK({ apiKey: process.env.PULSE_API_KEY! })
+await init({ apiKey: process.env.PULSE_API_KEY! })
 ```
 
 The register entrypoint:
@@ -144,7 +144,7 @@ queueMicrotask(() => {
 
 ## Privacy And Transport Boundaries
 
-Before `createSDK()` succeeds, bootstrap hooks are conservative:
+Before `init()` succeeds, bootstrap hooks are conservative:
 
 - no API key is read;
 - no `/v1/init` request is made by the bootstrap itself;
@@ -152,7 +152,7 @@ Before `createSDK()` succeeds, bootstrap hooks are conservative:
 - request headers, query strings, bodies, cookies, and DB parameters are not intentionally captured by bootstrap policy;
 - profiling, runtime metrics, cron monitoring, replay, and automatic error/log capture are not started by bootstrap alone.
 
-After `createSDK()` succeeds, the validated remote snapshot is authoritative for instrumentation selection, sampling, privacy capture, scrubbing, killswitches, entitlements, limits, and transport routes.
+After `init()` succeeds, the validated remote snapshot is authoritative for instrumentation selection, sampling, privacy capture, scrubbing, killswitches, entitlements, limits, and transport routes.
 
 ## Hard Boundary
 
@@ -160,7 +160,7 @@ Pulse cannot reliably patch modules that were already loaded before the Pulse bo
 
 ```ts
 import { Pool } from 'pg'
-import { createSDK } from '@pulse-apm/node'
+import { init } from '@pulse-apm/node'
 ```
 
 If the target library is already in Node's module cache, complete auto-instrumentation cannot be guaranteed across all library versions. Move the Pulse import earlier or use `node --import @pulse-apm/node/register`.

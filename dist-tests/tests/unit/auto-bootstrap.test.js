@@ -1,6 +1,6 @@
 import { describe, it, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { createSDK, shutdown } from '../../src/index.js';
+import { init, shutdown } from '../../src/index.js';
 import { TEST_REMOTE_CONFIG } from '../fixtures/remote-config.js';
 const originalFetch = globalThis.fetch;
 const instrumentationGuard = Symbol.for('pulse-sdk.auto-instrumentation.registered');
@@ -45,7 +45,7 @@ describe('auto-instrumentation bootstrap', () => {
             }
             return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });
         });
-        const config = await createSDK({ apiKey: 'test-bootstrap-key' });
+        const config = await init({ apiKey: 'test-bootstrap-key' });
         assert.equal(config?.sdk.projectId, 'bootstrap-project');
         assert.equal(globalState[instrumentationGuard], true, 'remote-config registration should remain active after init');
         assert.equal(globalState[bootstrapGuard], undefined, 'bootstrap marker should be cleared after remote-config rebuild');
