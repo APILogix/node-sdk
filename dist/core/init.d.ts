@@ -4,4 +4,4 @@ import type { RemoteConfigResponse, SDKInitOptions } from '../types/config.js';
  * /v1/init. Failure is fail-open to the host application but does not invent
  * a runtime configuration or start telemetry with defaults.
  */
-export declare function init(options: SDKInitOptions): Promise<Readonly<RemoteConfigResponse> | undefined>;
+export declare function init(options: string | SDKInitOptions): Promise<Readonly<RemoteConfigResponse> | undefined>;

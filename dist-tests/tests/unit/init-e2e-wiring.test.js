@@ -1,6 +1,6 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { init, shutdown, captureError, monitorMiddleware, expressErrorHandler, withSpan, withDbSpan, withBackgroundSpan, getActiveSpan, } from '../../src/index.js';
+import { init, Pulse, shutdown, captureError, monitorMiddleware, expressErrorHandler, withSpan, withDbSpan, withBackgroundSpan, getActiveSpan, } from '../../src/index.js';
 import { client } from '../../src/core/client.js';
 import { FeatureController } from '../../src/core/feature-controller.js';
 import { TEST_REMOTE_CONFIG } from '../fixtures/remote-config.js';
@@ -132,5 +132,18 @@ describe('init() end-to-end wiring: Auto-instrumentation & Error Handlers', () =
         assert.equal(client.initialized, true);
         await shutdown(2_000);
         assert.equal(client.initialized, false, 'client must be uninitialized after shutdown');
+    });
+    it('exports canonical Pulse facade object and supports string apiKey or object init', async () => {
+        assert.ok(Pulse, 'Pulse object must be exported');
+        assert.equal(typeof Pulse.init, 'function', 'Pulse.init must be a function');
+        assert.equal(typeof Pulse.captureError, 'function', 'Pulse.captureError must be a function');
+        assert.equal(typeof Pulse.withSpan, 'function', 'Pulse.withSpan must be a function');
+        assert.equal(typeof Pulse.getSDKHealth, 'function', 'Pulse.getSDKHealth must be a function');
+        // Test initializing via string apiKey directly
+        const config = await Pulse.init('test-wiring-api-key');
+        assert.ok(config, 'Pulse.init with string apiKey must succeed');
+        assert.equal(client.initialized, true, 'client must be initialized');
+        await Pulse.shutdown(2_000);
+        assert.equal(client.initialized, false, 'client must be shut down');
     });
 });

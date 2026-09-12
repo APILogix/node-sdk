@@ -45,26 +45,27 @@ import { resolveMaxMemoryMb } from '../utils/memory-detector.js';
  * a runtime configuration or start telemetry with defaults.
  */
 export async function init(options) {
+    const normalizedOptions = typeof options === 'string' ? { apiKey: options } : options;
     await waitForShutdownCompletion();
-    setDebugMode(options.debug ?? false);
-    if (options.logLevel)
-        setLogLevel(options.logLevel);
-    validateInitOptions(options);
+    setDebugMode(normalizedOptions.debug ?? false);
+    if (normalizedOptions.logLevel)
+        setLogLevel(normalizedOptions.logLevel);
+    validateInitOptions(normalizedOptions);
     if (client.initialized) {
-        if (!client.hasSameIdentity(options)) {
+        if (!client.hasSameIdentity(normalizedOptions)) {
             throw new SDKError('Telemetry already initialized with different options', 'SDK_ALREADY_INITIALIZED');
         }
         return ConfigManager.getInstance().getConfig();
     }
     const existing = client.getInitPromise();
     if (existing) {
-        if (!client.hasSamePendingIdentity(options)) {
+        if (!client.hasSamePendingIdentity(normalizedOptions)) {
             throw new SDKError('Telemetry initialization already in progress with different options', 'SDK_INIT_IN_PROGRESS');
         }
         return existing;
     }
-    client.setPendingIdentity(options);
-    const operation = initialize(options);
+    client.setPendingIdentity(normalizedOptions);
+    const operation = initialize(normalizedOptions);
     client.setInitPromise(operation);
     try {
         return await operation;

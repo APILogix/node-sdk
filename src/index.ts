@@ -20,6 +20,18 @@
  */
 
 export { init } from './core/init.js'
+import { init } from './core/init.js'
+import { flush, shutdown, crashFlush } from './core/lifecycle.js'
+import { captureError } from './capture/captureError.js'
+import { captureRequest } from './capture/captureRequest.js'
+import { captureMessage } from './capture/captureMessage.js'
+import { captureEvent } from './capture/captureEvent.js'
+import { captureMetric } from './capture/captureMetric.js'
+import { captureLog } from './capture/captureLog.js'
+import { addBreadcrumb, getTraceId, getSpanId } from './core/context.js'
+import { setUser, setTag, setTags, setContext } from './core/scope.js'
+import { startSpan, withSpan } from './tracing/tracer.js'
+import { startDbSpan, withDbSpan } from './tracing/db-span.js'
 import type { SDKInitOptions, RemoteConfigResponse } from './types/config.js'
 import { registerBootstrapAutoInstrumentations } from './instrumentation/auto-instrument.js'
 
@@ -302,3 +314,35 @@ export function getSDKHealth(): {
     },
   }
 }
+
+/**
+ * Canonical Pulse SDK facade namespace.
+ * Enables both `import { Pulse } from '@pulse-apm/node'` and `import Pulse from '@pulse-apm/node'`.
+ */
+export const Pulse = {
+  init,
+  flush,
+  shutdown,
+  crashFlush,
+  captureError,
+  captureRequest,
+  captureMessage,
+  captureEvent,
+  captureMetric,
+  captureLog,
+  addBreadcrumb,
+  setUser,
+  setTag,
+  setTags,
+  setContext,
+  startSpan,
+  withSpan,
+  startDbSpan,
+  withDbSpan,
+  getTraceId,
+  getSpanId,
+  getSDKHealth,
+}
+
+export default Pulse
+

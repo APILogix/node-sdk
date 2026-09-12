@@ -19,6 +19,18 @@
  *     app.use(monitorMiddleware())
  */
 export { init } from './core/init.js';
+import { init } from './core/init.js';
+import { flush, shutdown, crashFlush } from './core/lifecycle.js';
+import { captureError } from './capture/captureError.js';
+import { captureRequest } from './capture/captureRequest.js';
+import { captureMessage } from './capture/captureMessage.js';
+import { captureEvent } from './capture/captureEvent.js';
+import { captureMetric } from './capture/captureMetric.js';
+import { captureLog } from './capture/captureLog.js';
+import { addBreadcrumb, getTraceId, getSpanId } from './core/context.js';
+import { setUser, setTag, setTags, setContext } from './core/scope.js';
+import { startSpan, withSpan } from './tracing/tracer.js';
+import { startDbSpan, withDbSpan } from './tracing/db-span.js';
 export { flush, shutdown, crashFlush } from './core/lifecycle.js';
 export { getConfig } from './core/config.js';
 export { SDKError } from './core/errors.js';
@@ -151,3 +163,32 @@ export declare function getSDKHealth(): {
         totalFlushed: number;
     };
 };
+/**
+ * Canonical Pulse SDK facade namespace.
+ * Enables both `import { Pulse } from '@pulse-apm/node'` and `import Pulse from '@pulse-apm/node'`.
+ */
+export declare const Pulse: {
+    init: typeof init;
+    flush: typeof flush;
+    shutdown: typeof shutdown;
+    crashFlush: typeof crashFlush;
+    captureError: typeof captureError;
+    captureRequest: typeof captureRequest;
+    captureMessage: typeof captureMessage;
+    captureEvent: typeof captureEvent;
+    captureMetric: typeof captureMetric;
+    captureLog: typeof captureLog;
+    addBreadcrumb: typeof addBreadcrumb;
+    setUser: typeof setUser;
+    setTag: typeof setTag;
+    setTags: typeof setTags;
+    setContext: typeof setContext;
+    startSpan: typeof startSpan;
+    withSpan: typeof withSpan;
+    startDbSpan: typeof startDbSpan;
+    withDbSpan: typeof withDbSpan;
+    getTraceId: typeof getTraceId;
+    getSpanId: typeof getSpanId;
+    getSDKHealth: typeof getSDKHealth;
+};
+export default Pulse;
