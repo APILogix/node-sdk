@@ -4,9 +4,11 @@ import { trace, SpanKind, SpanStatusCode } from '@opentelemetry/api';
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base';
 import { MongooseInstrumentation } from '../../src/instrumentation/mongoose.js';
+import { createMongoDBInstrumentation, SUPPRESS_MONGODB_DRIVER_SPANS } from '../../src/instrumentation/mongodb.js';
 import { registerBootstrapAutoInstrumentations, registerAutoInstrumentations, resetAutoInstrumentations } from '../../src/instrumentation/auto-instrument.js';
 import { ConfigManager } from '../../src/core/config-manager.js';
 import { TEST_REMOTE_CONFIG } from '../fixtures/remote-config.js';
+import { context } from '@opentelemetry/api';
 describe('Mongoose ODM Trace Instrumentation & In-Place Upgrades', () => {
     let memoryExporter;
     let provider;
@@ -136,7 +138,108 @@ describe('Mongoose ODM Trace Instrumentation & In-Place Upgrades', () => {
         assert.equal(span.events[0]?.name, 'exception');
         instrumentation.disable();
     });
-    it('3. In-place upgrade preserves bootstrap monkey patches without unwrapping', () => {
+    it('3. Patches native ESM default-wrapped mongoose exports', async () => {
+        const mockMongoose = {
+            version: '6.7.0',
+            Query: class MockQuery {
+                op = 'findOne';
+                model = { modelName: 'User', collection: { name: 'users' }, db: { name: 'prod_db' } };
+                async exec() {
+                    return { id: 'usr_esm' };
+                }
+            },
+            Model: class MockModel {
+                isNew = false;
+                collection = { name: 'users' };
+                db = { name: 'prod_db' };
+                static modelName = 'User';
+                static collection = { name: 'users' };
+                static db = { name: 'prod_db' };
+                async save() {
+                    return this;
+                }
+            },
+            Aggregate: class MockAggregate {
+                async exec() {
+                    return [];
+                }
+            },
+        };
+        const instrumentation = new MongooseInstrumentation({ enabled: true }, TEST_REMOTE_CONFIG.privacy.capture);
+        instrumentation.setTracerProvider(provider);
+        instrumentation.enable();
+        const patched = instrumentation._patchMongoose({ default: mockMongoose });
+        assert.equal(patched, true, 'default-wrapped ESM exports must be patchable');
+        assert.equal(mockMongoose.Query.prototype.exec.name, 'pulsePatchedQueryExec');
+        const query = new mockMongoose.Query();
+        const result = await query.exec();
+        assert.equal(result.id, 'usr_esm');
+        const spans = memoryExporter.getFinishedSpans();
+        const querySpan = spans.find((s) => s.name === 'User.findOne');
+        assert.ok(querySpan, 'Should record User.findOne from a default-wrapped export');
+        assert.equal(querySpan.attributes['db.system'], 'mongodb');
+        assert.equal(querySpan.attributes['db.system.name'], 'mongodb');
+        assert.equal(querySpan.attributes['pulse.instrumentation.layer'], 'mongoose');
+        instrumentation.disable();
+    });
+    it('4. Captures Model.create as one canonical span and suppresses nested save duplicates', async () => {
+        class MockModel {
+            isNew = true;
+            collection = { name: 'loginhistories' };
+            db = { name: 'prod_db' };
+            static modelName = 'LoginHistory';
+            static collection = { name: 'loginhistories' };
+            static db = { name: 'prod_db' };
+            static async create(doc) {
+                const instance = new this();
+                instance.doc = doc;
+                await instance.save();
+                return instance;
+            }
+            static async insertMany(docs) {
+                return docs;
+            }
+            static async bulkWrite(ops) {
+                return { ok: 1, ops };
+            }
+            async save() {
+                return this;
+            }
+        }
+        const mockMongoose = {
+            Query: class MockQuery {
+                async exec() { return null; }
+            },
+            Model: MockModel,
+            Aggregate: class MockAggregate {
+                async exec() { return []; }
+            },
+        };
+        const instrumentation = new MongooseInstrumentation({ enabled: true }, TEST_REMOTE_CONFIG.privacy.capture);
+        instrumentation.setTracerProvider(provider);
+        instrumentation.enable();
+        instrumentation._patchMongoose(mockMongoose);
+        await MockModel.create({ userId: 'usr_123' });
+        await MockModel.insertMany([{ a: 1 }, { a: 2 }]);
+        await MockModel.bulkWrite([{ insertOne: { document: { a: 3 } } }]);
+        const spans = memoryExporter.getFinishedSpans();
+        assert.ok(spans.find((s) => s.name === 'LoginHistory.create'), 'Should record Model.create');
+        assert.ok(spans.find((s) => s.name === 'LoginHistory.insertMany'), 'Should record Model.insertMany');
+        assert.ok(spans.find((s) => s.name === 'LoginHistory.bulkWrite'), 'Should record Model.bulkWrite');
+        assert.equal(spans.filter((s) => s.name === 'LoginHistory.save').length, 0, 'Model.create must not produce a duplicate nested save span');
+        instrumentation.disable();
+    });
+    it('5. Marks MongoDB driver spans suppressible while Mongoose owns the canonical span', () => {
+        const mongoInstrumentation = createMongoDBInstrumentation(true, {}, TEST_REMOTE_CONFIG.privacy.capture);
+        assert.ok(mongoInstrumentation, 'MongoDB driver instrumentation should be created');
+        const skip = mongoInstrumentation._checkSkipInstrumentation;
+        assert.equal(typeof skip, 'function', 'MongoDB instrumentation skip hook must be available');
+        assert.equal(skip.call(mongoInstrumentation, {}), false, 'Driver instrumentation remains active by default');
+        context.with(context.active().setValue(SUPPRESS_MONGODB_DRIVER_SPANS, true), () => {
+            assert.equal(skip.call(mongoInstrumentation, {}), true, 'Driver instrumentation is suppressed under Mongoose canonical spans');
+        });
+    });
+    it('6. In-place upgrade preserves bootstrap monkey patches without unwrapping', () => {
         const mockMongoose = {
             Query: class MockQuery {
                 op = 'findOne';

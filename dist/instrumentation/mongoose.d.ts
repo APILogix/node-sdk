@@ -17,12 +17,21 @@ export declare class MongooseInstrumentation extends InstrumentationBase {
     private _originalExec;
     private _originalSave;
     private _originalAggregateExec;
+    private _originalCreate;
+    private _originalInsertMany;
+    private _originalBulkWrite;
+    private _originalPopulate;
     constructor(config?: MongooseInstrumentationOptions, captureConfig?: PrivacyCaptureConfig);
     protected init(): InstrumentationNodeModuleDefinition[];
     enable(): void;
     disable(): void;
     updateCaptureConfig(captureConfig?: PrivacyCaptureConfig): void;
-    private _checkExistingModule;
+    _checkExistingModule(): void;
+    private _resolveMongooseExports;
+    private _baseAttributes;
+    private _endSpan;
+    private _wrapLastCallback;
+    private _withMongooseSpan;
     private _patchMongoose;
     private _unpatchMongoose;
 }

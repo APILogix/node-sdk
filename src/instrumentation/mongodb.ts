@@ -12,7 +12,10 @@
 
 import { MongoDBInstrumentation as OTelMongoDBInstrumentation } from '@opentelemetry/instrumentation-mongodb'
 import type { MongoDBInstrumentationConfig as OTelMongoDBInstrumentationConfig } from '@opentelemetry/instrumentation-mongodb'
+import { context, createContextKey } from '@opentelemetry/api'
 import type { PrivacyCaptureConfig } from '../types/config.js'
+
+export const SUPPRESS_MONGODB_DRIVER_SPANS = createContextKey('pulse-sdk.mongodb.suppress-driver-spans')
 
 export interface MongoDBInstrumentationOptions {
   enabled: boolean
@@ -51,7 +54,18 @@ export function createMongoDBInstrumentation(
     }),
   }
 
-  return new OTelMongoDBInstrumentation(instrumentationOptions)
+  const instrumentation = new OTelMongoDBInstrumentation(instrumentationOptions)
+  const originalSkipCheck = (instrumentation as any)._checkSkipInstrumentation
+  if (typeof originalSkipCheck === 'function') {
+    ;(instrumentation as any)._checkSkipInstrumentation = function pulseCheckSkipMongoDBInstrumentation(currentSpan: unknown) {
+      if (context.active().getValue(SUPPRESS_MONGODB_DRIVER_SPANS) === true) {
+        return true
+      }
+      return originalSkipCheck.call(this, currentSpan)
+    }
+  }
+
+  return instrumentation
 }
 
 export interface MongoDBSpanAttributes {

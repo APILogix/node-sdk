@@ -10,8 +10,11 @@
  * - Transaction instrumentation
  */
 import { trace, SpanKind, SpanStatusCode } from '@opentelemetry/api';
+import { InstrumentationBase, InstrumentationNodeModuleDefinition } from '@opentelemetry/instrumentation';
 import { PrismaInstrumentation as OTelPrismaInstrumentation } from '@prisma/instrumentation';
+import { getLogger } from '../utils/logger.js';
 const PRISMA_EXT_APPLIED = Symbol.for('pulse-sdk.prisma.extension.applied');
+const PRISMA_ORIGINAL_CLIENT = Symbol.for('pulse-sdk.prisma.original-client');
 /**
  * Creates an OpenTelemetry query extension for Prisma Client.
  * Attach with `prismaClient.$extends(pulsePrismaExtension())`
@@ -56,7 +59,7 @@ export function pulsePrismaExtension() {
  */
 export function instrumentPrismaClientInstance(prismaInstance) {
     if (!prismaInstance || prismaInstance[PRISMA_EXT_APPLIED])
-        return;
+        return prismaInstance;
     if (typeof prismaInstance.$use === 'function') {
         ;
         prismaInstance[PRISMA_EXT_APPLIED] = true;
@@ -84,6 +87,121 @@ export function instrumentPrismaClientInstance(prismaInstance) {
                 }
             });
         });
+        return prismaInstance;
+    }
+    if (typeof prismaInstance.$extends === 'function') {
+        try {
+            const extended = prismaInstance.$extends(pulsePrismaExtension());
+            if (extended && typeof extended === 'object') {
+                ;
+                extended[PRISMA_EXT_APPLIED] = true;
+                prismaInstance[PRISMA_EXT_APPLIED] = true;
+                return extended;
+            }
+        }
+        catch (err) {
+            getLogger().debug('Prisma $extends instrumentation failed', { error: String(err) });
+        }
+    }
+    return prismaInstance;
+}
+function copyStaticProperties(target, source) {
+    for (const key of Reflect.ownKeys(source)) {
+        if (key === 'prototype' || key === 'length' || key === 'name')
+            continue;
+        const descriptor = Object.getOwnPropertyDescriptor(source, key);
+        if (!descriptor)
+            continue;
+        try {
+            Object.defineProperty(target, key, descriptor);
+        }
+        catch { }
+    }
+}
+function patchPrismaClientExport(moduleExports) {
+    const prismaModule = moduleExports?.default?.PrismaClient ? moduleExports.default : moduleExports;
+    const OriginalPrismaClient = prismaModule?.PrismaClient;
+    if (typeof OriginalPrismaClient !== 'function' || OriginalPrismaClient[PRISMA_ORIGINAL_CLIENT]) {
+        return moduleExports;
+    }
+    const PulsePrismaClient = function PulsePrismaClient(...args) {
+        const instance = Reflect.construct(OriginalPrismaClient, args, new.target || PulsePrismaClient);
+        return instrumentPrismaClientInstance(instance);
+    };
+    Object.setPrototypeOf(PulsePrismaClient, OriginalPrismaClient);
+    PulsePrismaClient.prototype = OriginalPrismaClient.prototype;
+    PulsePrismaClient[PRISMA_ORIGINAL_CLIENT] = OriginalPrismaClient;
+    copyStaticProperties(PulsePrismaClient, OriginalPrismaClient);
+    prismaModule.PrismaClient = PulsePrismaClient;
+    if (moduleExports?.default?.PrismaClient) {
+        moduleExports.default.PrismaClient = PulsePrismaClient;
+    }
+    getLogger().debug('PrismaClient constructor auto-instrumentation attached');
+    return moduleExports;
+}
+function unpatchPrismaClientExport(moduleExports) {
+    const prismaModule = moduleExports?.default?.PrismaClient ? moduleExports.default : moduleExports;
+    const current = prismaModule?.PrismaClient;
+    const original = current?.[PRISMA_ORIGINAL_CLIENT];
+    if (original) {
+        prismaModule.PrismaClient = original;
+        if (moduleExports?.default?.PrismaClient) {
+            moduleExports.default.PrismaClient = original;
+        }
+    }
+}
+export class PulsePrismaInstrumentation extends InstrumentationBase {
+    otelPrisma;
+    constructor(config = {}) {
+        super('@pulse-apm/instrumentation-prisma', '1.0.0', { enabled: config.enabled ?? true });
+        try {
+            this.otelPrisma = new OTelPrismaInstrumentation({
+                ...(config.captureQueries === false ? { ignoreSpanTypes: [/^prisma:engine:/] } : {}),
+                ...(config.ignoreSpanTypes ? { ignoreSpanTypes: config.ignoreSpanTypes } : {}),
+            });
+            if (this.isEnabled() && typeof this.otelPrisma?.enable === 'function') {
+                ;
+                this.otelPrisma.enable();
+            }
+        }
+        catch { }
+    }
+    setTracerProvider(tracerProvider) {
+        super.setTracerProvider(tracerProvider);
+        if (this.otelPrisma && typeof this.otelPrisma.setTracerProvider === 'function') {
+            try {
+                ;
+                this.otelPrisma.setTracerProvider(tracerProvider);
+            }
+            catch { }
+        }
+    }
+    init() {
+        return [
+            new InstrumentationNodeModuleDefinition('@prisma/client', ['>=4.0.0 <8'], (moduleExports) => patchPrismaClientExport(moduleExports), (moduleExports) => unpatchPrismaClientExport(moduleExports)),
+        ];
+    }
+    enable() {
+        super.enable();
+        if (this.otelPrisma && typeof this.otelPrisma.enable === 'function') {
+            try {
+                ;
+                this.otelPrisma.enable();
+            }
+            catch (err) {
+                getLogger().debug('Prisma global tracing helper enable failed', { error: String(err) });
+            }
+        }
+    }
+    disable() {
+        super.disable();
+        if (this.otelPrisma && typeof this.otelPrisma.disable === 'function') {
+            try {
+                ;
+                this.otelPrisma.disable();
+            }
+            catch { }
+        }
     }
 }
 export function createPrismaInstrumentation(config, mergedOptions) {
@@ -94,8 +212,10 @@ export function createPrismaInstrumentation(config, mergedOptions) {
     const captureQueries = typeof config === 'object'
         ? (config.captureQueries ?? true)
         : (mergedOptions?.captureQueries ?? true);
-    return new OTelPrismaInstrumentation({
-        ...(captureQueries ? {} : { ignoreSpanTypes: [/^prisma:engine:/] }),
+    return new PulsePrismaInstrumentation({
+        enabled: true,
+        captureQueries,
+        captureParams: typeof config === 'object' ? (config.captureParams ?? false) : (mergedOptions?.captureParams ?? false),
     });
 }
 export { OTelPrismaInstrumentation };

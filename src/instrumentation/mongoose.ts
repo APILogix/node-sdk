@@ -4,10 +4,12 @@
  * and nests them cleanly within active HTTP request spans.
  */
 
-import { trace, SpanKind, SpanStatusCode } from '@opentelemetry/api'
+import * as nodeModule from 'node:module'
+import { context, createContextKey, trace, SpanKind, SpanStatusCode } from '@opentelemetry/api'
 import { InstrumentationBase, InstrumentationNodeModuleDefinition } from '@opentelemetry/instrumentation'
 import type { PrivacyCaptureConfig } from '../types/config.js'
 import { getLogger } from '../utils/logger.js'
+import { SUPPRESS_MONGODB_DRIVER_SPANS } from './mongodb.js'
 
 export interface MongooseInstrumentationOptions {
   enabled: boolean
@@ -18,6 +20,9 @@ export interface MongooseInstrumentationOptions {
 const MODULE_NAME = 'mongoose'
 const INSTRUMENTATION_NAME = '@pulse-apm/instrumentation-mongoose'
 const INSTRUMENTATION_VERSION = '1.0.0'
+const SUPPRESS_NESTED_MONGOOSE_SPANS = createContextKey('pulse-sdk.mongoose.suppress-nested-spans')
+
+type MongooseSpanAttributes = Record<string, string | number | boolean>
 
 export class MongooseInstrumentation extends InstrumentationBase {
   private _captureConfig?: PrivacyCaptureConfig | undefined
@@ -26,6 +31,10 @@ export class MongooseInstrumentation extends InstrumentationBase {
   private _originalExec: any = null
   private _originalSave: any = null
   private _originalAggregateExec: any = null
+  private _originalCreate: any = null
+  private _originalInsertMany: any = null
+  private _originalBulkWrite: any = null
+  private _originalPopulate: any = null
 
   constructor(
     config: MongooseInstrumentationOptions = { enabled: true },
@@ -42,7 +51,14 @@ export class MongooseInstrumentation extends InstrumentationBase {
         MODULE_NAME,
         ['>=5.0.0 <9'],
         (moduleExports: any) => {
-          this._patchMongoose(moduleExports)
+          const patched = this._patchMongoose(moduleExports)
+          if (!patched) {
+            getLogger().debug('Mongoose module detected but exports were not patchable', {
+              hasDefault: Boolean(moduleExports?.default),
+              hasQuery: Boolean(moduleExports?.Query),
+              hasDefaultQuery: Boolean(moduleExports?.default?.Query),
+            })
+          }
           return moduleExports
         },
         (moduleExports: any) => {
@@ -68,37 +84,190 @@ export class MongooseInstrumentation extends InstrumentationBase {
     this._captureConfig = captureConfig
   }
 
-  private _checkExistingModule(): void {
+  public _checkExistingModule(): void {
     if (this._isPatched) return
 
     // 1. Check globalThis.mongoose (e.g. global.mongoose cache in apps)
     const g = globalThis as any
-    if (g.mongoose && g.mongoose.Query) {
-      this._patchMongoose(g.mongoose)
-      return
+    if (g.mongoose) {
+      if (this._patchMongoose(g.mongoose)) return
+      if (g.mongoose.conn && this._patchMongoose(g.mongoose.conn.base || g.mongoose.conn)) return
+      if (g.mongoose.connection && this._patchMongoose(g.mongoose.connection.base || g.mongoose.connection)) return
+      if (g.mongoose.promise && typeof g.mongoose.promise.then === 'function') {
+        g.mongoose.promise.then((m: any) => {
+          if (!this._isPatched && m) {
+            this._patchMongoose(m.base || m)
+          }
+        }).catch(() => {})
+      }
     }
 
-    // 2. Check require.cache if available in CJS/mixed contexts
+    // 2. Scan globalThis for common Mongoose instances
+    for (const key of Object.keys(g)) {
+      if (key.toLowerCase().includes('mongo') || key.toLowerCase().includes('db')) {
+        const candidate = g[key]
+        if (candidate && typeof candidate === 'object') {
+          if (this._patchMongoose(candidate)) return
+        }
+      }
+    }
+
+    // 3. Check require.cache if available in CJS/mixed contexts
     try {
       const nodeRequire = (globalThis as any).require || (typeof require !== 'undefined' ? require : null)
       if (nodeRequire?.cache) {
         for (const key of Object.keys(nodeRequire.cache)) {
-          if (key.includes('mongoose') && nodeRequire.cache[key]?.exports?.Query) {
-            this._patchMongoose(nodeRequire.cache[key].exports)
-            break
+          if (key.includes('mongoose') && nodeRequire.cache[key]?.exports) {
+            if (this._patchMongoose(nodeRequire.cache[key].exports)) break
           }
         }
       }
     } catch {}
+
+    // 4. In native ESM, use createRequire if available to resolve mongoose from host application
+    if (!this._isPatched) {
+      try {
+        const createReq = (nodeModule as any).createRequire
+        if (typeof createReq === 'function') {
+          const hostRequire = createReq(process.cwd() + '/package.json')
+          const resolved = hostRequire.resolve('mongoose')
+          if (resolved && hostRequire.cache && hostRequire.cache[resolved]) {
+            this._patchMongoose(hostRequire.cache[resolved].exports)
+          }
+        }
+      } catch {}
+    }
   }
 
-  private _patchMongoose(mongoose: any): void {
-    if (!mongoose || this._isPatched) return
+  private _resolveMongooseExports(moduleExports: any): any | null {
+    if (!moduleExports) return null
+
+    const candidates = [
+      moduleExports,
+      moduleExports?.default,
+      moduleExports?.mongoose,
+      moduleExports?.base,
+      moduleExports?.conn?.base,
+      moduleExports?.connection?.base,
+      moduleExports?.default?.default,
+      moduleExports?.default?.mongoose,
+      moduleExports?.default?.base,
+    ]
+
+    for (const candidate of candidates) {
+      if (candidate?.Query?.prototype && candidate?.Model?.prototype) {
+        return candidate
+      }
+    }
+
+    return null
+  }
+
+  private _baseAttributes(dbName: string, collectionName: string, operation: string): MongooseSpanAttributes {
+    return {
+      'db.system': 'mongodb',
+      'db.system.name': 'mongodb',
+      'db.name': dbName,
+      'db.namespace': dbName,
+      'db.mongodb.collection': collectionName,
+      'db.collection.name': collectionName,
+      'db.operation': operation,
+      'db.operation.name': operation,
+      'pulse.instrumentation.layer': 'mongoose',
+    }
+  }
+
+  private _endSpan(span: any, err?: any): void {
+    if (err) {
+      span.recordException(err)
+      span.setStatus({ code: SpanStatusCode.ERROR, message: err?.message || String(err) })
+    }
+    span.end()
+  }
+
+  private _wrapLastCallback(args: any[], endWithError: (err: any) => void, endOk: () => void): { args: any[], wrapped: boolean } {
+    const last = args.length > 0 ? args[args.length - 1] : undefined
+    if (typeof last !== 'function') {
+      return { args, wrapped: false }
+    }
+
+    const wrappedArgs = args.slice()
+    wrappedArgs[wrappedArgs.length - 1] = function pulseMongooseCallback(this: any, err: any, ...rest: any[]) {
+      if (err) endWithError(err)
+      else endOk()
+      return last.apply(this, [err, ...rest])
+    }
+    return { args: wrappedArgs, wrapped: true }
+  }
+
+  private _withMongooseSpan<T>(
+    spanName: string,
+    attributes: MongooseSpanAttributes,
+    invoke: (endWithError: (err: any) => void, endOk: () => void) => { result: T, callbackWrapped?: boolean },
+    suppressNested = false
+  ): T {
+    const tracer = this.tracer
+    return tracer.startActiveSpan(
+      spanName,
+      {
+        kind: SpanKind.CLIENT,
+        attributes,
+      },
+      (span) => {
+        let ended = false
+        const endOk = () => {
+          if (ended) return
+          ended = true
+          this._endSpan(span)
+        }
+        const endWithError = (err: any) => {
+          if (ended) return
+          ended = true
+          this._endSpan(span, err)
+        }
+
+        const run = () => invoke(endWithError, endOk)
+
+        try {
+          let invocationContext = context.active().setValue(SUPPRESS_MONGODB_DRIVER_SPANS, true)
+          if (suppressNested) {
+            invocationContext = invocationContext.setValue(SUPPRESS_NESTED_MONGOOSE_SPANS, true)
+          }
+          const { result, callbackWrapped } = context.with(invocationContext, run)
+
+          if (result && typeof (result as any).then === 'function') {
+            return (result as any).then(
+              (value: any) => {
+                endOk()
+                return value
+              },
+              (err: any) => {
+                endWithError(err)
+                throw err
+              }
+            )
+          }
+
+          if (!callbackWrapped) {
+            endOk()
+          }
+          return result
+        } catch (err: any) {
+          endWithError(err)
+          throw err
+        }
+      }
+    ) as T
+  }
+
+  private _patchMongoose(moduleExports: any): boolean {
+    const mongoose = this._resolveMongooseExports(moduleExports)
+    if (!mongoose || this._isPatched) return false
     const Query = mongoose.Query
     const Model = mongoose.Model
     const Aggregate = mongoose.Aggregate
 
-    if (!Query?.prototype || !Model?.prototype) return
+    if (!Query?.prototype || !Model?.prototype) return false
 
     this._patchedMongooseRef = mongoose
     this._isPatched = true
@@ -111,7 +280,7 @@ export class MongooseInstrumentation extends InstrumentationBase {
       const origExec = this._originalExec
 
       Query.prototype.exec = function pulsePatchedQueryExec(this: any, op?: any, callback?: any) {
-        if (!self.isEnabled()) {
+        if (!self.isEnabled() || context.active().getValue(SUPPRESS_NESTED_MONGOOSE_SPANS)) {
           return origExec.apply(this, arguments as any)
         }
 
@@ -139,47 +308,17 @@ export class MongooseInstrumentation extends InstrumentationBase {
           }
         }
 
-        const tracer = self.tracer
-        return tracer.startActiveSpan(
+        const attributes = {
+          ...self._baseAttributes(dbName, collectionName, operation),
+          'db.statement': statement,
+        }
+        const originalArgs = Array.from(arguments as any)
+        return self._withMongooseSpan(
           spanName,
-          {
-            kind: SpanKind.CLIENT,
-            attributes: {
-              'db.system': 'mongodb',
-              'db.name': dbName,
-              'db.mongodb.collection': collectionName,
-              'db.operation': operation,
-              'db.statement': statement,
-            },
-          },
-          (span) => {
-            let promise: Promise<any>
-            try {
-              promise = origExec.apply(this, arguments as any)
-            } catch (err: any) {
-              span.recordException(err)
-              span.setStatus({ code: SpanStatusCode.ERROR, message: err?.message || String(err) })
-              span.end()
-              throw err
-            }
-
-            if (promise && typeof promise.then === 'function') {
-              return promise.then(
-                (res) => {
-                  span.end()
-                  return res
-                },
-                (err) => {
-                  span.recordException(err)
-                  span.setStatus({ code: SpanStatusCode.ERROR, message: err?.message || String(err) })
-                  span.end()
-                  throw err
-                }
-              )
-            }
-
-            span.end()
-            return promise
+          attributes,
+          (endWithError, endOk) => {
+            const wrapped = self._wrapLastCallback(originalArgs, endWithError, endOk)
+            return { result: origExec.apply(this, wrapped.args), callbackWrapped: wrapped.wrapped }
           }
         )
       }
@@ -191,7 +330,7 @@ export class MongooseInstrumentation extends InstrumentationBase {
       const origSave = this._originalSave
 
       Model.prototype.save = function pulsePatchedModelSave(this: any, ...args: any[]) {
-        if (!self.isEnabled()) {
+        if (!self.isEnabled() || context.active().getValue(SUPPRESS_NESTED_MONGOOSE_SPANS)) {
           return origSave.apply(this, args)
         }
 
@@ -202,58 +341,99 @@ export class MongooseInstrumentation extends InstrumentationBase {
         const operation = isNew ? 'insert' : 'save'
         const spanName = `${modelName}.save`
 
-        const tracer = self.tracer
-        return tracer.startActiveSpan(
+        return self._withMongooseSpan(
           spanName,
-          {
-            kind: SpanKind.CLIENT,
-            attributes: {
-              'db.system': 'mongodb',
-              'db.name': dbName,
-              'db.mongodb.collection': collectionName,
-              'db.operation': operation,
-            },
-          },
-          (span) => {
-            let res: any
-            try {
-              res = origSave.apply(this, args)
-            } catch (err: any) {
-              span.recordException(err)
-              span.setStatus({ code: SpanStatusCode.ERROR, message: err?.message || String(err) })
-              span.end()
-              throw err
-            }
-
-            if (res && typeof res.then === 'function') {
-              return res.then(
-                (doc: any) => {
-                  span.end()
-                  return doc
-                },
-                (err: any) => {
-                  span.recordException(err)
-                  span.setStatus({ code: SpanStatusCode.ERROR, message: err?.message || String(err) })
-                  span.end()
-                  throw err
-                }
-              )
-            }
-
-            span.end()
-            return res
+          self._baseAttributes(dbName, collectionName, operation),
+          (endWithError, endOk) => {
+            const wrapped = self._wrapLastCallback(args, endWithError, endOk)
+            return { result: origSave.apply(this, wrapped.args), callbackWrapped: wrapped.wrapped }
           }
         )
       }
     }
 
-    // ─── 3. Patch Aggregate.prototype.exec ──────────────────────────────
+    // ─── 3. Patch static Model.create for direct create() calls ──────────
+    if (!this._originalCreate && typeof Model.create === 'function') {
+      this._originalCreate = Model.create
+      const origCreate = this._originalCreate
+
+      Model.create = function pulsePatchedModelCreate(this: any, ...args: any[]) {
+        if (!self.isEnabled() || context.active().getValue(SUPPRESS_NESTED_MONGOOSE_SPANS)) {
+          return origCreate.apply(this, args)
+        }
+
+        const modelName = this.modelName || this.collection?.name || 'Model'
+        const collectionName = this.collection?.name || modelName
+        const dbName = this.db?.name || 'db'
+        return self._withMongooseSpan(
+          `${modelName}.create`,
+          self._baseAttributes(dbName, collectionName, 'create'),
+          (endWithError, endOk) => {
+            const wrapped = self._wrapLastCallback(args, endWithError, endOk)
+            return { result: origCreate.apply(this, wrapped.args), callbackWrapped: wrapped.wrapped }
+          },
+          true
+        )
+      }
+    }
+
+    // ─── 4. Patch static Model.insertMany for bulk inserts ───────────────
+    if (!this._originalInsertMany && typeof Model.insertMany === 'function') {
+      this._originalInsertMany = Model.insertMany
+      const origInsertMany = this._originalInsertMany
+
+      Model.insertMany = function pulsePatchedModelInsertMany(this: any, ...args: any[]) {
+        if (!self.isEnabled() || context.active().getValue(SUPPRESS_NESTED_MONGOOSE_SPANS)) {
+          return origInsertMany.apply(this, args)
+        }
+
+        const modelName = this.modelName || this.collection?.name || 'Model'
+        const collectionName = this.collection?.name || modelName
+        const dbName = this.db?.name || 'db'
+        return self._withMongooseSpan(
+          `${modelName}.insertMany`,
+          self._baseAttributes(dbName, collectionName, 'insertMany'),
+          (endWithError, endOk) => {
+            const wrapped = self._wrapLastCallback(args, endWithError, endOk)
+            return { result: origInsertMany.apply(this, wrapped.args), callbackWrapped: wrapped.wrapped }
+          },
+          true
+        )
+      }
+    }
+
+    // ─── 5. Patch static Model.bulkWrite for raw model bulk operations ───
+    if (!this._originalBulkWrite && typeof Model.bulkWrite === 'function') {
+      this._originalBulkWrite = Model.bulkWrite
+      const origBulkWrite = this._originalBulkWrite
+
+      Model.bulkWrite = function pulsePatchedModelBulkWrite(this: any, ...args: any[]) {
+        if (!self.isEnabled() || context.active().getValue(SUPPRESS_NESTED_MONGOOSE_SPANS)) {
+          return origBulkWrite.apply(this, args)
+        }
+
+        const modelName = this.modelName || this.collection?.name || 'Model'
+        const collectionName = this.collection?.name || modelName
+        const dbName = this.db?.name || 'db'
+        return self._withMongooseSpan(
+          `${modelName}.bulkWrite`,
+          self._baseAttributes(dbName, collectionName, 'bulkWrite'),
+          (endWithError, endOk) => {
+            const wrapped = self._wrapLastCallback(args, endWithError, endOk)
+            return { result: origBulkWrite.apply(this, wrapped.args), callbackWrapped: wrapped.wrapped }
+          },
+          true
+        )
+      }
+    }
+
+    // ─── 6. Patch Aggregate.prototype.exec ──────────────────────────────
     if (Aggregate?.prototype && !this._originalAggregateExec && typeof Aggregate.prototype.exec === 'function') {
       this._originalAggregateExec = Aggregate.prototype.exec
       const origAggregateExec = this._originalAggregateExec
 
       Aggregate.prototype.exec = function pulsePatchedAggregateExec(this: any, ...args: any[]) {
-        if (!self.isEnabled()) {
+        if (!self.isEnabled() || context.active().getValue(SUPPRESS_NESTED_MONGOOSE_SPANS)) {
           return origAggregateExec.apply(this, args)
         }
 
@@ -262,55 +442,57 @@ export class MongooseInstrumentation extends InstrumentationBase {
         const dbName = this.model?.()?.db?.name || 'db'
         const collectionName = this.model?.()?.collection?.name || modelName
 
-        const tracer = self.tracer
-        return tracer.startActiveSpan(
+        return self._withMongooseSpan(
           spanName,
-          {
-            kind: SpanKind.CLIENT,
-            attributes: {
-              'db.system': 'mongodb',
-              'db.name': dbName,
-              'db.mongodb.collection': collectionName,
-              'db.operation': 'aggregate',
-            },
-          },
-          (span) => {
-            let promise: Promise<any>
-            try {
-              promise = origAggregateExec.apply(this, args)
-            } catch (err: any) {
-              span.recordException(err)
-              span.setStatus({ code: SpanStatusCode.ERROR, message: err?.message || String(err) })
-              span.end()
-              throw err
-            }
-
-            if (promise && typeof promise.then === 'function') {
-              return promise.then(
-                (res) => {
-                  span.end()
-                  return res
-                },
-                (err) => {
-                  span.recordException(err)
-                  span.setStatus({ code: SpanStatusCode.ERROR, message: err?.message || String(err) })
-                  span.end()
-                  throw err
-                }
-              )
-            }
-
-            span.end()
-            return promise
+          self._baseAttributes(dbName, collectionName, 'aggregate'),
+          (endWithError, endOk) => {
+            const wrapped = self._wrapLastCallback(args, endWithError, endOk)
+            return { result: origAggregateExec.apply(this, wrapped.args), callbackWrapped: wrapped.wrapped }
           }
         )
       }
     }
 
-    logger.debug('Mongoose ODM auto-instrumentation successfully attached')
+    // ─── 7. Patch static Model.populate for explicit Model.populate calls ─
+    if (!this._originalPopulate && typeof Model.populate === 'function') {
+      this._originalPopulate = Model.populate
+      const origPopulate = this._originalPopulate
+
+      Model.populate = function pulsePatchedModelPopulate(this: any, ...args: any[]) {
+        if (!self.isEnabled() || context.active().getValue(SUPPRESS_NESTED_MONGOOSE_SPANS)) {
+          return origPopulate.apply(this, args)
+        }
+
+        const modelName = this.modelName || 'Model'
+        const collectionName = this.collection?.name || modelName
+        const dbName = this.db?.name || 'db'
+        return self._withMongooseSpan(
+          `${modelName}.populate`,
+          self._baseAttributes(dbName, collectionName, 'populate'),
+          (endWithError, endOk) => {
+            const wrapped = self._wrapLastCallback(args, endWithError, endOk)
+            return { result: origPopulate.apply(this, wrapped.args), callbackWrapped: wrapped.wrapped }
+          },
+          true
+        )
+      }
+    }
+
+    logger.debug('Mongoose ODM auto-instrumentation successfully attached', {
+      version: mongoose.version,
+      queryExec: Boolean(this._originalExec),
+      modelSave: Boolean(this._originalSave),
+      modelCreate: Boolean(this._originalCreate),
+      insertMany: Boolean(this._originalInsertMany),
+      bulkWrite: Boolean(this._originalBulkWrite),
+      aggregateExec: Boolean(this._originalAggregateExec),
+      populate: Boolean(this._originalPopulate),
+    })
+    return true
   }
 
-  private _unpatchMongoose(mongoose: any): void {
+  private _unpatchMongoose(moduleExports: any): void {
+    const mongoose = this._resolveMongooseExports(moduleExports) || this._patchedMongooseRef
     if (!mongoose || !this._isPatched) return
 
     if (this._originalExec && mongoose.Query?.prototype) {
@@ -323,9 +505,29 @@ export class MongooseInstrumentation extends InstrumentationBase {
       this._originalSave = null
     }
 
+    if (this._originalCreate && mongoose.Model) {
+      mongoose.Model.create = this._originalCreate
+      this._originalCreate = null
+    }
+
+    if (this._originalInsertMany && mongoose.Model) {
+      mongoose.Model.insertMany = this._originalInsertMany
+      this._originalInsertMany = null
+    }
+
+    if (this._originalBulkWrite && mongoose.Model) {
+      mongoose.Model.bulkWrite = this._originalBulkWrite
+      this._originalBulkWrite = null
+    }
+
     if (this._originalAggregateExec && mongoose.Aggregate?.prototype) {
       mongoose.Aggregate.prototype.exec = this._originalAggregateExec
       this._originalAggregateExec = null
+    }
+
+    if (this._originalPopulate && mongoose.Model) {
+      mongoose.Model.populate = this._originalPopulate
+      this._originalPopulate = null
     }
 
     this._isPatched = false
@@ -342,4 +544,3 @@ export function createMongooseInstrumentation(
 }
 
 export default createMongooseInstrumentation
-
