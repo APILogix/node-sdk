@@ -11,6 +11,7 @@ export { createMongooseInstrumentation, MongooseInstrumentation } from './mongoo
 export { createRedisInstrumentation, createIORedisInstrumentation, createRedisStatementSerializer } from './redis.js'
 export { createBullMQInstrumentation } from './bullmq.js'
 export { createAxiosInstrumentation } from './axios.js'
+export { createNodemailerInstrumentation, NodemailerInstrumentation } from './nodemailer.js'
 
 export type { GraphQLInstrumentationOptions } from './graphql.js'
 export type { PrismaInstrumentationOptions } from './prisma.js'
@@ -19,3 +20,4 @@ export type { MongooseInstrumentationOptions } from './mongoose.js'
 export type { RedisInstrumentationOptions, RedisKeyVisibilityPolicy } from './redis.js'
 export type { BullMQInstrumentationOptions } from './bullmq.js'
 export type { AxiosInstrumentationOptions } from './axios.js'
+export type { NodemailerInstrumentationOptions } from './nodemailer.js'

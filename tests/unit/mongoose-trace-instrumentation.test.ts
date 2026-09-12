@@ -304,4 +304,51 @@ describe('Mongoose ODM Trace Instrumentation & In-Place Upgrades', () => {
 
     delete (globalThis as any).mongoose
   })
+
+  it('8. Detects connection buffering state and tags db.mongodb.buffering', async () => {
+    const mockMongoose = {
+      Query: class MockQuery {
+        op = 'findOne'
+        model = { modelName: 'User', collection: { name: 'users' }, db: { name: 'test_db', readyState: 2 } }
+        async exec() {
+          return { id: 'usr_buffer' }
+        }
+      },
+      Model: class MockModel {
+        collection = { name: 'users' }
+        db = { name: 'test_db', readyState: 1 }
+        constructor() {
+          ;(this as any).constructor.modelName = 'User'
+        }
+        async save() {
+          return this
+        }
+      },
+    }
+
+    const instrumentation = new MongooseInstrumentation({ enabled: true }, TEST_REMOTE_CONFIG.privacy.capture)
+    instrumentation.setTracerProvider(provider)
+    instrumentation.enable()
+    ;(instrumentation as any)._patchMongoose(mockMongoose)
+
+    const query = new mockMongoose.Query()
+    await query.exec()
+
+    const doc = new mockMongoose.Model()
+    await doc.save()
+
+    const spans = memoryExporter.getFinishedSpans()
+    const querySpan = spans.find((s) => s.name === 'User.findOne')
+    assert.ok(querySpan)
+    assert.equal(querySpan.attributes['db.mongodb.buffering'], true, 'ReadyState 2 should be flagged as buffering')
+    assert.equal(querySpan.attributes['db.mongodb.connection_state'], 'connecting')
+
+    const saveSpan = spans.find((s) => s.name === 'User.save')
+    assert.ok(saveSpan)
+    assert.equal(saveSpan.attributes['db.mongodb.buffering'], false, 'ReadyState 1 should not be buffering')
+    assert.equal(saveSpan.attributes['db.mongodb.connection_state'], 'connected')
+
+    instrumentation.disable()
+  })
 })
+

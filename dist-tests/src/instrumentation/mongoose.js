@@ -137,7 +137,10 @@ export class MongooseInstrumentation extends InstrumentationBase {
         }
         return null;
     }
-    _baseAttributes(dbName, collectionName, operation) {
+    _baseAttributes(dbName, collectionName, operation, conn) {
+        const readyState = conn?.readyState ?? (this._patchedMongooseRef?.connection?.readyState);
+        const isBuffering = readyState !== undefined && readyState !== 1;
+        const connectionState = readyState === 1 ? 'connected' : readyState === 0 ? 'disconnected' : readyState === 2 ? 'connecting' : readyState === 3 ? 'disconnecting' : undefined;
         return {
             'db.system': 'mongodb',
             'db.system.name': 'mongodb',
@@ -148,6 +151,10 @@ export class MongooseInstrumentation extends InstrumentationBase {
             'db.operation': operation,
             'db.operation.name': operation,
             'pulse.instrumentation.layer': 'mongoose',
+            ...(readyState !== undefined ? {
+                'db.mongodb.buffering': isBuffering,
+                ...(connectionState ? { 'db.mongodb.connection_state': connectionState } : {}),
+            } : {}),
         };
     }
     _endSpan(span, err) {
@@ -263,7 +270,7 @@ export class MongooseInstrumentation extends InstrumentationBase {
                     }
                 }
                 const attributes = {
-                    ...self._baseAttributes(dbName, collectionName, operation),
+                    ...self._baseAttributes(dbName, collectionName, operation, this.model?.db || this.db),
                     'db.statement': statement,
                 };
                 const originalArgs = Array.from(arguments);
@@ -287,7 +294,7 @@ export class MongooseInstrumentation extends InstrumentationBase {
                 const isNew = Boolean(this.isNew);
                 const operation = isNew ? 'insert' : 'save';
                 const spanName = `${modelName}.save`;
-                return self._withMongooseSpan(spanName, self._baseAttributes(dbName, collectionName, operation), (endWithError, endOk) => {
+                return self._withMongooseSpan(spanName, self._baseAttributes(dbName, collectionName, operation, this.db), (endWithError, endOk) => {
                     const wrapped = self._wrapLastCallback(args, endWithError, endOk);
                     return { result: origSave.apply(this, wrapped.args), callbackWrapped: wrapped.wrapped };
                 });
@@ -304,7 +311,7 @@ export class MongooseInstrumentation extends InstrumentationBase {
                 const modelName = this.modelName || this.collection?.name || 'Model';
                 const collectionName = this.collection?.name || modelName;
                 const dbName = this.db?.name || 'db';
-                return self._withMongooseSpan(`${modelName}.create`, self._baseAttributes(dbName, collectionName, 'create'), (endWithError, endOk) => {
+                return self._withMongooseSpan(`${modelName}.create`, self._baseAttributes(dbName, collectionName, 'create', this.db), (endWithError, endOk) => {
                     const wrapped = self._wrapLastCallback(args, endWithError, endOk);
                     return { result: origCreate.apply(this, wrapped.args), callbackWrapped: wrapped.wrapped };
                 }, true);
@@ -321,7 +328,7 @@ export class MongooseInstrumentation extends InstrumentationBase {
                 const modelName = this.modelName || this.collection?.name || 'Model';
                 const collectionName = this.collection?.name || modelName;
                 const dbName = this.db?.name || 'db';
-                return self._withMongooseSpan(`${modelName}.insertMany`, self._baseAttributes(dbName, collectionName, 'insertMany'), (endWithError, endOk) => {
+                return self._withMongooseSpan(`${modelName}.insertMany`, self._baseAttributes(dbName, collectionName, 'insertMany', this.db), (endWithError, endOk) => {
                     const wrapped = self._wrapLastCallback(args, endWithError, endOk);
                     return { result: origInsertMany.apply(this, wrapped.args), callbackWrapped: wrapped.wrapped };
                 }, true);
@@ -338,7 +345,7 @@ export class MongooseInstrumentation extends InstrumentationBase {
                 const modelName = this.modelName || this.collection?.name || 'Model';
                 const collectionName = this.collection?.name || modelName;
                 const dbName = this.db?.name || 'db';
-                return self._withMongooseSpan(`${modelName}.bulkWrite`, self._baseAttributes(dbName, collectionName, 'bulkWrite'), (endWithError, endOk) => {
+                return self._withMongooseSpan(`${modelName}.bulkWrite`, self._baseAttributes(dbName, collectionName, 'bulkWrite', this.db), (endWithError, endOk) => {
                     const wrapped = self._wrapLastCallback(args, endWithError, endOk);
                     return { result: origBulkWrite.apply(this, wrapped.args), callbackWrapped: wrapped.wrapped };
                 }, true);
@@ -373,7 +380,7 @@ export class MongooseInstrumentation extends InstrumentationBase {
                 const modelName = this.modelName || 'Model';
                 const collectionName = this.collection?.name || modelName;
                 const dbName = this.db?.name || 'db';
-                return self._withMongooseSpan(`${modelName}.populate`, self._baseAttributes(dbName, collectionName, 'populate'), (endWithError, endOk) => {
+                return self._withMongooseSpan(`${modelName}.populate`, self._baseAttributes(dbName, collectionName, 'populate', this.db), (endWithError, endOk) => {
                     const wrapped = self._wrapLastCallback(args, endWithError, endOk);
                     return { result: origPopulate.apply(this, wrapped.args), callbackWrapped: wrapped.wrapped };
                 }, true);

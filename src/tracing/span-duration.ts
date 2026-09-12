@@ -88,8 +88,9 @@ export function computeExclusiveDuration(
   // Step 1: Collect valid child intervals truthfully without clamping.
   // P0.4: Do not modify or clamp child start/end to hide lifecycle defects.
   const validIntervals: Array<{ start: number; end: number }> = []
+  const JITTER_TOLERANCE_MS = 1.0
   for (const child of childIntervals) {
-    if (child.startTime < parentStartMs || child.endTime > parentEndMs) {
+    if (child.startTime < parentStartMs - JITTER_TOLERANCE_MS || child.endTime > parentEndMs + JITTER_TOLERANCE_MS) {
       getLogger().warn('Span timing anomaly: child interval exceeds parent boundaries', {
         parentStartMs,
         parentEndMs,
@@ -97,8 +98,10 @@ export function computeExclusiveDuration(
         childEndTime: child.endTime,
       })
     }
-    if (child.startTime < child.endTime) {
-      validIntervals.push({ start: child.startTime, end: child.endTime })
+    const clampedStart = Math.max(parentStartMs, child.startTime)
+    const clampedEnd = Math.min(parentEndMs, child.endTime)
+    if (clampedStart < clampedEnd) {
+      validIntervals.push({ start: clampedStart, end: clampedEnd })
     }
   }
 

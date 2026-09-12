@@ -43,6 +43,7 @@ import { createRedisInstrumentation, createIORedisInstrumentation } from './redi
 import { createBullMQInstrumentation } from './bullmq.js'
 import { createGraphQLInstrumentation } from './graphql.js'
 import { createPrismaInstrumentation } from './prisma.js'
+import { createNodemailerInstrumentation } from './nodemailer.js'
 import { patchEventEmitter, unpatchEventEmitter } from './event-emitter-patch.js'
 import { installHttpLifecycleGuard, uninstallHttpLifecycleGuard } from './http-lifecycle-guard.js'
 import { registerEsmLoaderHooks } from './esm-loader.js'
@@ -570,6 +571,12 @@ export function registerAutoInstrumentations(): void {
     )
   }
 
+  registry.nodemailer = createNodemailerInstrumentation(
+    true,
+    {},
+    resolved.captureConfig
+  )
+
   g[ACTIVE_REGISTRY] = registry
   const otelInstrumentations = Object.values(registry).filter(
     (inst): inst is any => Boolean(inst && typeof (inst as any).setTracerProvider === 'function')
@@ -652,6 +659,7 @@ export function registerBootstrapAutoInstrumentations(): void {
   )
   registry.pg = createPgInstrumentation(true, { captureQueries: false, captureParams: false, requireParentSpan: false }, captureConfig)
   registry.mysql2 = createMySQLInstrumentation(true, { captureQueries: false }, captureConfig)
+  registry.nodemailer = createNodemailerInstrumentation(true, {}, captureConfig)
 
   const instrumentations = Object.values(registry).filter(
     (inst): inst is any => Boolean(inst && typeof (inst as any).setTracerProvider === 'function')

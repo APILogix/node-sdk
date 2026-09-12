@@ -163,7 +163,11 @@ export class MongooseInstrumentation extends InstrumentationBase {
     return null
   }
 
-  private _baseAttributes(dbName: string, collectionName: string, operation: string): MongooseSpanAttributes {
+  private _baseAttributes(dbName: string, collectionName: string, operation: string, conn?: any): MongooseSpanAttributes {
+    const readyState = conn?.readyState ?? (this._patchedMongooseRef?.connection?.readyState)
+    const isBuffering = readyState !== undefined && readyState !== 1
+    const connectionState = readyState === 1 ? 'connected' : readyState === 0 ? 'disconnected' : readyState === 2 ? 'connecting' : readyState === 3 ? 'disconnecting' : undefined
+
     return {
       'db.system': 'mongodb',
       'db.system.name': 'mongodb',
@@ -174,6 +178,10 @@ export class MongooseInstrumentation extends InstrumentationBase {
       'db.operation': operation,
       'db.operation.name': operation,
       'pulse.instrumentation.layer': 'mongoose',
+      ...(readyState !== undefined ? {
+        'db.mongodb.buffering': isBuffering,
+        ...(connectionState ? { 'db.mongodb.connection_state': connectionState } : {}),
+      } : {}),
     }
   }
 
@@ -309,7 +317,7 @@ export class MongooseInstrumentation extends InstrumentationBase {
         }
 
         const attributes = {
-          ...self._baseAttributes(dbName, collectionName, operation),
+          ...self._baseAttributes(dbName, collectionName, operation, this.model?.db || this.db),
           'db.statement': statement,
         }
         const originalArgs = Array.from(arguments as any)
@@ -343,7 +351,7 @@ export class MongooseInstrumentation extends InstrumentationBase {
 
         return self._withMongooseSpan(
           spanName,
-          self._baseAttributes(dbName, collectionName, operation),
+          self._baseAttributes(dbName, collectionName, operation, this.db),
           (endWithError, endOk) => {
             const wrapped = self._wrapLastCallback(args, endWithError, endOk)
             return { result: origSave.apply(this, wrapped.args), callbackWrapped: wrapped.wrapped }
@@ -367,7 +375,7 @@ export class MongooseInstrumentation extends InstrumentationBase {
         const dbName = this.db?.name || 'db'
         return self._withMongooseSpan(
           `${modelName}.create`,
-          self._baseAttributes(dbName, collectionName, 'create'),
+          self._baseAttributes(dbName, collectionName, 'create', this.db),
           (endWithError, endOk) => {
             const wrapped = self._wrapLastCallback(args, endWithError, endOk)
             return { result: origCreate.apply(this, wrapped.args), callbackWrapped: wrapped.wrapped }
@@ -392,7 +400,7 @@ export class MongooseInstrumentation extends InstrumentationBase {
         const dbName = this.db?.name || 'db'
         return self._withMongooseSpan(
           `${modelName}.insertMany`,
-          self._baseAttributes(dbName, collectionName, 'insertMany'),
+          self._baseAttributes(dbName, collectionName, 'insertMany', this.db),
           (endWithError, endOk) => {
             const wrapped = self._wrapLastCallback(args, endWithError, endOk)
             return { result: origInsertMany.apply(this, wrapped.args), callbackWrapped: wrapped.wrapped }
@@ -417,7 +425,7 @@ export class MongooseInstrumentation extends InstrumentationBase {
         const dbName = this.db?.name || 'db'
         return self._withMongooseSpan(
           `${modelName}.bulkWrite`,
-          self._baseAttributes(dbName, collectionName, 'bulkWrite'),
+          self._baseAttributes(dbName, collectionName, 'bulkWrite', this.db),
           (endWithError, endOk) => {
             const wrapped = self._wrapLastCallback(args, endWithError, endOk)
             return { result: origBulkWrite.apply(this, wrapped.args), callbackWrapped: wrapped.wrapped }
@@ -468,7 +476,7 @@ export class MongooseInstrumentation extends InstrumentationBase {
         const dbName = this.db?.name || 'db'
         return self._withMongooseSpan(
           `${modelName}.populate`,
-          self._baseAttributes(dbName, collectionName, 'populate'),
+          self._baseAttributes(dbName, collectionName, 'populate', this.db),
           (endWithError, endOk) => {
             const wrapped = self._wrapLastCallback(args, endWithError, endOk)
             return { result: origPopulate.apply(this, wrapped.args), callbackWrapped: wrapped.wrapped }

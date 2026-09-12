@@ -10,3 +10,4 @@ export { createMongooseInstrumentation, MongooseInstrumentation } from './mongoo
 export { createRedisInstrumentation, createIORedisInstrumentation, createRedisStatementSerializer } from './redis.js';
 export { createBullMQInstrumentation } from './bullmq.js';
 export { createAxiosInstrumentation } from './axios.js';
+export { createNodemailerInstrumentation, NodemailerInstrumentation } from './nodemailer.js';
