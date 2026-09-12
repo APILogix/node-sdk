@@ -1,16 +1,20 @@
 # GSD Project State
 
 ## Current Position
-- **Active Workflow:** `/map` completed
-- **Next Up:** Ready for `/plan` or milestone creation
+- **Active Workflow:** `/new-project` completed
+- **Current Milestone:** v2.0 — Universal Database & Framework Autoinstrumentation Hardening
+- **Active Phase:** Phase 1 (Not Started)
+- **Next Up:** `/plan 1` or `/discuss-phase 1`
+
+## Milestone Overview
+- **Phase 1**: MySQL2 & Relational Database Hardening
+- **Phase 2**: GraphQL & BullMQ Background Job Tracing Parity
+- **Phase 3**: Hot-Path Performance & Zero-Allocation Optimization
+- **Phase 4**: Integration Benchmarking, Regression & Verification
 
 ## Last Session Summary
-Codebase mapping complete for `@pulse-apm/node` (v8.1.2):
-- **6 Core Subsystems Identified:** Lifecycle/Client, Auto-Instrumentation, Tracing/Context, Processors/Sanitization, Storage/Buffering, Transport/Resiliency.
-- **23 Production Dependencies Analyzed:** OpenTelemetry suite, framework/ORM plugins (Mongoose, Prisma, PG, Redis, Express, Fastify, BullMQ), Zod, source-map-js.
-- **3 Technical Debt Items Documented:** `SlowRequestDetector` deprecation, ESM static import boundary constraints, Windows test runner temp file concurrency.
-
-## Documentation Artifacts Generated
-- `.gsd/ARCHITECTURE.md`
-- `.gsd/STACK.md`
-- `.gsd/STATE.md`
+Project initialization complete:
+- Initialized `.gsd/SPEC.md` (`Status: FINALIZED`).
+- Formulated 8 measurable requirements in `.gsd/REQUIREMENTS.md`.
+- Structured 4-phase execution roadmap in `.gsd/ROADMAP.md`.
+- Established architecture baseline in `.gsd/ARCHITECTURE.md` and `.gsd/STACK.md`.
