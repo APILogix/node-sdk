@@ -433,16 +433,6 @@ export class BatchManager {
                 aborted,
                 eventCount: events.length,
             });
-            sdkConsoleLog('[Pulse] Batch send failed', {
-                route: this.options.route,
-                errorName: normalizedError.name,
-                errorMessage: normalizedError.message,
-                errorCode: getErrorCode(normalizedError),
-                errorCause: summarizeErrorCause(normalizedError.cause),
-                abortReason,
-                aborted,
-                eventCount: events.length,
-            });
         }
         finally {
             this.activeBatches.delete(events);

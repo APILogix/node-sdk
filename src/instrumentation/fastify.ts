@@ -146,19 +146,21 @@ export function fastifyPulsePlugin(
       const referer = headerString(headers['referer'] ?? headers['referrer'])
       const clientIp = resolveClientIp(headers, request.socket?.remoteAddress, options.trustedProxies, decision.maskIp, request.ip)
 
+      const extra: Record<string, unknown> = tenantId ? { tenantId } : {}
+      Object.defineProperties(extra, {
+        getStatusCode: { value: () => (request as any).raw?.statusCode ?? (request as any).reply?.statusCode, enumerable: false, configurable: true, writable: true },
+        getMethod: { value: () => request.method, enumerable: false, configurable: true, writable: true },
+        getUrl: { value: () => request.url, enumerable: false, configurable: true, writable: true },
+        getRoute: { value: () => normalizedRoute(request), enumerable: false, configurable: true, writable: true },
+      })
+
       const store = createContextStore(
         requestId,
         options.maxBreadcrumbs ?? client.options?.maxBreadcrumbs ?? 100,
         {
           userId,
           sessionId,
-          extra: {
-            ...(tenantId ? { tenantId } : {}),
-            getStatusCode: () => (request as any).raw?.statusCode ?? (request as any).reply?.statusCode,
-            getMethod: () => request.method,
-            getUrl: () => request.url,
-            getRoute: () => normalizedRoute(request),
-          },
+          extra,
           tags: { framework: 'fastify' },
         },
       )

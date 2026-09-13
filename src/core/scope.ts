@@ -411,10 +411,19 @@ export function applyScopeToEvent(event: Record<string, unknown>): Record<string
   }
 
   // Extra: merge active scope extra with context extra (context wins)
-  const mergedExtra: Record<string, unknown> = { ...scope.getExtras() }
+  // Enterprise guard: Functions and non-cloneable objects must NEVER leak into
+  // event payloads (prevents DataCloneError during Worker serialization).
+  const mergedExtra: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(scope.getExtras())) {
+    if (typeof value !== 'function' && typeof value !== 'symbol') {
+      mergedExtra[key] = value
+    }
+  }
   if (ctx?.extra) {
     for (const [key, value] of Object.entries(ctx.extra)) {
-      mergedExtra[key] = value
+      if (typeof value !== 'function' && typeof value !== 'symbol') {
+        mergedExtra[key] = value
+      }
     }
   }
   if (Object.keys(mergedExtra).length > 0) {

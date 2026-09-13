@@ -78,16 +78,17 @@ export function monitorMiddleware(options = {}) {
         const referer = headerString(headers['referer'] ?? headers['referrer']);
         const clientIp = resolveClientIp(headers, req.socket?.remoteAddress, options.trustedProxies, decision.maskIp);
         const startTime = Date.now();
+        const extra = tenantId ? { tenantId } : {};
+        Object.defineProperties(extra, {
+            getStatusCode: { value: () => res.statusCode, enumerable: false, configurable: true, writable: true },
+            getMethod: { value: () => req.method, enumerable: false, configurable: true, writable: true },
+            getUrl: { value: () => req.originalUrl || req.url, enumerable: false, configurable: true, writable: true },
+            getRoute: { value: () => normalizedRoute(req), enumerable: false, configurable: true, writable: true },
+        });
         const store = createContextStore(requestId, options.maxBreadcrumbs ?? client.options?.maxBreadcrumbs ?? 100, {
             userId,
             sessionId,
-            extra: {
-                ...(tenantId ? { tenantId } : {}),
-                getStatusCode: () => res.statusCode,
-                getMethod: () => req.method,
-                getUrl: () => req.originalUrl || req.url,
-                getRoute: () => normalizedRoute(req),
-            },
+            extra,
             tags: { framework: 'express' },
         });
         // Privacy capture policy is backend-authoritative.
