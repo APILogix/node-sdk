@@ -57,6 +57,7 @@ export interface FeaturesConfig {
     readonly runtimeMetrics: boolean;
     readonly eventLoopMonitoring: boolean;
     readonly gcMonitoring: boolean;
+    readonly adaptiveSampling?: boolean | undefined;
 }
 /**
  * Per-route override map. Each key is a route prefix; the value is a
@@ -93,6 +94,7 @@ export interface SamplingConfig {
     readonly crons: number;
     /** Per-route overrides keyed by URL prefix. Longest prefix wins. */
     readonly routes: Readonly<Record<string, RouteSamplingRates>>;
+    readonly adaptive?: boolean | undefined;
 }
 export interface InstrumentationConfig {
     readonly http: boolean;
@@ -440,6 +442,12 @@ export interface SDKInitOptions {
     readonly apiKey: string;
     /** Startup request deadline in milliseconds (default: 1500). Failure leaves telemetry disabled. */
     readonly initTimeoutMs?: number | undefined;
+    /** Custom backend ingestion / control plane endpoint (overrides default or PULSE_ENDPOINT). */
+    readonly endpoint?: string | undefined;
+    /** Whether to automatically register SIGTERM/SIGINT listeners for graceful shutdown (default: true). */
+    readonly handleSignals?: boolean | undefined;
+    /** Enable dynamic adaptive sampling based on system pressure (default: false). */
+    readonly adaptiveSampling?: boolean | undefined;
     readonly applicationName?: string | undefined;
     readonly applicationVersion?: string | undefined;
     readonly packageJsonPath?: string | undefined;
@@ -460,6 +468,9 @@ export interface SDKInitOptions {
 export declare const sdkInitOptionsSchema: z.ZodObject<{
     apiKey: z.ZodString;
     initTimeoutMs: z.ZodOptional<z.ZodNumber>;
+    endpoint: z.ZodOptional<z.ZodString>;
+    handleSignals: z.ZodOptional<z.ZodBoolean>;
+    adaptiveSampling: z.ZodOptional<z.ZodBoolean>;
     applicationName: z.ZodOptional<z.ZodString>;
     applicationVersion: z.ZodOptional<z.ZodString>;
     packageJsonPath: z.ZodOptional<z.ZodString>;

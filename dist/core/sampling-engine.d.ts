@@ -18,17 +18,23 @@
  */
 import type { SamplingConfig, ConfigDiff, RemoteConfigResponse } from '../types/config.js';
 export type SamplingEventType = 'traces' | 'requests' | 'spans' | 'errors' | 'messages' | 'profiles' | 'replays' | 'metrics' | 'logs' | 'events' | 'crons';
+export interface SamplingEngineOptions {
+    readonly adaptive?: boolean | undefined;
+}
 export type SamplingDecision = {
     readonly sampled: boolean;
     readonly rate: number;
-    readonly reason: 'global_rate' | 'route_override' | 'always_sample' | 'always_drop';
+    readonly reason: 'global_rate' | 'route_override' | 'always_sample' | 'always_drop' | 'adaptive_pressure';
 };
 export declare class SamplingEngine {
     private static instance;
     private config;
+    private adaptive;
     private destroyed;
     private constructor();
-    static initialize(config: SamplingConfig): SamplingEngine;
+    static initialize(config: SamplingConfig, options?: SamplingEngineOptions): SamplingEngine;
+    setAdaptive(enabled: boolean): void;
+    isAdaptive(): boolean;
     static getInstance(): SamplingEngine | null;
     shouldSampleTrace(traceId: string, route?: string): SamplingDecision;
     shouldSampleRequest(requestId: string, route?: string): SamplingDecision;

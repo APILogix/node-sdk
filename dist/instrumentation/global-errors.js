@@ -9,6 +9,7 @@
  * (rejections don't crash the process by default in modern Node.js).
  */
 import { captureError } from "../capture/captureError.js";
+import { captureMessage } from "../capture/captureMessage.js";
 import { toError } from "../core/errors.js";
 import { getLogger } from "../utils/logger.js";
 import { ERROR_DEFAULTS } from "../constants/internal-defaults.js";
@@ -134,6 +135,16 @@ export function setupGlobalErrorHandlers() {
  * something else wrapped on top of us.
  */
 const CONSOLE_ERROR_MARKER = Symbol.for('pulse-sdk.global-errors.console-error-wrapper');
+const PROCESS_WARNING_PATTERN = /^(?:\(node:\d+\)\s+)?(?:\[[A-Z0-9_-]+\]\s+)?(?:SECURITY\s+)?(?:Warning|DeprecationWarning|ExperimentalWarning):/i;
+function isProcessWarning(error, message) {
+    if (error && (error.name === 'Warning' || error.name === 'DeprecationWarning' || error.name === 'ExperimentalWarning')) {
+        return true;
+    }
+    if (message && PROCESS_WARNING_PATTERN.test(message.trim())) {
+        return true;
+    }
+    return false;
+}
 function wrapConsoleError() {
     if (consoleErrorWrapped)
         return;
@@ -178,6 +189,15 @@ function wrapConsoleError() {
                 }
             }).join(' ');
             const error = scrubbedArgs.find(a => a instanceof Error);
+            // Route runtime/library process warnings to captureMessage (Severity.Warning)
+            // instead of logging an APM application error that taints healthy HTTP 200 requests.
+            if (isProcessWarning(error, message)) {
+                captureMessage(message, Severity.Warning, {
+                    mechanism: 'console.error.warning',
+                    warning: true,
+                });
+                return;
+            }
             const store = getRequestContext();
             if (store?.extra) {
                 ;

@@ -1,0 +1,189 @@
+{
+  "traceId": "e9a0865fa95d79f6d29cabe94ccb52c7",
+  "eventId": "trace_e9a0865fa95d79f6d29cabe94ccb52c7",
+  "rootSpan": {
+    "spanId": "a1e348065bc8a440",
+    "traceId": "e9a0865fa95d79f6d29cabe94ccb52c7",
+    "name": "createIndexes $cmd",
+    "kind": "client",
+    "startTime": 1789315740524,
+    "endTime": 1789315741886.682,
+    "duration": 1362.6819,
+    "exclusiveDuration": 1362.681884765625,
+    "status": "error",
+    "statusMessage": "An existing index has the same name as the requested index. When index names are not specified, they are auto generated and can cause conflicts. Please refer to our documentation. Requested index: { v: 2, unique: true, key: { projectId: 1 }, name: \"projectId_1\", partialFilterExpression: { isProjectDefault: true }, background: true }, existing index: { v: 2, key: { projectId: 1 }, name: \"projectId_1\", background: true }",
+    "attributes": {
+      "db.system.name": "mongodb",
+      "db.namespace": "ERP",
+      "db.operation.name": "createIndexes",
+      "db.collection.name": "$cmd",
+      "server.address": "159.41.196.138",
+      "server.port": 27017,
+      "db.query.text": "{\"createIndexes\":\"boards\",\"indexes\":[{\"unique\":true,\"partialFilterExpression\":{\"isProjectDefault\":true},\"background\":true,\"name\":\"projectId_1\",\"key\":{}}]}"
+    },
+    "events": [],
+    "links": [],
+    "children": []
+  },
+  "spanCount": 1,
+  "totalDuration": 1362.6819,
+  "isPartial": false,
+  "metadata": {
+    "sdkName": "@pulse-apm/node",
+    "sdkVersion": "8.1.2",
+    "applicationName": "paypalproject",
+    "applicationVersion": "1.0.0",
+    "projectId": "cubicle-project-001",
+    "environment": "production",
+    "release": "8.0.0"
+  },
+  "sessionId": "df729728-b2fd-410b-a23b-821423e205d2",
+  "tailSampled": false,
+  "hasError": true,
+  "isSlow": true,
+  "timestamp": 1789315742278,
+  "tags": {},
+  "request": null,
+  "errors": [],
+  "logs": [],
+  "waterfall": {
+    "traceId": "e9a0865fa95d79f6d29cabe94ccb52c7",
+    "roots": [
+      {
+        "spanId": "a1e348065bc8a440",
+        "originalMissingId": null,
+        "parentSpanId": null,
+        "name": "createIndexes $cmd",
+        "kind": "client",
+        "status": "error",
+        "statusMessage": "An existing index has the same name as the requested index. When index names are not specified, they are auto generated and can cause conflicts. Please refer to our documentation. Requested index: { v: 2, unique: true, key: { projectId: 1 }, name: \"projectId_1\", partialFilterExpression: { isProjectDefault: true }, background: true }, existing index: { v: 2, key: { projectId: 1 }, name: \"projectId_1\", background: true }",
+        "startTime": 1789315740524,
+        "endTime": 1789315741886.682,
+        "duration": 1362.6819,
+        "exclusiveDuration": 1362.681884765625,
+        "offsetMs": 0,
+        "offsetPercent": 0,
+        "durationPercent": 100,
+        "attributes": {
+          "db.system.name": "mongodb",
+          "db.namespace": "ERP",
+          "db.operation.name": "createIndexes",
+          "db.collection.name": "$cmd",
+          "server.address": "159.41.196.138",
+          "server.port": 27017,
+          "db.query.text": "{\"createIndexes\":\"boards\",\"indexes\":[{\"unique\":true,\"partialFilterExpression\":{\"isProjectDefault\":true},\"background\":true,\"name\":\"projectId_1\",\"key\":{}}]}"
+        },
+        "events": [],
+        "links": [],
+        "isVirtualMissingParent": false,
+        "isMissingParent": false,
+        "isOrphan": false,
+        "children": []
+      }
+    ],
+    "displayList": [
+      {
+        "spanId": "a1e348065bc8a440",
+        "originalMissingId": null,
+        "parentSpanId": null,
+        "name": "createIndexes $cmd",
+        "kind": "client",
+        "status": "error",
+        "statusMessage": "An existing index has the same name as the requested index. When index names are not specified, they are auto generated and can cause conflicts. Please refer to our documentation. Requested index: { v: 2, unique: true, key: { projectId: 1 }, name: \"projectId_1\", partialFilterExpression: { isProjectDefault: true }, background: true }, existing index: { v: 2, key: { projectId: 1 }, name: \"projectId_1\", background: true }",
+        "startTime": 1789315740524,
+        "endTime": 1789315741886.682,
+        "duration": 1362.6819,
+        "exclusiveDuration": 1362.681884765625,
+        "offsetMs": 0,
+        "offsetPercent": 0,
+        "durationPercent": 100,
+        "attributes": {
+          "db.system.name": "mongodb",
+          "db.namespace": "ERP",
+          "db.operation.name": "createIndexes",
+          "db.collection.name": "$cmd",
+          "server.address": "159.41.196.138",
+          "server.port": 27017,
+          "db.query.text": "{\"createIndexes\":\"boards\",\"indexes\":[{\"unique\":true,\"partialFilterExpression\":{\"isProjectDefault\":true},\"background\":true,\"name\":\"projectId_1\",\"key\":{}}]}"
+        },
+        "events": [],
+        "links": [],
+        "isVirtualMissingParent": false,
+        "isMissingParent": false,
+        "isOrphan": false,
+        "children": [],
+        "displayDepth": 0,
+        "rowId": "a1e348065bc8a440",
+        "hasChildren": false
+      }
+    ],
+    "traceStartTime": 1789315740524,
+    "traceEndTime": 1789315741886.682,
+    "totalDuration": 1362.6819,
+    "missingParents": [],
+    "missingParentNodesCount": 0,
+    "spanCount": 1
+  },
+  "spans": [
+    {
+      "spanId": "a1e348065bc8a440",
+      "traceId": "e9a0865fa95d79f6d29cabe94ccb52c7",
+      "parentSpanId": null,
+      "name": "createIndexes $cmd",
+      "kind": "client",
+      "startTime": 1789315740524,
+      "endTime": 1789315741886.682,
+      "duration": 1362.6819,
+      "exclusiveDuration": 1362.681884765625,
+      "status": "error",
+      "statusMessage": "An existing index has the same name as the requested index. When index names are not specified, they are auto generated and can cause conflicts. Please refer to our documentation. Requested index: { v: 2, unique: true, key: { projectId: 1 }, name: \"projectId_1\", partialFilterExpression: { isProjectDefault: true }, background: true }, existing index: { v: 2, key: { projectId: 1 }, name: \"projectId_1\", background: true }",
+      "attributes": {
+        "db.system.name": "mongodb",
+        "db.namespace": "ERP",
+        "db.operation.name": "createIndexes",
+        "db.collection.name": "$cmd",
+        "server.address": "159.41.196.138",
+        "server.port": 27017,
+        "db.query.text": "{\"createIndexes\":\"boards\",\"indexes\":[{\"unique\":true,\"partialFilterExpression\":{\"isProjectDefault\":true},\"background\":true,\"name\":\"projectId_1\",\"key\":{}}]}"
+      },
+      "events": [],
+      "links": [],
+      "metadata": {
+        "sdkName": "@pulse-apm/node",
+        "sdkVersion": "8.1.2",
+        "applicationName": "paypalproject",
+        "applicationVersion": "1.0.0",
+        "projectId": "cubicle-project-001",
+        "environment": "production",
+        "release": "8.0.0"
+      },
+      "sessionId": "df729728-b2fd-410b-a23b-821423e205d2",
+      "requestId": null,
+      "tags": {},
+      "isSampled": true,
+      "traceFlags": 1,
+      "database": {
+        "system": "mongodb",
+        "operation": "createIndexes",
+        "collection": "$cmd",
+        "statement": "{\"createIndexes\":\"boards\",\"indexes\":[{\"unique\":true,\"partialFilterExpression\":{\"isProjectDefault\":true},\"background\":true,\"name\":\"projectId_1\",\"key\":{}}]}"
+      },
+      "errorCount": 0,
+      "logCount": 0,
+      "_provenance": {
+        "category": "spans",
+        "filename": "span_1789315770821_span_a1e348065bc8a440.json",
+        "relativePath": "cubicle/spans/span_1789315770821_span_a1e348065bc8a440.json",
+        "sizeBytes": 1623,
+        "mtime": "2026-09-13T16:09:31.097Z"
+      }
+    }
+  ],
+  "_provenance": {
+    "category": "traces",
+    "filename": "trace_1789315749455_trace_e9a0865fa95d79f6d29cabe94ccb52c7.json",
+    "relativePath": "cubicle/traces/trace_1789315749455_trace_e9a0865fa95d79f6d29cabe94ccb52c7.json",
+    "sizeBytes": 1864,
+    "mtime": "2026-09-13T16:09:09.786Z"
+  }
+}

@@ -1,0 +1,188 @@
+{
+  "traceId": "e0f957b8a3792b5b257b41caccfc6daa",
+  "eventId": "trace_e0f957b8a3792b5b257b41caccfc6daa",
+  "rootSpan": {
+    "spanId": "4add88520b8ef49d",
+    "traceId": "e0f957b8a3792b5b257b41caccfc6daa",
+    "name": "create $cmd",
+    "kind": "client",
+    "startTime": 1789315708088,
+    "endTime": 1789315708296.7495,
+    "duration": 208.7496,
+    "exclusiveDuration": 208.74951171875,
+    "status": "unset",
+    "attributes": {
+      "db.system.name": "mongodb",
+      "db.namespace": "ERP",
+      "db.operation.name": "create",
+      "db.collection.name": "$cmd",
+      "server.address": "159.41.196.138",
+      "server.port": 27017,
+      "db.query.text": "{\"create\":\"hrmmoduleusagelogs\"}"
+    },
+    "events": [],
+    "links": [],
+    "children": []
+  },
+  "spanCount": 1,
+  "totalDuration": 208.7496,
+  "isPartial": false,
+  "metadata": {
+    "sdkName": "@pulse-apm/node",
+    "sdkVersion": "8.1.2",
+    "applicationName": "paypalproject",
+    "applicationVersion": "1.0.0",
+    "projectId": "cubicle-project-001",
+    "environment": "production",
+    "release": "8.0.0"
+  },
+  "sessionId": "df729728-b2fd-410b-a23b-821423e205d2",
+  "tailSampled": false,
+  "hasError": false,
+  "isSlow": false,
+  "timestamp": 1789315708406,
+  "tags": {},
+  "request": null,
+  "errors": [],
+  "logs": [],
+  "waterfall": {
+    "traceId": "e0f957b8a3792b5b257b41caccfc6daa",
+    "roots": [
+      {
+        "spanId": "4add88520b8ef49d",
+        "originalMissingId": null,
+        "parentSpanId": null,
+        "name": "create $cmd",
+        "kind": "client",
+        "status": "unset",
+        "statusMessage": null,
+        "startTime": 1789315708088,
+        "endTime": 1789315708296.7495,
+        "duration": 208.7496,
+        "exclusiveDuration": 208.74951171875,
+        "offsetMs": 0,
+        "offsetPercent": 0,
+        "durationPercent": 100,
+        "attributes": {
+          "db.system.name": "mongodb",
+          "db.namespace": "ERP",
+          "db.operation.name": "create",
+          "db.collection.name": "$cmd",
+          "server.address": "159.41.196.138",
+          "server.port": 27017,
+          "db.query.text": "{\"create\":\"hrmmoduleusagelogs\"}"
+        },
+        "events": [],
+        "links": [],
+        "isVirtualMissingParent": false,
+        "isMissingParent": false,
+        "isOrphan": false,
+        "children": []
+      }
+    ],
+    "displayList": [
+      {
+        "spanId": "4add88520b8ef49d",
+        "originalMissingId": null,
+        "parentSpanId": null,
+        "name": "create $cmd",
+        "kind": "client",
+        "status": "unset",
+        "statusMessage": null,
+        "startTime": 1789315708088,
+        "endTime": 1789315708296.7495,
+        "duration": 208.7496,
+        "exclusiveDuration": 208.74951171875,
+        "offsetMs": 0,
+        "offsetPercent": 0,
+        "durationPercent": 100,
+        "attributes": {
+          "db.system.name": "mongodb",
+          "db.namespace": "ERP",
+          "db.operation.name": "create",
+          "db.collection.name": "$cmd",
+          "server.address": "159.41.196.138",
+          "server.port": 27017,
+          "db.query.text": "{\"create\":\"hrmmoduleusagelogs\"}"
+        },
+        "events": [],
+        "links": [],
+        "isVirtualMissingParent": false,
+        "isMissingParent": false,
+        "isOrphan": false,
+        "children": [],
+        "displayDepth": 0,
+        "rowId": "4add88520b8ef49d",
+        "hasChildren": false
+      }
+    ],
+    "traceStartTime": 1789315708088,
+    "traceEndTime": 1789315708296.7495,
+    "totalDuration": 208.7496,
+    "missingParents": [],
+    "missingParentNodesCount": 0,
+    "spanCount": 1
+  },
+  "spans": [
+    {
+      "spanId": "4add88520b8ef49d",
+      "traceId": "e0f957b8a3792b5b257b41caccfc6daa",
+      "parentSpanId": null,
+      "name": "create $cmd",
+      "kind": "client",
+      "startTime": 1789315708088,
+      "endTime": 1789315708296.7495,
+      "duration": 208.7496,
+      "exclusiveDuration": 208.74951171875,
+      "status": "unset",
+      "statusMessage": null,
+      "attributes": {
+        "db.system.name": "mongodb",
+        "db.namespace": "ERP",
+        "db.operation.name": "create",
+        "db.collection.name": "$cmd",
+        "server.address": "159.41.196.138",
+        "server.port": 27017,
+        "db.query.text": "{\"create\":\"hrmmoduleusagelogs\"}"
+      },
+      "events": [],
+      "links": [],
+      "metadata": {
+        "sdkName": "@pulse-apm/node",
+        "sdkVersion": "8.1.2",
+        "applicationName": "paypalproject",
+        "applicationVersion": "1.0.0",
+        "projectId": "cubicle-project-001",
+        "environment": "production",
+        "release": "8.0.0"
+      },
+      "sessionId": "df729728-b2fd-410b-a23b-821423e205d2",
+      "requestId": null,
+      "tags": {},
+      "isSampled": true,
+      "traceFlags": 1,
+      "database": {
+        "system": "mongodb",
+        "operation": "create",
+        "collection": "$cmd",
+        "statement": "{\"create\":\"hrmmoduleusagelogs\"}"
+      },
+      "errorCount": 0,
+      "logCount": 0,
+      "_provenance": {
+        "category": "spans",
+        "filename": "span_1789315710825_span_4add88520b8ef49d.json",
+        "relativePath": "cubicle/spans/span_1789315710825_span_4add88520b8ef49d.json",
+        "sizeBytes": 1019,
+        "mtime": "2026-09-13T16:08:30.934Z"
+      }
+    }
+  ],
+  "_provenance": {
+    "category": "traces",
+    "filename": "trace_1789315708644_trace_e0f957b8a3792b5b257b41caccfc6daa.json",
+    "relativePath": "cubicle/traces/trace_1789315708644_trace_e0f957b8a3792b5b257b41caccfc6daa.json",
+    "sizeBytes": 1259,
+    "mtime": "2026-09-13T16:08:28.678Z"
+  }
+}

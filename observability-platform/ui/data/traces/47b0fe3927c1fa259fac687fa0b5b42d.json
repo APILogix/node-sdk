@@ -1,0 +1,188 @@
+{
+  "traceId": "47b0fe3927c1fa259fac687fa0b5b42d",
+  "eventId": "trace_47b0fe3927c1fa259fac687fa0b5b42d",
+  "rootSpan": {
+    "spanId": "ee18a0221ccae143",
+    "traceId": "47b0fe3927c1fa259fac687fa0b5b42d",
+    "name": "createIndexes $cmd",
+    "kind": "client",
+    "startTime": 1789315735936,
+    "endTime": 1789315736632.4685,
+    "duration": 696.4684,
+    "exclusiveDuration": 696.468505859375,
+    "status": "unset",
+    "attributes": {
+      "db.system.name": "mongodb",
+      "db.namespace": "ERP",
+      "db.operation.name": "createIndexes",
+      "db.collection.name": "$cmd",
+      "server.address": "159.41.196.138",
+      "server.port": 27017,
+      "db.query.text": "{\"createIndexes\":\"memberactivityevents\",\"indexes\":[{\"background\":true,\"name\":\"orgId_1_memberId_1_occurredAt_-1\",\"key\":{}}]}"
+    },
+    "events": [],
+    "links": [],
+    "children": []
+  },
+  "spanCount": 1,
+  "totalDuration": 696.4684,
+  "isPartial": false,
+  "metadata": {
+    "sdkName": "@pulse-apm/node",
+    "sdkVersion": "8.1.2",
+    "applicationName": "paypalproject",
+    "applicationVersion": "1.0.0",
+    "projectId": "cubicle-project-001",
+    "environment": "production",
+    "release": "8.0.0"
+  },
+  "sessionId": "df729728-b2fd-410b-a23b-821423e205d2",
+  "tailSampled": false,
+  "hasError": false,
+  "isSlow": false,
+  "timestamp": 1789315736868,
+  "tags": {},
+  "request": null,
+  "errors": [],
+  "logs": [],
+  "waterfall": {
+    "traceId": "47b0fe3927c1fa259fac687fa0b5b42d",
+    "roots": [
+      {
+        "spanId": "ee18a0221ccae143",
+        "originalMissingId": null,
+        "parentSpanId": null,
+        "name": "createIndexes $cmd",
+        "kind": "client",
+        "status": "unset",
+        "statusMessage": null,
+        "startTime": 1789315735936,
+        "endTime": 1789315736632.4685,
+        "duration": 696.4684,
+        "exclusiveDuration": 696.468505859375,
+        "offsetMs": 0,
+        "offsetPercent": 0,
+        "durationPercent": 99.99998480055105,
+        "attributes": {
+          "db.system.name": "mongodb",
+          "db.namespace": "ERP",
+          "db.operation.name": "createIndexes",
+          "db.collection.name": "$cmd",
+          "server.address": "159.41.196.138",
+          "server.port": 27017,
+          "db.query.text": "{\"createIndexes\":\"memberactivityevents\",\"indexes\":[{\"background\":true,\"name\":\"orgId_1_memberId_1_occurredAt_-1\",\"key\":{}}]}"
+        },
+        "events": [],
+        "links": [],
+        "isVirtualMissingParent": false,
+        "isMissingParent": false,
+        "isOrphan": false,
+        "children": []
+      }
+    ],
+    "displayList": [
+      {
+        "spanId": "ee18a0221ccae143",
+        "originalMissingId": null,
+        "parentSpanId": null,
+        "name": "createIndexes $cmd",
+        "kind": "client",
+        "status": "unset",
+        "statusMessage": null,
+        "startTime": 1789315735936,
+        "endTime": 1789315736632.4685,
+        "duration": 696.4684,
+        "exclusiveDuration": 696.468505859375,
+        "offsetMs": 0,
+        "offsetPercent": 0,
+        "durationPercent": 99.99998480055105,
+        "attributes": {
+          "db.system.name": "mongodb",
+          "db.namespace": "ERP",
+          "db.operation.name": "createIndexes",
+          "db.collection.name": "$cmd",
+          "server.address": "159.41.196.138",
+          "server.port": 27017,
+          "db.query.text": "{\"createIndexes\":\"memberactivityevents\",\"indexes\":[{\"background\":true,\"name\":\"orgId_1_memberId_1_occurredAt_-1\",\"key\":{}}]}"
+        },
+        "events": [],
+        "links": [],
+        "isVirtualMissingParent": false,
+        "isMissingParent": false,
+        "isOrphan": false,
+        "children": [],
+        "displayDepth": 0,
+        "rowId": "ee18a0221ccae143",
+        "hasChildren": false
+      }
+    ],
+    "traceStartTime": 1789315735936,
+    "traceEndTime": 1789315736632.4685,
+    "totalDuration": 696.468505859375,
+    "missingParents": [],
+    "missingParentNodesCount": 0,
+    "spanCount": 1
+  },
+  "spans": [
+    {
+      "spanId": "ee18a0221ccae143",
+      "traceId": "47b0fe3927c1fa259fac687fa0b5b42d",
+      "parentSpanId": null,
+      "name": "createIndexes $cmd",
+      "kind": "client",
+      "startTime": 1789315735936,
+      "endTime": 1789315736632.4685,
+      "duration": 696.4684,
+      "exclusiveDuration": 696.468505859375,
+      "status": "unset",
+      "statusMessage": null,
+      "attributes": {
+        "db.system.name": "mongodb",
+        "db.namespace": "ERP",
+        "db.operation.name": "createIndexes",
+        "db.collection.name": "$cmd",
+        "server.address": "159.41.196.138",
+        "server.port": 27017,
+        "db.query.text": "{\"createIndexes\":\"memberactivityevents\",\"indexes\":[{\"background\":true,\"name\":\"orgId_1_memberId_1_occurredAt_-1\",\"key\":{}}]}"
+      },
+      "events": [],
+      "links": [],
+      "metadata": {
+        "sdkName": "@pulse-apm/node",
+        "sdkVersion": "8.1.2",
+        "applicationName": "paypalproject",
+        "applicationVersion": "1.0.0",
+        "projectId": "cubicle-project-001",
+        "environment": "production",
+        "release": "8.0.0"
+      },
+      "sessionId": "df729728-b2fd-410b-a23b-821423e205d2",
+      "requestId": null,
+      "tags": {},
+      "isSampled": true,
+      "traceFlags": 1,
+      "database": {
+        "system": "mongodb",
+        "operation": "createIndexes",
+        "collection": "$cmd",
+        "statement": "{\"createIndexes\":\"memberactivityevents\",\"indexes\":[{\"background\":true,\"name\":\"orgId_1_memberId_1_occurredAt_-1\",\"key\":{}}]}"
+      },
+      "errorCount": 0,
+      "logCount": 0,
+      "_provenance": {
+        "category": "spans",
+        "filename": "span_1789315744766_span_ee18a0221ccae143.json",
+        "relativePath": "cubicle/spans/span_1789315744766_span_ee18a0221ccae143.json",
+        "sizeBytes": 1136,
+        "mtime": "2026-09-13T16:09:04.839Z"
+      }
+    }
+  ],
+  "_provenance": {
+    "category": "traces",
+    "filename": "trace_1789315759110_trace_47b0fe3927c1fa259fac687fa0b5b42d.json",
+    "relativePath": "cubicle/traces/trace_1789315759110_trace_47b0fe3927c1fa259fac687fa0b5b42d.json",
+    "sizeBytes": 1376,
+    "mtime": "2026-09-13T16:09:19.465Z"
+  }
+}

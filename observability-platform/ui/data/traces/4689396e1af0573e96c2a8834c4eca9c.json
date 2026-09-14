@@ -1,0 +1,188 @@
+{
+  "traceId": "4689396e1af0573e96c2a8834c4eca9c",
+  "eventId": "trace_4689396e1af0573e96c2a8834c4eca9c",
+  "rootSpan": {
+    "spanId": "0a40ccef0aae45ce",
+    "traceId": "4689396e1af0573e96c2a8834c4eca9c",
+    "name": "create $cmd",
+    "kind": "client",
+    "startTime": 1789315714814,
+    "endTime": 1789315715498.9478,
+    "duration": 684.9478,
+    "exclusiveDuration": 684.94775390625,
+    "status": "unset",
+    "attributes": {
+      "db.system.name": "mongodb",
+      "db.namespace": "ERP",
+      "db.operation.name": "create",
+      "db.collection.name": "$cmd",
+      "server.address": "159.41.196.138",
+      "server.port": 27017,
+      "db.query.text": "{\"create\":\"compressedweekschedules\"}"
+    },
+    "events": [],
+    "links": [],
+    "children": []
+  },
+  "spanCount": 1,
+  "totalDuration": 684.9478,
+  "isPartial": false,
+  "metadata": {
+    "sdkName": "@pulse-apm/node",
+    "sdkVersion": "8.1.2",
+    "applicationName": "paypalproject",
+    "applicationVersion": "1.0.0",
+    "projectId": "cubicle-project-001",
+    "environment": "production",
+    "release": "8.0.0"
+  },
+  "sessionId": "df729728-b2fd-410b-a23b-821423e205d2",
+  "tailSampled": false,
+  "hasError": false,
+  "isSlow": false,
+  "timestamp": 1789315715637,
+  "tags": {},
+  "request": null,
+  "errors": [],
+  "logs": [],
+  "waterfall": {
+    "traceId": "4689396e1af0573e96c2a8834c4eca9c",
+    "roots": [
+      {
+        "spanId": "0a40ccef0aae45ce",
+        "originalMissingId": null,
+        "parentSpanId": null,
+        "name": "create $cmd",
+        "kind": "client",
+        "status": "unset",
+        "statusMessage": null,
+        "startTime": 1789315714814,
+        "endTime": 1789315715498.9478,
+        "duration": 684.9478,
+        "exclusiveDuration": 684.94775390625,
+        "offsetMs": 0,
+        "offsetPercent": 0,
+        "durationPercent": 100,
+        "attributes": {
+          "db.system.name": "mongodb",
+          "db.namespace": "ERP",
+          "db.operation.name": "create",
+          "db.collection.name": "$cmd",
+          "server.address": "159.41.196.138",
+          "server.port": 27017,
+          "db.query.text": "{\"create\":\"compressedweekschedules\"}"
+        },
+        "events": [],
+        "links": [],
+        "isVirtualMissingParent": false,
+        "isMissingParent": false,
+        "isOrphan": false,
+        "children": []
+      }
+    ],
+    "displayList": [
+      {
+        "spanId": "0a40ccef0aae45ce",
+        "originalMissingId": null,
+        "parentSpanId": null,
+        "name": "create $cmd",
+        "kind": "client",
+        "status": "unset",
+        "statusMessage": null,
+        "startTime": 1789315714814,
+        "endTime": 1789315715498.9478,
+        "duration": 684.9478,
+        "exclusiveDuration": 684.94775390625,
+        "offsetMs": 0,
+        "offsetPercent": 0,
+        "durationPercent": 100,
+        "attributes": {
+          "db.system.name": "mongodb",
+          "db.namespace": "ERP",
+          "db.operation.name": "create",
+          "db.collection.name": "$cmd",
+          "server.address": "159.41.196.138",
+          "server.port": 27017,
+          "db.query.text": "{\"create\":\"compressedweekschedules\"}"
+        },
+        "events": [],
+        "links": [],
+        "isVirtualMissingParent": false,
+        "isMissingParent": false,
+        "isOrphan": false,
+        "children": [],
+        "displayDepth": 0,
+        "rowId": "0a40ccef0aae45ce",
+        "hasChildren": false
+      }
+    ],
+    "traceStartTime": 1789315714814,
+    "traceEndTime": 1789315715498.9478,
+    "totalDuration": 684.9478,
+    "missingParents": [],
+    "missingParentNodesCount": 0,
+    "spanCount": 1
+  },
+  "spans": [
+    {
+      "spanId": "0a40ccef0aae45ce",
+      "traceId": "4689396e1af0573e96c2a8834c4eca9c",
+      "parentSpanId": null,
+      "name": "create $cmd",
+      "kind": "client",
+      "startTime": 1789315714814,
+      "endTime": 1789315715498.9478,
+      "duration": 684.9478,
+      "exclusiveDuration": 684.94775390625,
+      "status": "unset",
+      "statusMessage": null,
+      "attributes": {
+        "db.system.name": "mongodb",
+        "db.namespace": "ERP",
+        "db.operation.name": "create",
+        "db.collection.name": "$cmd",
+        "server.address": "159.41.196.138",
+        "server.port": 27017,
+        "db.query.text": "{\"create\":\"compressedweekschedules\"}"
+      },
+      "events": [],
+      "links": [],
+      "metadata": {
+        "sdkName": "@pulse-apm/node",
+        "sdkVersion": "8.1.2",
+        "applicationName": "paypalproject",
+        "applicationVersion": "1.0.0",
+        "projectId": "cubicle-project-001",
+        "environment": "production",
+        "release": "8.0.0"
+      },
+      "sessionId": "df729728-b2fd-410b-a23b-821423e205d2",
+      "requestId": null,
+      "tags": {},
+      "isSampled": true,
+      "traceFlags": 1,
+      "database": {
+        "system": "mongodb",
+        "operation": "create",
+        "collection": "$cmd",
+        "statement": "{\"create\":\"compressedweekschedules\"}"
+      },
+      "errorCount": 0,
+      "logCount": 0,
+      "_provenance": {
+        "category": "spans",
+        "filename": "span_1789315721120_span_0a40ccef0aae45ce.json",
+        "relativePath": "cubicle/spans/span_1789315721120_span_0a40ccef0aae45ce.json",
+        "sizeBytes": 1024,
+        "mtime": "2026-09-13T16:08:41.806Z"
+      }
+    }
+  ],
+  "_provenance": {
+    "category": "traces",
+    "filename": "trace_1789315719447_trace_4689396e1af0573e96c2a8834c4eca9c.json",
+    "relativePath": "cubicle/traces/trace_1789315719447_trace_4689396e1af0573e96c2a8834c4eca9c.json",
+    "sizeBytes": 1264,
+    "mtime": "2026-09-13T16:08:39.556Z"
+  }
+}

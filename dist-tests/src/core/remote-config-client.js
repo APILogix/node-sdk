@@ -88,6 +88,7 @@ export class RemoteConfigClient {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
+                        'Connection': 'keep-alive',
                         'x-pulse-internal': '1',
                         'X-API-Key': this.apiKey,
                     },
@@ -171,6 +172,9 @@ function normalizeBaseUrl(value) {
         }
         if (url.username || url.password || url.search || url.hash || (url.pathname && url.pathname !== '/')) {
             throw new Error('base URL must be an origin');
+        }
+        if (url.hostname === 'localhost') {
+            url.hostname = '127.0.0.1';
         }
         return url.origin;
     }

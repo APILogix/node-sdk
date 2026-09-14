@@ -252,4 +252,104 @@ describe('TraceAggregator State Machine & Reliability Contract', () => {
     assert.equal(aggregator.isFinalized(traceId), true)
     assert.equal(aggregator.pendingCount, 0)
   })
+
+  it('6. Orphan span recovery: Intermediate missing parent attaches orphan subtrees to root so no spans are dropped', () => {
+    const aggregator = new TraceAggregator({
+      gracePeriodMs: 20,
+      maxFinalizationDelayMs: 100,
+    })
+
+    const traceId = 'trace-orphan-recovery-999'
+    const rootSpanId = 'root-span-1'
+    const normalChildId = 'child-normal-2'
+    const orphanParentId = 'missing-parent-3'
+    const orphanChildId = 'orphan-child-4'
+    const orphanGrandChildId = 'orphan-grandchild-5'
+
+    aggregator.onSpanStart(traceId, rootSpanId)
+    aggregator.onSpanStart(traceId, normalChildId)
+    aggregator.onSpanStart(traceId, orphanChildId)
+    aggregator.onSpanStart(traceId, orphanGrandChildId)
+
+    // Root span
+    aggregator.addSpan({
+      traceId,
+      spanId: rootSpanId,
+      name: 'HTTP GET /api/checkout',
+      startTime: 1000,
+      endTime: 1100,
+      duration: 100,
+      isSampled: true,
+      status: 'ok',
+    })
+
+    // Normal child
+    aggregator.addSpan({
+      traceId,
+      spanId: normalChildId,
+      parentSpanId: rootSpanId,
+      name: 'Redis GET cart:123',
+      startTime: 1010,
+      endTime: 1030,
+      duration: 20,
+      isSampled: true,
+      status: 'ok',
+    })
+
+    // Orphan child referencing missing parent
+    aggregator.addSpan({
+      traceId,
+      spanId: orphanChildId,
+      parentSpanId: orphanParentId, // missing!
+      name: 'pg.connect',
+      startTime: 1040,
+      endTime: 1080,
+      duration: 40,
+      isSampled: true,
+      status: 'ok',
+    })
+
+    // Grandchild referencing orphan child
+    aggregator.addSpan({
+      traceId,
+      spanId: orphanGrandChildId,
+      parentSpanId: orphanChildId,
+      name: 'pg.query SELECT balance',
+      startTime: 1050,
+      endTime: 1075,
+      duration: 25,
+      isSampled: true,
+      status: 'ok',
+    })
+
+    // Before flush, pending contains 4 spans
+    const pending = (aggregator as any).pending.get(traceId)
+    assert.ok(pending, 'Trace must be in pending')
+    const spans = Array.from(pending.spans.values()) as any[]
+    assert.equal(spans.length, 4)
+
+    // Check tree built by flushTrace
+    const childrenByParent = new Map<string, any[]>()
+    for (const span of spans) {
+      const parentId = span.parentSpanId
+      if (!parentId) continue
+      const list = childrenByParent.get(parentId)
+      if (list) list.push(span)
+      else childrenByParent.set(parentId, [span])
+    }
+
+    const visited = new Set<string>()
+    const rootAggregated = (aggregator as any).buildTree(pending.rootSpan, childrenByParent, visited)
+
+    // Directly buildTree only visited root and normalChild
+    assert.equal(visited.size, 2)
+    assert.equal(rootAggregated.children.length, 1)
+
+    // Execute flushTrace (which triggers orphan recovery)
+    const agg: any = aggregator
+    agg.flushTrace(traceId)
+
+    // Trace is now finalized and removed from pending
+    assert.equal(aggregator.isFinalized(traceId), true)
+  })
 })

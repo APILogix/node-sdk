@@ -57,5 +57,16 @@ declare class ErrorDeduplicator {
     reset(): void;
     private cleanup;
 }
+declare class TraceDeduplicator {
+    private entries;
+    private suppressionWindowMs;
+    configure(options?: {
+        suppressionWindowMs?: number;
+        maxEntries?: number;
+    }): void;
+    isDuplicate(traceId: string): boolean;
+    reset(): void;
+}
 export declare const errorDeduplicator: ErrorDeduplicator;
-export { ErrorDeduplicator };
+export declare const traceDeduplicator: TraceDeduplicator;
+export { ErrorDeduplicator, TraceDeduplicator };

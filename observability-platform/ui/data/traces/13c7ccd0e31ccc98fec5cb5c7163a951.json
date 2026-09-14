@@ -1,0 +1,189 @@
+{
+  "traceId": "13c7ccd0e31ccc98fec5cb5c7163a951",
+  "eventId": "trace_13c7ccd0e31ccc98fec5cb5c7163a951",
+  "rootSpan": {
+    "spanId": "df21e977990f7d01",
+    "traceId": "13c7ccd0e31ccc98fec5cb5c7163a951",
+    "name": "createIndexes $cmd",
+    "kind": "client",
+    "startTime": 1789315758737,
+    "endTime": 1789315759625.6548,
+    "duration": 888.6549,
+    "exclusiveDuration": 888.65478515625,
+    "status": "error",
+    "statusMessage": "Error in specification { unique: true, sparse: true, partialFilterExpression: { externalEventId: { $exists: true, $type: \"string\" } }, background: true, name: \"organizationId_1_source_1_deviceId_1_externalEventId_1\", key: { organizationId: 1, source: 1, deviceId: 1, externalEventId: 1 }, v: 2 } :: caused by :: cannot mix \"partialFilterExpression\" and \"sparse\" options",
+    "attributes": {
+      "db.system.name": "mongodb",
+      "db.namespace": "ERP",
+      "db.operation.name": "createIndexes",
+      "db.collection.name": "$cmd",
+      "server.address": "159.41.196.138",
+      "server.port": 27017,
+      "db.query.text": "{\"createIndexes\":\"rawtimelogs\",\"indexes\":[{\"unique\":true,\"sparse\":true,\"partialFilterExpression\":{\"externalEventId\":{\"$exists\":true,\"$type\":\"string\"}},\"background\":true,\"name\":\"organizationId_1_source_1_deviceId_1_externalEventId_1\",\"key\":{}}]}"
+    },
+    "events": [],
+    "links": [],
+    "children": []
+  },
+  "spanCount": 1,
+  "totalDuration": 888.6549,
+  "isPartial": false,
+  "metadata": {
+    "sdkName": "@pulse-apm/node",
+    "sdkVersion": "8.1.2",
+    "applicationName": "paypalproject",
+    "applicationVersion": "1.0.0",
+    "projectId": "cubicle-project-001",
+    "environment": "production",
+    "release": "8.0.0"
+  },
+  "sessionId": "df729728-b2fd-410b-a23b-821423e205d2",
+  "tailSampled": false,
+  "hasError": true,
+  "isSlow": false,
+  "timestamp": 1789315759744,
+  "tags": {},
+  "request": null,
+  "errors": [],
+  "logs": [],
+  "waterfall": {
+    "traceId": "13c7ccd0e31ccc98fec5cb5c7163a951",
+    "roots": [
+      {
+        "spanId": "df21e977990f7d01",
+        "originalMissingId": null,
+        "parentSpanId": null,
+        "name": "createIndexes $cmd",
+        "kind": "client",
+        "status": "error",
+        "statusMessage": "Error in specification { unique: true, sparse: true, partialFilterExpression: { externalEventId: { $exists: true, $type: \"string\" } }, background: true, name: \"organizationId_1_source_1_deviceId_1_externalEventId_1\", key: { organizationId: 1, source: 1, deviceId: 1, externalEventId: 1 }, v: 2 } :: caused by :: cannot mix \"partialFilterExpression\" and \"sparse\" options",
+        "startTime": 1789315758737,
+        "endTime": 1789315759625.6548,
+        "duration": 888.6549,
+        "exclusiveDuration": 888.65478515625,
+        "offsetMs": 0,
+        "offsetPercent": 0,
+        "durationPercent": 100,
+        "attributes": {
+          "db.system.name": "mongodb",
+          "db.namespace": "ERP",
+          "db.operation.name": "createIndexes",
+          "db.collection.name": "$cmd",
+          "server.address": "159.41.196.138",
+          "server.port": 27017,
+          "db.query.text": "{\"createIndexes\":\"rawtimelogs\",\"indexes\":[{\"unique\":true,\"sparse\":true,\"partialFilterExpression\":{\"externalEventId\":{\"$exists\":true,\"$type\":\"string\"}},\"background\":true,\"name\":\"organizationId_1_source_1_deviceId_1_externalEventId_1\",\"key\":{}}]}"
+        },
+        "events": [],
+        "links": [],
+        "isVirtualMissingParent": false,
+        "isMissingParent": false,
+        "isOrphan": false,
+        "children": []
+      }
+    ],
+    "displayList": [
+      {
+        "spanId": "df21e977990f7d01",
+        "originalMissingId": null,
+        "parentSpanId": null,
+        "name": "createIndexes $cmd",
+        "kind": "client",
+        "status": "error",
+        "statusMessage": "Error in specification { unique: true, sparse: true, partialFilterExpression: { externalEventId: { $exists: true, $type: \"string\" } }, background: true, name: \"organizationId_1_source_1_deviceId_1_externalEventId_1\", key: { organizationId: 1, source: 1, deviceId: 1, externalEventId: 1 }, v: 2 } :: caused by :: cannot mix \"partialFilterExpression\" and \"sparse\" options",
+        "startTime": 1789315758737,
+        "endTime": 1789315759625.6548,
+        "duration": 888.6549,
+        "exclusiveDuration": 888.65478515625,
+        "offsetMs": 0,
+        "offsetPercent": 0,
+        "durationPercent": 100,
+        "attributes": {
+          "db.system.name": "mongodb",
+          "db.namespace": "ERP",
+          "db.operation.name": "createIndexes",
+          "db.collection.name": "$cmd",
+          "server.address": "159.41.196.138",
+          "server.port": 27017,
+          "db.query.text": "{\"createIndexes\":\"rawtimelogs\",\"indexes\":[{\"unique\":true,\"sparse\":true,\"partialFilterExpression\":{\"externalEventId\":{\"$exists\":true,\"$type\":\"string\"}},\"background\":true,\"name\":\"organizationId_1_source_1_deviceId_1_externalEventId_1\",\"key\":{}}]}"
+        },
+        "events": [],
+        "links": [],
+        "isVirtualMissingParent": false,
+        "isMissingParent": false,
+        "isOrphan": false,
+        "children": [],
+        "displayDepth": 0,
+        "rowId": "df21e977990f7d01",
+        "hasChildren": false
+      }
+    ],
+    "traceStartTime": 1789315758737,
+    "traceEndTime": 1789315759625.6548,
+    "totalDuration": 888.6549,
+    "missingParents": [],
+    "missingParentNodesCount": 0,
+    "spanCount": 1
+  },
+  "spans": [
+    {
+      "spanId": "df21e977990f7d01",
+      "traceId": "13c7ccd0e31ccc98fec5cb5c7163a951",
+      "parentSpanId": null,
+      "name": "createIndexes $cmd",
+      "kind": "client",
+      "startTime": 1789315758737,
+      "endTime": 1789315759625.6548,
+      "duration": 888.6549,
+      "exclusiveDuration": 888.65478515625,
+      "status": "error",
+      "statusMessage": "Error in specification { unique: true, sparse: true, partialFilterExpression: { externalEventId: { $exists: true, $type: \"string\" } }, background: true, name: \"organizationId_1_source_1_deviceId_1_externalEventId_1\", key: { organizationId: 1, source: 1, deviceId: 1, externalEventId: 1 }, v: 2 } :: caused by :: cannot mix \"partialFilterExpression\" and \"sparse\" options",
+      "attributes": {
+        "db.system.name": "mongodb",
+        "db.namespace": "ERP",
+        "db.operation.name": "createIndexes",
+        "db.collection.name": "$cmd",
+        "server.address": "159.41.196.138",
+        "server.port": 27017,
+        "db.query.text": "{\"createIndexes\":\"rawtimelogs\",\"indexes\":[{\"unique\":true,\"sparse\":true,\"partialFilterExpression\":{\"externalEventId\":{\"$exists\":true,\"$type\":\"string\"}},\"background\":true,\"name\":\"organizationId_1_source_1_deviceId_1_externalEventId_1\",\"key\":{}}]}"
+      },
+      "events": [],
+      "links": [],
+      "metadata": {
+        "sdkName": "@pulse-apm/node",
+        "sdkVersion": "8.1.2",
+        "applicationName": "paypalproject",
+        "applicationVersion": "1.0.0",
+        "projectId": "cubicle-project-001",
+        "environment": "production",
+        "release": "8.0.0"
+      },
+      "sessionId": "df729728-b2fd-410b-a23b-821423e205d2",
+      "requestId": null,
+      "tags": {},
+      "isSampled": true,
+      "traceFlags": 1,
+      "database": {
+        "system": "mongodb",
+        "operation": "createIndexes",
+        "collection": "$cmd",
+        "statement": "{\"createIndexes\":\"rawtimelogs\",\"indexes\":[{\"unique\":true,\"sparse\":true,\"partialFilterExpression\":{\"externalEventId\":{\"$exists\":true,\"$type\":\"string\"}},\"background\":true,\"name\":\"organizationId_1_source_1_deviceId_1_externalEventId_1\",\"key\":{}}]}"
+      },
+      "errorCount": 0,
+      "logCount": 0,
+      "_provenance": {
+        "category": "spans",
+        "filename": "span_1789315765876_span_df21e977990f7d01.json",
+        "relativePath": "cubicle/spans/span_1789315765876_span_df21e977990f7d01.json",
+        "sizeBytes": 1670,
+        "mtime": "2026-09-13T16:09:26.001Z"
+      }
+    }
+  ],
+  "_provenance": {
+    "category": "traces",
+    "filename": "trace_1789315765511_trace_13c7ccd0e31ccc98fec5cb5c7163a951.json",
+    "relativePath": "cubicle/traces/trace_1789315765511_trace_13c7ccd0e31ccc98fec5cb5c7163a951.json",
+    "sizeBytes": 1911,
+    "mtime": "2026-09-13T16:09:25.592Z"
+  }
+}

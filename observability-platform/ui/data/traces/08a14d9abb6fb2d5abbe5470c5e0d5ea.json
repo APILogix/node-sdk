@@ -1,0 +1,188 @@
+{
+  "traceId": "08a14d9abb6fb2d5abbe5470c5e0d5ea",
+  "eventId": "trace_08a14d9abb6fb2d5abbe5470c5e0d5ea",
+  "rootSpan": {
+    "spanId": "08d63fa4e269a97e",
+    "traceId": "08a14d9abb6fb2d5abbe5470c5e0d5ea",
+    "name": "createIndexes $cmd",
+    "kind": "client",
+    "startTime": 1789315746666,
+    "endTime": 1789315747311.998,
+    "duration": 645.998,
+    "exclusiveDuration": 645.998046875,
+    "status": "unset",
+    "attributes": {
+      "db.system.name": "mongodb",
+      "db.namespace": "ERP",
+      "db.operation.name": "createIndexes",
+      "db.collection.name": "$cmd",
+      "server.address": "159.41.196.138",
+      "server.port": 27017,
+      "db.query.text": "{\"createIndexes\":\"employeeshiftassignments\",\"indexes\":[{\"unique\":true,\"partialFilterExpression\":{\"isActive\":true,\"effectiveTo\":null},\"background\":true,\"name\":\"organizationId_1_employeeId_1\",\"key\":{}}]}"
+    },
+    "events": [],
+    "links": [],
+    "children": []
+  },
+  "spanCount": 1,
+  "totalDuration": 645.998,
+  "isPartial": false,
+  "metadata": {
+    "sdkName": "@pulse-apm/node",
+    "sdkVersion": "8.1.2",
+    "applicationName": "paypalproject",
+    "applicationVersion": "1.0.0",
+    "projectId": "cubicle-project-001",
+    "environment": "production",
+    "release": "8.0.0"
+  },
+  "sessionId": "df729728-b2fd-410b-a23b-821423e205d2",
+  "tailSampled": false,
+  "hasError": false,
+  "isSlow": false,
+  "timestamp": 1789315750470,
+  "tags": {},
+  "request": null,
+  "errors": [],
+  "logs": [],
+  "waterfall": {
+    "traceId": "08a14d9abb6fb2d5abbe5470c5e0d5ea",
+    "roots": [
+      {
+        "spanId": "08d63fa4e269a97e",
+        "originalMissingId": null,
+        "parentSpanId": null,
+        "name": "createIndexes $cmd",
+        "kind": "client",
+        "status": "unset",
+        "statusMessage": null,
+        "startTime": 1789315746666,
+        "endTime": 1789315747311.998,
+        "duration": 645.998,
+        "exclusiveDuration": 645.998046875,
+        "offsetMs": 0,
+        "offsetPercent": 0,
+        "durationPercent": 99.99999274378611,
+        "attributes": {
+          "db.system.name": "mongodb",
+          "db.namespace": "ERP",
+          "db.operation.name": "createIndexes",
+          "db.collection.name": "$cmd",
+          "server.address": "159.41.196.138",
+          "server.port": 27017,
+          "db.query.text": "{\"createIndexes\":\"employeeshiftassignments\",\"indexes\":[{\"unique\":true,\"partialFilterExpression\":{\"isActive\":true,\"effectiveTo\":null},\"background\":true,\"name\":\"organizationId_1_employeeId_1\",\"key\":{}}]}"
+        },
+        "events": [],
+        "links": [],
+        "isVirtualMissingParent": false,
+        "isMissingParent": false,
+        "isOrphan": false,
+        "children": []
+      }
+    ],
+    "displayList": [
+      {
+        "spanId": "08d63fa4e269a97e",
+        "originalMissingId": null,
+        "parentSpanId": null,
+        "name": "createIndexes $cmd",
+        "kind": "client",
+        "status": "unset",
+        "statusMessage": null,
+        "startTime": 1789315746666,
+        "endTime": 1789315747311.998,
+        "duration": 645.998,
+        "exclusiveDuration": 645.998046875,
+        "offsetMs": 0,
+        "offsetPercent": 0,
+        "durationPercent": 99.99999274378611,
+        "attributes": {
+          "db.system.name": "mongodb",
+          "db.namespace": "ERP",
+          "db.operation.name": "createIndexes",
+          "db.collection.name": "$cmd",
+          "server.address": "159.41.196.138",
+          "server.port": 27017,
+          "db.query.text": "{\"createIndexes\":\"employeeshiftassignments\",\"indexes\":[{\"unique\":true,\"partialFilterExpression\":{\"isActive\":true,\"effectiveTo\":null},\"background\":true,\"name\":\"organizationId_1_employeeId_1\",\"key\":{}}]}"
+        },
+        "events": [],
+        "links": [],
+        "isVirtualMissingParent": false,
+        "isMissingParent": false,
+        "isOrphan": false,
+        "children": [],
+        "displayDepth": 0,
+        "rowId": "08d63fa4e269a97e",
+        "hasChildren": false
+      }
+    ],
+    "traceStartTime": 1789315746666,
+    "traceEndTime": 1789315747311.998,
+    "totalDuration": 645.998046875,
+    "missingParents": [],
+    "missingParentNodesCount": 0,
+    "spanCount": 1
+  },
+  "spans": [
+    {
+      "spanId": "08d63fa4e269a97e",
+      "traceId": "08a14d9abb6fb2d5abbe5470c5e0d5ea",
+      "parentSpanId": null,
+      "name": "createIndexes $cmd",
+      "kind": "client",
+      "startTime": 1789315746666,
+      "endTime": 1789315747311.998,
+      "duration": 645.998,
+      "exclusiveDuration": 645.998046875,
+      "status": "unset",
+      "statusMessage": null,
+      "attributes": {
+        "db.system.name": "mongodb",
+        "db.namespace": "ERP",
+        "db.operation.name": "createIndexes",
+        "db.collection.name": "$cmd",
+        "server.address": "159.41.196.138",
+        "server.port": 27017,
+        "db.query.text": "{\"createIndexes\":\"employeeshiftassignments\",\"indexes\":[{\"unique\":true,\"partialFilterExpression\":{\"isActive\":true,\"effectiveTo\":null},\"background\":true,\"name\":\"organizationId_1_employeeId_1\",\"key\":{}}]}"
+      },
+      "events": [],
+      "links": [],
+      "metadata": {
+        "sdkName": "@pulse-apm/node",
+        "sdkVersion": "8.1.2",
+        "applicationName": "paypalproject",
+        "applicationVersion": "1.0.0",
+        "projectId": "cubicle-project-001",
+        "environment": "production",
+        "release": "8.0.0"
+      },
+      "sessionId": "df729728-b2fd-410b-a23b-821423e205d2",
+      "requestId": null,
+      "tags": {},
+      "isSampled": true,
+      "traceFlags": 1,
+      "database": {
+        "system": "mongodb",
+        "operation": "createIndexes",
+        "collection": "$cmd",
+        "statement": "{\"createIndexes\":\"employeeshiftassignments\",\"indexes\":[{\"unique\":true,\"partialFilterExpression\":{\"isActive\":true,\"effectiveTo\":null},\"background\":true,\"name\":\"organizationId_1_employeeId_1\",\"key\":{}}]}"
+      },
+      "errorCount": 0,
+      "logCount": 0,
+      "_provenance": {
+        "category": "spans",
+        "filename": "span_1789315756201_span_08d63fa4e269a97e.json",
+        "relativePath": "cubicle/spans/span_1789315756201_span_08d63fa4e269a97e.json",
+        "sizeBytes": 1217,
+        "mtime": "2026-09-13T16:09:16.363Z"
+      }
+    }
+  ],
+  "_provenance": {
+    "category": "traces",
+    "filename": "trace_1789315755892_trace_08a14d9abb6fb2d5abbe5470c5e0d5ea.json",
+    "relativePath": "cubicle/traces/trace_1789315755892_trace_08a14d9abb6fb2d5abbe5470c5e0d5ea.json",
+    "sizeBytes": 1456,
+    "mtime": "2026-09-13T16:09:16.144Z"
+  }
+}

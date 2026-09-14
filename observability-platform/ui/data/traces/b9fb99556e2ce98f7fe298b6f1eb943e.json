@@ -1,0 +1,189 @@
+{
+  "traceId": "b9fb99556e2ce98f7fe298b6f1eb943e",
+  "eventId": "trace_b9fb99556e2ce98f7fe298b6f1eb943e",
+  "rootSpan": {
+    "spanId": "8769a2e514047c3f",
+    "traceId": "b9fb99556e2ce98f7fe298b6f1eb943e",
+    "name": "createIndexes $cmd",
+    "kind": "client",
+    "startTime": 1789315740458,
+    "endTime": 1789315740871.7434,
+    "duration": 413.7434,
+    "exclusiveDuration": 413.743408203125,
+    "status": "error",
+    "statusMessage": "An equivalent index already exists with the same name but different options. Requested index: { v: 2, key: { expiresAt: 1 }, name: \"expiresAt_1\", expireAfterSeconds: 0, background: true }, existing index: { v: 2, key: { expiresAt: 1 }, name: \"expiresAt_1\", background: true }",
+    "attributes": {
+      "db.system.name": "mongodb",
+      "db.namespace": "ERP",
+      "db.operation.name": "createIndexes",
+      "db.collection.name": "$cmd",
+      "server.address": "159.41.196.138",
+      "server.port": 27017,
+      "db.query.text": "{\"createIndexes\":\"trusteddevices\",\"indexes\":[{\"expireAfterSeconds\":0,\"background\":true,\"name\":\"expiresAt_1\",\"key\":{}}]}"
+    },
+    "events": [],
+    "links": [],
+    "children": []
+  },
+  "spanCount": 1,
+  "totalDuration": 413.7434,
+  "isPartial": false,
+  "metadata": {
+    "sdkName": "@pulse-apm/node",
+    "sdkVersion": "8.1.2",
+    "applicationName": "paypalproject",
+    "applicationVersion": "1.0.0",
+    "projectId": "cubicle-project-001",
+    "environment": "production",
+    "release": "8.0.0"
+  },
+  "sessionId": "df729728-b2fd-410b-a23b-821423e205d2",
+  "tailSampled": false,
+  "hasError": true,
+  "isSlow": false,
+  "timestamp": 1789315742043,
+  "tags": {},
+  "request": null,
+  "errors": [],
+  "logs": [],
+  "waterfall": {
+    "traceId": "b9fb99556e2ce98f7fe298b6f1eb943e",
+    "roots": [
+      {
+        "spanId": "8769a2e514047c3f",
+        "originalMissingId": null,
+        "parentSpanId": null,
+        "name": "createIndexes $cmd",
+        "kind": "client",
+        "status": "error",
+        "statusMessage": "An equivalent index already exists with the same name but different options. Requested index: { v: 2, key: { expiresAt: 1 }, name: \"expiresAt_1\", expireAfterSeconds: 0, background: true }, existing index: { v: 2, key: { expiresAt: 1 }, name: \"expiresAt_1\", background: true }",
+        "startTime": 1789315740458,
+        "endTime": 1789315740871.7434,
+        "duration": 413.7434,
+        "exclusiveDuration": 413.743408203125,
+        "offsetMs": 0,
+        "offsetPercent": 0,
+        "durationPercent": 99.99999801734002,
+        "attributes": {
+          "db.system.name": "mongodb",
+          "db.namespace": "ERP",
+          "db.operation.name": "createIndexes",
+          "db.collection.name": "$cmd",
+          "server.address": "159.41.196.138",
+          "server.port": 27017,
+          "db.query.text": "{\"createIndexes\":\"trusteddevices\",\"indexes\":[{\"expireAfterSeconds\":0,\"background\":true,\"name\":\"expiresAt_1\",\"key\":{}}]}"
+        },
+        "events": [],
+        "links": [],
+        "isVirtualMissingParent": false,
+        "isMissingParent": false,
+        "isOrphan": false,
+        "children": []
+      }
+    ],
+    "displayList": [
+      {
+        "spanId": "8769a2e514047c3f",
+        "originalMissingId": null,
+        "parentSpanId": null,
+        "name": "createIndexes $cmd",
+        "kind": "client",
+        "status": "error",
+        "statusMessage": "An equivalent index already exists with the same name but different options. Requested index: { v: 2, key: { expiresAt: 1 }, name: \"expiresAt_1\", expireAfterSeconds: 0, background: true }, existing index: { v: 2, key: { expiresAt: 1 }, name: \"expiresAt_1\", background: true }",
+        "startTime": 1789315740458,
+        "endTime": 1789315740871.7434,
+        "duration": 413.7434,
+        "exclusiveDuration": 413.743408203125,
+        "offsetMs": 0,
+        "offsetPercent": 0,
+        "durationPercent": 99.99999801734002,
+        "attributes": {
+          "db.system.name": "mongodb",
+          "db.namespace": "ERP",
+          "db.operation.name": "createIndexes",
+          "db.collection.name": "$cmd",
+          "server.address": "159.41.196.138",
+          "server.port": 27017,
+          "db.query.text": "{\"createIndexes\":\"trusteddevices\",\"indexes\":[{\"expireAfterSeconds\":0,\"background\":true,\"name\":\"expiresAt_1\",\"key\":{}}]}"
+        },
+        "events": [],
+        "links": [],
+        "isVirtualMissingParent": false,
+        "isMissingParent": false,
+        "isOrphan": false,
+        "children": [],
+        "displayDepth": 0,
+        "rowId": "8769a2e514047c3f",
+        "hasChildren": false
+      }
+    ],
+    "traceStartTime": 1789315740458,
+    "traceEndTime": 1789315740871.7434,
+    "totalDuration": 413.743408203125,
+    "missingParents": [],
+    "missingParentNodesCount": 0,
+    "spanCount": 1
+  },
+  "spans": [
+    {
+      "spanId": "8769a2e514047c3f",
+      "traceId": "b9fb99556e2ce98f7fe298b6f1eb943e",
+      "parentSpanId": null,
+      "name": "createIndexes $cmd",
+      "kind": "client",
+      "startTime": 1789315740458,
+      "endTime": 1789315740871.7434,
+      "duration": 413.7434,
+      "exclusiveDuration": 413.743408203125,
+      "status": "error",
+      "statusMessage": "An equivalent index already exists with the same name but different options. Requested index: { v: 2, key: { expiresAt: 1 }, name: \"expiresAt_1\", expireAfterSeconds: 0, background: true }, existing index: { v: 2, key: { expiresAt: 1 }, name: \"expiresAt_1\", background: true }",
+      "attributes": {
+        "db.system.name": "mongodb",
+        "db.namespace": "ERP",
+        "db.operation.name": "createIndexes",
+        "db.collection.name": "$cmd",
+        "server.address": "159.41.196.138",
+        "server.port": 27017,
+        "db.query.text": "{\"createIndexes\":\"trusteddevices\",\"indexes\":[{\"expireAfterSeconds\":0,\"background\":true,\"name\":\"expiresAt_1\",\"key\":{}}]}"
+      },
+      "events": [],
+      "links": [],
+      "metadata": {
+        "sdkName": "@pulse-apm/node",
+        "sdkVersion": "8.1.2",
+        "applicationName": "paypalproject",
+        "applicationVersion": "1.0.0",
+        "projectId": "cubicle-project-001",
+        "environment": "production",
+        "release": "8.0.0"
+      },
+      "sessionId": "df729728-b2fd-410b-a23b-821423e205d2",
+      "requestId": null,
+      "tags": {},
+      "isSampled": true,
+      "traceFlags": 1,
+      "database": {
+        "system": "mongodb",
+        "operation": "createIndexes",
+        "collection": "$cmd",
+        "statement": "{\"createIndexes\":\"trusteddevices\",\"indexes\":[{\"expireAfterSeconds\":0,\"background\":true,\"name\":\"expiresAt_1\",\"key\":{}}]}"
+      },
+      "errorCount": 0,
+      "logCount": 0,
+      "_provenance": {
+        "category": "spans",
+        "filename": "span_1789315770821_span_8769a2e514047c3f.json",
+        "relativePath": "cubicle/spans/span_1789315770821_span_8769a2e514047c3f.json",
+        "sizeBytes": 1436,
+        "mtime": "2026-09-13T16:09:30.846Z"
+      }
+    }
+  ],
+  "_provenance": {
+    "category": "traces",
+    "filename": "trace_1789315749455_trace_b9fb99556e2ce98f7fe298b6f1eb943e.json",
+    "relativePath": "cubicle/traces/trace_1789315749455_trace_b9fb99556e2ce98f7fe298b6f1eb943e.json",
+    "sizeBytes": 1677,
+    "mtime": "2026-09-13T16:09:09.689Z"
+  }
+}

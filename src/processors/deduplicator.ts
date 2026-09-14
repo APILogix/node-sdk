@@ -189,9 +189,33 @@ class ErrorDeduplicator {
       logger.debug('Error dedup cleanup', { cleanedEntries: cleaned, remaining: this.entries.size })
     }
   }
+}
 
+class TraceDeduplicator {
+  private entries = new LRUCache<string, number>(10_000)
+  private suppressionWindowMs = 60_000
 
+  configure(options: { suppressionWindowMs?: number; maxEntries?: number } = {}): void {
+    if (options.suppressionWindowMs !== undefined) this.suppressionWindowMs = options.suppressionWindowMs
+    if (options.maxEntries !== undefined) this.entries.setCapacity(options.maxEntries)
+  }
+
+  isDuplicate(traceId: string): boolean {
+    const now = epochMs()
+    const lastSeen = this.entries.get(traceId)
+    if (lastSeen !== undefined && now - lastSeen < this.suppressionWindowMs) {
+      return true
+    }
+    this.entries.set(traceId, now)
+    return false
+  }
+
+  reset(): void {
+    this.entries.clear()
+  }
 }
 
 export const errorDeduplicator = new ErrorDeduplicator()
-export { ErrorDeduplicator }
+export const traceDeduplicator = new TraceDeduplicator()
+export { ErrorDeduplicator, TraceDeduplicator }
+

@@ -1,0 +1,188 @@
+{
+  "traceId": "58598632879ccc5e144bc9b5ac6d763f",
+  "eventId": "trace_58598632879ccc5e144bc9b5ac6d763f",
+  "rootSpan": {
+    "spanId": "edb9f8fb5f7fc783",
+    "traceId": "58598632879ccc5e144bc9b5ac6d763f",
+    "name": "create $cmd",
+    "kind": "client",
+    "startTime": 1789315709688,
+    "endTime": 1789315709899.1396,
+    "duration": 211.1396,
+    "exclusiveDuration": 211.1396484375,
+    "status": "unset",
+    "attributes": {
+      "db.system.name": "mongodb",
+      "db.namespace": "ERP",
+      "db.operation.name": "create",
+      "db.collection.name": "$cmd",
+      "server.address": "159.41.196.138",
+      "server.port": 27017,
+      "db.query.text": "{\"create\":\"recruitmentwebhookconfigs\"}"
+    },
+    "events": [],
+    "links": [],
+    "children": []
+  },
+  "spanCount": 1,
+  "totalDuration": 211.1396,
+  "isPartial": false,
+  "metadata": {
+    "sdkName": "@pulse-apm/node",
+    "sdkVersion": "8.1.2",
+    "applicationName": "paypalproject",
+    "applicationVersion": "1.0.0",
+    "projectId": "cubicle-project-001",
+    "environment": "production",
+    "release": "8.0.0"
+  },
+  "sessionId": "df729728-b2fd-410b-a23b-821423e205d2",
+  "tailSampled": false,
+  "hasError": false,
+  "isSlow": false,
+  "timestamp": 1789315710245,
+  "tags": {},
+  "request": null,
+  "errors": [],
+  "logs": [],
+  "waterfall": {
+    "traceId": "58598632879ccc5e144bc9b5ac6d763f",
+    "roots": [
+      {
+        "spanId": "edb9f8fb5f7fc783",
+        "originalMissingId": null,
+        "parentSpanId": null,
+        "name": "create $cmd",
+        "kind": "client",
+        "status": "unset",
+        "statusMessage": null,
+        "startTime": 1789315709688,
+        "endTime": 1789315709899.1396,
+        "duration": 211.1396,
+        "exclusiveDuration": 211.1396484375,
+        "offsetMs": 0,
+        "offsetPercent": 0,
+        "durationPercent": 99.99997705902214,
+        "attributes": {
+          "db.system.name": "mongodb",
+          "db.namespace": "ERP",
+          "db.operation.name": "create",
+          "db.collection.name": "$cmd",
+          "server.address": "159.41.196.138",
+          "server.port": 27017,
+          "db.query.text": "{\"create\":\"recruitmentwebhookconfigs\"}"
+        },
+        "events": [],
+        "links": [],
+        "isVirtualMissingParent": false,
+        "isMissingParent": false,
+        "isOrphan": false,
+        "children": []
+      }
+    ],
+    "displayList": [
+      {
+        "spanId": "edb9f8fb5f7fc783",
+        "originalMissingId": null,
+        "parentSpanId": null,
+        "name": "create $cmd",
+        "kind": "client",
+        "status": "unset",
+        "statusMessage": null,
+        "startTime": 1789315709688,
+        "endTime": 1789315709899.1396,
+        "duration": 211.1396,
+        "exclusiveDuration": 211.1396484375,
+        "offsetMs": 0,
+        "offsetPercent": 0,
+        "durationPercent": 99.99997705902214,
+        "attributes": {
+          "db.system.name": "mongodb",
+          "db.namespace": "ERP",
+          "db.operation.name": "create",
+          "db.collection.name": "$cmd",
+          "server.address": "159.41.196.138",
+          "server.port": 27017,
+          "db.query.text": "{\"create\":\"recruitmentwebhookconfigs\"}"
+        },
+        "events": [],
+        "links": [],
+        "isVirtualMissingParent": false,
+        "isMissingParent": false,
+        "isOrphan": false,
+        "children": [],
+        "displayDepth": 0,
+        "rowId": "edb9f8fb5f7fc783",
+        "hasChildren": false
+      }
+    ],
+    "traceStartTime": 1789315709688,
+    "traceEndTime": 1789315709899.1396,
+    "totalDuration": 211.1396484375,
+    "missingParents": [],
+    "missingParentNodesCount": 0,
+    "spanCount": 1
+  },
+  "spans": [
+    {
+      "spanId": "edb9f8fb5f7fc783",
+      "traceId": "58598632879ccc5e144bc9b5ac6d763f",
+      "parentSpanId": null,
+      "name": "create $cmd",
+      "kind": "client",
+      "startTime": 1789315709688,
+      "endTime": 1789315709899.1396,
+      "duration": 211.1396,
+      "exclusiveDuration": 211.1396484375,
+      "status": "unset",
+      "statusMessage": null,
+      "attributes": {
+        "db.system.name": "mongodb",
+        "db.namespace": "ERP",
+        "db.operation.name": "create",
+        "db.collection.name": "$cmd",
+        "server.address": "159.41.196.138",
+        "server.port": 27017,
+        "db.query.text": "{\"create\":\"recruitmentwebhookconfigs\"}"
+      },
+      "events": [],
+      "links": [],
+      "metadata": {
+        "sdkName": "@pulse-apm/node",
+        "sdkVersion": "8.1.2",
+        "applicationName": "paypalproject",
+        "applicationVersion": "1.0.0",
+        "projectId": "cubicle-project-001",
+        "environment": "production",
+        "release": "8.0.0"
+      },
+      "sessionId": "df729728-b2fd-410b-a23b-821423e205d2",
+      "requestId": null,
+      "tags": {},
+      "isSampled": true,
+      "traceFlags": 1,
+      "database": {
+        "system": "mongodb",
+        "operation": "create",
+        "collection": "$cmd",
+        "statement": "{\"create\":\"recruitmentwebhookconfigs\"}"
+      },
+      "errorCount": 0,
+      "logCount": 0,
+      "_provenance": {
+        "category": "spans",
+        "filename": "span_1789315711425_span_edb9f8fb5f7fc783.json",
+        "relativePath": "cubicle/spans/span_1789315711425_span_edb9f8fb5f7fc783.json",
+        "sizeBytes": 1025,
+        "mtime": "2026-09-13T16:08:31.850Z"
+      }
+    }
+  ],
+  "_provenance": {
+    "category": "traces",
+    "filename": "trace_1789315711931_trace_58598632879ccc5e144bc9b5ac6d763f.json",
+    "relativePath": "cubicle/traces/trace_1789315711931_trace_58598632879ccc5e144bc9b5ac6d763f.json",
+    "sizeBytes": 1265,
+    "mtime": "2026-09-13T16:08:32.018Z"
+  }
+}

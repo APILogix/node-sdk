@@ -10,7 +10,7 @@
  * - Connection pool monitoring
  */
 import { MongoDBInstrumentation as OTelMongoDBInstrumentation } from '@opentelemetry/instrumentation-mongodb';
-import { context, createContextKey } from '@opentelemetry/api';
+import { context, createContextKey, trace } from '@opentelemetry/api';
 export const SUPPRESS_MONGODB_DRIVER_SPANS = createContextKey('pulse-sdk.mongodb.suppress-driver-spans');
 export function createMongoDBInstrumentation(enabled, mergedOptions, captureConfig) {
     if (!enabled) {
@@ -43,6 +43,43 @@ export function createMongoDBInstrumentation(enabled, mergedOptions, captureConf
                 return true;
             }
             return originalSkipCheck.call(this, currentSpan);
+        };
+    }
+    // Filter out standalone root traces for startup indexing commands (e.g. createIndexes, create, listIndexes)
+    // when executed without an active parent span, preventing thousands of 1-span startup traces from flooding APM.
+    const origV4Promise = instrumentation._getV4PatchCommandPromise;
+    if (typeof origV4Promise === 'function') {
+        ;
+        instrumentation._getV4PatchCommandPromise = function pulseGetV4PatchCommandPromise(...promiseArgs) {
+            const patcher = origV4Promise.apply(this, promiseArgs);
+            return function (original) {
+                const patched = patcher(original);
+                return function patchedV4ServerCommand(...args) {
+                    const [, cmd] = args;
+                    const currentSpan = trace.getSpan(context.active());
+                    if (!currentSpan && cmd && typeof cmd === 'object' && (cmd.createIndexes || cmd.create || cmd.listIndexes || cmd.buildInfo)) {
+                        return original.apply(this, args);
+                    }
+                    return patched.apply(this, args);
+                };
+            };
+        };
+    }
+    const origV4Callback = instrumentation._getV4PatchCommandCallback;
+    if (typeof origV4Callback === 'function') {
+        ;
+        instrumentation._getV4PatchCommandCallback = function pulseGetV4PatchCommandCallback(...callbackArgs) {
+            const patcher = origV4Callback.apply(this, callbackArgs);
+            return function (original) {
+                const patched = patcher(original);
+                return function patchedV4ServerCommand(ns, cmd, options, callback) {
+                    const currentSpan = trace.getSpan(context.active());
+                    if (!currentSpan && cmd && typeof cmd === 'object' && (cmd.createIndexes || cmd.create || cmd.listIndexes || cmd.buildInfo)) {
+                        return original.call(this, ns, cmd, options, callback);
+                    }
+                    return patched.call(this, ns, cmd, options, callback);
+                };
+            };
         };
     }
     return instrumentation;

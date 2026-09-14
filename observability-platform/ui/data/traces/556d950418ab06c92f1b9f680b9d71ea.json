@@ -1,0 +1,188 @@
+{
+  "traceId": "556d950418ab06c92f1b9f680b9d71ea",
+  "eventId": "trace_556d950418ab06c92f1b9f680b9d71ea",
+  "rootSpan": {
+    "spanId": "047c8fc2dbb2aa7a",
+    "traceId": "556d950418ab06c92f1b9f680b9d71ea",
+    "name": "create $cmd",
+    "kind": "client",
+    "startTime": 1789315709773,
+    "endTime": 1789315710188.4236,
+    "duration": 415.4236,
+    "exclusiveDuration": 415.423583984375,
+    "status": "unset",
+    "attributes": {
+      "db.system.name": "mongodb",
+      "db.namespace": "ERP",
+      "db.operation.name": "create",
+      "db.collection.name": "$cmd",
+      "server.address": "159.41.196.138",
+      "server.port": 27017,
+      "db.query.text": "{\"create\":\"marketintelligences\"}"
+    },
+    "events": [],
+    "links": [],
+    "children": []
+  },
+  "spanCount": 1,
+  "totalDuration": 415.4236,
+  "isPartial": false,
+  "metadata": {
+    "sdkName": "@pulse-apm/node",
+    "sdkVersion": "8.1.2",
+    "applicationName": "paypalproject",
+    "applicationVersion": "1.0.0",
+    "projectId": "cubicle-project-001",
+    "environment": "production",
+    "release": "8.0.0"
+  },
+  "sessionId": "df729728-b2fd-410b-a23b-821423e205d2",
+  "tailSampled": false,
+  "hasError": false,
+  "isSlow": false,
+  "timestamp": 1789315710635,
+  "tags": {},
+  "request": null,
+  "errors": [],
+  "logs": [],
+  "waterfall": {
+    "traceId": "556d950418ab06c92f1b9f680b9d71ea",
+    "roots": [
+      {
+        "spanId": "047c8fc2dbb2aa7a",
+        "originalMissingId": null,
+        "parentSpanId": null,
+        "name": "create $cmd",
+        "kind": "client",
+        "status": "unset",
+        "statusMessage": null,
+        "startTime": 1789315709773,
+        "endTime": 1789315710188.4236,
+        "duration": 415.4236,
+        "exclusiveDuration": 415.423583984375,
+        "offsetMs": 0,
+        "offsetPercent": 0,
+        "durationPercent": 100,
+        "attributes": {
+          "db.system.name": "mongodb",
+          "db.namespace": "ERP",
+          "db.operation.name": "create",
+          "db.collection.name": "$cmd",
+          "server.address": "159.41.196.138",
+          "server.port": 27017,
+          "db.query.text": "{\"create\":\"marketintelligences\"}"
+        },
+        "events": [],
+        "links": [],
+        "isVirtualMissingParent": false,
+        "isMissingParent": false,
+        "isOrphan": false,
+        "children": []
+      }
+    ],
+    "displayList": [
+      {
+        "spanId": "047c8fc2dbb2aa7a",
+        "originalMissingId": null,
+        "parentSpanId": null,
+        "name": "create $cmd",
+        "kind": "client",
+        "status": "unset",
+        "statusMessage": null,
+        "startTime": 1789315709773,
+        "endTime": 1789315710188.4236,
+        "duration": 415.4236,
+        "exclusiveDuration": 415.423583984375,
+        "offsetMs": 0,
+        "offsetPercent": 0,
+        "durationPercent": 100,
+        "attributes": {
+          "db.system.name": "mongodb",
+          "db.namespace": "ERP",
+          "db.operation.name": "create",
+          "db.collection.name": "$cmd",
+          "server.address": "159.41.196.138",
+          "server.port": 27017,
+          "db.query.text": "{\"create\":\"marketintelligences\"}"
+        },
+        "events": [],
+        "links": [],
+        "isVirtualMissingParent": false,
+        "isMissingParent": false,
+        "isOrphan": false,
+        "children": [],
+        "displayDepth": 0,
+        "rowId": "047c8fc2dbb2aa7a",
+        "hasChildren": false
+      }
+    ],
+    "traceStartTime": 1789315709773,
+    "traceEndTime": 1789315710188.4236,
+    "totalDuration": 415.4236,
+    "missingParents": [],
+    "missingParentNodesCount": 0,
+    "spanCount": 1
+  },
+  "spans": [
+    {
+      "spanId": "047c8fc2dbb2aa7a",
+      "traceId": "556d950418ab06c92f1b9f680b9d71ea",
+      "parentSpanId": null,
+      "name": "create $cmd",
+      "kind": "client",
+      "startTime": 1789315709773,
+      "endTime": 1789315710188.4236,
+      "duration": 415.4236,
+      "exclusiveDuration": 415.423583984375,
+      "status": "unset",
+      "statusMessage": null,
+      "attributes": {
+        "db.system.name": "mongodb",
+        "db.namespace": "ERP",
+        "db.operation.name": "create",
+        "db.collection.name": "$cmd",
+        "server.address": "159.41.196.138",
+        "server.port": 27017,
+        "db.query.text": "{\"create\":\"marketintelligences\"}"
+      },
+      "events": [],
+      "links": [],
+      "metadata": {
+        "sdkName": "@pulse-apm/node",
+        "sdkVersion": "8.1.2",
+        "applicationName": "paypalproject",
+        "applicationVersion": "1.0.0",
+        "projectId": "cubicle-project-001",
+        "environment": "production",
+        "release": "8.0.0"
+      },
+      "sessionId": "df729728-b2fd-410b-a23b-821423e205d2",
+      "requestId": null,
+      "tags": {},
+      "isSampled": true,
+      "traceFlags": 1,
+      "database": {
+        "system": "mongodb",
+        "operation": "create",
+        "collection": "$cmd",
+        "statement": "{\"create\":\"marketintelligences\"}"
+      },
+      "errorCount": 0,
+      "logCount": 0,
+      "_provenance": {
+        "category": "spans",
+        "filename": "span_1789315713329_span_047c8fc2dbb2aa7a.json",
+        "relativePath": "cubicle/spans/span_1789315713329_span_047c8fc2dbb2aa7a.json",
+        "sizeBytes": 1021,
+        "mtime": "2026-09-13T16:08:33.394Z"
+      }
+    }
+  ],
+  "_provenance": {
+    "category": "traces",
+    "filename": "trace_1789315712079_trace_556d950418ab06c92f1b9f680b9d71ea.json",
+    "relativePath": "cubicle/traces/trace_1789315712079_trace_556d950418ab06c92f1b9f680b9d71ea.json",
+    "sizeBytes": 1261,
+    "mtime": "2026-09-13T16:08:32.144Z"
+  }
+}

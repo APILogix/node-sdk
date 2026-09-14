@@ -1,0 +1,188 @@
+{
+  "traceId": "27f42e992a8a9d3703a60601ad538868",
+  "eventId": "trace_27f42e992a8a9d3703a60601ad538868",
+  "rootSpan": {
+    "spanId": "ae4efb82a1281a82",
+    "traceId": "27f42e992a8a9d3703a60601ad538868",
+    "name": "createIndexes $cmd",
+    "kind": "client",
+    "startTime": 1789315737111,
+    "endTime": 1789315737518.5107,
+    "duration": 407.5108,
+    "exclusiveDuration": 407.5107421875,
+    "status": "unset",
+    "attributes": {
+      "db.system.name": "mongodb",
+      "db.namespace": "ERP",
+      "db.operation.name": "createIndexes",
+      "db.collection.name": "$cmd",
+      "server.address": "159.41.196.138",
+      "server.port": 27017,
+      "db.query.text": "{\"createIndexes\":\"actionplans\",\"indexes\":[{\"background\":true,\"name\":\"status_1\",\"key\":{}}]}"
+    },
+    "events": [],
+    "links": [],
+    "children": []
+  },
+  "spanCount": 1,
+  "totalDuration": 407.5108,
+  "isPartial": false,
+  "metadata": {
+    "sdkName": "@pulse-apm/node",
+    "sdkVersion": "8.1.2",
+    "applicationName": "paypalproject",
+    "applicationVersion": "1.0.0",
+    "projectId": "cubicle-project-001",
+    "environment": "production",
+    "release": "8.0.0"
+  },
+  "sessionId": "df729728-b2fd-410b-a23b-821423e205d2",
+  "tailSampled": false,
+  "hasError": false,
+  "isSlow": false,
+  "timestamp": 1789315737622,
+  "tags": {},
+  "request": null,
+  "errors": [],
+  "logs": [],
+  "waterfall": {
+    "traceId": "27f42e992a8a9d3703a60601ad538868",
+    "roots": [
+      {
+        "spanId": "ae4efb82a1281a82",
+        "originalMissingId": null,
+        "parentSpanId": null,
+        "name": "createIndexes $cmd",
+        "kind": "client",
+        "status": "unset",
+        "statusMessage": null,
+        "startTime": 1789315737111,
+        "endTime": 1789315737518.5107,
+        "duration": 407.5108,
+        "exclusiveDuration": 407.5107421875,
+        "offsetMs": 0,
+        "offsetPercent": 0,
+        "durationPercent": 100,
+        "attributes": {
+          "db.system.name": "mongodb",
+          "db.namespace": "ERP",
+          "db.operation.name": "createIndexes",
+          "db.collection.name": "$cmd",
+          "server.address": "159.41.196.138",
+          "server.port": 27017,
+          "db.query.text": "{\"createIndexes\":\"actionplans\",\"indexes\":[{\"background\":true,\"name\":\"status_1\",\"key\":{}}]}"
+        },
+        "events": [],
+        "links": [],
+        "isVirtualMissingParent": false,
+        "isMissingParent": false,
+        "isOrphan": false,
+        "children": []
+      }
+    ],
+    "displayList": [
+      {
+        "spanId": "ae4efb82a1281a82",
+        "originalMissingId": null,
+        "parentSpanId": null,
+        "name": "createIndexes $cmd",
+        "kind": "client",
+        "status": "unset",
+        "statusMessage": null,
+        "startTime": 1789315737111,
+        "endTime": 1789315737518.5107,
+        "duration": 407.5108,
+        "exclusiveDuration": 407.5107421875,
+        "offsetMs": 0,
+        "offsetPercent": 0,
+        "durationPercent": 100,
+        "attributes": {
+          "db.system.name": "mongodb",
+          "db.namespace": "ERP",
+          "db.operation.name": "createIndexes",
+          "db.collection.name": "$cmd",
+          "server.address": "159.41.196.138",
+          "server.port": 27017,
+          "db.query.text": "{\"createIndexes\":\"actionplans\",\"indexes\":[{\"background\":true,\"name\":\"status_1\",\"key\":{}}]}"
+        },
+        "events": [],
+        "links": [],
+        "isVirtualMissingParent": false,
+        "isMissingParent": false,
+        "isOrphan": false,
+        "children": [],
+        "displayDepth": 0,
+        "rowId": "ae4efb82a1281a82",
+        "hasChildren": false
+      }
+    ],
+    "traceStartTime": 1789315737111,
+    "traceEndTime": 1789315737518.5107,
+    "totalDuration": 407.5108,
+    "missingParents": [],
+    "missingParentNodesCount": 0,
+    "spanCount": 1
+  },
+  "spans": [
+    {
+      "spanId": "ae4efb82a1281a82",
+      "traceId": "27f42e992a8a9d3703a60601ad538868",
+      "parentSpanId": null,
+      "name": "createIndexes $cmd",
+      "kind": "client",
+      "startTime": 1789315737111,
+      "endTime": 1789315737518.5107,
+      "duration": 407.5108,
+      "exclusiveDuration": 407.5107421875,
+      "status": "unset",
+      "statusMessage": null,
+      "attributes": {
+        "db.system.name": "mongodb",
+        "db.namespace": "ERP",
+        "db.operation.name": "createIndexes",
+        "db.collection.name": "$cmd",
+        "server.address": "159.41.196.138",
+        "server.port": 27017,
+        "db.query.text": "{\"createIndexes\":\"actionplans\",\"indexes\":[{\"background\":true,\"name\":\"status_1\",\"key\":{}}]}"
+      },
+      "events": [],
+      "links": [],
+      "metadata": {
+        "sdkName": "@pulse-apm/node",
+        "sdkVersion": "8.1.2",
+        "applicationName": "paypalproject",
+        "applicationVersion": "1.0.0",
+        "projectId": "cubicle-project-001",
+        "environment": "production",
+        "release": "8.0.0"
+      },
+      "sessionId": "df729728-b2fd-410b-a23b-821423e205d2",
+      "requestId": null,
+      "tags": {},
+      "isSampled": true,
+      "traceFlags": 1,
+      "database": {
+        "system": "mongodb",
+        "operation": "createIndexes",
+        "collection": "$cmd",
+        "statement": "{\"createIndexes\":\"actionplans\",\"indexes\":[{\"background\":true,\"name\":\"status_1\",\"key\":{}}]}"
+      },
+      "errorCount": 0,
+      "logCount": 0,
+      "_provenance": {
+        "category": "spans",
+        "filename": "span_1789315753017_span_ae4efb82a1281a82.json",
+        "relativePath": "cubicle/spans/span_1789315753017_span_ae4efb82a1281a82.json",
+        "sizeBytes": 1101,
+        "mtime": "2026-09-13T16:09:13.033Z"
+      }
+    }
+  ],
+  "_provenance": {
+    "category": "traces",
+    "filename": "trace_1789315752256_trace_27f42e992a8a9d3703a60601ad538868.json",
+    "relativePath": "cubicle/traces/trace_1789315752256_trace_27f42e992a8a9d3703a60601ad538868.json",
+    "sizeBytes": 1341,
+    "mtime": "2026-09-13T16:09:12.791Z"
+  }
+}

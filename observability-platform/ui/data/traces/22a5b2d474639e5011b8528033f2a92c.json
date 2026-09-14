@@ -1,0 +1,188 @@
+{
+  "traceId": "22a5b2d474639e5011b8528033f2a92c",
+  "eventId": "trace_22a5b2d474639e5011b8528033f2a92c",
+  "rootSpan": {
+    "spanId": "bdf945454651c26f",
+    "traceId": "22a5b2d474639e5011b8528033f2a92c",
+    "name": "create $cmd",
+    "kind": "client",
+    "startTime": 1789315713657,
+    "endTime": 1789315714014.9834,
+    "duration": 357.9833,
+    "exclusiveDuration": 357.9833984375,
+    "status": "unset",
+    "attributes": {
+      "db.system.name": "mongodb",
+      "db.namespace": "ERP",
+      "db.operation.name": "create",
+      "db.collection.name": "$cmd",
+      "server.address": "159.41.196.138",
+      "server.port": 27017,
+      "db.query.text": "{\"create\":\"walletredemptions\"}"
+    },
+    "events": [],
+    "links": [],
+    "children": []
+  },
+  "spanCount": 1,
+  "totalDuration": 357.9833,
+  "isPartial": false,
+  "metadata": {
+    "sdkName": "@pulse-apm/node",
+    "sdkVersion": "8.1.2",
+    "applicationName": "paypalproject",
+    "applicationVersion": "1.0.0",
+    "projectId": "cubicle-project-001",
+    "environment": "production",
+    "release": "8.0.0"
+  },
+  "sessionId": "df729728-b2fd-410b-a23b-821423e205d2",
+  "tailSampled": false,
+  "hasError": false,
+  "isSlow": false,
+  "timestamp": 1789315714130,
+  "tags": {},
+  "request": null,
+  "errors": [],
+  "logs": [],
+  "waterfall": {
+    "traceId": "22a5b2d474639e5011b8528033f2a92c",
+    "roots": [
+      {
+        "spanId": "bdf945454651c26f",
+        "originalMissingId": null,
+        "parentSpanId": null,
+        "name": "create $cmd",
+        "kind": "client",
+        "status": "unset",
+        "statusMessage": null,
+        "startTime": 1789315713657,
+        "endTime": 1789315714014.9834,
+        "duration": 357.9833,
+        "exclusiveDuration": 357.9833984375,
+        "offsetMs": 0,
+        "offsetPercent": 0,
+        "durationPercent": 99.99997250221647,
+        "attributes": {
+          "db.system.name": "mongodb",
+          "db.namespace": "ERP",
+          "db.operation.name": "create",
+          "db.collection.name": "$cmd",
+          "server.address": "159.41.196.138",
+          "server.port": 27017,
+          "db.query.text": "{\"create\":\"walletredemptions\"}"
+        },
+        "events": [],
+        "links": [],
+        "isVirtualMissingParent": false,
+        "isMissingParent": false,
+        "isOrphan": false,
+        "children": []
+      }
+    ],
+    "displayList": [
+      {
+        "spanId": "bdf945454651c26f",
+        "originalMissingId": null,
+        "parentSpanId": null,
+        "name": "create $cmd",
+        "kind": "client",
+        "status": "unset",
+        "statusMessage": null,
+        "startTime": 1789315713657,
+        "endTime": 1789315714014.9834,
+        "duration": 357.9833,
+        "exclusiveDuration": 357.9833984375,
+        "offsetMs": 0,
+        "offsetPercent": 0,
+        "durationPercent": 99.99997250221647,
+        "attributes": {
+          "db.system.name": "mongodb",
+          "db.namespace": "ERP",
+          "db.operation.name": "create",
+          "db.collection.name": "$cmd",
+          "server.address": "159.41.196.138",
+          "server.port": 27017,
+          "db.query.text": "{\"create\":\"walletredemptions\"}"
+        },
+        "events": [],
+        "links": [],
+        "isVirtualMissingParent": false,
+        "isMissingParent": false,
+        "isOrphan": false,
+        "children": [],
+        "displayDepth": 0,
+        "rowId": "bdf945454651c26f",
+        "hasChildren": false
+      }
+    ],
+    "traceStartTime": 1789315713657,
+    "traceEndTime": 1789315714014.9834,
+    "totalDuration": 357.9833984375,
+    "missingParents": [],
+    "missingParentNodesCount": 0,
+    "spanCount": 1
+  },
+  "spans": [
+    {
+      "spanId": "bdf945454651c26f",
+      "traceId": "22a5b2d474639e5011b8528033f2a92c",
+      "parentSpanId": null,
+      "name": "create $cmd",
+      "kind": "client",
+      "startTime": 1789315713657,
+      "endTime": 1789315714014.9834,
+      "duration": 357.9833,
+      "exclusiveDuration": 357.9833984375,
+      "status": "unset",
+      "statusMessage": null,
+      "attributes": {
+        "db.system.name": "mongodb",
+        "db.namespace": "ERP",
+        "db.operation.name": "create",
+        "db.collection.name": "$cmd",
+        "server.address": "159.41.196.138",
+        "server.port": 27017,
+        "db.query.text": "{\"create\":\"walletredemptions\"}"
+      },
+      "events": [],
+      "links": [],
+      "metadata": {
+        "sdkName": "@pulse-apm/node",
+        "sdkVersion": "8.1.2",
+        "applicationName": "paypalproject",
+        "applicationVersion": "1.0.0",
+        "projectId": "cubicle-project-001",
+        "environment": "production",
+        "release": "8.0.0"
+      },
+      "sessionId": "df729728-b2fd-410b-a23b-821423e205d2",
+      "requestId": null,
+      "tags": {},
+      "isSampled": true,
+      "traceFlags": 1,
+      "database": {
+        "system": "mongodb",
+        "operation": "create",
+        "collection": "$cmd",
+        "statement": "{\"create\":\"walletredemptions\"}"
+      },
+      "errorCount": 0,
+      "logCount": 0,
+      "_provenance": {
+        "category": "spans",
+        "filename": "span_1789315716781_span_bdf945454651c26f.json",
+        "relativePath": "cubicle/spans/span_1789315716781_span_bdf945454651c26f.json",
+        "sizeBytes": 1017,
+        "mtime": "2026-09-13T16:08:36.973Z"
+      }
+    }
+  ],
+  "_provenance": {
+    "category": "traces",
+    "filename": "trace_1789315715932_trace_22a5b2d474639e5011b8528033f2a92c.json",
+    "relativePath": "cubicle/traces/trace_1789315715932_trace_22a5b2d474639e5011b8528033f2a92c.json",
+    "sizeBytes": 1257,
+    "mtime": "2026-09-13T16:08:36.004Z"
+  }
+}

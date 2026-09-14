@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { sdkInitOptionsSchema } from '../types/config.js';
 import { client } from './client.js';
 import { SDKError } from './errors.js';
+import { loadEnvFileSafely } from '../utils/env-loader.js';
 import { waitForShutdownCompletion, registerSignalHandlers } from './lifecycle.js';
 import { getLogger, setDebugMode, setLogLevel } from '../utils/logger.js';
 import { RemoteConfigClient } from './remote-config-client.js';
@@ -45,7 +46,24 @@ import { resolveMaxMemoryMb } from '../utils/memory-detector.js';
  * a runtime configuration or start telemetry with defaults.
  */
 export async function init(options) {
-    const normalizedOptions = typeof options === 'string' ? { apiKey: options } : options;
+    loadEnvFileSafely();
+    let normalizedOptions;
+    if (typeof options === 'string') {
+        normalizedOptions = { apiKey: options };
+    }
+    else if (options && typeof options === 'object') {
+        normalizedOptions = { ...options };
+    }
+    else {
+        normalizedOptions = { apiKey: '' };
+    }
+    // Fallback to environment variables if apiKey is not explicitly set
+    if (!normalizedOptions.apiKey && typeof process !== 'undefined' && process.env) {
+        const envKey = process.env['PULSE_API_KEY'] || process.env['PULSE_KEY'];
+        if (envKey && typeof envKey === 'string' && envKey.trim().length > 0) {
+            normalizedOptions = { ...normalizedOptions, apiKey: envKey.trim() };
+        }
+    }
     await waitForShutdownCompletion();
     setDebugMode(normalizedOptions.debug ?? false);
     if (normalizedOptions.logLevel)
@@ -89,13 +107,20 @@ async function initialize(options) {
         const remoteClient = new RemoteConfigClient({
             apiKey: options.apiKey,
             initTimeoutMs: options.initTimeoutMs,
+            baseUrl: options.endpoint,
         });
         const response = await remoteClient.initialize();
         const config = manager.initialize(remoteClient, response.config);
         client.setInitResponse(response);
         client.applyRemoteIdentity(config);
         const killswitchEngine = KillswitchEngine.initialize(config.killswitches);
-        const samplingEngine = SamplingEngine.initialize(config.sampling);
+        const isAdaptive = options.adaptiveSampling ??
+            config.sampling.adaptive ??
+            config.features.adaptiveSampling ??
+            false;
+        const samplingEngine = SamplingEngine.initialize(config.sampling, {
+            adaptive: isAdaptive,
+        });
         const featureController = FeatureController.initialize(config.features);
         const limitsEngine = LimitsEngine.initialize(config.limits);
         const securityScrubber = SecurityScrubber.initialize(config.privacy);
@@ -139,8 +164,9 @@ async function initialize(options) {
                 embedSourceContent: options.sourceMaps.embedSourceContent ?? false,
             });
         }
-        slowRequestDetector.configure({});
-        registerSignalHandlers();
+        if (options.handleSignals !== false) {
+            registerSignalHandlers();
+        }
         errorDeduplicator.start();
         metricsRegistry.start();
         configureAdaptivePressure(config);

@@ -1,0 +1,188 @@
+{
+  "traceId": "3afb004ff575a3fa363ce0f60cd5ac16",
+  "eventId": "trace_3afb004ff575a3fa363ce0f60cd5ac16",
+  "rootSpan": {
+    "spanId": "f505f90e4829d5d9",
+    "traceId": "3afb004ff575a3fa363ce0f60cd5ac16",
+    "name": "saslStart $cmd",
+    "kind": "client",
+    "startTime": 1789315716689,
+    "endTime": 1789315717065.1443,
+    "duration": 376.1444,
+    "exclusiveDuration": 376.144287109375,
+    "status": "unset",
+    "attributes": {
+      "db.system.name": "mongodb",
+      "db.namespace": "admin",
+      "db.operation.name": "saslStart",
+      "db.collection.name": "$cmd",
+      "server.address": "159.41.196.138",
+      "server.port": 27017,
+      "db.query.text": "{\"saslStart\":1,\"mechanism\":\"SCRAM-SHA-1\",\"payload\":\"biwsbj1yaWNoYWZpeGxzb2x1dGlvbnNfZGJfdXNlcixyPXN0TTRLNVdvZHorOTB0QUlhcGIxS3JablNjWEJQSGpt\",\"autoAuthorize\":1,\"options\":{\"skipEmptyExchange\":true}}"
+    },
+    "events": [],
+    "links": [],
+    "children": []
+  },
+  "spanCount": 1,
+  "totalDuration": 376.1444,
+  "isPartial": false,
+  "metadata": {
+    "sdkName": "@pulse-apm/node",
+    "sdkVersion": "8.1.2",
+    "applicationName": "paypalproject",
+    "applicationVersion": "1.0.0",
+    "projectId": "cubicle-project-001",
+    "environment": "production",
+    "release": "8.0.0"
+  },
+  "sessionId": "df729728-b2fd-410b-a23b-821423e205d2",
+  "tailSampled": false,
+  "hasError": false,
+  "isSlow": false,
+  "timestamp": 1789315717172,
+  "tags": {},
+  "request": null,
+  "errors": [],
+  "logs": [],
+  "waterfall": {
+    "traceId": "3afb004ff575a3fa363ce0f60cd5ac16",
+    "roots": [
+      {
+        "spanId": "f505f90e4829d5d9",
+        "originalMissingId": null,
+        "parentSpanId": null,
+        "name": "saslStart $cmd",
+        "kind": "client",
+        "status": "unset",
+        "statusMessage": null,
+        "startTime": 1789315716689,
+        "endTime": 1789315717065.1443,
+        "duration": 376.1444,
+        "exclusiveDuration": 376.144287109375,
+        "offsetMs": 0,
+        "offsetPercent": 0,
+        "durationPercent": 100,
+        "attributes": {
+          "db.system.name": "mongodb",
+          "db.namespace": "admin",
+          "db.operation.name": "saslStart",
+          "db.collection.name": "$cmd",
+          "server.address": "159.41.196.138",
+          "server.port": 27017,
+          "db.query.text": "{\"saslStart\":1,\"mechanism\":\"SCRAM-SHA-1\",\"payload\":\"biwsbj1yaWNoYWZpeGxzb2x1dGlvbnNfZGJfdXNlcixyPXN0TTRLNVdvZHorOTB0QUlhcGIxS3JablNjWEJQSGpt\",\"autoAuthorize\":1,\"options\":{\"skipEmptyExchange\":true}}"
+        },
+        "events": [],
+        "links": [],
+        "isVirtualMissingParent": false,
+        "isMissingParent": false,
+        "isOrphan": false,
+        "children": []
+      }
+    ],
+    "displayList": [
+      {
+        "spanId": "f505f90e4829d5d9",
+        "originalMissingId": null,
+        "parentSpanId": null,
+        "name": "saslStart $cmd",
+        "kind": "client",
+        "status": "unset",
+        "statusMessage": null,
+        "startTime": 1789315716689,
+        "endTime": 1789315717065.1443,
+        "duration": 376.1444,
+        "exclusiveDuration": 376.144287109375,
+        "offsetMs": 0,
+        "offsetPercent": 0,
+        "durationPercent": 100,
+        "attributes": {
+          "db.system.name": "mongodb",
+          "db.namespace": "admin",
+          "db.operation.name": "saslStart",
+          "db.collection.name": "$cmd",
+          "server.address": "159.41.196.138",
+          "server.port": 27017,
+          "db.query.text": "{\"saslStart\":1,\"mechanism\":\"SCRAM-SHA-1\",\"payload\":\"biwsbj1yaWNoYWZpeGxzb2x1dGlvbnNfZGJfdXNlcixyPXN0TTRLNVdvZHorOTB0QUlhcGIxS3JablNjWEJQSGpt\",\"autoAuthorize\":1,\"options\":{\"skipEmptyExchange\":true}}"
+        },
+        "events": [],
+        "links": [],
+        "isVirtualMissingParent": false,
+        "isMissingParent": false,
+        "isOrphan": false,
+        "children": [],
+        "displayDepth": 0,
+        "rowId": "f505f90e4829d5d9",
+        "hasChildren": false
+      }
+    ],
+    "traceStartTime": 1789315716689,
+    "traceEndTime": 1789315717065.1443,
+    "totalDuration": 376.1444,
+    "missingParents": [],
+    "missingParentNodesCount": 0,
+    "spanCount": 1
+  },
+  "spans": [
+    {
+      "spanId": "f505f90e4829d5d9",
+      "traceId": "3afb004ff575a3fa363ce0f60cd5ac16",
+      "parentSpanId": null,
+      "name": "saslStart $cmd",
+      "kind": "client",
+      "startTime": 1789315716689,
+      "endTime": 1789315717065.1443,
+      "duration": 376.1444,
+      "exclusiveDuration": 376.144287109375,
+      "status": "unset",
+      "statusMessage": null,
+      "attributes": {
+        "db.system.name": "mongodb",
+        "db.namespace": "admin",
+        "db.operation.name": "saslStart",
+        "db.collection.name": "$cmd",
+        "server.address": "159.41.196.138",
+        "server.port": 27017,
+        "db.query.text": "{\"saslStart\":1,\"mechanism\":\"SCRAM-SHA-1\",\"payload\":\"biwsbj1yaWNoYWZpeGxzb2x1dGlvbnNfZGJfdXNlcixyPXN0TTRLNVdvZHorOTB0QUlhcGIxS3JablNjWEJQSGpt\",\"autoAuthorize\":1,\"options\":{\"skipEmptyExchange\":true}}"
+      },
+      "events": [],
+      "links": [],
+      "metadata": {
+        "sdkName": "@pulse-apm/node",
+        "sdkVersion": "8.1.2",
+        "applicationName": "paypalproject",
+        "applicationVersion": "1.0.0",
+        "projectId": "cubicle-project-001",
+        "environment": "production",
+        "release": "8.0.0"
+      },
+      "sessionId": "df729728-b2fd-410b-a23b-821423e205d2",
+      "requestId": null,
+      "tags": {},
+      "isSampled": true,
+      "traceFlags": 1,
+      "database": {
+        "system": "mongodb",
+        "operation": "saslStart",
+        "collection": "$cmd",
+        "statement": "{\"saslStart\":1,\"mechanism\":\"SCRAM-SHA-1\",\"payload\":\"biwsbj1yaWNoYWZpeGxzb2x1dGlvbnNfZGJfdXNlcixyPXN0TTRLNVdvZHorOTB0QUlhcGIxS3JablNjWEJQSGpt\",\"autoAuthorize\":1,\"options\":{\"skipEmptyExchange\":true}}"
+      },
+      "errorCount": 0,
+      "logCount": 0,
+      "_provenance": {
+        "category": "spans",
+        "filename": "span_1789315723042_span_f505f90e4829d5d9.json",
+        "relativePath": "cubicle/spans/span_1789315723042_span_f505f90e4829d5d9.json",
+        "sizeBytes": 1206,
+        "mtime": "2026-09-13T16:08:43.774Z"
+      }
+    }
+  ],
+  "_provenance": {
+    "category": "traces",
+    "filename": "trace_1789315720669_trace_3afb004ff575a3fa363ce0f60cd5ac16.json",
+    "relativePath": "cubicle/traces/trace_1789315720669_trace_3afb004ff575a3fa363ce0f60cd5ac16.json",
+    "sizeBytes": 1446,
+    "mtime": "2026-09-13T16:08:40.685Z"
+  }
+}

@@ -1,0 +1,189 @@
+{
+  "traceId": "2386181f6a52bcefbe5064f36f01f7c9",
+  "eventId": "trace_2386181f6a52bcefbe5064f36f01f7c9",
+  "rootSpan": {
+    "spanId": "f8f8651a0cd812c4",
+    "traceId": "2386181f6a52bcefbe5064f36f01f7c9",
+    "name": "create $cmd",
+    "kind": "client",
+    "startTime": 1789315713770,
+    "endTime": 1789315714265.0342,
+    "duration": 495.0343,
+    "exclusiveDuration": 495.0341796875,
+    "status": "error",
+    "statusMessage": "cannot create a new collection -- already using 502 collections of 500",
+    "attributes": {
+      "db.system.name": "mongodb",
+      "db.namespace": "ERP",
+      "db.operation.name": "create",
+      "db.collection.name": "$cmd",
+      "server.address": "159.41.196.138",
+      "server.port": 27017,
+      "db.query.text": "{\"create\":\"assetrequests\"}"
+    },
+    "events": [],
+    "links": [],
+    "children": []
+  },
+  "spanCount": 1,
+  "totalDuration": 495.0343,
+  "isPartial": false,
+  "metadata": {
+    "sdkName": "@pulse-apm/node",
+    "sdkVersion": "8.1.2",
+    "applicationName": "paypalproject",
+    "applicationVersion": "1.0.0",
+    "projectId": "cubicle-project-001",
+    "environment": "production",
+    "release": "8.0.0"
+  },
+  "sessionId": "df729728-b2fd-410b-a23b-821423e205d2",
+  "tailSampled": false,
+  "hasError": true,
+  "isSlow": false,
+  "timestamp": 1789315714445,
+  "tags": {},
+  "request": null,
+  "errors": [],
+  "logs": [],
+  "waterfall": {
+    "traceId": "2386181f6a52bcefbe5064f36f01f7c9",
+    "roots": [
+      {
+        "spanId": "f8f8651a0cd812c4",
+        "originalMissingId": null,
+        "parentSpanId": null,
+        "name": "create $cmd",
+        "kind": "client",
+        "status": "error",
+        "statusMessage": "cannot create a new collection -- already using 502 collections of 500",
+        "startTime": 1789315713770,
+        "endTime": 1789315714265.0342,
+        "duration": 495.0343,
+        "exclusiveDuration": 495.0341796875,
+        "offsetMs": 0,
+        "offsetPercent": 0,
+        "durationPercent": 100,
+        "attributes": {
+          "db.system.name": "mongodb",
+          "db.namespace": "ERP",
+          "db.operation.name": "create",
+          "db.collection.name": "$cmd",
+          "server.address": "159.41.196.138",
+          "server.port": 27017,
+          "db.query.text": "{\"create\":\"assetrequests\"}"
+        },
+        "events": [],
+        "links": [],
+        "isVirtualMissingParent": false,
+        "isMissingParent": false,
+        "isOrphan": false,
+        "children": []
+      }
+    ],
+    "displayList": [
+      {
+        "spanId": "f8f8651a0cd812c4",
+        "originalMissingId": null,
+        "parentSpanId": null,
+        "name": "create $cmd",
+        "kind": "client",
+        "status": "error",
+        "statusMessage": "cannot create a new collection -- already using 502 collections of 500",
+        "startTime": 1789315713770,
+        "endTime": 1789315714265.0342,
+        "duration": 495.0343,
+        "exclusiveDuration": 495.0341796875,
+        "offsetMs": 0,
+        "offsetPercent": 0,
+        "durationPercent": 100,
+        "attributes": {
+          "db.system.name": "mongodb",
+          "db.namespace": "ERP",
+          "db.operation.name": "create",
+          "db.collection.name": "$cmd",
+          "server.address": "159.41.196.138",
+          "server.port": 27017,
+          "db.query.text": "{\"create\":\"assetrequests\"}"
+        },
+        "events": [],
+        "links": [],
+        "isVirtualMissingParent": false,
+        "isMissingParent": false,
+        "isOrphan": false,
+        "children": [],
+        "displayDepth": 0,
+        "rowId": "f8f8651a0cd812c4",
+        "hasChildren": false
+      }
+    ],
+    "traceStartTime": 1789315713770,
+    "traceEndTime": 1789315714265.0342,
+    "totalDuration": 495.0343,
+    "missingParents": [],
+    "missingParentNodesCount": 0,
+    "spanCount": 1
+  },
+  "spans": [
+    {
+      "spanId": "f8f8651a0cd812c4",
+      "traceId": "2386181f6a52bcefbe5064f36f01f7c9",
+      "parentSpanId": null,
+      "name": "create $cmd",
+      "kind": "client",
+      "startTime": 1789315713770,
+      "endTime": 1789315714265.0342,
+      "duration": 495.0343,
+      "exclusiveDuration": 495.0341796875,
+      "status": "error",
+      "statusMessage": "cannot create a new collection -- already using 502 collections of 500",
+      "attributes": {
+        "db.system.name": "mongodb",
+        "db.namespace": "ERP",
+        "db.operation.name": "create",
+        "db.collection.name": "$cmd",
+        "server.address": "159.41.196.138",
+        "server.port": 27017,
+        "db.query.text": "{\"create\":\"assetrequests\"}"
+      },
+      "events": [],
+      "links": [],
+      "metadata": {
+        "sdkName": "@pulse-apm/node",
+        "sdkVersion": "8.1.2",
+        "applicationName": "paypalproject",
+        "applicationVersion": "1.0.0",
+        "projectId": "cubicle-project-001",
+        "environment": "production",
+        "release": "8.0.0"
+      },
+      "sessionId": "df729728-b2fd-410b-a23b-821423e205d2",
+      "requestId": null,
+      "tags": {},
+      "isSampled": true,
+      "traceFlags": 1,
+      "database": {
+        "system": "mongodb",
+        "operation": "create",
+        "collection": "$cmd",
+        "statement": "{\"create\":\"assetrequests\"}"
+      },
+      "errorCount": 0,
+      "logCount": 0,
+      "_provenance": {
+        "category": "spans",
+        "filename": "span_1789315716781_span_f8f8651a0cd812c4.json",
+        "relativePath": "cubicle/spans/span_1789315716781_span_f8f8651a0cd812c4.json",
+        "sizeBytes": 1106,
+        "mtime": "2026-09-13T16:08:37.058Z"
+      }
+    }
+  ],
+  "_provenance": {
+    "category": "traces",
+    "filename": "trace_1789315718665_trace_2386181f6a52bcefbe5064f36f01f7c9.json",
+    "relativePath": "cubicle/traces/trace_1789315718665_trace_2386181f6a52bcefbe5064f36f01f7c9.json",
+    "sizeBytes": 1347,
+    "mtime": "2026-09-13T16:08:38.696Z"
+  }
+}

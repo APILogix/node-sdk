@@ -17,6 +17,7 @@
  *   3. Compare against the rate for the event type (route-overridden if any).
  */
 import { getLogger } from '../utils/logger.js';
+import { adaptivePressure } from '../utils/adaptive-pressure.js';
 const SAMPLING_EVENT_TYPES = [
     'traces', 'requests', 'spans', 'errors', 'messages', 'profiles',
     'replays', 'metrics', 'logs', 'events', 'crons',
@@ -24,16 +25,24 @@ const SAMPLING_EVENT_TYPES = [
 export class SamplingEngine {
     static instance = null;
     config;
+    adaptive = false;
     destroyed = false;
-    constructor(config) {
+    constructor(config, options) {
         this.config = { ...config };
+        this.adaptive = options?.adaptive ?? false;
     }
-    static initialize(config) {
+    static initialize(config, options) {
         if (SamplingEngine.instance) {
             SamplingEngine.instance.destroy();
         }
-        SamplingEngine.instance = new SamplingEngine(config);
+        SamplingEngine.instance = new SamplingEngine(config, options);
         return SamplingEngine.instance;
+    }
+    setAdaptive(enabled) {
+        this.adaptive = enabled;
+    }
+    isAdaptive() {
+        return this.adaptive;
     }
     static getInstance() {
         return SamplingEngine.instance;
@@ -82,6 +91,12 @@ export class SamplingEngine {
             getLogger().info('[SamplingEngine] Rates updated', Object.fromEntries(SAMPLING_EVENT_TYPES.map(key => [key, newSampling[key]])));
         }
         this.config = { ...newSampling };
+        if (newSampling?.adaptive !== undefined) {
+            this.adaptive = newSampling.adaptive;
+        }
+        else if (newConfig?.features?.adaptiveSampling !== undefined) {
+            this.adaptive = newConfig.features.adaptiveSampling;
+        }
     }
     getConfig() {
         return { ...this.config };
@@ -94,25 +109,46 @@ export class SamplingEngine {
             if (routeRates) {
                 const routeRate = routeRates[eventType];
                 if (routeRate !== undefined) {
-                    return this.evaluate(id, routeRate, 'route_override');
+                    return this.evaluate(id, routeRate, 'route_override', eventType);
                 }
             }
         }
         // 2. Fall through to the global rate.
         const rate = this.config[eventType];
-        return this.evaluate(id, rate, 'global_rate');
+        return this.evaluate(id, rate, 'global_rate', eventType);
     }
-    evaluate(id, rate, reason) {
+    evaluate(id, rate, reason, eventType) {
         if (rate <= 0)
             return { sampled: false, rate: 0, reason: 'always_drop' };
-        if (rate >= 1)
+        let effectiveRate = rate;
+        let effectiveReason = reason;
+        // Dynamic adaptive sampling: when enabled, dynamically scale non-error high-throughput rates under system pressure
+        if (this.adaptive && eventType !== 'errors') {
+            const state = adaptivePressure.getState();
+            if (state === 'CRITICAL') {
+                effectiveRate = Math.min(rate, 0.10);
+                effectiveReason = 'adaptive_pressure';
+            }
+            else if (state === 'PRESSURED') {
+                effectiveRate = Math.min(rate, rate * 0.50);
+                effectiveReason = 'adaptive_pressure';
+            }
+            else if (state === 'ELEVATED') {
+                effectiveRate = Math.min(rate, rate * 0.80);
+                effectiveReason = 'adaptive_pressure';
+            }
+        }
+        if (effectiveRate <= 0)
+            return { sampled: false, rate: 0, reason: 'always_drop' };
+        if (effectiveRate >= 1 && effectiveReason !== 'adaptive_pressure') {
             return { sampled: true, rate: 1, reason: 'always_sample' };
+        }
         const hash = SamplingEngine.fnv1a32(id);
         const normalized = hash / 0x100000000;
         return {
-            sampled: normalized < rate,
-            rate,
-            reason,
+            sampled: normalized < effectiveRate,
+            rate: effectiveRate,
+            reason: effectiveReason,
         };
     }
     /**

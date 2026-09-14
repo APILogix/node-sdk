@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pulse APM - Requests Explorer</title>
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+
+  <main class="main-content">
+    <div class="page-header">
+      <div class="page-title-group">
+        <h1>
+          <span>HTTP Requests Explorer</span>
+          <span class="badge badge-server" id="total-req-count">16 Requests</span>
+        </h1>
+        <p class="page-subtitle">Track incoming Express HTTP requests, latencies, HTTP status codes, and trace correlations</p>
+      </div>
+      <div class="filter-bar">
+        <input type="text" id="req-filter-search" class="filter-input" placeholder="Search route, URL, ID..." style="width:240px;">
+        <select id="req-filter-method" class="filter-select">
+          <option value="">All Methods</option>
+          <option value="GET">GET</option>
+          <option value="POST">POST</option>
+        </select>
+        <select id="req-filter-status" class="filter-select">
+          <option value="">All Statuses</option>
+          <option value="200">200 OK</option>
+          <option value="401">401 Unauthorized</option>
+        </select>
+        <select id="req-filter-sort" class="filter-select">
+          <option value="time-desc">Time: Newest First</option>
+          <option value="time-asc">Time: Oldest First</option>
+          <option value="lat-desc">Latency: Slowest First</option>
+          <option value="lat-asc">Latency: Fastest First</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="table-responsive">
+        <table class="data-table" id="requests-table">
+          <thead>
+            <tr>
+              <th style="width: 140px;">Timestamp</th>
+              <th style="width: 80px;">Method</th>
+              <th>Route / URL</th>
+              <th style="width: 90px;">Status</th>
+              <th style="width: 130px;">Latency</th>
+              <th style="width: 180px;">Request ID</th>
+              <th style="width: 180px;">Trace ID</th>
+              <th style="width: 100px;">Errors / Logs</th>
+              <th style="width: 80px;">Details</th>
+            </tr>
+          </thead>
+          <tbody id="requests-tbody">
+            <tr><td colspan="9" style="text-align:center;">Loading requests...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </main>
+
+  <script type="module">
+    import { renderTopNav, formatDuration, formatTime, escapeHtml } from './app.js';
+    renderTopNav('requests');
+
+    let allRequests = [];
+    let expandedRowId = null;
+
+    async function loadRequests() {
+      try {
+        const res = await fetch('data/requests.json');
+        allRequests = await res.json();
+        renderRequests();
+      } catch (e) {
+        console.error('Failed to load requests:', e);
+      }
+    }
+
+    function renderRequests() {
+      const q = document.getElementById('req-filter-search').value.trim().toLowerCase();
+      const method = document.getElementById('req-filter-method').value;
+      const status = document.getElementById('req-filter-status').value;
+      const sort = document.getElementById('req-filter-sort').value;
+
+      let filtered = allRequests.filter(r => {
+        if (method && r.method !== method) return false;
+        if (status && String(r.statusCode) !== status) return false;
+        if (q) {
+          const text = `${r.url} ${r.route} ${r.requestId} ${r.traceId} ${r.clientIp}`.toLowerCase();
+          if (!text.includes(q)) return false;
+        }
+        return true;
+      });
+
+      // Sorting
+      filtered.sort((a, b) => {
+        if (sort === 'time-desc') return (b.timestamp || 0) - (a.timestamp || 0);
+        if (sort === 'time-asc') return (a.timestamp || 0) - (b.timestamp || 0);
+        if (sort === 'lat-desc') return (b.latency || 0) - (a.latency || 0);
+        if (sort === 'lat-asc') return (a.latency || 0) - (b.latency || 0);
+        return 0;
+      });
+
+      document.getElementById('total-req-count').innerText = `${filtered.length} of ${allRequests.length} Requests`;
+
+      const tbody = document.getElementById('requests-tbody');
+      if (filtered.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="9" style="text-align:center; padding:24px; color:#9ca3af;">No requests match the current filters</td></tr>`;
+        return;
+      }
+
+      let html = '';
+      for (const r of filtered) {
+        const isExpanded = (expandedRowId === r.requestId);
+        html += `
+          <tr id="req-row-${r.requestId}" class="${r.statusCode >= 400 ? 'row-warning' : ''}">
+            <td class="mono" style="font-size:11px;">${formatTime(r.timestamp)}</td>
+            <td><span class="badge badge-${r.method.toLowerCase()}">${r.method}</span></td>
+            <td>
+              <a href="trace-detail.html?traceId=${r.traceId}" style="font-weight:600; color:#f3f4f6;">${escapeHtml(r.url)}</a>
+              ${r.route && r.route !== r.url ? `<div style="font-size:10px; color:#9ca3af;">Route: ${escapeHtml(r.route)}</div>` : ''}
+            </td>
+            <td><span class="badge badge-${r.statusCode >= 400 ? '4xx' : '2xx'}">${r.statusCode}</span></td>
+            <td>
+              <div class="latency-cell">
+                <span class="latency-bar ${r.latency > 5000 ? 'danger' : (r.latency > 1000 ? 'warn' : '')}" style="width:${Math.min(60, (r.latency/30000)*60)}px;"></span>
+                <span>${formatDuration(r.latency)}</span>
+              </div>
+            </td>
+            <td class="mono" style="font-size:11px;">
+              <span title="${r.requestId}">${r.requestId.slice(0, 13)}...</span>
+            </td>
+            <td class="mono" style="font-size:11px;">
+              <a href="trace-detail.html?traceId=${r.traceId}" title="Inspect Trace Waterfall" style="display:inline-flex; align-items:center; gap:4px;">
+                <span>${r.traceId.slice(0, 10)}...</span>
+                <span>↗</span>
+              </a>
+            </td>
+            <td>
+              ${r.errorCount > 0 ? `<span class="badge badge-error">1 error</span>` : '<span class="text-muted" style="font-size:11px;">0 errors</span>'}
+              ${r.logCount > 0 ? `<span class="badge badge-internal" style="margin-left:4px;">1 log</span>` : ''}
+            </td>
+            <td>
+              <button class="btn btn-secondary" style="padding:2px 6px; font-size:10px;" onclick="window.toggleRowDetails('${r.requestId}')">
+                ${isExpanded ? 'Hide' : 'Inspect'}
+              </button>
+            </td>
+          </tr>
+        `;
+
+        if (isExpanded) {
+          html += `
+            <tr id="req-exp-${r.requestId}" style="background-color: var(--bg-tertiary);">
+              <td colspan="9" style="padding: 16px;">
+                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:16px;">
+                  <div>
+                    <h4 style="font-size:12px; color:#93c5fd; margin-bottom:8px;">Request Metadata & Client</h4>
+                    <table class="kv-table">
+                      <tr><th>Full Request ID</th><td><code class="mono">${r.requestId}</code></td></tr>
+                      <tr><th>Full Trace ID</th><td><a href="trace-detail.html?traceId=${r.traceId}" class="mono">${r.traceId}</a></td></tr>
+                      <tr><th>Client IP</th><td><code class="mono">${escapeHtml(r.clientIp)}</code></td></tr>
+                      <tr><th>User Agent</th><td><span style="font-size:10px;">${escapeHtml(r.userAgent)}</span></td></tr>
+                      <tr><th>Referer</th><td>${r.referer ? escapeHtml(r.referer) : '<span class="text-muted">None</span>'}</td></tr>
+                      <tr><th>Provenance</th><td><span class="badge badge-client">${escapeHtml(r._provenance.relativePath)}</span> (${r._provenance.sizeBytes} B)</td></tr>
+                    </table>
+                  </div>
+                  <div>
+                    <h4 style="font-size:12px; color:#93c5fd; margin-bottom:8px;">Headers & Payload</h4>
+                    <div style="font-size:11px; margin-bottom:4px; font-weight:600; color:#9ca3af;">Headers</div>
+                    <pre class="code-block" style="max-height:120px;">${escapeHtml(JSON.stringify(r.headers, null, 2))}</pre>
+                    ${r.query && Object.keys(r.query).length > 0 ? `
+                      <div style="font-size:11px; margin-top:8px; margin-bottom:4px; font-weight:600; color:#9ca3af;">Query Parameters</div>
+                      <pre class="code-block">${escapeHtml(JSON.stringify(r.query, null, 2))}</pre>
+                    ` : ''}
+                  </div>
+                </div>
+              </td>
+            </tr>
+          `;
+        }
+      }
+
+      tbody.innerHTML = html;
+    }
+
+    window.toggleRowDetails = (id) => {
+      expandedRowId = (expandedRowId === id) ? null : id;
+      renderRequests();
+    };
+
+    document.getElementById('req-filter-search').addEventListener('input', renderRequests);
+    document.getElementById('req-filter-method').addEventListener('change', renderRequests);
+    document.getElementById('req-filter-status').addEventListener('change', renderRequests);
+    document.getElementById('req-filter-sort').addEventListener('change', renderRequests);
+
+    loadRequests();
+  </script>
+</body>
+</html>

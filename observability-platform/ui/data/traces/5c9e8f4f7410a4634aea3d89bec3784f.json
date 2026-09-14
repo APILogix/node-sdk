@@ -1,0 +1,188 @@
+{
+  "traceId": "5c9e8f4f7410a4634aea3d89bec3784f",
+  "eventId": "trace_5c9e8f4f7410a4634aea3d89bec3784f",
+  "rootSpan": {
+    "spanId": "31ce22a2b9da956b",
+    "traceId": "5c9e8f4f7410a4634aea3d89bec3784f",
+    "name": "create $cmd",
+    "kind": "client",
+    "startTime": 1789315709899,
+    "endTime": 1789315710219.9902,
+    "duration": 320.9902,
+    "exclusiveDuration": 320.990234375,
+    "status": "unset",
+    "attributes": {
+      "db.system.name": "mongodb",
+      "db.namespace": "ERP",
+      "db.operation.name": "create",
+      "db.collection.name": "$cmd",
+      "server.address": "159.41.196.138",
+      "server.port": 27017,
+      "db.query.text": "{\"create\":\"reimbursements\"}"
+    },
+    "events": [],
+    "links": [],
+    "children": []
+  },
+  "spanCount": 1,
+  "totalDuration": 320.9902,
+  "isPartial": false,
+  "metadata": {
+    "sdkName": "@pulse-apm/node",
+    "sdkVersion": "8.1.2",
+    "applicationName": "paypalproject",
+    "applicationVersion": "1.0.0",
+    "projectId": "cubicle-project-001",
+    "environment": "production",
+    "release": "8.0.0"
+  },
+  "sessionId": "df729728-b2fd-410b-a23b-821423e205d2",
+  "tailSampled": false,
+  "hasError": false,
+  "isSlow": false,
+  "timestamp": 1789315710731,
+  "tags": {},
+  "request": null,
+  "errors": [],
+  "logs": [],
+  "waterfall": {
+    "traceId": "5c9e8f4f7410a4634aea3d89bec3784f",
+    "roots": [
+      {
+        "spanId": "31ce22a2b9da956b",
+        "originalMissingId": null,
+        "parentSpanId": null,
+        "name": "create $cmd",
+        "kind": "client",
+        "status": "unset",
+        "statusMessage": null,
+        "startTime": 1789315709899,
+        "endTime": 1789315710219.9902,
+        "duration": 320.9902,
+        "exclusiveDuration": 320.990234375,
+        "offsetMs": 0,
+        "offsetPercent": 0,
+        "durationPercent": 99.99998929095146,
+        "attributes": {
+          "db.system.name": "mongodb",
+          "db.namespace": "ERP",
+          "db.operation.name": "create",
+          "db.collection.name": "$cmd",
+          "server.address": "159.41.196.138",
+          "server.port": 27017,
+          "db.query.text": "{\"create\":\"reimbursements\"}"
+        },
+        "events": [],
+        "links": [],
+        "isVirtualMissingParent": false,
+        "isMissingParent": false,
+        "isOrphan": false,
+        "children": []
+      }
+    ],
+    "displayList": [
+      {
+        "spanId": "31ce22a2b9da956b",
+        "originalMissingId": null,
+        "parentSpanId": null,
+        "name": "create $cmd",
+        "kind": "client",
+        "status": "unset",
+        "statusMessage": null,
+        "startTime": 1789315709899,
+        "endTime": 1789315710219.9902,
+        "duration": 320.9902,
+        "exclusiveDuration": 320.990234375,
+        "offsetMs": 0,
+        "offsetPercent": 0,
+        "durationPercent": 99.99998929095146,
+        "attributes": {
+          "db.system.name": "mongodb",
+          "db.namespace": "ERP",
+          "db.operation.name": "create",
+          "db.collection.name": "$cmd",
+          "server.address": "159.41.196.138",
+          "server.port": 27017,
+          "db.query.text": "{\"create\":\"reimbursements\"}"
+        },
+        "events": [],
+        "links": [],
+        "isVirtualMissingParent": false,
+        "isMissingParent": false,
+        "isOrphan": false,
+        "children": [],
+        "displayDepth": 0,
+        "rowId": "31ce22a2b9da956b",
+        "hasChildren": false
+      }
+    ],
+    "traceStartTime": 1789315709899,
+    "traceEndTime": 1789315710219.9902,
+    "totalDuration": 320.990234375,
+    "missingParents": [],
+    "missingParentNodesCount": 0,
+    "spanCount": 1
+  },
+  "spans": [
+    {
+      "spanId": "31ce22a2b9da956b",
+      "traceId": "5c9e8f4f7410a4634aea3d89bec3784f",
+      "parentSpanId": null,
+      "name": "create $cmd",
+      "kind": "client",
+      "startTime": 1789315709899,
+      "endTime": 1789315710219.9902,
+      "duration": 320.9902,
+      "exclusiveDuration": 320.990234375,
+      "status": "unset",
+      "statusMessage": null,
+      "attributes": {
+        "db.system.name": "mongodb",
+        "db.namespace": "ERP",
+        "db.operation.name": "create",
+        "db.collection.name": "$cmd",
+        "server.address": "159.41.196.138",
+        "server.port": 27017,
+        "db.query.text": "{\"create\":\"reimbursements\"}"
+      },
+      "events": [],
+      "links": [],
+      "metadata": {
+        "sdkName": "@pulse-apm/node",
+        "sdkVersion": "8.1.2",
+        "applicationName": "paypalproject",
+        "applicationVersion": "1.0.0",
+        "projectId": "cubicle-project-001",
+        "environment": "production",
+        "release": "8.0.0"
+      },
+      "sessionId": "df729728-b2fd-410b-a23b-821423e205d2",
+      "requestId": null,
+      "tags": {},
+      "isSampled": true,
+      "traceFlags": 1,
+      "database": {
+        "system": "mongodb",
+        "operation": "create",
+        "collection": "$cmd",
+        "statement": "{\"create\":\"reimbursements\"}"
+      },
+      "errorCount": 0,
+      "logCount": 0,
+      "_provenance": {
+        "category": "spans",
+        "filename": "span_1789315713329_span_31ce22a2b9da956b.json",
+        "relativePath": "cubicle/spans/span_1789315713329_span_31ce22a2b9da956b.json",
+        "sizeBytes": 1013,
+        "mtime": "2026-09-13T16:08:33.515Z"
+      }
+    }
+  ],
+  "_provenance": {
+    "category": "traces",
+    "filename": "trace_1789315712079_trace_5c9e8f4f7410a4634aea3d89bec3784f.json",
+    "relativePath": "cubicle/traces/trace_1789315712079_trace_5c9e8f4f7410a4634aea3d89bec3784f.json",
+    "sizeBytes": 1253,
+    "mtime": "2026-09-13T16:08:32.276Z"
+  }
+}

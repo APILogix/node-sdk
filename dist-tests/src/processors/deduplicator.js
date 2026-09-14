@@ -163,5 +163,28 @@ class ErrorDeduplicator {
         }
     }
 }
+class TraceDeduplicator {
+    entries = new LRUCache(10_000);
+    suppressionWindowMs = 60_000;
+    configure(options = {}) {
+        if (options.suppressionWindowMs !== undefined)
+            this.suppressionWindowMs = options.suppressionWindowMs;
+        if (options.maxEntries !== undefined)
+            this.entries.setCapacity(options.maxEntries);
+    }
+    isDuplicate(traceId) {
+        const now = epochMs();
+        const lastSeen = this.entries.get(traceId);
+        if (lastSeen !== undefined && now - lastSeen < this.suppressionWindowMs) {
+            return true;
+        }
+        this.entries.set(traceId, now);
+        return false;
+    }
+    reset() {
+        this.entries.clear();
+    }
+}
 export const errorDeduplicator = new ErrorDeduplicator();
-export { ErrorDeduplicator };
+export const traceDeduplicator = new TraceDeduplicator();
+export { ErrorDeduplicator, TraceDeduplicator };

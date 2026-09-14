@@ -19,6 +19,7 @@
 
 import type { SamplingConfig, ConfigDiff, RemoteConfigResponse, RouteSamplingRates } from '../types/config.js'
 import { getLogger } from '../utils/logger.js'
+import { adaptivePressure } from '../utils/adaptive-pressure.js'
 
 export type SamplingEventType =
   | 'traces'
@@ -38,28 +39,42 @@ const SAMPLING_EVENT_TYPES = [
   'replays', 'metrics', 'logs', 'events', 'crons',
 ] as const
 
+export interface SamplingEngineOptions {
+  readonly adaptive?: boolean | undefined
+}
+
 export type SamplingDecision = {
   readonly sampled: boolean
   readonly rate: number
-  readonly reason: 'global_rate' | 'route_override' | 'always_sample' | 'always_drop'
+  readonly reason: 'global_rate' | 'route_override' | 'always_sample' | 'always_drop' | 'adaptive_pressure'
 }
 
 export class SamplingEngine {
   private static instance: SamplingEngine | null = null
 
   private config: SamplingConfig
+  private adaptive: boolean = false
   private destroyed: boolean = false
 
-  private constructor(config: SamplingConfig) {
+  private constructor(config: SamplingConfig, options?: SamplingEngineOptions) {
     this.config = { ...config }
+    this.adaptive = options?.adaptive ?? false
   }
 
-  static initialize(config: SamplingConfig): SamplingEngine {
+  static initialize(config: SamplingConfig, options?: SamplingEngineOptions): SamplingEngine {
     if (SamplingEngine.instance) {
       SamplingEngine.instance.destroy()
     }
-    SamplingEngine.instance = new SamplingEngine(config)
+    SamplingEngine.instance = new SamplingEngine(config, options)
     return SamplingEngine.instance
+  }
+
+  setAdaptive(enabled: boolean): void {
+    this.adaptive = enabled
+  }
+
+  isAdaptive(): boolean {
+    return this.adaptive
   }
 
   static getInstance(): SamplingEngine | null {
@@ -127,6 +142,11 @@ export class SamplingEngine {
     }
 
     this.config = { ...newSampling }
+    if (newSampling?.adaptive !== undefined) {
+      this.adaptive = newSampling.adaptive
+    } else if (newConfig?.features?.adaptiveSampling !== undefined) {
+      this.adaptive = newConfig.features.adaptiveSampling
+    }
   }
 
   getConfig(): Readonly<SamplingConfig> {
@@ -142,26 +162,53 @@ export class SamplingEngine {
       if (routeRates) {
         const routeRate = routeRates[eventType]
         if (routeRate !== undefined) {
-          return this.evaluate(id, routeRate, 'route_override')
+          return this.evaluate(id, routeRate, 'route_override', eventType)
         }
       }
     }
 
     // 2. Fall through to the global rate.
     const rate = this.config[eventType]
-    return this.evaluate(id, rate, 'global_rate')
+    return this.evaluate(id, rate, 'global_rate', eventType)
   }
 
-  private evaluate(id: string, rate: number, reason: 'global_rate' | 'route_override'): SamplingDecision {
+  private evaluate(
+    id: string,
+    rate: number,
+    reason: 'global_rate' | 'route_override',
+    eventType?: SamplingEventType,
+  ): SamplingDecision {
     if (rate <= 0) return { sampled: false, rate: 0, reason: 'always_drop' }
-    if (rate >= 1) return { sampled: true, rate: 1, reason: 'always_sample' }
+
+    let effectiveRate = rate
+    let effectiveReason: 'global_rate' | 'route_override' | 'adaptive_pressure' = reason
+
+    // Dynamic adaptive sampling: when enabled, dynamically scale non-error high-throughput rates under system pressure
+    if (this.adaptive && eventType !== 'errors') {
+      const state = adaptivePressure.getState()
+      if (state === 'CRITICAL') {
+        effectiveRate = Math.min(rate, 0.10)
+        effectiveReason = 'adaptive_pressure'
+      } else if (state === 'PRESSURED') {
+        effectiveRate = Math.min(rate, rate * 0.50)
+        effectiveReason = 'adaptive_pressure'
+      } else if (state === 'ELEVATED') {
+        effectiveRate = Math.min(rate, rate * 0.80)
+        effectiveReason = 'adaptive_pressure'
+      }
+    }
+
+    if (effectiveRate <= 0) return { sampled: false, rate: 0, reason: 'always_drop' }
+    if (effectiveRate >= 1 && effectiveReason !== 'adaptive_pressure') {
+      return { sampled: true, rate: 1, reason: 'always_sample' }
+    }
 
     const hash = SamplingEngine.fnv1a32(id)
     const normalized = hash / 0x100000000
     return {
-      sampled: normalized < rate,
-      rate,
-      reason,
+      sampled: normalized < effectiveRate,
+      rate: effectiveRate,
+      reason: effectiveReason,
     }
   }
 

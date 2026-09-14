@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pulse APM - Database Operations Explorer</title>
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+
+  <main class="main-content">
+    <div class="page-header">
+      <div class="page-title-group">
+        <h1>
+          <span>Database Explorer</span>
+          <span class="badge badge-client" id="total-db-count">1,814 Operations</span>
+        </h1>
+        <p class="page-subtitle">Granular database command telemetry across MongoDB native driver, Mongoose models, Prisma, and pg-pool</p>
+      </div>
+      <div class="filter-bar">
+        <input type="text" id="db-filter-search" class="filter-input" placeholder="Search operation, query, collection..." style="width:260px;">
+        <select id="db-filter-system" class="filter-select">
+          <option value="">All Database Systems</option>
+          <option value="mongodb">MongoDB (1,794)</option>
+          <option value="prisma">Prisma Client (12)</option>
+          <option value="postgresql">PostgreSQL (8)</option>
+        </select>
+        <select id="db-filter-sort" class="filter-select">
+          <option value="dur-desc">Duration: Slowest First</option>
+          <option value="dur-asc">Duration: Fastest First</option>
+          <option value="time-desc">Time: Newest First</option>
+          <option value="time-asc">Time: Oldest First</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- System Metrics Cards -->
+    <div class="metrics-grid" style="grid-template-columns: repeat(3, 1fr); margin-bottom: 20px;">
+      <div class="metric-card success">
+        <div class="metric-title"><span>MongoDB Native / Mongoose</span><span>🍃</span></div>
+        <div class="metric-value">1,794 ops</div>
+        <div class="metric-subtitle">createIndexes (1,342), create (316), findOne, save</div>
+      </div>
+      <div class="metric-card" style="border-left: 3px solid #8b5cf6;">
+        <div class="metric-title"><span>Prisma Client Transactions</span><span>◬</span></div>
+        <div class="metric-value">12 ops</div>
+        <div class="metric-subtitle">start_transaction, serialize, connect, compile</div>
+      </div>
+      <div class="metric-card primary">
+        <div class="metric-title"><span>PostgreSQL Driver (pg-pool)</span><span>🐘</span></div>
+        <div class="metric-value">8 ops</div>
+        <div class="metric-subtitle">pg-pool.connect & pg.connect (SSL Handshakes)</div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="table-responsive">
+        <table class="data-table" id="db-table">
+          <thead>
+            <tr>
+              <th style="width: 100px;">System</th>
+              <th style="width: 220px;">Operation / Model</th>
+              <th>Collection / Statement</th>
+              <th style="width: 120px;">Duration</th>
+              <th style="width: 90px;">Status</th>
+              <th style="width: 180px;">Trace ID</th>
+              <th style="width: 140px;">Span ID</th>
+            </tr>
+          </thead>
+          <tbody id="db-tbody">
+            <tr><td colspan="7" style="text-align:center;">Loading database operations...</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <!-- Pagination Controls -->
+      <div class="panel-header" style="border-top:1px solid var(--border-subtle); border-bottom:none;">
+        <span id="db-page-indicator" style="font-size:12px; color:var(--text-secondary);">Showing 1-50 of 1,814</span>
+        <div style="display:flex; gap:6px;">
+          <button id="btn-db-prev" class="btn btn-secondary" style="padding:3px 10px; font-size:11px;">Previous</button>
+          <button id="btn-db-next" class="btn btn-secondary" style="padding:3px 10px; font-size:11px;">Next</button>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script type="module">
+    import { renderTopNav, formatDuration, formatTime, escapeHtml } from './app.js';
+    renderTopNav('databases');
+
+    let allOps = [];
+    let currentPage = 1;
+    const pageSize = 50;
+
+    async function loadDatabases() {
+      try {
+        const res = await fetch('data/databases.json');
+        const data = await res.json();
+        allOps = data.operations || [];
+        renderDatabases();
+      } catch (err) {
+        console.error('Failed to load database operations:', err);
+      }
+    }
+
+    function getFilteredOps() {
+      const q = document.getElementById('db-filter-search').value.trim().toLowerCase();
+      const sys = document.getElementById('db-filter-system').value;
+      const sort = document.getElementById('db-filter-sort').value;
+
+      let filtered = allOps.filter(o => {
+        if (sys && o.system !== sys) return false;
+        if (q) {
+          const text = `${o.name} ${o.system} ${o.operation || ''} ${o.collection || ''} ${o.statement || ''} ${o.traceId}`.toLowerCase();
+          if (!text.includes(q)) return false;
+        }
+        return true;
+      });
+
+      filtered.sort((a, b) => {
+        if (sort === 'dur-desc') return (b.duration || 0) - (a.duration || 0);
+        if (sort === 'dur-asc') return (a.duration || 0) - (b.duration || 0);
+        if (sort === 'time-desc') return (b.startTime || 0) - (a.startTime || 0);
+        if (sort === 'time-asc') return (a.startTime || 0) - (b.startTime || 0);
+        return 0;
+      });
+
+      return filtered;
+    }
+
+    function renderDatabases() {
+      const filtered = getFilteredOps();
+      const total = filtered.length;
+      const totalPages = Math.ceil(total / pageSize) || 1;
+      if (currentPage > totalPages) currentPage = totalPages;
+      if (currentPage < 1) currentPage = 1;
+
+      const startIdx = (currentPage - 1) * pageSize;
+      const pageItems = filtered.slice(startIdx, startIdx + pageSize);
+
+      document.getElementById('total-db-count').innerText = `${total.toLocaleString()} Operations`;
+      document.getElementById('db-page-indicator').innerText = `Showing ${total > 0 ? startIdx + 1 : 0}-${Math.min(startIdx + pageSize, total)} of ${total.toLocaleString()}`;
+
+      const tbody = document.getElementById('db-tbody');
+      if (pageItems.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:24px; color:#9ca3af;">No operations match the selected filters</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = pageItems.map(o => {
+        const dur = o.duration || 0;
+        let badgeClass = 'badge-client';
+        if (o.system === 'postgresql') badgeClass = 'badge-server';
+        else if (o.system === 'prisma') badgeClass = 'badge-internal';
+
+        return `
+          <tr class="clickable" onclick="window.location.href='trace-detail.html?traceId=${o.traceId}'">
+            <td><span class="badge ${badgeClass}">${o.system}</span></td>
+            <td><strong style="color:#f3f4f6;">${escapeHtml(o.name)}</strong></td>
+            <td>
+              <div style="font-family:var(--font-mono); font-size:11px; color:#9ca3af; max-width:450px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeHtml(o.statement || o.collection || o.operation)}">
+                ${escapeHtml(o.statement || o.collection || o.operation || 'None')}
+              </div>
+            </td>
+            <td>
+              <div class="latency-cell">
+                <span class="latency-bar ${dur > 1000 ? 'danger' : (dur > 200 ? 'warn' : '')}" style="width:${Math.min(60, (dur/5000)*60)}px;"></span>
+                <span>${formatDuration(dur)}</span>
+              </div>
+            </td>
+            <td>
+              <span class="badge ${o.status === 'error' ? 'badge-error' : 'badge-2xx'}">${o.status}</span>
+            </td>
+            <td class="mono" style="font-size:11px;">
+              <a href="trace-detail.html?traceId=${o.traceId}" style="color:#60a5fa; font-weight:600;">
+                ${o.traceId.slice(0, 12)}... ↗
+              </a>
+            </td>
+            <td class="mono" style="font-size:11px;">
+              <code>${o.spanId.slice(0, 10)}...</code>
+            </td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    document.getElementById('db-filter-search').addEventListener('input', () => { currentPage = 1; renderDatabases(); });
+    document.getElementById('db-filter-system').addEventListener('change', () => { currentPage = 1; renderDatabases(); });
+    document.getElementById('db-filter-sort').addEventListener('change', () => { currentPage = 1; renderDatabases(); });
+
+    document.getElementById('btn-db-prev').addEventListener('click', () => {
+      if (currentPage > 1) {
+        currentPage--;
+        renderDatabases();
+      }
+    });
+
+    document.getElementById('btn-db-next').addEventListener('click', () => {
+      currentPage++;
+      renderDatabases();
+    });
+
+    loadDatabases();
+  </script>
+</body>
+</html>

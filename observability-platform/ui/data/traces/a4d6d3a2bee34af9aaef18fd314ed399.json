@@ -1,0 +1,189 @@
+{
+  "traceId": "a4d6d3a2bee34af9aaef18fd314ed399",
+  "eventId": "trace_a4d6d3a2bee34af9aaef18fd314ed399",
+  "rootSpan": {
+    "spanId": "7bffd1031193b5e7",
+    "traceId": "a4d6d3a2bee34af9aaef18fd314ed399",
+    "name": "create $cmd",
+    "kind": "client",
+    "startTime": 1789315708668,
+    "endTime": 1789315708839.1047,
+    "duration": 171.1047,
+    "exclusiveDuration": 171.104736328125,
+    "status": "error",
+    "statusMessage": "cannot create a new collection -- already using 502 collections of 500",
+    "attributes": {
+      "db.system.name": "mongodb",
+      "db.namespace": "ERP",
+      "db.operation.name": "create",
+      "db.collection.name": "$cmd",
+      "server.address": "159.41.196.138",
+      "server.port": 27017,
+      "db.query.text": "{\"create\":\"leadactivities\"}"
+    },
+    "events": [],
+    "links": [],
+    "children": []
+  },
+  "spanCount": 1,
+  "totalDuration": 171.1047,
+  "isPartial": false,
+  "metadata": {
+    "sdkName": "@pulse-apm/node",
+    "sdkVersion": "8.1.2",
+    "applicationName": "paypalproject",
+    "applicationVersion": "1.0.0",
+    "projectId": "cubicle-project-001",
+    "environment": "production",
+    "release": "8.0.0"
+  },
+  "sessionId": "df729728-b2fd-410b-a23b-821423e205d2",
+  "tailSampled": false,
+  "hasError": true,
+  "isSlow": false,
+  "timestamp": 1789315708943,
+  "tags": {},
+  "request": null,
+  "errors": [],
+  "logs": [],
+  "waterfall": {
+    "traceId": "a4d6d3a2bee34af9aaef18fd314ed399",
+    "roots": [
+      {
+        "spanId": "7bffd1031193b5e7",
+        "originalMissingId": null,
+        "parentSpanId": null,
+        "name": "create $cmd",
+        "kind": "client",
+        "status": "error",
+        "statusMessage": "cannot create a new collection -- already using 502 collections of 500",
+        "startTime": 1789315708668,
+        "endTime": 1789315708839.1047,
+        "duration": 171.1047,
+        "exclusiveDuration": 171.104736328125,
+        "offsetMs": 0,
+        "offsetPercent": 0,
+        "durationPercent": 99.99997876848661,
+        "attributes": {
+          "db.system.name": "mongodb",
+          "db.namespace": "ERP",
+          "db.operation.name": "create",
+          "db.collection.name": "$cmd",
+          "server.address": "159.41.196.138",
+          "server.port": 27017,
+          "db.query.text": "{\"create\":\"leadactivities\"}"
+        },
+        "events": [],
+        "links": [],
+        "isVirtualMissingParent": false,
+        "isMissingParent": false,
+        "isOrphan": false,
+        "children": []
+      }
+    ],
+    "displayList": [
+      {
+        "spanId": "7bffd1031193b5e7",
+        "originalMissingId": null,
+        "parentSpanId": null,
+        "name": "create $cmd",
+        "kind": "client",
+        "status": "error",
+        "statusMessage": "cannot create a new collection -- already using 502 collections of 500",
+        "startTime": 1789315708668,
+        "endTime": 1789315708839.1047,
+        "duration": 171.1047,
+        "exclusiveDuration": 171.104736328125,
+        "offsetMs": 0,
+        "offsetPercent": 0,
+        "durationPercent": 99.99997876848661,
+        "attributes": {
+          "db.system.name": "mongodb",
+          "db.namespace": "ERP",
+          "db.operation.name": "create",
+          "db.collection.name": "$cmd",
+          "server.address": "159.41.196.138",
+          "server.port": 27017,
+          "db.query.text": "{\"create\":\"leadactivities\"}"
+        },
+        "events": [],
+        "links": [],
+        "isVirtualMissingParent": false,
+        "isMissingParent": false,
+        "isOrphan": false,
+        "children": [],
+        "displayDepth": 0,
+        "rowId": "7bffd1031193b5e7",
+        "hasChildren": false
+      }
+    ],
+    "traceStartTime": 1789315708668,
+    "traceEndTime": 1789315708839.1047,
+    "totalDuration": 171.104736328125,
+    "missingParents": [],
+    "missingParentNodesCount": 0,
+    "spanCount": 1
+  },
+  "spans": [
+    {
+      "spanId": "7bffd1031193b5e7",
+      "traceId": "a4d6d3a2bee34af9aaef18fd314ed399",
+      "parentSpanId": null,
+      "name": "create $cmd",
+      "kind": "client",
+      "startTime": 1789315708668,
+      "endTime": 1789315708839.1047,
+      "duration": 171.1047,
+      "exclusiveDuration": 171.104736328125,
+      "status": "error",
+      "statusMessage": "cannot create a new collection -- already using 502 collections of 500",
+      "attributes": {
+        "db.system.name": "mongodb",
+        "db.namespace": "ERP",
+        "db.operation.name": "create",
+        "db.collection.name": "$cmd",
+        "server.address": "159.41.196.138",
+        "server.port": 27017,
+        "db.query.text": "{\"create\":\"leadactivities\"}"
+      },
+      "events": [],
+      "links": [],
+      "metadata": {
+        "sdkName": "@pulse-apm/node",
+        "sdkVersion": "8.1.2",
+        "applicationName": "paypalproject",
+        "applicationVersion": "1.0.0",
+        "projectId": "cubicle-project-001",
+        "environment": "production",
+        "release": "8.0.0"
+      },
+      "sessionId": "df729728-b2fd-410b-a23b-821423e205d2",
+      "requestId": null,
+      "tags": {},
+      "isSampled": true,
+      "traceFlags": 1,
+      "database": {
+        "system": "mongodb",
+        "operation": "create",
+        "collection": "$cmd",
+        "statement": "{\"create\":\"leadactivities\"}"
+      },
+      "errorCount": 0,
+      "logCount": 0,
+      "_provenance": {
+        "category": "spans",
+        "filename": "span_1789315710825_span_7bffd1031193b5e7.json",
+        "relativePath": "cubicle/spans/span_1789315710825_span_7bffd1031193b5e7.json",
+        "sizeBytes": 1109,
+        "mtime": "2026-09-13T16:08:31.260Z"
+      }
+    }
+  ],
+  "_provenance": {
+    "category": "traces",
+    "filename": "trace_1789315708973_trace_a4d6d3a2bee34af9aaef18fd314ed399.json",
+    "relativePath": "cubicle/traces/trace_1789315708973_trace_a4d6d3a2bee34af9aaef18fd314ed399.json",
+    "sizeBytes": 1350,
+    "mtime": "2026-09-13T16:08:29.015Z"
+  }
+}

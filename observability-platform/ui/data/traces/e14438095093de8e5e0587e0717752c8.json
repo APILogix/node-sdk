@@ -1,0 +1,188 @@
+{
+  "traceId": "e14438095093de8e5e0587e0717752c8",
+  "eventId": "trace_e14438095093de8e5e0587e0717752c8",
+  "rootSpan": {
+    "spanId": "ccfb5a0ac8fa0c75",
+    "traceId": "e14438095093de8e5e0587e0717752c8",
+    "name": "createIndexes $cmd",
+    "kind": "client",
+    "startTime": 1789315743948,
+    "endTime": 1789315744917.74,
+    "duration": 969.7399,
+    "exclusiveDuration": 969.739990234375,
+    "status": "unset",
+    "attributes": {
+      "db.system.name": "mongodb",
+      "db.namespace": "ERP",
+      "db.operation.name": "createIndexes",
+      "db.collection.name": "$cmd",
+      "server.address": "159.41.196.138",
+      "server.port": 27017,
+      "db.query.text": "{\"createIndexes\":\"healthscreeningcamps\",\"indexes\":[{\"background\":true,\"name\":\"organizationId_1_date_-1\",\"key\":{}}]}"
+    },
+    "events": [],
+    "links": [],
+    "children": []
+  },
+  "spanCount": 1,
+  "totalDuration": 969.7399,
+  "isPartial": false,
+  "metadata": {
+    "sdkName": "@pulse-apm/node",
+    "sdkVersion": "8.1.2",
+    "applicationName": "paypalproject",
+    "applicationVersion": "1.0.0",
+    "projectId": "cubicle-project-001",
+    "environment": "production",
+    "release": "8.0.0"
+  },
+  "sessionId": "df729728-b2fd-410b-a23b-821423e205d2",
+  "tailSampled": false,
+  "hasError": false,
+  "isSlow": false,
+  "timestamp": 1789315745830,
+  "tags": {},
+  "request": null,
+  "errors": [],
+  "logs": [],
+  "waterfall": {
+    "traceId": "e14438095093de8e5e0587e0717752c8",
+    "roots": [
+      {
+        "spanId": "ccfb5a0ac8fa0c75",
+        "originalMissingId": null,
+        "parentSpanId": null,
+        "name": "createIndexes $cmd",
+        "kind": "client",
+        "status": "unset",
+        "statusMessage": null,
+        "startTime": 1789315743948,
+        "endTime": 1789315744917.74,
+        "duration": 969.7399,
+        "exclusiveDuration": 969.739990234375,
+        "offsetMs": 0,
+        "offsetPercent": 0,
+        "durationPercent": 99.9999906949929,
+        "attributes": {
+          "db.system.name": "mongodb",
+          "db.namespace": "ERP",
+          "db.operation.name": "createIndexes",
+          "db.collection.name": "$cmd",
+          "server.address": "159.41.196.138",
+          "server.port": 27017,
+          "db.query.text": "{\"createIndexes\":\"healthscreeningcamps\",\"indexes\":[{\"background\":true,\"name\":\"organizationId_1_date_-1\",\"key\":{}}]}"
+        },
+        "events": [],
+        "links": [],
+        "isVirtualMissingParent": false,
+        "isMissingParent": false,
+        "isOrphan": false,
+        "children": []
+      }
+    ],
+    "displayList": [
+      {
+        "spanId": "ccfb5a0ac8fa0c75",
+        "originalMissingId": null,
+        "parentSpanId": null,
+        "name": "createIndexes $cmd",
+        "kind": "client",
+        "status": "unset",
+        "statusMessage": null,
+        "startTime": 1789315743948,
+        "endTime": 1789315744917.74,
+        "duration": 969.7399,
+        "exclusiveDuration": 969.739990234375,
+        "offsetMs": 0,
+        "offsetPercent": 0,
+        "durationPercent": 99.9999906949929,
+        "attributes": {
+          "db.system.name": "mongodb",
+          "db.namespace": "ERP",
+          "db.operation.name": "createIndexes",
+          "db.collection.name": "$cmd",
+          "server.address": "159.41.196.138",
+          "server.port": 27017,
+          "db.query.text": "{\"createIndexes\":\"healthscreeningcamps\",\"indexes\":[{\"background\":true,\"name\":\"organizationId_1_date_-1\",\"key\":{}}]}"
+        },
+        "events": [],
+        "links": [],
+        "isVirtualMissingParent": false,
+        "isMissingParent": false,
+        "isOrphan": false,
+        "children": [],
+        "displayDepth": 0,
+        "rowId": "ccfb5a0ac8fa0c75",
+        "hasChildren": false
+      }
+    ],
+    "traceStartTime": 1789315743948,
+    "traceEndTime": 1789315744917.74,
+    "totalDuration": 969.739990234375,
+    "missingParents": [],
+    "missingParentNodesCount": 0,
+    "spanCount": 1
+  },
+  "spans": [
+    {
+      "spanId": "ccfb5a0ac8fa0c75",
+      "traceId": "e14438095093de8e5e0587e0717752c8",
+      "parentSpanId": null,
+      "name": "createIndexes $cmd",
+      "kind": "client",
+      "startTime": 1789315743948,
+      "endTime": 1789315744917.74,
+      "duration": 969.7399,
+      "exclusiveDuration": 969.739990234375,
+      "status": "unset",
+      "statusMessage": null,
+      "attributes": {
+        "db.system.name": "mongodb",
+        "db.namespace": "ERP",
+        "db.operation.name": "createIndexes",
+        "db.collection.name": "$cmd",
+        "server.address": "159.41.196.138",
+        "server.port": 27017,
+        "db.query.text": "{\"createIndexes\":\"healthscreeningcamps\",\"indexes\":[{\"background\":true,\"name\":\"organizationId_1_date_-1\",\"key\":{}}]}"
+      },
+      "events": [],
+      "links": [],
+      "metadata": {
+        "sdkName": "@pulse-apm/node",
+        "sdkVersion": "8.1.2",
+        "applicationName": "paypalproject",
+        "applicationVersion": "1.0.0",
+        "projectId": "cubicle-project-001",
+        "environment": "production",
+        "release": "8.0.0"
+      },
+      "sessionId": "df729728-b2fd-410b-a23b-821423e205d2",
+      "requestId": null,
+      "tags": {},
+      "isSampled": true,
+      "traceFlags": 1,
+      "database": {
+        "system": "mongodb",
+        "operation": "createIndexes",
+        "collection": "$cmd",
+        "statement": "{\"createIndexes\":\"healthscreeningcamps\",\"indexes\":[{\"background\":true,\"name\":\"organizationId_1_date_-1\",\"key\":{}}]}"
+      },
+      "errorCount": 0,
+      "logCount": 0,
+      "_provenance": {
+        "category": "spans",
+        "filename": "span_1789315759525_span_ccfb5a0ac8fa0c75.json",
+        "relativePath": "cubicle/spans/span_1789315759525_span_ccfb5a0ac8fa0c75.json",
+        "sizeBytes": 1126,
+        "mtime": "2026-09-13T16:09:19.845Z"
+      }
+    }
+  ],
+  "_provenance": {
+    "category": "traces",
+    "filename": "trace_1789315774780_trace_e14438095093de8e5e0587e0717752c8.json",
+    "relativePath": "cubicle/traces/trace_1789315774780_trace_e14438095093de8e5e0587e0717752c8.json",
+    "sizeBytes": 1366,
+    "mtime": "2026-09-13T16:09:34.964Z"
+  }
+}

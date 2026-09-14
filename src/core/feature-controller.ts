@@ -47,7 +47,7 @@ export class FeatureController {
 
   /** Check whether a backend-owned feature is enabled. */
   isEnabled(feature: keyof FeaturesConfig): boolean {
-    return this.currentFeatures[feature]
+    return this.currentFeatures[feature] ?? false
   }
 
   /**

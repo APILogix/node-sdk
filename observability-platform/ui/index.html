@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pulse APM - Telemetry Overview</title>
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+
+  <main class="main-content">
+    <div class="page-header">
+      <div class="page-title-group">
+        <h1>
+          <span>APM Telemetry Overview</span>
+          <span class="badge badge-server">Live Reconstruction</span>
+        </h1>
+        <p class="page-subtitle">Derived from 4,219 authoritative raw SDK events in <code class="mono">sdk-node/cubicle</code></p>
+      </div>
+      <div>
+        <a href="diagnostics.html" class="btn btn-secondary">
+          <span style="color:#f59e0b;">⚠️</span> View SDK Diagnostics
+        </a>
+      </div>
+    </div>
+
+    <!-- Forensic Alert Banner -->
+    <div class="banner banner-warning">
+      <div class="banner-content">
+        <span style="font-size: 16px;">⚠️</span>
+        <div>
+          <strong>Reconstruction Telemetry Notice:</strong>
+          Found 3 spans with a missing parent span ID (<code class="mono">51b55868fbb7c3de</code>), 58 batch duplicate submissions, and 1 embedded root span missing from the standalone span index.
+        </div>
+      </div>
+      <a href="diagnostics.html" class="btn btn-secondary" style="font-size: 11px; padding: 4px 8px;">Examine Findings</a>
+    </div>
+
+    <!-- Golden Metrics Cards -->
+    <div class="metrics-grid">
+      <div class="metric-card primary">
+        <div class="metric-title">
+          <span>Total Requests</span>
+          <span>🌐</span>
+        </div>
+        <div class="metric-value" id="val-requests">16</div>
+        <div class="metric-subtitle">Inbound Express HTTP</div>
+      </div>
+
+      <div class="metric-card success">
+        <div class="metric-title">
+          <span>Total Traces</span>
+          <span>⚡</span>
+        </div>
+        <div class="metric-value" id="val-traces">1,778</div>
+        <div class="metric-subtitle">16 HTTP + 1,762 Standalone</div>
+      </div>
+
+      <div class="metric-card success">
+        <div class="metric-title">
+          <span>Total Spans</span>
+          <span>📊</span>
+        </div>
+        <div class="metric-value" id="val-spans">2,107</div>
+        <div class="metric-subtitle">16 Server, 288 Internal, 1803 Client</div>
+      </div>
+
+      <div class="metric-card danger">
+        <div class="metric-title">
+          <span>Total Errors</span>
+          <span>🔥</span>
+        </div>
+        <div class="metric-value" id="val-errors">3</div>
+        <div class="metric-subtitle">2 Handled SSL, 1 Fatal Crash</div>
+      </div>
+
+      <div class="metric-card warning">
+        <div class="metric-title">
+          <span>Total Logs</span>
+          <span>📝</span>
+        </div>
+        <div class="metric-value" id="val-logs">2</div>
+        <div class="metric-subtitle">Correlated console.error</div>
+      </div>
+
+      <div class="metric-card primary">
+        <div class="metric-title">
+          <span>Database Operations</span>
+          <span>💾</span>
+        </div>
+        <div class="metric-value" id="val-db">1,814</div>
+        <div class="metric-subtitle">MongoDB (1,794) & Postgres (20)</div>
+      </div>
+
+      <div class="metric-card warning">
+        <div class="metric-title">
+          <span>Avg Request Latency</span>
+          <span>⏱️</span>
+        </div>
+        <div class="metric-value" id="val-avg-lat">4.76s</div>
+        <div class="metric-subtitle">P50: 16ms | P95: 29.5s | P99: 30.1s</div>
+      </div>
+
+      <div class="metric-card info">
+        <div class="metric-title">
+          <span>Raw Telemetry Batches</span>
+          <span>📦</span>
+        </div>
+        <div class="metric-value" id="val-batches">253</div>
+        <div class="metric-subtitle">Captured SDK HTTP Payloads</div>
+      </div>
+    </div>
+
+    <!-- Two-column Layout: Slowest Requests & Slowest Traces -->
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 24px;">
+      <!-- Slowest Requests -->
+      <div class="panel">
+        <div class="panel-header">
+          <span class="panel-title">Slowest Requests</span>
+          <a href="requests.html" class="btn btn-secondary" style="font-size:11px; padding: 2px 8px;">View All 16</a>
+        </div>
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Method</th>
+                <th>Route</th>
+                <th>Status</th>
+                <th>Latency</th>
+                <th>Trace</th>
+              </tr>
+            </thead>
+            <tbody id="tbody-slow-requests">
+              <tr><td colspan="5" style="text-align:center;">Loading requests...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Slowest Traces -->
+      <div class="panel">
+        <div class="panel-header">
+          <span class="panel-title">Slowest Traces</span>
+          <a href="traces.html" class="btn btn-secondary" style="font-size:11px; padding: 2px 8px;">View All 1,778</a>
+        </div>
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Root Operation</th>
+                <th>Duration</th>
+                <th>Spans</th>
+                <th>Status</th>
+                <th>Trace ID</th>
+              </tr>
+            </thead>
+            <tbody id="tbody-slow-traces">
+              <tr><td colspan="5" style="text-align:center;">Loading traces...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Database Breakdown & Service Overview -->
+    <div style="display: grid; grid-template-columns: 1fr 2fr; gap: 20px;">
+      <div class="panel">
+        <div class="panel-header">
+          <span class="panel-title">Database Distribution</span>
+          <a href="databases.html" class="btn btn-secondary" style="font-size:11px; padding: 2px 8px;">Explorer</a>
+        </div>
+        <div style="padding: 16px;">
+          <div style="margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center;">
+            <span style="font-weight:600; color:#10b981;">🍃 MongoDB (Mongoose & Driver)</span>
+            <span class="mono" style="font-weight:700;">1,794 ops (98.9%)</span>
+          </div>
+          <div style="background:#1e293b; height:6px; border-radius:3px; margin-bottom:16px;">
+            <div style="background:#10b981; height:6px; border-radius:3px; width:98.9%;"></div>
+          </div>
+
+          <div style="margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center;">
+            <span style="font-weight:600; color:#8b5cf6;">◬ Prisma Client Transactions</span>
+            <span class="mono" style="font-weight:700;">12 ops (0.7%)</span>
+          </div>
+          <div style="background:#1e293b; height:6px; border-radius:3px; margin-bottom:16px;">
+            <div style="background:#8b5cf6; height:6px; border-radius:3px; width:0.7%; min-width:4px;"></div>
+          </div>
+
+          <div style="margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center;">
+            <span style="font-weight:600; color:#3b82f6;">🐘 PostgreSQL Driver (pg-pool)</span>
+            <span class="mono" style="font-weight:700;">8 ops (0.4%)</span>
+          </div>
+          <div style="background:#1e293b; height:6px; border-radius:3px;">
+            <div style="background:#3b82f6; height:6px; border-radius:3px; width:0.4%; min-width:4px;"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">
+          <span class="panel-title">SDK Environment & Application Metadata</span>
+          <a href="services.html" class="btn btn-secondary" style="font-size:11px; padding: 2px 8px;">Services</a>
+        </div>
+        <div style="padding: 16px;">
+          <table class="kv-table">
+            <tbody>
+              <tr>
+                <th>Application Name</th>
+                <td><code class="mono">paypalproject</code> (<code class="mono">cubicle-be</code>)</td>
+                <th>Environment</th>
+                <td><span class="badge badge-get">production</span></td>
+              </tr>
+              <tr>
+                <th>SDK Package</th>
+                <td><code class="mono">@pulse-apm/node</code></td>
+                <th>SDK Version</th>
+                <td><span class="badge badge-server">8.1.2</span> (Transpiled 8.3.12)</td>
+              </tr>
+              <tr>
+                <th>Project ID</th>
+                <td><code class="mono">cubicle-project-001</code></td>
+                <th>Release</th>
+                <td><code class="mono">8.0.0</code></td>
+              </tr>
+              <tr>
+                <th>Monitored Framework</th>
+                <td><span class="badge badge-post">Express 5.x</span></td>
+                <th>Active Session ID</th>
+                <td><code class="mono">df729728-b2fd-410b-a23b-821423e205d2</code></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script type="module">
+    import { renderTopNav, formatDuration, escapeHtml } from './app.js';
+    renderTopNav('overview');
+
+    async function initOverview() {
+      try {
+        const res = await fetch('data/summary.json');
+        const data = await res.json();
+
+        // Populate metrics
+        document.getElementById('val-requests').innerText = data.metrics.totalRequests.toLocaleString();
+        document.getElementById('val-traces').innerText = data.metrics.totalTraces.toLocaleString();
+        document.getElementById('val-spans').innerText = data.metrics.totalSpans.toLocaleString();
+        document.getElementById('val-errors').innerText = data.metrics.totalErrors.toLocaleString();
+        document.getElementById('val-logs').innerText = data.metrics.totalLogs.toLocaleString();
+        document.getElementById('val-db').innerText = data.metrics.totalDbOperations.toLocaleString();
+        document.getElementById('val-avg-lat').innerText = formatDuration(data.metrics.latency.avgMs);
+        document.getElementById('val-batches').innerText = data.metrics.totalRawBatches.toLocaleString();
+
+        // Populate Slowest Requests
+        const tbodyReq = document.getElementById('tbody-slow-requests');
+        tbodyReq.innerHTML = data.slowestRequests.map(r => `
+          <tr class="clickable" onclick="window.location.href='trace-detail.html?traceId=${r.traceId}'">
+            <td><span class="badge badge-${r.method.toLowerCase()}">${r.method}</span></td>
+            <td><strong>${escapeHtml(r.url)}</strong></td>
+            <td><span class="badge badge-${r.statusCode >= 400 ? '4xx' : '2xx'}">${r.statusCode}</span></td>
+            <td><div class="latency-cell"><span class="latency-bar ${r.latency > 1000 ? 'danger' : ''}" style="width:${Math.min(100, (r.latency/30000)*100)}px;"></span><span>${formatDuration(r.latency)}</span></div></td>
+            <td><a href="trace-detail.html?traceId=${r.traceId}" class="mono">${r.traceId.slice(0, 8)}...</a></td>
+          </tr>
+        `).join('');
+
+        // Populate Slowest Traces
+        const tbodyTraces = document.getElementById('tbody-slow-traces');
+        tbodyTraces.innerHTML = data.slowestTraces.slice(0, 5).map(t => `
+          <tr class="clickable" onclick="window.location.href='trace-detail.html?traceId=${t.traceId}'">
+            <td><strong>${escapeHtml(t.name)}</strong></td>
+            <td><div class="latency-cell"><span class="latency-bar ${t.duration > 5000 ? 'danger' : ''}" style="width:${Math.min(100, (t.duration/35000)*100)}px;"></span><span>${formatDuration(t.duration)}</span></div></td>
+            <td><span class="badge badge-server">${t.spanCount} spans</span></td>
+            <td><span class="badge ${t.hasError ? 'badge-error' : 'badge-2xx'}">${t.hasError ? 'Error' : 'OK'}</span></td>
+            <td><a href="trace-detail.html?traceId=${t.traceId}" class="mono">${t.traceId.slice(0, 8)}...</a></td>
+          </tr>
+        `).join('');
+
+      } catch (err) {
+        console.error('Failed to load overview data:', err);
+      }
+    }
+
+    initOverview();
+  </script>
+</body>
+</html>

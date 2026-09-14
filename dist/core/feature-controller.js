@@ -29,7 +29,7 @@ export class FeatureController {
     }
     /** Check whether a backend-owned feature is enabled. */
     isEnabled(feature) {
-        return this.currentFeatures[feature];
+        return this.currentFeatures[feature] ?? false;
     }
     /**
      * Register a subsystem with its factory and teardown functions.

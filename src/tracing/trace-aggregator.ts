@@ -588,10 +588,51 @@ export class TraceAggregator {
       for (const list of childrenByParent.values()) {
         list.sort((a, b) => (a.startTime as number) - (b.startTime as number))
       }
-      const rootAggregated = this.buildTree(rootSpanEvent, childrenByParent)
+      const visitedSpanIds = new Set<string>()
+      const rootAggregated = this.buildTree(rootSpanEvent, childrenByParent, visitedSpanIds)
+
+      // Ensure all collected spans are included in the trace tree even if an intermediate parent was dropped or filtered upstream
+      if (visitedSpanIds.size < spans.length) {
+        let unvisited = spans.filter(s => !visitedSpanIds.has(s.spanId as string))
+        while (unvisited.length > 0) {
+          const unvisitedIds = new Set(unvisited.map(s => s.spanId as string))
+          let nextBatch = unvisited.filter(s => {
+            const pid = s.parentSpanId as string | undefined
+            return !pid || !unvisitedIds.has(pid)
+          })
+
+          if (nextBatch.length === 0) {
+            nextBatch = [unvisited.reduce((earliest, s) => {
+              const eStart = (earliest.startTime as number) ?? 0
+              const sStart = (s.startTime as number) ?? 0
+              return sStart < eStart ? s : earliest
+            })]
+          }
+
+          nextBatch.sort((a, b) => ((a.startTime as number) ?? 0) - ((b.startTime as number) ?? 0))
+
+          for (const orphan of nextBatch) {
+            if (!visitedSpanIds.has(orphan.spanId as string)) {
+              const orphanTree = this.buildTree(orphan, childrenByParent, visitedSpanIds)
+              rootAggregated.children.push(orphanTree)
+            }
+          }
+
+          unvisited = spans.filter(s => !visitedSpanIds.has(s.spanId as string))
+        }
+
+        rootAggregated.children.sort((a, b) => a.startTime - b.startTime)
+      }
 
       // Calculate total duration from root (or max child end minus min start for partials)
-      const totalDuration = (rootSpanEvent.duration as number) ?? 0
+      let totalDuration = (rootSpanEvent.duration as number) ?? 0
+      if (isPartial && spans.length > 1) {
+        const minStart = spans.reduce((min, s) => Math.min(min, (s.startTime as number) ?? min), (rootSpanEvent.startTime as number) ?? 0)
+        const maxEnd = spans.reduce((max, s) => Math.max(max, (s.endTime as number) ?? max), (rootSpanEvent.endTime as number) ?? 0)
+        if (maxEnd > minStart) {
+          totalDuration = Math.max(totalDuration, maxEnd - minStart)
+        }
+      }
 
       // Tail-sampling decision:
       // 1. Was root head-sampled?
@@ -678,12 +719,18 @@ export class TraceAggregator {
   private buildTree(
     rootEvent: Record<string, unknown>,
     childrenByParent: ReadonlyMap<string, Record<string, unknown>[]>,
+    visited?: Set<string>,
   ): AggregatedSpan {
     const rootSpanId = rootEvent.spanId as string
+    if (visited) {
+      visited.add(rootSpanId)
+    }
 
     // Find direct children of this span — O(1) lookup
-    const children = (childrenByParent.get(rootSpanId) ?? [])
-      .map(child => this.buildTree(child, childrenByParent))
+    const rawChildren = childrenByParent.get(rootSpanId) ?? []
+    const children = rawChildren
+      .filter(child => !visited || !visited.has(child.spanId as string))
+      .map(child => this.buildTree(child, childrenByParent, visited))
 
     return {
       spanId: rootSpanId,

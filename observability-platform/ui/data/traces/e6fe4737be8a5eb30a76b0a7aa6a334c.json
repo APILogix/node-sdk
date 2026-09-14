@@ -1,0 +1,188 @@
+{
+  "traceId": "e6fe4737be8a5eb30a76b0a7aa6a334c",
+  "eventId": "trace_e6fe4737be8a5eb30a76b0a7aa6a334c",
+  "rootSpan": {
+    "spanId": "80d7959d00878780",
+    "traceId": "e6fe4737be8a5eb30a76b0a7aa6a334c",
+    "name": "createIndexes $cmd",
+    "kind": "client",
+    "startTime": 1789315754808,
+    "endTime": 1789315756182.069,
+    "duration": 1374.0692,
+    "exclusiveDuration": 1374.069091796875,
+    "status": "unset",
+    "attributes": {
+      "db.system.name": "mongodb",
+      "db.namespace": "ERP",
+      "db.operation.name": "createIndexes",
+      "db.collection.name": "$cmd",
+      "server.address": "159.41.196.138",
+      "server.port": 27017,
+      "db.query.text": "{\"createIndexes\":\"employeeprofiles\",\"indexes\":[{\"unique\":true,\"partialFilterExpression\":{\"workEmail\":{\"$exists\":true,\"$type\":\"string\"}},\"background\":true,\"name\":\"organizationId_1_workEmail_1\",\"key\":{}}]}"
+    },
+    "events": [],
+    "links": [],
+    "children": []
+  },
+  "spanCount": 1,
+  "totalDuration": 1374.0692,
+  "isPartial": false,
+  "metadata": {
+    "sdkName": "@pulse-apm/node",
+    "sdkVersion": "8.1.2",
+    "applicationName": "paypalproject",
+    "applicationVersion": "1.0.0",
+    "projectId": "cubicle-project-001",
+    "environment": "production",
+    "release": "8.0.0"
+  },
+  "sessionId": "df729728-b2fd-410b-a23b-821423e205d2",
+  "tailSampled": false,
+  "hasError": false,
+  "isSlow": true,
+  "timestamp": 1789315757011,
+  "tags": {},
+  "request": null,
+  "errors": [],
+  "logs": [],
+  "waterfall": {
+    "traceId": "e6fe4737be8a5eb30a76b0a7aa6a334c",
+    "roots": [
+      {
+        "spanId": "80d7959d00878780",
+        "originalMissingId": null,
+        "parentSpanId": null,
+        "name": "createIndexes $cmd",
+        "kind": "client",
+        "status": "unset",
+        "statusMessage": null,
+        "startTime": 1789315754808,
+        "endTime": 1789315756182.069,
+        "duration": 1374.0692,
+        "exclusiveDuration": 1374.069091796875,
+        "offsetMs": 0,
+        "offsetPercent": 0,
+        "durationPercent": 100,
+        "attributes": {
+          "db.system.name": "mongodb",
+          "db.namespace": "ERP",
+          "db.operation.name": "createIndexes",
+          "db.collection.name": "$cmd",
+          "server.address": "159.41.196.138",
+          "server.port": 27017,
+          "db.query.text": "{\"createIndexes\":\"employeeprofiles\",\"indexes\":[{\"unique\":true,\"partialFilterExpression\":{\"workEmail\":{\"$exists\":true,\"$type\":\"string\"}},\"background\":true,\"name\":\"organizationId_1_workEmail_1\",\"key\":{}}]}"
+        },
+        "events": [],
+        "links": [],
+        "isVirtualMissingParent": false,
+        "isMissingParent": false,
+        "isOrphan": false,
+        "children": []
+      }
+    ],
+    "displayList": [
+      {
+        "spanId": "80d7959d00878780",
+        "originalMissingId": null,
+        "parentSpanId": null,
+        "name": "createIndexes $cmd",
+        "kind": "client",
+        "status": "unset",
+        "statusMessage": null,
+        "startTime": 1789315754808,
+        "endTime": 1789315756182.069,
+        "duration": 1374.0692,
+        "exclusiveDuration": 1374.069091796875,
+        "offsetMs": 0,
+        "offsetPercent": 0,
+        "durationPercent": 100,
+        "attributes": {
+          "db.system.name": "mongodb",
+          "db.namespace": "ERP",
+          "db.operation.name": "createIndexes",
+          "db.collection.name": "$cmd",
+          "server.address": "159.41.196.138",
+          "server.port": 27017,
+          "db.query.text": "{\"createIndexes\":\"employeeprofiles\",\"indexes\":[{\"unique\":true,\"partialFilterExpression\":{\"workEmail\":{\"$exists\":true,\"$type\":\"string\"}},\"background\":true,\"name\":\"organizationId_1_workEmail_1\",\"key\":{}}]}"
+        },
+        "events": [],
+        "links": [],
+        "isVirtualMissingParent": false,
+        "isMissingParent": false,
+        "isOrphan": false,
+        "children": [],
+        "displayDepth": 0,
+        "rowId": "80d7959d00878780",
+        "hasChildren": false
+      }
+    ],
+    "traceStartTime": 1789315754808,
+    "traceEndTime": 1789315756182.069,
+    "totalDuration": 1374.0692,
+    "missingParents": [],
+    "missingParentNodesCount": 0,
+    "spanCount": 1
+  },
+  "spans": [
+    {
+      "spanId": "80d7959d00878780",
+      "traceId": "e6fe4737be8a5eb30a76b0a7aa6a334c",
+      "parentSpanId": null,
+      "name": "createIndexes $cmd",
+      "kind": "client",
+      "startTime": 1789315754808,
+      "endTime": 1789315756182.069,
+      "duration": 1374.0692,
+      "exclusiveDuration": 1374.069091796875,
+      "status": "unset",
+      "statusMessage": null,
+      "attributes": {
+        "db.system.name": "mongodb",
+        "db.namespace": "ERP",
+        "db.operation.name": "createIndexes",
+        "db.collection.name": "$cmd",
+        "server.address": "159.41.196.138",
+        "server.port": 27017,
+        "db.query.text": "{\"createIndexes\":\"employeeprofiles\",\"indexes\":[{\"unique\":true,\"partialFilterExpression\":{\"workEmail\":{\"$exists\":true,\"$type\":\"string\"}},\"background\":true,\"name\":\"organizationId_1_workEmail_1\",\"key\":{}}]}"
+      },
+      "events": [],
+      "links": [],
+      "metadata": {
+        "sdkName": "@pulse-apm/node",
+        "sdkVersion": "8.1.2",
+        "applicationName": "paypalproject",
+        "applicationVersion": "1.0.0",
+        "projectId": "cubicle-project-001",
+        "environment": "production",
+        "release": "8.0.0"
+      },
+      "sessionId": "df729728-b2fd-410b-a23b-821423e205d2",
+      "requestId": null,
+      "tags": {},
+      "isSampled": true,
+      "traceFlags": 1,
+      "database": {
+        "system": "mongodb",
+        "operation": "createIndexes",
+        "collection": "$cmd",
+        "statement": "{\"createIndexes\":\"employeeprofiles\",\"indexes\":[{\"unique\":true,\"partialFilterExpression\":{\"workEmail\":{\"$exists\":true,\"$type\":\"string\"}},\"background\":true,\"name\":\"organizationId_1_workEmail_1\",\"key\":{}}]}"
+      },
+      "errorCount": 0,
+      "logCount": 0,
+      "_provenance": {
+        "category": "spans",
+        "filename": "span_1789315763532_span_80d7959d00878780.json",
+        "relativePath": "cubicle/spans/span_1789315763532_span_80d7959d00878780.json",
+        "sizeBytes": 1229,
+        "mtime": "2026-09-13T16:09:23.932Z"
+      }
+    }
+  ],
+  "_provenance": {
+    "category": "traces",
+    "filename": "trace_1789315768488_trace_e6fe4737be8a5eb30a76b0a7aa6a334c.json",
+    "relativePath": "cubicle/traces/trace_1789315768488_trace_e6fe4737be8a5eb30a76b0a7aa6a334c.json",
+    "sizeBytes": 1469,
+    "mtime": "2026-09-13T16:09:28.555Z"
+  }
+}

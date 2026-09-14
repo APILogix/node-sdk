@@ -23,15 +23,28 @@ import type {
   TransportRouteConfig,
 } from '../types/config.js'
 
+import { loadEnvFileSafely } from '../utils/env-loader.js'
+
 /** Local Pulse backend origin used by the SDK control plane. */
 export const DEFAULT_API_BASE_URL = 'http://127.0.0.1:5000'
 
 /** Resolve the control-plane origin with support for environment overrides. */
 export function resolveApiBaseUrl(): string {
+  loadEnvFileSafely()
   if (typeof process !== 'undefined' && process.env) {
-    const customUrl = process.env['SDK_BASE_URL'] || process.env['PULSE_BASE_URL']
+    const customUrl =
+      process.env['PULSE_ENDPOINT'] ||
+      process.env['PULSE_API_URL'] ||
+      process.env['PULSE_BASE_URL'] ||
+      process.env['BACKEND_URL'] ||
+      process.env['SDK_BASE_URL']
     if (customUrl && typeof customUrl === 'string' && customUrl.trim().length > 0) {
-      return customUrl.trim()
+      let resolved = customUrl.trim()
+      if (resolved.endsWith('/')) resolved = resolved.slice(0, -1)
+      resolved = resolved.replace(/^http:\/\/localhost(?::(\d+))?/i, (_match, port) => {
+        return port ? `http://127.0.0.1:${port}` : 'http://127.0.0.1'
+      })
+      return resolved
     }
   }
   return DEFAULT_API_BASE_URL
@@ -58,6 +71,7 @@ export const DEFAULT_FEATURES: Readonly<FeaturesConfig> = Object.freeze({
   runtimeMetrics: true,
   eventLoopMonitoring: true,
   gcMonitoring: true,
+  adaptiveSampling: false,
 })
 
 export const DEFAULT_SAMPLING: Readonly<SamplingConfig> = Object.freeze({
@@ -73,6 +87,7 @@ export const DEFAULT_SAMPLING: Readonly<SamplingConfig> = Object.freeze({
   events: 1,
   crons: 1,
   routes: Object.freeze({}),
+  adaptive: false,
 })
 
 export const DEFAULT_TRANSPORT_ROUTES: Readonly<Record<TransportRouteName, TransportRouteConfig>> = Object.freeze({
@@ -222,7 +237,7 @@ export const DEFAULT_PRIVACY: Readonly<PrivacyConfig> = Object.freeze({
   }),
   scrubbing: Object.freeze({
     enabled: true,
-    headers: Object.freeze(['authorization', 'cookie', 'x-api-key', 'x-auth-token']),
+    headers: Object.freeze(['authorization', 'cookie', 'set-cookie', 'x-api-key', 'x-auth-token']),
     fields: Object.freeze([
       'password', 'token', 'secret', 'creditCard', 'ssn', 'nationalId', 'apiKey',
       'code', 'id_token', 'access_token', 'refresh_token', 'client_secret', 'assertion',

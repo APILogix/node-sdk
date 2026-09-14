@@ -1,0 +1,575 @@
+{
+  "errors": [
+    {
+      "eventId": "08151ccc-782a-46e0-a450-4091a2b8964a",
+      "type": "error",
+      "name": "Error",
+      "message": "(node:15544) Warning: SECURITY WARNING: The SSL modes 'prefer', 'require', and 'verify-ca' are treated as aliases for 'verify-full'.\nIn the next major version (pg-connection-string v3.0.0 and pg v9.0.0), these modes will adopt standard libpq semantics, which have weaker security guarantees.\n\nTo prepare for this change:\n- If you want the current behavior, explicitly use 'sslmode=verify-full'\n- If you want libpq compatibility now, use 'uselibpqcompat=true&sslmode=require'\n\nSee https://www.postgresql.org/docs/current/libpq-ssl.html for libpq SSL mode definitions.\n(Use `node --trace-warnings ...` to show where the warning was created)",
+      "stack": [
+        {
+          "function": "console.wrapped",
+          "filename": "/C:/Users/vikas/OneDrive/Desktop/cubicle/cubicle-be/node_modules/@pulse-apm/node/dist/instrumentation/global-errors.js",
+          "lineno": 187,
+          "colno": 35,
+          "inApp": false,
+          "module": "global-errors"
+        },
+        {
+          "function": "wrapper",
+          "filename": "/C:/Users/vikas/OneDrive/Desktop/cubicle/cubicle-be/node_modules/@pulse-apm/node/dist/subsystems/logging-subsystem.js",
+          "lineno": 110,
+          "colno": 26,
+          "inApp": false,
+          "module": "logging-subsystem"
+        }
+      ],
+      "rawStack": null,
+      "fingerprint": "20d41fb0f1859a7e67bbe43da06f20b5abff16be02c66df26090a41662bc9988",
+      "severity": "error",
+      "timestamp": 1789315750080,
+      "context": {},
+      "mechanism": "console.error",
+      "handled": true,
+      "classification": {
+        "unhandled": false,
+        "fatal": false,
+        "crash": false
+      },
+      "requestId": "34bab098-f82c-46f0-969b-cc922c7d123b",
+      "traceId": "67bd5f53d33bb8e04d743dc4f9170ada",
+      "spanId": "37b0474a17d0790e",
+      "statusCode": 200,
+      "method": "POST",
+      "route": "/api/auth/refresh",
+      "url": "/api/auth/refresh",
+      "metadata": {
+        "sdkName": "@pulse-apm/node",
+        "sdkVersion": "8.1.2",
+        "applicationName": "paypalproject",
+        "applicationVersion": "1.0.0",
+        "projectId": "cubicle-project-001",
+        "environment": "production",
+        "release": "8.0.0"
+      },
+      "sessionId": "df729728-b2fd-410b-a23b-821423e205d2",
+      "tags": {
+        "framework": "express"
+      },
+      "extra": {
+        "mechanism": "console.error",
+        "handled": true
+      },
+      "correlatedSpanName": "pg-pool.connect",
+      "_provenance": {
+        "category": "errors",
+        "filename": "error_1789315772271_08151ccc-782a-46e0-a450-4091a2b8964a.json",
+        "relativePath": "cubicle/errors/error_1789315772271_08151ccc-782a-46e0-a450-4091a2b8964a.json",
+        "sizeBytes": 2296,
+        "mtime": "2026-09-13T16:09:32.321Z"
+      }
+    },
+    {
+      "eventId": "926633a6-8fdd-4508-a3db-7a430e2007cc",
+      "type": "error",
+      "name": "Error",
+      "message": "(node:15544) Warning: SECURITY WARNING: The SSL modes 'prefer', 'require', and 'verify-ca' are treated as aliases for 'verify-full'.\nIn the next major version (pg-connection-string v3.0.0 and pg v9.0.0), these modes will adopt standard libpq semantics, which have weaker security guarantees.\n\nTo prepare for this change:\n- If you want the current behavior, explicitly use 'sslmode=verify-full'\n- If you want libpq compatibility now, use 'uselibpqcompat=true&sslmode=require'\n\nSee https://www.postgresql.org/docs/current/libpq-ssl.html for libpq SSL mode definitions.",
+      "stack": [
+        {
+          "function": "console.wrapped",
+          "filename": "/C:/Users/vikas/OneDrive/Desktop/cubicle/cubicle-be/node_modules/@pulse-apm/node/dist/instrumentation/global-errors.js",
+          "lineno": 187,
+          "colno": 35,
+          "inApp": false,
+          "module": "global-errors"
+        },
+        {
+          "function": "wrapper",
+          "filename": "/C:/Users/vikas/OneDrive/Desktop/cubicle/cubicle-be/node_modules/@pulse-apm/node/dist/subsystems/logging-subsystem.js",
+          "lineno": 110,
+          "colno": 26,
+          "inApp": false,
+          "module": "logging-subsystem"
+        }
+      ],
+      "rawStack": null,
+      "fingerprint": "89aa417d1e828d148b8a4ca34ff9b2fe4f700fac78f3d0d9fa3c0d483265d7a4",
+      "severity": "error",
+      "timestamp": 1789315812172,
+      "context": {},
+      "mechanism": "console.error",
+      "handled": true,
+      "classification": {
+        "unhandled": false,
+        "fatal": false,
+        "crash": false
+      },
+      "requestId": "cb88af35-66ee-41bd-85e3-fdec4f80d1dd",
+      "traceId": "e1150d3ab63d19892bdd2c731a5ef0e9",
+      "spanId": "b8a3b9182fd70868",
+      "statusCode": 200,
+      "method": "POST",
+      "route": "/api/auth/signin",
+      "url": "/api/auth/signin",
+      "metadata": {
+        "sdkName": "@pulse-apm/node",
+        "sdkVersion": "8.1.2",
+        "applicationName": "paypalproject",
+        "applicationVersion": "1.0.0",
+        "projectId": "cubicle-project-001",
+        "environment": "production",
+        "release": "8.0.0"
+      },
+      "sessionId": "df729728-b2fd-410b-a23b-821423e205d2",
+      "tags": {
+        "framework": "express"
+      },
+      "extra": {
+        "mechanism": "console.error",
+        "handled": true
+      },
+      "correlatedSpanName": null,
+      "_provenance": {
+        "category": "errors",
+        "filename": "error_1789315812354_926633a6-8fdd-4508-a3db-7a430e2007cc.json",
+        "relativePath": "cubicle/errors/error_1789315812354_926633a6-8fdd-4508-a3db-7a430e2007cc.json",
+        "sizeBytes": 2221,
+        "mtime": "2026-09-13T16:10:12.388Z"
+      }
+    },
+    {
+      "eventId": "9c02ee13-4eb4-4e31-aa0d-f1475b607d84",
+      "type": "error",
+      "name": "TypeError",
+      "message": "Cannot read properties of undefined (reading 'catch')",
+      "stack": [
+        {
+          "function": "ServerResponse.<anonymous>",
+          "filename": "/C:/Users/vikas/OneDrive/Desktop/cubicle/cubicle-be/src/middleweare/apiActivityTracker.js",
+          "lineno": 24,
+          "colno": 7,
+          "inApp": true,
+          "module": "middleweare/apiActivityTracker"
+        },
+        {
+          "function": "<anonymous>",
+          "filename": "C:/Users/vikas/OneDrive/Desktop/cubicle/cubicle-be/node_modules/@opentelemetry/context-async-hooks/build/src/AbstractAsyncHooksContextManager.js",
+          "lineno": 35,
+          "colno": 55,
+          "inApp": false,
+          "module": "AbstractAsyncHooksContextManager"
+        },
+        {
+          "function": "AsyncLocalStorageContextManager.with",
+          "filename": "C:/Users/vikas/OneDrive/Desktop/cubicle/cubicle-be/node_modules/@opentelemetry/context-async-hooks/build/src/AsyncLocalStorageContextManager.js",
+          "lineno": 45,
+          "colno": 40,
+          "inApp": false,
+          "module": "AsyncLocalStorageContextManager"
+        },
+        {
+          "function": "ServerResponse.contextWrapper",
+          "filename": "C:/Users/vikas/OneDrive/Desktop/cubicle/cubicle-be/node_modules/@opentelemetry/context-async-hooks/build/src/AbstractAsyncHooksContextManager.js",
+          "lineno": 35,
+          "colno": 32,
+          "inApp": false,
+          "module": "AbstractAsyncHooksContextManager"
+        },
+        {
+          "function": "ServerResponse.contextBoundListener",
+          "filename": "/C:/Users/vikas/OneDrive/Desktop/cubicle/cubicle-be/node_modules/@pulse-apm/node/dist/instrumentation/event-emitter-patch.js",
+          "lineno": 75,
+          "colno": 26,
+          "inApp": false,
+          "module": "event-emitter-patch"
+        }
+      ],
+      "rawStack": null,
+      "fingerprint": "52c061d2b5ff7594ae7928968024693065f8e286a9db63f860b414881044c622",
+      "severity": "fatal",
+      "timestamp": 1789315814330,
+      "context": {},
+      "mechanism": "uncaughtException",
+      "handled": false,
+      "classification": {
+        "unhandled": true,
+        "fatal": true,
+        "crash": true
+      },
+      "requestId": "uncaught",
+      "traceId": "22486473cb44baca65b80386a643e7e8",
+      "spanId": "bd98d8a4e6c85ea8",
+      "statusCode": null,
+      "method": null,
+      "route": null,
+      "url": null,
+      "metadata": {
+        "sdkName": "@pulse-apm/node",
+        "sdkVersion": "8.1.2",
+        "applicationName": "paypalproject",
+        "applicationVersion": "1.0.0",
+        "projectId": "cubicle-project-001",
+        "environment": "production",
+        "release": "8.0.0"
+      },
+      "sessionId": null,
+      "tags": {},
+      "extra": {
+        "mechanism": "uncaughtException",
+        "handled": false
+      },
+      "correlatedSpanName": "request handler - /api/me/permissions",
+      "_provenance": {
+        "category": "errors",
+        "filename": "error_1789315814563_9c02ee13-4eb4-4e31-aa0d-f1475b607d84.json",
+        "relativePath": "cubicle/errors/error_1789315814563_9c02ee13-4eb4-4e31-aa0d-f1475b607d84.json",
+        "sizeBytes": 2529,
+        "mtime": "2026-09-13T16:10:14.573Z"
+      }
+    }
+  ],
+  "errorGroups": [
+    {
+      "fingerprint": "20d41fb0f1859a7e67bbe43da06f20b5abff16be02c66df26090a41662bc9988",
+      "name": "Error",
+      "message": "(node:15544) Warning: SECURITY WARNING: The SSL modes 'prefer', 'require', and 'verify-ca' are treated as aliases for 'verify-full'.\nIn the next major version (pg-connection-string v3.0.0 and pg v9.0.0), these modes will adopt standard libpq semantics, which have weaker security guarantees.\n\nTo prepare for this change:\n- If you want the current behavior, explicitly use 'sslmode=verify-full'\n- If you want libpq compatibility now, use 'uselibpqcompat=true&sslmode=require'\n\nSee https://www.postgresql.org/docs/current/libpq-ssl.html for libpq SSL mode definitions.\n(Use `node --trace-warnings ...` to show where the warning was created)",
+      "severity": "error",
+      "mechanism": "console.error",
+      "handled": true,
+      "count": 1,
+      "firstSeen": 1789315750080,
+      "lastSeen": 1789315750080,
+      "stack": [
+        {
+          "function": "console.wrapped",
+          "filename": "/C:/Users/vikas/OneDrive/Desktop/cubicle/cubicle-be/node_modules/@pulse-apm/node/dist/instrumentation/global-errors.js",
+          "lineno": 187,
+          "colno": 35,
+          "inApp": false,
+          "module": "global-errors"
+        },
+        {
+          "function": "wrapper",
+          "filename": "/C:/Users/vikas/OneDrive/Desktop/cubicle/cubicle-be/node_modules/@pulse-apm/node/dist/subsystems/logging-subsystem.js",
+          "lineno": 110,
+          "colno": 26,
+          "inApp": false,
+          "module": "logging-subsystem"
+        }
+      ],
+      "occurrences": [
+        {
+          "eventId": "08151ccc-782a-46e0-a450-4091a2b8964a",
+          "type": "error",
+          "name": "Error",
+          "message": "(node:15544) Warning: SECURITY WARNING: The SSL modes 'prefer', 'require', and 'verify-ca' are treated as aliases for 'verify-full'.\nIn the next major version (pg-connection-string v3.0.0 and pg v9.0.0), these modes will adopt standard libpq semantics, which have weaker security guarantees.\n\nTo prepare for this change:\n- If you want the current behavior, explicitly use 'sslmode=verify-full'\n- If you want libpq compatibility now, use 'uselibpqcompat=true&sslmode=require'\n\nSee https://www.postgresql.org/docs/current/libpq-ssl.html for libpq SSL mode definitions.\n(Use `node --trace-warnings ...` to show where the warning was created)",
+          "stack": [
+            {
+              "function": "console.wrapped",
+              "filename": "/C:/Users/vikas/OneDrive/Desktop/cubicle/cubicle-be/node_modules/@pulse-apm/node/dist/instrumentation/global-errors.js",
+              "lineno": 187,
+              "colno": 35,
+              "inApp": false,
+              "module": "global-errors"
+            },
+            {
+              "function": "wrapper",
+              "filename": "/C:/Users/vikas/OneDrive/Desktop/cubicle/cubicle-be/node_modules/@pulse-apm/node/dist/subsystems/logging-subsystem.js",
+              "lineno": 110,
+              "colno": 26,
+              "inApp": false,
+              "module": "logging-subsystem"
+            }
+          ],
+          "rawStack": null,
+          "fingerprint": "20d41fb0f1859a7e67bbe43da06f20b5abff16be02c66df26090a41662bc9988",
+          "severity": "error",
+          "timestamp": 1789315750080,
+          "context": {},
+          "mechanism": "console.error",
+          "handled": true,
+          "classification": {
+            "unhandled": false,
+            "fatal": false,
+            "crash": false
+          },
+          "requestId": "34bab098-f82c-46f0-969b-cc922c7d123b",
+          "traceId": "67bd5f53d33bb8e04d743dc4f9170ada",
+          "spanId": "37b0474a17d0790e",
+          "statusCode": 200,
+          "method": "POST",
+          "route": "/api/auth/refresh",
+          "url": "/api/auth/refresh",
+          "metadata": {
+            "sdkName": "@pulse-apm/node",
+            "sdkVersion": "8.1.2",
+            "applicationName": "paypalproject",
+            "applicationVersion": "1.0.0",
+            "projectId": "cubicle-project-001",
+            "environment": "production",
+            "release": "8.0.0"
+          },
+          "sessionId": "df729728-b2fd-410b-a23b-821423e205d2",
+          "tags": {
+            "framework": "express"
+          },
+          "extra": {
+            "mechanism": "console.error",
+            "handled": true
+          },
+          "correlatedSpanName": "pg-pool.connect",
+          "_provenance": {
+            "category": "errors",
+            "filename": "error_1789315772271_08151ccc-782a-46e0-a450-4091a2b8964a.json",
+            "relativePath": "cubicle/errors/error_1789315772271_08151ccc-782a-46e0-a450-4091a2b8964a.json",
+            "sizeBytes": 2296,
+            "mtime": "2026-09-13T16:09:32.321Z"
+          }
+        }
+      ]
+    },
+    {
+      "fingerprint": "89aa417d1e828d148b8a4ca34ff9b2fe4f700fac78f3d0d9fa3c0d483265d7a4",
+      "name": "Error",
+      "message": "(node:15544) Warning: SECURITY WARNING: The SSL modes 'prefer', 'require', and 'verify-ca' are treated as aliases for 'verify-full'.\nIn the next major version (pg-connection-string v3.0.0 and pg v9.0.0), these modes will adopt standard libpq semantics, which have weaker security guarantees.\n\nTo prepare for this change:\n- If you want the current behavior, explicitly use 'sslmode=verify-full'\n- If you want libpq compatibility now, use 'uselibpqcompat=true&sslmode=require'\n\nSee https://www.postgresql.org/docs/current/libpq-ssl.html for libpq SSL mode definitions.",
+      "severity": "error",
+      "mechanism": "console.error",
+      "handled": true,
+      "count": 1,
+      "firstSeen": 1789315812172,
+      "lastSeen": 1789315812172,
+      "stack": [
+        {
+          "function": "console.wrapped",
+          "filename": "/C:/Users/vikas/OneDrive/Desktop/cubicle/cubicle-be/node_modules/@pulse-apm/node/dist/instrumentation/global-errors.js",
+          "lineno": 187,
+          "colno": 35,
+          "inApp": false,
+          "module": "global-errors"
+        },
+        {
+          "function": "wrapper",
+          "filename": "/C:/Users/vikas/OneDrive/Desktop/cubicle/cubicle-be/node_modules/@pulse-apm/node/dist/subsystems/logging-subsystem.js",
+          "lineno": 110,
+          "colno": 26,
+          "inApp": false,
+          "module": "logging-subsystem"
+        }
+      ],
+      "occurrences": [
+        {
+          "eventId": "926633a6-8fdd-4508-a3db-7a430e2007cc",
+          "type": "error",
+          "name": "Error",
+          "message": "(node:15544) Warning: SECURITY WARNING: The SSL modes 'prefer', 'require', and 'verify-ca' are treated as aliases for 'verify-full'.\nIn the next major version (pg-connection-string v3.0.0 and pg v9.0.0), these modes will adopt standard libpq semantics, which have weaker security guarantees.\n\nTo prepare for this change:\n- If you want the current behavior, explicitly use 'sslmode=verify-full'\n- If you want libpq compatibility now, use 'uselibpqcompat=true&sslmode=require'\n\nSee https://www.postgresql.org/docs/current/libpq-ssl.html for libpq SSL mode definitions.",
+          "stack": [
+            {
+              "function": "console.wrapped",
+              "filename": "/C:/Users/vikas/OneDrive/Desktop/cubicle/cubicle-be/node_modules/@pulse-apm/node/dist/instrumentation/global-errors.js",
+              "lineno": 187,
+              "colno": 35,
+              "inApp": false,
+              "module": "global-errors"
+            },
+            {
+              "function": "wrapper",
+              "filename": "/C:/Users/vikas/OneDrive/Desktop/cubicle/cubicle-be/node_modules/@pulse-apm/node/dist/subsystems/logging-subsystem.js",
+              "lineno": 110,
+              "colno": 26,
+              "inApp": false,
+              "module": "logging-subsystem"
+            }
+          ],
+          "rawStack": null,
+          "fingerprint": "89aa417d1e828d148b8a4ca34ff9b2fe4f700fac78f3d0d9fa3c0d483265d7a4",
+          "severity": "error",
+          "timestamp": 1789315812172,
+          "context": {},
+          "mechanism": "console.error",
+          "handled": true,
+          "classification": {
+            "unhandled": false,
+            "fatal": false,
+            "crash": false
+          },
+          "requestId": "cb88af35-66ee-41bd-85e3-fdec4f80d1dd",
+          "traceId": "e1150d3ab63d19892bdd2c731a5ef0e9",
+          "spanId": "b8a3b9182fd70868",
+          "statusCode": 200,
+          "method": "POST",
+          "route": "/api/auth/signin",
+          "url": "/api/auth/signin",
+          "metadata": {
+            "sdkName": "@pulse-apm/node",
+            "sdkVersion": "8.1.2",
+            "applicationName": "paypalproject",
+            "applicationVersion": "1.0.0",
+            "projectId": "cubicle-project-001",
+            "environment": "production",
+            "release": "8.0.0"
+          },
+          "sessionId": "df729728-b2fd-410b-a23b-821423e205d2",
+          "tags": {
+            "framework": "express"
+          },
+          "extra": {
+            "mechanism": "console.error",
+            "handled": true
+          },
+          "correlatedSpanName": null,
+          "_provenance": {
+            "category": "errors",
+            "filename": "error_1789315812354_926633a6-8fdd-4508-a3db-7a430e2007cc.json",
+            "relativePath": "cubicle/errors/error_1789315812354_926633a6-8fdd-4508-a3db-7a430e2007cc.json",
+            "sizeBytes": 2221,
+            "mtime": "2026-09-13T16:10:12.388Z"
+          }
+        }
+      ]
+    },
+    {
+      "fingerprint": "52c061d2b5ff7594ae7928968024693065f8e286a9db63f860b414881044c622",
+      "name": "TypeError",
+      "message": "Cannot read properties of undefined (reading 'catch')",
+      "severity": "fatal",
+      "mechanism": "uncaughtException",
+      "handled": false,
+      "count": 1,
+      "firstSeen": 1789315814330,
+      "lastSeen": 1789315814330,
+      "stack": [
+        {
+          "function": "ServerResponse.<anonymous>",
+          "filename": "/C:/Users/vikas/OneDrive/Desktop/cubicle/cubicle-be/src/middleweare/apiActivityTracker.js",
+          "lineno": 24,
+          "colno": 7,
+          "inApp": true,
+          "module": "middleweare/apiActivityTracker"
+        },
+        {
+          "function": "<anonymous>",
+          "filename": "C:/Users/vikas/OneDrive/Desktop/cubicle/cubicle-be/node_modules/@opentelemetry/context-async-hooks/build/src/AbstractAsyncHooksContextManager.js",
+          "lineno": 35,
+          "colno": 55,
+          "inApp": false,
+          "module": "AbstractAsyncHooksContextManager"
+        },
+        {
+          "function": "AsyncLocalStorageContextManager.with",
+          "filename": "C:/Users/vikas/OneDrive/Desktop/cubicle/cubicle-be/node_modules/@opentelemetry/context-async-hooks/build/src/AsyncLocalStorageContextManager.js",
+          "lineno": 45,
+          "colno": 40,
+          "inApp": false,
+          "module": "AsyncLocalStorageContextManager"
+        },
+        {
+          "function": "ServerResponse.contextWrapper",
+          "filename": "C:/Users/vikas/OneDrive/Desktop/cubicle/cubicle-be/node_modules/@opentelemetry/context-async-hooks/build/src/AbstractAsyncHooksContextManager.js",
+          "lineno": 35,
+          "colno": 32,
+          "inApp": false,
+          "module": "AbstractAsyncHooksContextManager"
+        },
+        {
+          "function": "ServerResponse.contextBoundListener",
+          "filename": "/C:/Users/vikas/OneDrive/Desktop/cubicle/cubicle-be/node_modules/@pulse-apm/node/dist/instrumentation/event-emitter-patch.js",
+          "lineno": 75,
+          "colno": 26,
+          "inApp": false,
+          "module": "event-emitter-patch"
+        }
+      ],
+      "occurrences": [
+        {
+          "eventId": "9c02ee13-4eb4-4e31-aa0d-f1475b607d84",
+          "type": "error",
+          "name": "TypeError",
+          "message": "Cannot read properties of undefined (reading 'catch')",
+          "stack": [
+            {
+              "function": "ServerResponse.<anonymous>",
+              "filename": "/C:/Users/vikas/OneDrive/Desktop/cubicle/cubicle-be/src/middleweare/apiActivityTracker.js",
+              "lineno": 24,
+              "colno": 7,
+              "inApp": true,
+              "module": "middleweare/apiActivityTracker"
+            },
+            {
+              "function": "<anonymous>",
+              "filename": "C:/Users/vikas/OneDrive/Desktop/cubicle/cubicle-be/node_modules/@opentelemetry/context-async-hooks/build/src/AbstractAsyncHooksContextManager.js",
+              "lineno": 35,
+              "colno": 55,
+              "inApp": false,
+              "module": "AbstractAsyncHooksContextManager"
+            },
+            {
+              "function": "AsyncLocalStorageContextManager.with",
+              "filename": "C:/Users/vikas/OneDrive/Desktop/cubicle/cubicle-be/node_modules/@opentelemetry/context-async-hooks/build/src/AsyncLocalStorageContextManager.js",
+              "lineno": 45,
+              "colno": 40,
+              "inApp": false,
+              "module": "AsyncLocalStorageContextManager"
+            },
+            {
+              "function": "ServerResponse.contextWrapper",
+              "filename": "C:/Users/vikas/OneDrive/Desktop/cubicle/cubicle-be/node_modules/@opentelemetry/context-async-hooks/build/src/AbstractAsyncHooksContextManager.js",
+              "lineno": 35,
+              "colno": 32,
+              "inApp": false,
+              "module": "AbstractAsyncHooksContextManager"
+            },
+            {
+              "function": "ServerResponse.contextBoundListener",
+              "filename": "/C:/Users/vikas/OneDrive/Desktop/cubicle/cubicle-be/node_modules/@pulse-apm/node/dist/instrumentation/event-emitter-patch.js",
+              "lineno": 75,
+              "colno": 26,
+              "inApp": false,
+              "module": "event-emitter-patch"
+            }
+          ],
+          "rawStack": null,
+          "fingerprint": "52c061d2b5ff7594ae7928968024693065f8e286a9db63f860b414881044c622",
+          "severity": "fatal",
+          "timestamp": 1789315814330,
+          "context": {},
+          "mechanism": "uncaughtException",
+          "handled": false,
+          "classification": {
+            "unhandled": true,
+            "fatal": true,
+            "crash": true
+          },
+          "requestId": "uncaught",
+          "traceId": "22486473cb44baca65b80386a643e7e8",
+          "spanId": "bd98d8a4e6c85ea8",
+          "statusCode": null,
+          "method": null,
+          "route": null,
+          "url": null,
+          "metadata": {
+            "sdkName": "@pulse-apm/node",
+            "sdkVersion": "8.1.2",
+            "applicationName": "paypalproject",
+            "applicationVersion": "1.0.0",
+            "projectId": "cubicle-project-001",
+            "environment": "production",
+            "release": "8.0.0"
+          },
+          "sessionId": null,
+          "tags": {},
+          "extra": {
+            "mechanism": "uncaughtException",
+            "handled": false
+          },
+          "correlatedSpanName": "request handler - /api/me/permissions",
+          "_provenance": {
+            "category": "errors",
+            "filename": "error_1789315814563_9c02ee13-4eb4-4e31-aa0d-f1475b607d84.json",
+            "relativePath": "cubicle/errors/error_1789315814563_9c02ee13-4eb4-4e31-aa0d-f1475b607d84.json",
+            "sizeBytes": 2529,
+            "mtime": "2026-09-13T16:10:14.573Z"
+          }
+        }
+      ]
+    }
+  ]
+}

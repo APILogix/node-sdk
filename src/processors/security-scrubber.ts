@@ -179,12 +179,33 @@ export class SecurityScrubber {
     try {
       if (typeof value === 'string') {
         let str = value
+
+        if (
+          this.scrubbingConfig.enabled &&
+          str.length >= 2 &&
+          str.length <= 64 * 1024 &&
+          ((str.startsWith('{') && str.endsWith('}')) || (str.startsWith('[') && str.endsWith(']')))
+        ) {
+          try {
+            const parsed = JSON.parse(str)
+            if (typeof parsed === 'object' && parsed !== null) {
+              return JSON.stringify(this.scrubValue(parsed, depth + 1))
+            }
+          } catch {
+            // Not valid JSON, continue with string pattern scrubbing
+          }
+        }
+
         if (this.piiConfig.enabled) {
           str = this.scrubPiiInString(str)
         }
         if (this.scrubbingConfig.enabled) {
           str = str.replace(/Bearer\s+[A-Za-z0-9_\-\.]+/gi, 'Bearer [Redacted]')
           str = str.replace(/eyJ[a-zA-Z0-9_-]{10,}\.eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}/g, '[Redacted]')
+          str = str.replace(
+            /\b(api[-_]?key|api[-_]?secret|access[-_]?token|refresh[-_]?token|client[-_]?secret|password|secret|token|authorization|x-api-key|x-auth-token)=([^\s&,;"']+)/gi,
+            '$1=[Redacted]',
+          )
         }
         return str
       }
@@ -260,6 +281,12 @@ export class SecurityScrubber {
     try {
       const parsed = new URL(url, 'http://localhost')
       let changed = false
+
+      if (parsed.username || parsed.password) {
+        if (parsed.username) parsed.username = REDACTED
+        if (parsed.password) parsed.password = REDACTED
+        changed = true
+      }
 
       for (const param of this.sensitiveFields) {
         if (parsed.searchParams.has(param)) {

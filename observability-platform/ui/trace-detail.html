@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pulse APM - Trace Waterfall Detail</title>
+  <link rel="stylesheet" href="app.css">
+  <style>
+    .waterfall-table-header {
+      display: flex;
+      background-color: var(--bg-tertiary);
+      border-bottom: 1px solid var(--border-normal);
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .wth-spans {
+      width: 480px;
+      min-width: 480px;
+      padding: 8px 16px;
+      border-right: 1px solid var(--border-subtle);
+    }
+    .wth-timeline {
+      flex: 1;
+      padding: 8px 12px;
+      display: flex;
+      justify-content: space-between;
+    }
+    .tree-guide {
+      display: inline-block;
+      width: 14px;
+      height: 100%;
+      border-left: 1px dashed #374151;
+      margin-right: 2px;
+    }
+  </style>
+</head>
+<body>
+
+  <main class="main-content">
+    <!-- Breadcrumb & Back -->
+    <div style="margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between;">
+      <div style="display:flex; align-items:center; gap:8px; font-size:12px; color:var(--text-muted);">
+        <a href="traces.html">← Back to Traces</a>
+        <span>/</span>
+        <span id="breadcrumb-trace-id" class="mono">Loading...</span>
+      </div>
+      <div style="display:flex; gap:8px;">
+        <button id="btn-collapse-all" class="btn btn-secondary" style="font-size:11px; padding:3px 8px;">Collapse All</button>
+        <button id="btn-expand-all" class="btn btn-secondary" style="font-size:11px; padding:3px 8px;">Expand All</button>
+      </div>
+    </div>
+
+    <!-- Trace Summary Header Panel -->
+    <div class="panel" style="margin-bottom: 16px;">
+      <div class="waterfall-header">
+        <div>
+          <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 6px;">
+            <h2 id="trace-root-name" style="font-size: 18px; font-weight: 700; color: #ffffff;">Loading Trace...</h2>
+            <span id="trace-status-badge" class="badge badge-server">...</span>
+          </div>
+          <div class="trace-meta-tags">
+            <span style="color:var(--text-muted); font-size:11px;">Trace ID:</span>
+            <code class="mono" id="trace-id-display" style="font-size:12px; color:#93c5fd;">...</code>
+            <button id="btn-copy-trace-id" class="copy-btn">Copy</button>
+            <span style="color:var(--border-normal);">|</span>
+            <span style="color:var(--text-muted); font-size:11px;">Service:</span>
+            <span id="trace-service-display" class="badge badge-get">...</span>
+            <span style="color:var(--border-normal);">|</span>
+            <span style="color:var(--text-muted); font-size:11px;">Session:</span>
+            <code class="mono" id="trace-session-display" style="font-size:11px; color:#9ca3af;">...</code>
+          </div>
+        </div>
+
+        <div style="display: flex; gap: 20px; align-items: center;">
+          <div style="text-align: right;">
+            <div style="font-size: 10px; color: var(--text-muted); text-transform: uppercase;">Duration</div>
+            <div id="trace-duration-display" class="mono" style="font-size: 18px; font-weight: 700; color: #ffffff;">...</div>
+          </div>
+          <div style="text-align: right;">
+            <div style="font-size: 10px; color: var(--text-muted); text-transform: uppercase;">Total Spans</div>
+            <div id="trace-spans-display" class="mono" style="font-size: 18px; font-weight: 700; color: #60a5fa;">...</div>
+          </div>
+          <div style="text-align: right;">
+            <div style="font-size: 10px; color: var(--text-muted); text-transform: uppercase;">Errors</div>
+            <div id="trace-errors-display" class="mono" style="font-size: 18px; font-weight: 700; color: #ef4444;">...</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Linked Request Banner (if applicable) -->
+      <div id="linked-request-banner" style="display:none; padding: 10px 20px; background-color: rgba(59, 130, 246, 0.08); border-top: 1px solid var(--border-subtle); font-size: 12px;">
+        <span style="font-weight:600; color:#60a5fa; margin-right:8px;">Linked HTTP Request:</span>
+        <span id="lreq-method" class="badge badge-get">GET</span>
+        <strong id="lreq-url" style="margin-left:6px; color:#fff;">/api/...</strong>
+        <span id="lreq-status" class="badge badge-2xx" style="margin-left:8px;">200</span>
+        <span style="margin-left:12px; color:var(--text-muted);">Latency:</span>
+        <span id="lreq-latency" class="mono" style="margin-left:4px; color:#fff;">...</span>
+        <span style="margin-left:12px; color:var(--text-muted);">Request ID:</span>
+        <code id="lreq-id" class="mono" style="margin-left:4px; font-size:11px;">...</code>
+      </div>
+
+      <!-- Missing Parent Warning Banner (if applicable) -->
+      <div id="missing-parent-banner" style="display:none; padding: 10px 20px; background-color: rgba(236, 72, 153, 0.12); border-top: 1px solid rgba(236, 72, 153, 0.3); font-size: 12px; color:#f472b6;">
+        <strong>⚠️ Missing Parent Span Detected:</strong>
+        <span id="missing-parent-banner-text">This trace contains child spans referencing a parentSpanId that does not exist in the raw dataset.</span>
+      </div>
+    </div>
+
+    <!-- Filter within trace -->
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 12px;">
+      <div style="display:flex; gap:10px; align-items:center;">
+        <input type="text" id="waterfall-filter-input" class="filter-input" placeholder="Filter spans by name, operation..." style="width:280px;">
+        <span id="waterfall-visible-count" style="font-size:11px; color:var(--text-muted);">Showing all spans</span>
+      </div>
+      <div style="font-size:11px; color:var(--text-muted);">
+        Click any span to open the 5-tab inspector panel
+      </div>
+    </div>
+
+    <!-- The Interactive Waterfall Container -->
+    <div class="waterfall-container">
+      <!-- Table Header & Ruler -->
+      <div class="waterfall-table-header">
+        <div class="wth-spans">Hierarchy & Operation</div>
+        <div class="wth-timeline" id="timeline-ruler-ticks-header">
+          <span>0ms</span>
+          <span id="ruler-mid">...</span>
+          <span id="ruler-end">...</span>
+        </div>
+      </div>
+
+      <!-- Waterfall Rows -->
+      <div class="waterfall-body" id="waterfall-rows-container">
+        <div style="padding: 40px; text-align: center; color: var(--text-muted);">
+          Reconstructing waterfall timeline...
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Slide-out Span Detail Drawer (Section 14) -->
+  <div id="drawer-backdrop" class="drawer-backdrop"></div>
+  <aside id="span-drawer" class="span-drawer">
+    <div class="drawer-header">
+      <div class="drawer-title">
+        <span id="drawer-kind-badge" class="badge badge-server">server</span>
+        <span id="drawer-span-name">Span Details</span>
+      </div>
+      <button id="drawer-close-btn" class="drawer-close">&times;</button>
+    </div>
+
+    <div class="drawer-tabs">
+      <div class="drawer-tab active" data-tab="tab-overview">Overview</div>
+      <div class="drawer-tab" data-tab="tab-attributes">Attributes</div>
+      <div class="drawer-tab" data-tab="tab-events">Events & Exceptions</div>
+      <div class="drawer-tab" data-tab="tab-correlation">Correlated Telemetry</div>
+      <div class="drawer-tab" data-tab="tab-raw">Raw JSON & Provenance</div>
+    </div>
+
+    <div class="drawer-content">
+      <!-- Tab 1: Overview -->
+      <div id="tab-overview" class="tab-panel active">
+        <table class="kv-table">
+          <tr><th>Operation Name</th><td><strong id="d-name"></strong></td></tr>
+          <tr><th>Span ID</th><td><code class="mono" id="d-span-id"></code> <button class="copy-btn" id="btn-copy-span-id">Copy</button></td></tr>
+          <tr><th>Trace ID</th><td><code class="mono" id="d-trace-id"></code></td></tr>
+          <tr><th>Parent Span ID</th><td><code class="mono" id="d-parent-id"></code></td></tr>
+          <tr><th>Span Kind</th><td><span id="d-kind" class="badge badge-server"></span></td></tr>
+          <tr><th>Status</th><td><span id="d-status" class="badge badge-2xx"></span></td></tr>
+          <tr id="row-status-msg" style="display:none;"><th>Status Message</th><td id="d-status-msg" style="color:#f87171;"></td></tr>
+          <tr><th>Duration</th><td><strong class="mono" id="d-duration"></strong></td></tr>
+          <tr><th>Exclusive Duration</th><td class="mono" id="d-exclusive-duration"></td></tr>
+          <tr><th>Start Timestamp</th><td class="mono" id="d-start-time"></td></tr>
+          <tr><th>End Timestamp</th><td class="mono" id="d-end-time"></td></tr>
+          <tr><th>Offset from Trace Start</th><td class="mono" id="d-offset"></td></tr>
+        </table>
+      </div>
+
+      <!-- Tab 2: Attributes -->
+      <div id="tab-attributes" class="tab-panel">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <span style="font-size:11px; font-weight:600; color:#9ca3af;" id="attr-count-label">Attributes (0)</span>
+          <button class="copy-btn" id="btn-copy-attrs">Copy JSON</button>
+        </div>
+        <table class="kv-table" id="table-attributes">
+          <tbody></tbody>
+        </table>
+      </div>
+
+      <!-- Tab 3: Events & Exceptions -->
+      <div id="tab-events" class="tab-panel">
+        <div id="events-container"></div>
+      </div>
+
+      <!-- Tab 4: Correlated Telemetry -->
+      <div id="tab-correlation" class="tab-panel">
+        <div id="correlation-container"></div>
+      </div>
+
+      <!-- Tab 5: Raw JSON & Provenance -->
+      <div id="tab-raw" class="tab-panel">
+        <div style="margin-bottom: 12px; padding: 10px; background-color: var(--bg-tertiary); border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
+          <div style="font-size: 11px; font-weight: 600; color: #9ca3af; margin-bottom: 4px;">Raw Data Provenance (Section 22)</div>
+          <div style="font-size: 11px;">Source File: <code class="mono" id="raw-provenance-file" style="color:#93c5fd;">...</code></div>
+          <div style="font-size: 11px; color:var(--text-muted); margin-top:2px;">File Size: <span id="raw-provenance-size"></span> | Category: <span id="raw-provenance-cat"></span></div>
+        </div>
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <span style="font-size:11px; font-weight:600; color:#9ca3af;">Raw Payload</span>
+          <button class="copy-btn" id="btn-copy-raw-json">Copy JSON</button>
+        </div>
+        <pre class="code-block" id="raw-json-display"></pre>
+      </div>
+    </div>
+  </aside>
+
+  <script type="module">
+    import { renderTopNav, formatDuration, formatTime, escapeHtml, copyToClipboard } from './app.js';
+    renderTopNav('traces');
+
+    const urlParams = new URLSearchParams(window.location.search);
+    // Default to POST /api/auth/signin trace if none specified
+    const targetTraceId = urlParams.get('traceId') || 'e1150d3ab63d19892bdd2c731a5ef0e9';
+
+    let traceData = null;
+    let collapsedNodes = new Set();
+    let currentSelectedSpanId = null;
+
+    async function loadTraceDetail() {
+      try {
+        document.getElementById('breadcrumb-trace-id').innerText = targetTraceId;
+        const res = await fetch(`data/traces/${targetTraceId}.json`);
+        if (!res.ok) {
+          throw new Error(`Trace ${targetTraceId} not found`);
+        }
+        traceData = await res.json();
+        renderHeader();
+        renderWaterfall();
+      } catch (err) {
+        console.error('Failed to load trace:', err);
+        document.getElementById('waterfall-rows-container').innerHTML = `
+          <div style="padding: 40px; text-align: center; color: #f87171;">
+            <h3>Error Loading Trace</h3>
+            <p style="margin-top:8px; color:#9ca3af;">Could not find trace payload for <code class="mono">${targetTraceId}</code></p>
+            <a href="traces.html" class="btn btn-secondary" style="margin-top:16px;">Back to Traces Explorer</a>
+          </div>
+        `;
+      }
+    }
+
+    function renderHeader() {
+      const t = traceData;
+      document.getElementById('trace-root-name').innerText = t.rootSpan?.name || 'Trace Execution';
+      document.getElementById('trace-id-display').innerText = t.traceId;
+      document.getElementById('trace-service-display').innerText = t.metadata?.applicationName || 'cubicle-backend';
+      document.getElementById('trace-session-display').innerText = t.sessionId || 'N/A';
+
+      const dur = t.totalDuration || t.waterfall.totalDuration || 0;
+      document.getElementById('trace-duration-display').innerText = formatDuration(dur);
+      document.getElementById('trace-spans-display').innerText = t.spanCount || (t.spans ? t.spans.length : 1);
+      
+      const errorCount = (t.errors?.length || 0) + (t.hasError ? 1 : 0);
+      document.getElementById('trace-errors-display').innerText = errorCount;
+
+      const statusBadge = document.getElementById('trace-status-badge');
+      if (t.hasError) {
+        statusBadge.className = 'badge badge-error';
+        statusBadge.innerText = 'ERROR';
+      } else {
+        statusBadge.className = 'badge badge-2xx';
+        statusBadge.innerText = 'OK (200)';
+      }
+
+      // Copy trace ID button
+      document.getElementById('btn-copy-trace-id').onclick = (e) => {
+        copyToClipboard(t.traceId, e.target);
+      };
+
+      // Linked Request banner
+      if (t.request) {
+        const req = t.request;
+        const banner = document.getElementById('linked-request-banner');
+        banner.style.display = 'block';
+        document.getElementById('lreq-method').className = `badge badge-${req.method.toLowerCase()}`;
+        document.getElementById('lreq-method').innerText = req.method;
+        document.getElementById('lreq-url').innerText = req.url;
+        document.getElementById('lreq-status').className = `badge badge-${req.statusCode >= 400 ? '4xx' : '2xx'}`;
+        document.getElementById('lreq-status').innerText = req.statusCode;
+        document.getElementById('lreq-latency').innerText = formatDuration(req.latency);
+        document.getElementById('lreq-id').innerText = req.requestId;
+      }
+
+      // Missing Parent banner
+      if (t.waterfall.missingParents && t.waterfall.missingParents.length > 0) {
+        const mpBanner = document.getElementById('missing-parent-banner');
+        mpBanner.style.display = 'block';
+        const missingIds = [...new Set(t.waterfall.missingParents.map(m => m.missingParentId))].join(', ');
+        document.getElementById('missing-parent-banner-text').innerHTML = `
+          Contains <strong>${t.waterfall.missingParents.length} child spans</strong> referencing missing parent ID <code class="mono" style="color:#fff; background:#831843; padding:1px 4px; border-radius:3px;">${missingIds}</code>. 
+          Represented below as an explicit unresolved node as required by telemetry precision rules.
+        `;
+      }
+
+      // Timeline Ruler Marks
+      document.getElementById('ruler-mid').innerText = formatDuration(dur / 2);
+      document.getElementById('ruler-end').innerText = formatDuration(dur);
+    }
+
+    function renderWaterfall() {
+      const q = document.getElementById('waterfall-filter-input').value.trim().toLowerCase();
+      const wf = traceData.waterfall;
+      const totalDur = wf.totalDuration || 1;
+      const container = document.getElementById('waterfall-rows-container');
+
+      // Filter display list
+      let visibleSpans = wf.displayList.filter(node => {
+        if (!q) return true;
+        const text = `${node.name} ${node.spanId} ${node.kind} ${node.status}`.toLowerCase();
+        return text.includes(q);
+      });
+
+      document.getElementById('waterfall-visible-count').innerText = `Showing ${visibleSpans.length} of ${wf.displayList.length} spans`;
+
+      if (visibleSpans.length === 0) {
+        container.innerHTML = `<div style="padding:30px; text-align:center; color:#9ca3af;">No spans match "${escapeHtml(q)}"</div>`;
+        return;
+      }
+
+      let html = '';
+      for (const node of visibleSpans) {
+        const depth = node.displayDepth || 0;
+        const isSelected = (currentSelectedSpanId === node.spanId);
+        const dur = node.duration ?? 0;
+        const offsetMs = node.offsetMs ?? 0;
+        const leftPercent = Math.min(99.5, Math.max(0, (offsetMs / totalDur) * 100));
+        const widthPercent = Math.max(0.4, Math.min(100 - leftPercent, (dur / totalDur) * 100));
+
+        let kindClass = 'span-bar-internal';
+        if (node.isVirtualMissingParent) kindClass = 'span-bar-missing';
+        else if (node.status === 'error') kindClass = 'span-bar-error';
+        else if (node.kind === 'server') kindClass = 'span-bar-server';
+        else if (node.kind === 'client') kindClass = 'span-bar-client';
+
+        // Check if DB span
+        const isDb = node.name.includes('$cmd') || node.attributes?.['db.system'] || node.name.startsWith('pg') || node.name.startsWith('prisma');
+
+        html += `
+          <div class="waterfall-row ${isSelected ? 'selected' : ''} ${node.isVirtualMissingParent ? 'is-missing-parent' : ''}" 
+               id="wf-row-${node.spanId}" 
+               onclick="window.selectSpan('${node.spanId}')">
+            
+            <!-- Left Hierarchy Tree -->
+            <div class="waterfall-span-label" style="padding-left: ${16 + depth * 18}px;">
+              ${node.hasChildren ? `
+                <span class="waterfall-span-tree-toggle" onclick="event.stopPropagation(); window.toggleNode('${node.spanId}')">
+                  ${collapsedNodes.has(node.spanId) ? '▶' : '▼'}
+                </span>
+              ` : '<span style="width:16px;"></span>'}
+              
+              <span class="badge ${node.isVirtualMissingParent ? 'badge-missing' : (node.status === 'error' ? 'badge-error' : (node.kind === 'server' ? 'badge-server' : (node.kind === 'client' ? 'badge-client' : 'badge-internal')))}" style="font-size:9px; padding:1px 5px;">
+                ${node.isVirtualMissingParent ? 'MISSING PARENT' : (isDb ? 'DB' : node.kind)}
+              </span>
+
+              <span class="waterfall-span-name" title="${escapeHtml(node.name)}">
+                ${node.status === 'error' ? '<span style="color:#ef4444; margin-right:2px;">⚠️</span>' : ''}
+                ${escapeHtml(node.name)}
+              </span>
+            </div>
+
+            <!-- Right Timeline Track -->
+            <div class="waterfall-timeline-track">
+              <div class="waterfall-span-bar ${kindClass}" 
+                   style="left: ${leftPercent}%; width: ${widthPercent}%;" 
+                   title="${escapeHtml(node.name)} (${formatDuration(dur)}) offset: +${formatDuration(offsetMs)}">
+                <span style="font-size:9px; margin-left:4px;">${formatDuration(dur)}</span>
+              </div>
+            </div>
+          </div>
+        `;
+      }
+
+      container.innerHTML = html;
+    }
+
+    // Interactive Span Selection -> Open Drawer
+    window.selectSpan = (spanId) => {
+      currentSelectedSpanId = spanId;
+      
+      // Update selected row style
+      document.querySelectorAll('.waterfall-row').forEach(r => r.classList.remove('selected'));
+      const row = document.getElementById(`wf-row-${spanId}`);
+      if (row) row.classList.add('selected');
+
+      // Locate span object from trace spans or waterfall list
+      let spanObj = (traceData.spans || []).find(s => s.spanId === spanId);
+      if (!spanObj) {
+        spanObj = traceData.waterfall.displayList.find(s => s.spanId === spanId);
+      }
+      if (!spanObj) return;
+
+      populateDrawer(spanObj);
+      openDrawer();
+    };
+
+    function populateDrawer(s) {
+      document.getElementById('drawer-span-name').innerText = s.name;
+      document.getElementById('d-name').innerText = s.name;
+      document.getElementById('d-span-id').innerText = s.spanId;
+      document.getElementById('d-trace-id').innerText = s.traceId || traceData.traceId;
+      document.getElementById('d-parent-id').innerText = s.parentSpanId || 'none (Root)';
+      document.getElementById('d-kind').innerText = s.kind;
+      document.getElementById('d-status').innerText = s.status || 'unset';
+      
+      if (s.statusMessage) {
+        document.getElementById('row-status-msg').style.display = 'table-row';
+        document.getElementById('d-status-msg').innerText = s.statusMessage;
+      } else {
+        document.getElementById('row-status-msg').style.display = 'none';
+      }
+
+      document.getElementById('d-duration').innerText = formatDuration(s.duration);
+      document.getElementById('d-exclusive-duration').innerText = s.exclusiveDuration != null ? formatDuration(s.exclusiveDuration) : 'N/A';
+      document.getElementById('d-start-time').innerText = s.startTime ? `${s.startTime} (${formatTime(s.startTime)})` : 'N/A';
+      document.getElementById('d-end-time').innerText = s.endTime ? `${s.endTime} (${formatTime(s.endTime)})` : 'N/A';
+      document.getElementById('d-offset').innerText = s.offsetMs != null ? `+${formatDuration(s.offsetMs)}` : '0ms';
+
+      // Attributes Tab
+      const attrs = s.attributes || {};
+      const attrKeys = Object.keys(attrs);
+      document.getElementById('attr-count-label').innerText = `Attributes (${attrKeys.length})`;
+      const attrTable = document.getElementById('table-attributes').querySelector('tbody');
+      if (attrKeys.length === 0) {
+        attrTable.innerHTML = `<tr><td colspan="2" style="text-align:center; color:#9ca3af;">No attributes recorded on this span</td></tr>`;
+      } else {
+        attrTable.innerHTML = attrKeys.map(k => `
+          <tr>
+            <th style="color:#93c5fd;">${escapeHtml(k)}</th>
+            <td>${escapeHtml(typeof attrs[k] === 'object' ? JSON.stringify(attrs[k]) : String(attrs[k]))}</td>
+          </tr>
+        `).join('');
+      }
+
+      // Events Tab (Exceptions)
+      const eventsContainer = document.getElementById('events-container');
+      const events = s.events || [];
+      if (events.length === 0) {
+        eventsContainer.innerHTML = `<div style="padding:20px; text-align:center; color:#9ca3af;">No events or exceptions attached to this span</div>`;
+      } else {
+        eventsContainer.innerHTML = events.map(ev => `
+          <div style="background:var(--bg-tertiary); border:1px solid var(--border-subtle); border-radius:var(--radius-sm); padding:12px; margin-bottom:12px;">
+            <div style="display:flex; justify-content:space-between; margin-bottom:6px;">
+              <span class="badge badge-error">${escapeHtml(ev.name)}</span>
+              <span class="mono" style="font-size:11px; color:#9ca3af;">${formatTime(ev.timestamp)}</span>
+            </div>
+            ${ev.attributes?.['exception.message'] ? `
+              <div style="font-weight:600; color:#fca5a5; margin-bottom:8px;">${escapeHtml(ev.attributes['exception.message'])}</div>
+            ` : ''}
+            ${ev.attributes?.['exception.stacktrace'] ? `
+              <pre class="code-block" style="color:#fca5a5; font-size:10px;">${escapeHtml(ev.attributes['exception.stacktrace'])}</pre>
+            ` : ''}
+          </div>
+        `).join('');
+      }
+
+      // Correlated Telemetry Tab
+      const corrContainer = document.getElementById('correlation-container');
+      corrContainer.innerHTML = `
+        <div style="margin-bottom:16px;">
+          <h4 style="font-size:12px; color:#93c5fd; margin-bottom:6px;">Correlated Trace</h4>
+          <table class="kv-table">
+            <tr><th>Trace ID</th><td><a href="trace-detail.html?traceId=${traceData.traceId}" class="mono">${traceData.traceId}</a></td></tr>
+            <tr><th>Root Operation</th><td>${escapeHtml(traceData.rootSpan?.name)}</td></tr>
+            <tr><th>Total Trace Duration</th><td class="mono">${formatDuration(traceData.totalDuration)}</td></tr>
+          </table>
+        </div>
+        ${traceData.request ? `
+          <div style="margin-bottom:16px;">
+            <h4 style="font-size:12px; color:#93c5fd; margin-bottom:6px;">Correlated Inbound Request</h4>
+            <table class="kv-table">
+              <tr><th>Request ID</th><td><code class="mono">${traceData.request.requestId}</code></td></tr>
+              <tr><th>Route</th><td><strong>${traceData.request.method} ${escapeHtml(traceData.request.url)}</strong></td></tr>
+              <tr><th>Status</th><td><span class="badge badge-${traceData.request.statusCode >= 400 ? '4xx' : '2xx'}">${traceData.request.statusCode}</span></td></tr>
+              <tr><th>Client IP</th><td class="mono">${escapeHtml(traceData.request.clientIp)}</td></tr>
+            </table>
+          </div>
+        ` : ''}
+        ${traceData.errors && traceData.errors.length > 0 ? `
+          <div style="margin-bottom:16px;">
+            <h4 style="font-size:12px; color:#f87171; margin-bottom:6px;">Correlated Errors (${traceData.errors.length})</h4>
+            ${traceData.errors.map(err => `
+              <div style="background:#2d1515; border:1px solid #7f1d1d; padding:10px; border-radius:4px; margin-bottom:8px;">
+                <div style="font-weight:600; color:#fca5a5;">${escapeHtml(err.name)}: ${escapeHtml(err.message)}</div>
+                <div style="font-size:10px; color:#9ca3af; margin-top:4px;">Mechanism: ${err.mechanism} | Handled: ${err.handled}</div>
+              </div>
+            `).join('')}
+          </div>
+        ` : ''}
+      `;
+
+      // Raw JSON Tab & Provenance
+      const prov = s._provenance || traceData._provenance || { filename: 'embedded', relativePath: 'embedded in trace', sizeBytes: 0, category: 'trace_tree' };
+      document.getElementById('raw-provenance-file').innerText = prov.relativePath;
+      document.getElementById('raw-provenance-size').innerText = `${prov.sizeBytes} Bytes`;
+      document.getElementById('raw-provenance-cat').innerText = prov.category;
+      document.getElementById('raw-json-display').innerText = JSON.stringify(s, null, 2);
+
+      // Copy buttons
+      document.getElementById('btn-copy-span-id').onclick = (e) => copyToClipboard(s.spanId, e.target);
+      document.getElementById('btn-copy-attrs').onclick = (e) => copyToClipboard(JSON.stringify(s.attributes || {}, null, 2), e.target);
+      document.getElementById('btn-copy-raw-json').onclick = (e) => copyToClipboard(JSON.stringify(s, null, 2), e.target);
+    }
+
+    function openDrawer() {
+      document.getElementById('span-drawer').classList.add('open');
+      document.getElementById('drawer-backdrop').classList.add('open');
+    }
+
+    function closeDrawer() {
+      document.getElementById('span-drawer').classList.remove('open');
+      document.getElementById('drawer-backdrop').classList.remove('open');
+    }
+
+    document.getElementById('drawer-close-btn').onclick = closeDrawer;
+    document.getElementById('drawer-backdrop').onclick = closeDrawer;
+
+    // Drawer Tabs switching
+    document.querySelectorAll('.drawer-tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('.drawer-tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+        tab.classList.add('active');
+        const targetId = tab.getAttribute('data-tab');
+        document.getElementById(targetId).classList.add('active');
+      });
+    });
+
+    // Expand/Collapse all
+    document.getElementById('btn-collapse-all').onclick = () => {
+      traceData.waterfall.displayList.forEach(s => {
+        if (s.hasChildren) collapsedNodes.add(s.spanId);
+      });
+      renderWaterfall();
+    };
+
+    document.getElementById('btn-expand-all').onclick = () => {
+      collapsedNodes.clear();
+      renderWaterfall();
+    };
+
+    window.toggleNode = (spanId) => {
+      if (collapsedNodes.has(spanId)) collapsedNodes.delete(spanId);
+      else collapsedNodes.add(spanId);
+      renderWaterfall();
+    };
+
+    document.getElementById('waterfall-filter-input').addEventListener('input', renderWaterfall);
+
+    loadTraceDetail();
+  </script>
+</body>
+</html>

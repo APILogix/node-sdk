@@ -46,7 +46,7 @@ import { sanitizeEvent } from '../processors/sanitizer.js';
 import { getLogger } from '../utils/logger.js';
 import { generateId } from '../utils/uuid.js';
 import { epochMs } from '../utils/time.js';
-import { errorDeduplicator } from '../processors/deduplicator.js';
+import { errorDeduplicator, traceDeduplicator } from '../processors/deduplicator.js';
 import { applyScopeToEvent } from './scope.js';
 import { loadShedder } from '../transport/load-shedder.js';
 import { isSDKShuttingDown } from './lifecycle.js';
@@ -232,6 +232,7 @@ export function resetEventPipeline() {
     pipelineDraining = false;
     pendingPipelines.clear();
     pendingPipelineDrops = 0;
+    traceDeduplicator.reset();
 }
 /**
  * Async pipeline — processes a single event through all pipeline stages.
@@ -304,6 +305,17 @@ export async function processEventAsync(rawEvent, assignedEventId) {
             if (errorDeduplicator.isDuplicate(compositeKey)) {
                 logger.debug('Event dropped — duplicate error within suppression window', {
                     fingerprint: event.fingerprint,
+                    eventType: event.type,
+                    eventId: event.eventId,
+                });
+                return false;
+            }
+        }
+        // Step 6.6: Trace deduplication — suppress identical re-emitted traces within suppression window
+        if (event.type === 'trace' && 'traceId' in event && typeof event.traceId === 'string') {
+            if (traceDeduplicator.isDuplicate(event.traceId)) {
+                logger.debug('Event dropped — duplicate trace within suppression window', {
+                    traceId: event.traceId,
                     eventType: event.type,
                     eventId: event.eventId,
                 });

@@ -1,9 +1,9 @@
 # @pulse-apm/node
 
-> Enterprise-grade observability and distributed tracing SDK for Node.js applications, built on OpenTelemetry with automated database interception, truthful timing attribution, and detached background execution support.
+> Enterprise-grade observability and distributed tracing SDK for Node.js applications, built on OpenTelemetry with automated database interception, truthful timing attribution, adaptive sampling, and detached background execution support.
 
-[![Version](https://img.shields.io/badge/version-8.1.0-blue.svg)](package.json)
-[![Tests](https://img.shields.io/badge/tests-415%20passing-brightgreen.svg)]()
+[![Version](https://img.shields.io/badge/version-8.3.12-blue.svg)](package.json)
+[![Tests](https://img.shields.io/badge/tests-459%20passing-brightgreen.svg)]()
 [![Node](https://img.shields.io/badge/node-%3E%3D18.19.0-green.svg)]()
 [![License](https://img.shields.io/badge/license-ISC-blue.svg)](package.json)
 
@@ -14,32 +14,31 @@
 - [Features](#features)
 - [Installation](#installation)
 - [SDK Initialization & Startup](#sdk-initialization--startup)
+  - [Passing Your API Key](#passing-your-api-key)
   - [1. ECMAScript Modules (ESM) — Recommended](#1-ecmascript-modules-esm--recommended)
   - [2. CommonJS (CJS)](#2-commonjs-cjs)
+- [Environment & Endpoint Configuration (.env)](#environment--endpoint-configuration-env)
+- [High-Throughput Services & Adaptive Sampling](#high-throughput-services--adaptive-sampling)
+- [Ultra-Fast Initialization Latency](#ultra-fast-initialization-latency)
 - [Framework Integration](#framework-integration)
   - [Express.js Integration](#expressjs-integration)
-    - [ESM Example](#express-esm-example)
-    - [CommonJS Example](#express-commonjs-example)
+    - [Express ESM Example](#express-esm-example)
+    - [Express CommonJS Example](#express-commonjs-example)
   - [Fastify Integration](#fastify-integration)
 - [Database & Cache Auto-Instrumentation](#database--cache-auto-instrumentation)
 - [Custom Function & Business Logic Tracing](#custom-function--business-logic-tracing)
   - [In-Request Function Tracing (`withSpan`)](#in-request-function-tracing-withspan)
-    - [ESM Example](#withspan-esm-example)
-    - [CommonJS Example](#withspan-commonjs-example)
   - [Synchronous Function Tracing (`withSpanSync`)](#synchronous-function-tracing-withspansync)
 - [Detached Background Work (`withBackgroundSpan`)](#detached-background-work-withbackgroundspan)
-  - [When to Use `withBackgroundSpan` vs `withSpan`](#when-to-use-withbackgroundspan-vs-withspan)
-  - [ESM Example](#withbackgroundspan-esm-example)
-  - [CommonJS Example](#withbackgroundspan-commonjs-example)
 - [Custom Database Spans (`withDbSpan`)](#custom-database-spans-withdbspan)
-  - [ESM Example](#withdbspan-esm-example)
-  - [CommonJS Example](#withdbspan-commonjs-example)
 - [Error Tracking & Context Enrichment](#error-tracking--context-enrichment)
   - [Explicit Error Capture (`captureError`)](#explicit-error-capture-captureerror)
   - [Breadcrumbs, User Identity & Tags](#breadcrumbs-user-identity--tags)
 - [Custom Metrics Tracking](#custom-metrics-tracking)
-- [Lifecycle & Graceful Shutdown](#lifecycle--graceful-shutdown)
+- [Lifecycle & Hardened Graceful Shutdown](#lifecycle--hardened-graceful-shutdown)
+- [Resilient Pipeline & Telemetry Integrity](#resilient-pipeline--telemetry-integrity)
 - [API Reference](#api-reference)
+- [License](#license)
 
 ---
 
@@ -48,10 +47,12 @@
 - **Turnkey Auto-Instrumentation**: Automatically instruments HTTP/HTTPS, Express, Fastify, PostgreSQL (`pg`), Redis (`redis`, `ioredis`), MongoDB, MySQL2, Prisma, BullMQ, Axios, Undici, and `fetch`.
 - **Truthful Timing & Exclusive Durations**: Zero synthetic duration clamping. High-resolution monotonic interval calculation separates Node.js CPU execution time from database and network wait time.
 - **Detached Background Traces**: First-class support for post-response asynchronous tasks (emails, webhooks, queue publish) via causal `SpanLink` without leaking HTTP trace memory.
-- **Native ESM Support**: Synchronous in-thread loader hooks via `import-in-the-middle` (`--import @pulse-apm/node/register`).
-- **Distributed W3C Tracing**: Strict compliance with W3C `traceparent` and `baggage` standards across incoming requests and outgoing HTTP calls.
-- **Automated PII Sanitization**: Masks credit card numbers (Luhn check), passwords, JWTs, SQL query literals, and sensitive Redis keys out of the box.
-- **Memory Bounded & Concurrency Safe**: 1000 concurrent background spans ceiling with deterministic fail-open degradation, circuit-breaker protected transport, and unref'd internal timers.
+- **Dynamic Adaptive Sampling**: Scales non-error trace volume dynamically under system pressure (`CRITICAL`: 10%, `PRESSURED`: 50%, `ELEVATED`: 80%) to optimize ingestion costs in high-throughput services (>10,000 RPS) while **guaranteeing 100% error preservation**.
+- **Zero-Dependency Native `.env` Discovery**: Automatically loads your host project's `.env` for endpoint and control-plane configuration without external dependencies.
+- **Ultra-Fast Sub-10ms Startup**: Bypasses IPv6 DNS resolution fallback delays with automatic origin normalization, HTTP keep-alive, and Redis lookup cache alignment.
+- **Resilient Pipeline & Orphan Recovery**: Cycle-safe bounded orphan recovery grafts unvisited child subtrees onto root traces; LRU trace deduplication stops duplicate emissions; startup index noise is suppressed.
+- **Deep Recursive PII Sanitization**: Masks credit card numbers, passwords, JWTs, JSON string attributes, URL basic authentication credentials, and `set-cookie` headers.
+- **Hardened Graceful Shutdown**: Automatic `SIGTERM`/`SIGINT` listeners drain in-flight batches across all transport routes before container termination.
 
 ---
 
@@ -61,7 +62,7 @@
 npm install @pulse-apm/node
 ```
 
-> **Requirements:** Node.js `>= 18.19.0` (or Node.js `>= 20.6.0` for native ESM `--import` support).
+> **Requirements:** Node.js `>= 18.19.0` (or Node.js `>= 20.6.0` for native ESM `--import` and native `loadEnvFile` support).
 
 ---
 
@@ -69,11 +70,36 @@ npm install @pulse-apm/node
 
 Always initialize the SDK **as early as possible** in your application lifecycle, before importing database drivers or starting your HTTP server.
 
+### Passing Your API Key
+
+When calling `init()`, you must pass your Pulse APM **`apiKey`**. You can provide it as an options object (recommended) or as a shorthand string:
+
+```typescript
+import { init } from '@pulse-apm/node'
+
+// Option A: Options object (Recommended)
+await init({
+  apiKey: 'pls_live_your_api_key_here',
+})
+
+// Option B: Shorthand string
+await init('pls_live_your_api_key_here')
+
+// Option C: Passing from process.env
+await init({
+  apiKey: process.env.PULSE_API_KEY!,
+})
+```
+
+The SDK automatically reads your `package.json` to detect `applicationName` and `applicationVersion`. Runtime telemetry policy, sampling rates, features, and entitlements are authoritatively managed via remote configuration.
+
+---
+
 ### 1. ECMAScript Modules (ESM) — Recommended
 
 If your project uses `"type": "module"` in `package.json`:
 
-#### Step 1: Preload the ESM Loader Hook (Important for Native ESM Drivers)
+#### Step 1: Preload the ESM Loader Hook
 To ensure static `import pg from 'pg'` and `import redis from 'redis'` are automatically intercepted before execution, launch Node with the `--import` flag:
 
 ```bash
@@ -85,15 +111,13 @@ node --import @pulse-apm/node/register server.js
 
 #### Step 2: Initialize in Code
 
-All you need is your **`apiKey`**! The SDK automatically reads your `package.json` to detect `applicationName` and `release` (version). Environment and project settings are authoritatively managed via remote configuration.
-
 ```typescript
 // server.js or app.ts
 import { init } from '@pulse-apm/node'
 
-// Initialize the SDK before starting your server (apiKey is the only required option!)
+// Initialize the SDK before starting your server (pass your apiKey)
 await init({
-  apiKey: process.env.PULSE_API_KEY || 'pk_live_your_api_key_here',
+  apiKey: process.env.PULSE_API_KEY || 'pls_live_your_api_key_here',
 })
 
 // Import frameworks and database drivers AFTER initialization
@@ -105,7 +129,7 @@ const app = express()
 ```
 
 > 📖 **Need architectural recipes for NestJS, Fastify, BullMQ, TypeScript, or Docker?**  
-> Check out the [Complete Initialization & Load-Order Guide](docs/INITIALIZATION_GUIDE.md) for step-by-step patterns and anti-pattern prevention.
+> Check out the [Complete Initialization & Load-Order Guide](docs/INITIALIZATION_GUIDE.md).
 
 ---
 
@@ -118,9 +142,9 @@ If your project uses standard CommonJS (`require`):
 const { init } = require('@pulse-apm/node')
 
 async function bootstrap() {
-  // 1. Initialize the SDK with apiKey only
+  // 1. Initialize the SDK with apiKey
   await init({
-    apiKey: process.env.PULSE_API_KEY || 'pk_live_your_api_key_here',
+    apiKey: process.env.PULSE_API_KEY || 'pls_live_your_api_key_here',
   })
 
   // 2. Require frameworks and database drivers AFTER initialization
@@ -134,10 +158,73 @@ async function bootstrap() {
 bootstrap().catch(console.error)
 ```
 
-Run standard Node:
+Run with standard Node:
 ```bash
 node server.js
 ```
+
+---
+
+## Environment & Endpoint Configuration (.env)
+
+The SDK features a **zero-dependency native `.env` loader**. It automatically inspects your application's root directory (`process.cwd()`) and loads environment variables using Node.js native `process.loadEnvFile()` (Node 20.6+) or a lightweight fallback parser.
+
+You do **not** need to install or import `dotenv` to configure your backend ingestion endpoint.
+
+### Configuring Your Ingest Endpoint in `.env`
+
+Create a `.env` file in the root of your host project:
+
+```env
+# Custom backend ingestion / control plane endpoint
+PULSE_ENDPOINT=http://127.0.0.1:3000
+```
+
+### Precedence Resolution
+
+The SDK resolves your backend ingestion endpoint using the following order of precedence:
+
+1. `endpoint` option passed to `init({ apiKey, endpoint: '...' })`
+2. `PULSE_ENDPOINT` environment variable (from `.env` or system)
+3. `PULSE_API_URL` environment variable
+4. `PULSE_BASE_URL` environment variable
+5. `BACKEND_URL` environment variable
+6. `SDK_BASE_URL` environment variable
+7. Default production origin (`http://127.0.0.1:5000`)
+
+---
+
+## High-Throughput Services & Adaptive Sampling
+
+In services handling high throughput (>10,000 RPS), static trace sampling can result in high telemetry ingestion costs and risk event-loop lag during sudden traffic spikes.
+
+To optimize ingestion volume while safeguarding system performance, enable **Adaptive Sampling**:
+
+```typescript
+import { init } from '@pulse-apm/node'
+
+await init({
+  apiKey: process.env.PULSE_API_KEY!,
+  adaptiveSampling: true, // Enables dynamic system pressure scaling
+})
+```
+
+### How Adaptive Sampling Works:
+* Continuously evaluates system pressure (`adaptivePressure`) by monitoring heap memory utilization and event-loop lag:
+  * **`HEALTHY`**: Retains 100% of the remotely configured sample rate.
+  * **`ELEVATED`**: Dynamically throttles non-error telemetry to at most **80%** of the configured rate.
+  * **`PRESSURED`**: Dynamically throttles non-error telemetry to at most **50%** of the configured rate.
+  * **`CRITICAL`**: Dynamically throttles non-error telemetry to at most **10%** of the configured rate (`reason: 'adaptive_pressure'`).
+* **Non-Negotiable Error Guarantee**: Errors (`eventType === 'errors'`) are **100% exempt** from adaptive reduction. Even under `CRITICAL` memory/lag pressure, 100% of errors are captured and dispatched.
+
+---
+
+## Ultra-Fast Initialization Latency
+
+SDK startup is engineered for sub-millisecond to sub-10ms execution:
+* **IPv6 DNS Bypass**: When communicating with local endpoints (`localhost`), Node.js `fetch` (Undici) resolves IPv6 `::1` before falling back to `127.0.0.1`, which can induce a 1–3 second OS timeout. The SDK automatically normalizes `localhost` to `127.0.0.1`, eliminating DNS lookup lag.
+* **HTTP Keep-Alive**: All control-plane handshakes reuse TCP connections with `Connection: keep-alive`.
+* **Redis Cache Alignment**: The `/v1/init` payload structure is aligned with the backend's Redis lookup caching (`getApiKeyMapping` + `getInitDelivery`), ensuring sub-millisecond responses on cache hits.
 
 ---
 
@@ -154,7 +241,7 @@ import { init, monitorMiddleware, expressErrorHandler } from '@pulse-apm/node'
 import express from 'express'
 import pg from 'pg'
 
-// 1. Initialize SDK
+// 1. Initialize SDK with your apiKey
 await init({ apiKey: process.env.PULSE_API_KEY! })
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL })
@@ -252,7 +339,7 @@ When auto-instrumentation is enabled, you **do not need to write manual spans** 
 |---|---|---|
 | **PostgreSQL** | `pg`, `pg-pool` | Sanitized SQL (`db.statement`), table, query latency, errors |
 | **Redis** | `redis` (v4+), `ioredis` (v4, v5) | Command name, sanitized key, pipelining, multi/exec blocks |
-| **MongoDB** | `mongodb` (v4, v5, v6) | Collection, operation (`find`, `update`), latency |
+| **MongoDB** | `mongodb` (v4, v5, v6), `mongoose` | Collection, operation (`find`, `update`), latency |
 | **MySQL** | `mysql2` | Sanitized SQL, query latency, connection pool events |
 | **Prisma** | `@prisma/client` | Query engine operations, query latency |
 | **HTTP Clients**| `axios`, native `http`/`https`, `fetch`, `undici` | Outgoing URL, status code, latency, W3C headers injected |
@@ -271,8 +358,6 @@ Use `withSpan` to track custom business logic, external API integrations, or com
 ### In-Request Function Tracing (`withSpan`)
 
 Spans created with `withSpan` automatically nest as children under the current active HTTP request.
-
-#### `withSpan` ESM Example
 
 ```typescript
 import { withSpan } from '@pulse-apm/node'
@@ -300,47 +385,16 @@ export async function processPayment(orderId: string, amount: number) {
 }
 ```
 
-#### `withSpan` CommonJS Example
-
-```javascript
-const { withSpan } = require('@pulse-apm/node')
-
-async function calculateRiskScore(userProfile) {
-  return await withSpan('fraud.calculate_risk', async (span) => {
-    span.setAttribute('user.id', userProfile.id)
-    span.setAttribute('user.country', userProfile.country)
-
-    try {
-      const score = await runFraudModel(userProfile)
-      span.setAttribute('fraud.risk_score', score)
-      span.setStatus('ok')
-      return score
-    } catch (err) {
-      // Record error on the span
-      span.recordError(err)
-      span.setStatus('error', err.message)
-      throw err
-    }
-  })
-}
-
-module.exports = { calculateRiskScore }
-```
-
----
-
 ### Synchronous Function Tracing (`withSpanSync`)
 
-For synchronous operations (e.g. CPU-intensive JSON parsing, encryption, parsing templates):
+For non-async functions:
 
 ```typescript
 import { withSpanSync } from '@pulse-apm/node'
 
-const parsedData = withSpanSync('crypto.decrypt_payload', (span) => {
-  span.setAttribute('crypto.algorithm', 'aes-256-gcm')
-  const decrypted = decrypt(payload, secretKey)
-  span.setStatus('ok')
-  return decrypted
+const token = withSpanSync('crypto.generateToken', (span) => {
+  span.setAttribute('crypto.algorithm', 'sha256')
+  return computeHash(secret)
 })
 ```
 
@@ -348,128 +402,40 @@ const parsedData = withSpanSync('crypto.decrypt_payload', (span) => {
 
 ## Detached Background Work (`withBackgroundSpan`)
 
-In web servers, operations often continue **after** the HTTP response has been sent to the client (e.g. sending welcome emails, dispatching webhooks, publishing events to queues, updating search indices).
+When tasks execute *after* an HTTP response has completed (such as sending confirmation emails, generating PDF receipts, or publishing events to a message queue), using standard spans risks memory leaks or corrupted parent-child trees.
 
-### When to Use `withBackgroundSpan` vs `withSpan`
-
-| Feature | `withSpan` | `withBackgroundSpan` |
-|---|---|---|
-| **Lifecycle** | In-request (<250ms post-response) | Long-running (unlimited / custom timeout) |
-| **Trace Relationship** | Child of HTTP request trace | **Independent root trace** with fresh `traceId` |
-| **Correlation** | Parent-Child (`parentSpanId`) | OpenTelemetry **`SpanLink`** (`pulse.link.type: 'caused_by'`) |
-| **Safety Deadline** | Subject to HTTP 250ms quiescing timeout | Decoupled; unaffected by HTTP response completion |
-| **Context Store** | Shared request breadcrumbs | **Forked breadcrumb ring-buffer** (`[requestId]-bg-[id]`) |
-| **Concurrency** | Unbounded | Governed by `MAX_CONCURRENT_BACKGROUND_SPANS = 1000` |
-| **Use Cases** | Database queries, service calls during request | Fire-and-forget emails, webhooks, queue publish, post-response tasks |
-
----
-
-### `withBackgroundSpan` ESM Example
+`withBackgroundSpan` creates an independent, detached trace root linked via a causal W3C `SpanLink`:
 
 ```typescript
 import { withBackgroundSpan } from '@pulse-apm/node'
-import express from 'express'
 
-const app = express()
+app.post('/api/checkout', async (req, res) => {
+  const order = await createOrder(req.body)
 
-app.post('/api/register', async (req, res) => {
-  // 1. Complete in-request database work
-  const user = await db.createUser(req.body)
+  // Respond to the user immediately:
+  res.status(201).json({ orderId: order.id })
 
-  // 2. Respond immediately to the client
-  res.status(201).json({ success: true, userId: user.id })
-
-  // 3. Detached background task (runs AFTER response without being dropped)
-  void withBackgroundSpan('jobs.send_welcome_email', {
-    timeoutMs: 10_000, // 10-second fail-open safety timeout
-    attributes: {
-      'user.id': user.id,
-      'email.type': 'welcome_v2',
-    }
-  }, async (span) => {
-    // Automatically linked to the HTTP request trace via causal SpanLink!
-    // Database and external HTTP calls inside here are automatically traced
-    await emailService.sendTemplate(user.email, 'welcome', { name: user.name })
-    await auditLog.record(user.id, 'registration_email_sent')
-    
-    span.setStatus('ok')
-  }).catch(err => {
-    console.error('Background email failed:', err)
+  // Execute detached background task asynchronously:
+  withBackgroundSpan('checkout.send_email', { timeoutMs: 10000 }, async (span) => {
+    span.setAttribute('order.id', order.id)
+    await emailClient.sendReceipt(order.email, order)
   })
 })
 ```
 
 ---
 
-### `withBackgroundSpan` CommonJS Example
-
-```javascript
-const { withBackgroundSpan } = require('@pulse-apm/node')
-
-function dispatchWebhook(eventPayload) {
-  // Fire-and-forget background job
-  withBackgroundSpan('webhooks.dispatch', {
-    timeoutMs: 15_000,
-    attributes: {
-      'webhook.event': eventPayload.type,
-      'webhook.target_url': eventPayload.url,
-    }
-  }, async (span) => {
-    const response = await axios.post(eventPayload.url, eventPayload.data, { timeout: 10000 })
-    span.setAttribute('http.status_code', response.status)
-    span.setStatus('ok')
-  }).catch(err => {
-    // Application errors are safely handled
-    console.error('Webhook delivery failed:', err.message)
-  })
-}
-
-module.exports = { dispatchWebhook }
-```
-
----
-
 ## Custom Database Spans (`withDbSpan`)
 
-If you use a custom internal database wrapper, a NoSQL store, or a driver not natively auto-instrumented (e.g. Cassandra, ClickHouse, SQLite):
-
-### `withDbSpan` ESM Example
+If you use custom database drivers or raw connection pools:
 
 ```typescript
 import { withDbSpan } from '@pulse-apm/node'
 
-export async function queryClickhouse(sql: string) {
-  return await withDbSpan('other', 'SELECT', async (span) => {
-    span.setAttribute('db.name', 'analytics')
-    span.setAttribute('db.sql.table', 'page_views')
-    
-    const data = await rawClickhouseClient.query(sql)
-    return data
-  }, {
-    statement: sql, // SQL query is automatically sanitized/redacted
-    captureStatement: true,
-  })
-}
-```
-
-### `withDbSpan` CommonJS Example
-
-```javascript
-const { withDbSpan } = require('@pulse-apm/node')
-
-async function executeCassandraQuery(queryStr, params) {
-  return await withDbSpan('cassandra', 'SELECT', async (span) => {
-    span.setAttribute('db.name', 'keyspace_orders')
-    span.setAttribute('db.cassandra.consistency_level', 'LOCAL_QUORUM')
-
-    const result = await cassandraClient.execute(queryStr, params)
-    return result
-  }, {
-    statement: queryStr,
-  })
-}
-
-module.exports = { executeCassandraQuery }
+const users = await withDbSpan('postgresql', 'SELECT', async (span) => {
+  span.setAttribute('db.sql.table', 'users')
+  return await rawPool.query('SELECT * FROM users')
+})
 ```
 
 ---
@@ -478,29 +444,22 @@ module.exports = { executeCassandraQuery }
 
 ### Explicit Error Capture (`captureError`)
 
-The SDK automatically captures unhandled exceptions and route errors via `expressErrorHandler()`. To manually record caught exceptions with active context:
+Catch and record exceptions with enriched diagnostics:
 
 ```typescript
 import { captureError } from '@pulse-apm/node'
 
 try {
-  await riskyExternalCall()
-} catch (error) {
-  // Captures the error, attaches active traceId, spanId, breadcrumbs, and request details
-  captureError(error, {
-    extra: {
-      retryCount: 3,
-      customerId: 'cust_98231',
-    },
-    tags: {
-      subsystem: 'external_gateway',
-    },
-    fingerprint: ['external_gateway', 'timeout'],
+  await chargeCard(token)
+} catch (err) {
+  captureError(err, {
+    tags: { gateway: 'stripe' },
+    extra: { attempt: 3 },
+    mechanism: 'payment_flow',
   })
+  throw err
 }
 ```
-
----
 
 ### Breadcrumbs, User Identity & Tags
 
@@ -554,18 +513,35 @@ setGauge('worker.active_jobs', 12)
 
 ---
 
-## Lifecycle & Graceful Shutdown
+## Lifecycle & Hardened Graceful Shutdown
 
-In containerized environments (Kubernetes, Docker, AWS ECS), ensure pending spans, traces, and metrics are flushed before the process terminates:
+In containerized environments (Kubernetes, Docker, AWS ECS), ensure pending spans, traces, and metrics are flushed before container termination.
+
+### Automatic Signal Handling (Default)
+
+By default (`handleSignals: true`), `init()` automatically registers listeners for `SIGTERM` and `SIGINT`. When your container orchestrator signals termination, the SDK:
+1. Rejects incoming non-critical telemetry to freeze buffer sizes.
+2. Flushes the trace aggregator, orphan-recovered span trees, and active span buffers.
+3. Concurrently drains in-flight batches across all transport routes (`traces`, `spans`, `requests`, `metrics`, `errors`).
+4. Unreferences remaining background timers, allowing the Node process to exit cleanly without hanging.
+
+### Manual Shutdown Control
+
+If you prefer to manage signal handlers yourself, set `handleSignals: false` and call `await shutdown()`:
 
 ```typescript
-import { flush, shutdown } from '@pulse-apm/node'
+import { init, shutdown } from '@pulse-apm/node'
+
+await init({
+  apiKey: process.env.PULSE_API_KEY!,
+  handleSignals: false, // Set false when managing termination manually
+})
 
 async function onSignal() {
-  console.log('Received termination signal. Shutting down gracefully...')
+  console.log('Received termination signal. Draining telemetry batches...')
   
-  // Flushes all pending trace debounces, metrics, and network transport queues
-  await shutdown(2000) // 2000ms maximum wait deadline
+  // Drains in-flight batches before exit
+  await shutdown(2000) // 2000ms deadline
   
   process.exit(0)
 }
@@ -576,11 +552,22 @@ process.on('SIGINT', onSignal)
 
 ---
 
+## Resilient Pipeline & Telemetry Integrity
+
+The SDK includes several enterprise pipeline protections:
+- **Cycle-Safe Bounded Orphan Recovery**: Spans with delayed or missing intermediate parents are safely grafted onto the trace root with duration re-clamping, ensuring **zero missing database or HTTP spans in waterfalls**.
+- **Process Warning Routing**: Node runtime warnings (`[DEP0123] Warning: ...`) and driver deprecation notices in `console.error` are routed to `captureMessage(..., Severity.Warning)` instead of generating false APM error incidents, keeping HTTP 200 transactions clean.
+- **Trace Deduplication**: A 60-second sliding LRU cache drops duplicate trace payloads during network retry storms.
+- **MongoDB Startup Suppression**: Mongoose index/build commands at startup outside an active request context are suppressed, saving ingest quotas.
+- **Recursive Sensitive Data Scrubbing**: Recursively scrubs JSON strings, URLs with basic authentication credentials, query-parameter tokens, and `set-cookie` headers.
+
+---
+
 ## API Reference
 
 | Function / Export | Purpose | Common Usage |
 |---|---|---|
-| `init(options)` | Standard process-level SDK initialization function. Reads `package.json` for app metadata. | `await init({ apiKey: '...' })` |
+| `init(options)` | Standard process-level SDK initialization function. | `await init({ apiKey: '...' })` or `await init('...')` |
 | `monitorMiddleware(options)` | Express request & context monitoring middleware. | `app.use(monitorMiddleware())` |
 | `expressErrorHandler()` | Express error capture middleware. | `app.use(expressErrorHandler())` |
 | `fastifyPulsePlugin` | Fastify request monitoring plugin. | `await fastify.register(fastifyPulsePlugin)` |
@@ -594,11 +581,56 @@ process.on('SIGINT', onSignal)
 | `incrementCounter(name, value, tags)` | Emits an OTel metric counter. | `incrementCounter('logins', 1)` |
 | `recordHistogram(name, value, tags)` | Emits a histogram distribution value. | `recordHistogram('size', 1024)` |
 | `flush(timeoutMs)` | Force-flushes in-flight spans and events. | `await flush(1000)` |
-| `shutdown(timeoutMs)` | Flushes telemetry and cleanly releases resources. | `await shutdown(2000)` |
+| `shutdown(timeoutMs)` | Drains telemetry and cleanly releases resources. | `await shutdown(2000)` |
+
+### `init()` Options Reference (3-Tier Enterprise Structure)
+
+In enterprise architectures, **runtime telemetry policy** (sampling rates, kill switches, PII blacklists, transport batching) is centrally governed by the remote control plane. Options passed to `init()` strictly control **local process-level integration concerns**.
+
+```typescript
+import { init } from '@pulse-apm/node'
+
+// ─── TIER 1: Core Configuration (Standard Production Usage) ─────────────────
+await init({
+  apiKey: 'pls_live_abcdef1234567890', // Required: Project authentication key
+})
+
+// ─── TIER 2: Infrastructure & Lifecycle (DevOps, K8s & High-Throughput) ────
+await init({
+  apiKey: 'pls_live_abcdef1234567890',
+  endpoint: 'http://internal-collector.corp:3000', // Custom VPC forward-proxy / backend origin
+  adaptiveSampling: true,                          // Dynamic rate scaling under load (>10k RPS)
+  handleSignals: true,                             // Intercept SIGTERM/SIGINT for container drain (default: true)
+  initTimeoutMs: 1500,                             // Fail-open startup deadline (default: 1500ms)
+  shutdownTimeoutMs: 5000,                         // Maximum container termination drain window (default: 5000ms)
+})
+
+// ─── TIER 3: Pipeline & Compliance Hooks (InfoSec & Framework Authors) ──────
+await init({
+  apiKey: 'pls_live_abcdef1234567890',
+  beforeSend: (event) => {
+    // Custom payload transformation or emergency redaction before export
+    return event
+  },
+  beforeBreadcrumb: (crumb) => {
+    // Custom breadcrumb filtering
+    return crumb
+  },
+  sourceMaps: {
+    paths: ['./dist'],                             // Container filesystem path to source maps
+    allowRemote: false,
+  },
+  maxBreadcrumbs: 100,                             // Memory heap buffer limit (default: 100)
+  debug: false,                                    // Diagnostic logging to stdout (default: false)
+  logLevel: 'info',                                // Diagnostic severity ('debug' | 'info' | 'warning' | 'error')
+})
+```
+
+#### Why are `sampleRate`, `enableTracing`, and `dataScrubbing` absent from `init()`?
+Enterprise environments operate dozens or hundreds of microservices. Changing a sampling rate during an incident, enabling a kill switch, or updating a redacted PII field must **never require a code commit, CI/CD pipeline run, or pod redeployment**. The SDK synchronizes these policies dynamically via the Pulse remote control plane.
 
 ---
 
 ## License
 
 ISC © Pulse APM
-

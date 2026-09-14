@@ -20,6 +20,7 @@
  */
 
 export { init } from './core/init.js'
+export { loadEnvFileSafely } from './utils/env-loader.js'
 import { init } from './core/init.js'
 import { flush, shutdown, crashFlush } from './core/lifecycle.js'
 import { captureError } from './capture/captureError.js'

@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pulse APM - Traces Explorer</title>
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+
+  <main class="main-content">
+    <div class="page-header">
+      <div class="page-title-group">
+        <h1>
+          <span>Traces Explorer</span>
+          <span class="badge badge-server" id="total-trace-count">1,778 Traces</span>
+        </h1>
+        <p class="page-subtitle">Distributed trace stream reconstructed from raw SDK event summaries and span trees</p>
+      </div>
+      <div class="filter-bar">
+        <input type="text" id="trace-filter-search" class="filter-input" placeholder="Search Trace ID, operation..." style="width:260px;">
+        <select id="trace-filter-status" class="filter-select">
+          <option value="">All Statuses</option>
+          <option value="error">Has Errors Only</option>
+          <option value="ok">Success / OK Only</option>
+        </select>
+        <select id="trace-filter-type" class="filter-select">
+          <option value="">All Traces (1,778)</option>
+          <option value="http">HTTP Requests Only (16)</option>
+          <option value="standalone">Standalone / DB Ops (1,762)</option>
+        </select>
+        <select id="trace-filter-sort" class="filter-select">
+          <option value="dur-desc">Duration: Slowest First</option>
+          <option value="dur-asc">Duration: Fastest First</option>
+          <option value="spans-desc">Span Count: Most Spans</option>
+          <option value="time-desc">Time: Newest First</option>
+          <option value="time-asc">Time: Oldest First</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- Quick filter pill presets -->
+    <div style="display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap;">
+      <button class="btn btn-secondary" onclick="window.applyPreset('all')" style="font-size:11px; padding:3px 8px;">All (1,778)</button>
+      <button class="btn btn-secondary" onclick="window.applyPreset('http')" style="font-size:11px; padding:3px 8px; border-color:#3b82f6; color:#93c5fd;">⚡ HTTP Requests (16 Multi-Span)</button>
+      <button class="btn btn-secondary" onclick="window.applyPreset('errors')" style="font-size:11px; padding:3px 8px; border-color:#ef4444; color:#fca5a5;">🔥 Traces with Errors</button>
+      <button class="btn btn-secondary" onclick="window.applyPreset('missing-parent')" style="font-size:11px; padding:3px 8px; border-color:#ec4899; color:#f472b6;">⚠️ Missing Parent Span (Signin)</button>
+    </div>
+
+    <div class="panel">
+      <div class="table-responsive">
+        <table class="data-table" id="traces-table">
+          <thead>
+            <tr>
+              <th style="width: 220px;">Trace ID</th>
+              <th>Root Operation</th>
+              <th style="width: 140px;">Duration</th>
+              <th style="width: 110px;">Span Count</th>
+              <th style="width: 110px;">Status</th>
+              <th style="width: 150px;">Service</th>
+              <th style="width: 140px;">Timestamp</th>
+              <th style="width: 80px;">Action</th>
+            </tr>
+          </thead>
+          <tbody id="traces-tbody">
+            <tr><td colspan="8" style="text-align:center;">Loading traces...</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <!-- Pagination Controls -->
+      <div class="panel-header" style="border-top:1px solid var(--border-subtle); border-bottom:none;">
+        <span id="page-indicator" style="font-size:12px; color:var(--text-secondary);">Showing 1-50 of 1,778</span>
+        <div style="display:flex; gap:6px;">
+          <button id="btn-prev-page" class="btn btn-secondary" style="padding:3px 10px; font-size:11px;">Previous</button>
+          <button id="btn-next-page" class="btn btn-secondary" style="padding:3px 10px; font-size:11px;">Next</button>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script type="module">
+    import { renderTopNav, formatDuration, formatTime, escapeHtml } from './app.js';
+    renderTopNav('traces');
+
+    let allTraces = [];
+    let currentPage = 1;
+    const pageSize = 50;
+
+    async function loadTraces() {
+      try {
+        const res = await fetch('data/traces_index.json');
+        allTraces = await res.json();
+        renderTraces();
+      } catch (e) {
+        console.error('Failed to load traces:', e);
+      }
+    }
+
+    function getFilteredTraces() {
+      const q = document.getElementById('trace-filter-search').value.trim().toLowerCase();
+      const status = document.getElementById('trace-filter-status').value;
+      const type = document.getElementById('trace-filter-type').value;
+      const sort = document.getElementById('trace-filter-sort').value;
+
+      let filtered = allTraces.filter(t => {
+        if (status === 'error' && !t.hasError) return false;
+        if (status === 'ok' && t.hasError) return false;
+        if (type === 'http' && t.spanCount < 2) return false;
+        if (type === 'standalone' && t.spanCount > 1) return false;
+        if (q) {
+          const text = `${t.traceId} ${t.name} ${t.service} ${t.route || ''}`.toLowerCase();
+          if (!text.includes(q)) return false;
+        }
+        return true;
+      });
+
+      filtered.sort((a, b) => {
+        if (sort === 'dur-desc') return (b.duration || 0) - (a.duration || 0);
+        if (sort === 'dur-asc') return (a.duration || 0) - (b.duration || 0);
+        if (sort === 'spans-desc') return (b.spanCount || 0) - (a.spanCount || 0);
+        if (sort === 'time-desc') return (b.timestamp || 0) - (a.timestamp || 0);
+        if (sort === 'time-asc') return (a.timestamp || 0) - (b.timestamp || 0);
+        return 0;
+      });
+
+      return filtered;
+    }
+
+    function renderTraces() {
+      const filtered = getFilteredTraces();
+      const total = filtered.length;
+      const totalPages = Math.ceil(total / pageSize) || 1;
+      if (currentPage > totalPages) currentPage = totalPages;
+      if (currentPage < 1) currentPage = 1;
+
+      const startIdx = (currentPage - 1) * pageSize;
+      const pageItems = filtered.slice(startIdx, startIdx + pageSize);
+
+      document.getElementById('total-trace-count').innerText = `${total.toLocaleString()} Traces`;
+      document.getElementById('page-indicator').innerText = `Showing ${total > 0 ? startIdx + 1 : 0}-${Math.min(startIdx + pageSize, total)} of ${total.toLocaleString()}`;
+
+      const tbody = document.getElementById('traces-tbody');
+      if (pageItems.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; padding:24px; color:#9ca3af;">No traces match the selected filters</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = pageItems.map(t => {
+        const isHttp = t.spanCount > 1;
+        const dur = t.duration || 0;
+        return `
+          <tr class="clickable" onclick="window.location.href='trace-detail.html?traceId=${t.traceId}'">
+            <td class="mono" style="font-size:11px;">
+              <a href="trace-detail.html?traceId=${t.traceId}" style="color:#60a5fa; font-weight:600;">${t.traceId}</a>
+            </td>
+            <td>
+              <div style="display:flex; align-items:center; gap:6px;">
+                ${isHttp ? '<span class="badge badge-server">HTTP</span>' : '<span class="badge badge-client">DB</span>'}
+                <strong style="color:#f3f4f6;">${escapeHtml(t.name)}</strong>
+              </div>
+            </td>
+            <td>
+              <div class="latency-cell">
+                <span class="latency-bar ${dur > 5000 ? 'danger' : (dur > 1000 ? 'warn' : '')}" style="width:${Math.min(60, (dur/35000)*60)}px;"></span>
+                <span>${formatDuration(dur)}</span>
+              </div>
+            </td>
+            <td><span class="badge ${isHttp ? 'badge-server' : 'badge-internal'}">${t.spanCount} spans</span></td>
+            <td>
+              <span class="badge ${t.hasError ? 'badge-error' : 'badge-2xx'}">${t.hasError ? 'Error' : 'OK'}</span>
+            </td>
+            <td><span style="font-size:11px; color:#9ca3af;">${escapeHtml(t.service)}</span></td>
+            <td class="mono" style="font-size:11px;">${formatTime(t.timestamp)}</td>
+            <td>
+              <a href="trace-detail.html?traceId=${t.traceId}" class="btn btn-secondary" style="padding:2px 8px; font-size:10px;">
+                Inspect
+              </a>
+            </td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    window.applyPreset = (preset) => {
+      document.getElementById('trace-filter-search').value = '';
+      if (preset === 'all') {
+        document.getElementById('trace-filter-status').value = '';
+        document.getElementById('trace-filter-type').value = '';
+      } else if (preset === 'http') {
+        document.getElementById('trace-filter-status').value = '';
+        document.getElementById('trace-filter-type').value = 'http';
+      } else if (preset === 'errors') {
+        document.getElementById('trace-filter-status').value = 'error';
+        document.getElementById('trace-filter-type').value = '';
+      } else if (preset === 'missing-parent') {
+        document.getElementById('trace-filter-search').value = 'e1150d3ab63d19892bdd2c731a5ef0e9';
+      }
+      currentPage = 1;
+      renderTraces();
+    };
+
+    document.getElementById('trace-filter-search').addEventListener('input', () => { currentPage = 1; renderTraces(); });
+    document.getElementById('trace-filter-status').addEventListener('change', () => { currentPage = 1; renderTraces(); });
+    document.getElementById('trace-filter-type').addEventListener('change', () => { currentPage = 1; renderTraces(); });
+    document.getElementById('trace-filter-sort').addEventListener('change', () => { currentPage = 1; renderTraces(); });
+
+    document.getElementById('btn-prev-page').addEventListener('click', () => {
+      if (currentPage > 1) {
+        currentPage--;
+        renderTraces();
+      }
+    });
+
+    document.getElementById('btn-next-page').addEventListener('click', () => {
+      currentPage++;
+      renderTraces();
+    });
+
+    loadTraces();
+  </script>
+</body>
+</html>

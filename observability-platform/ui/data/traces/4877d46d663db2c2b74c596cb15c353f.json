@@ -1,0 +1,189 @@
+{
+  "traceId": "4877d46d663db2c2b74c596cb15c353f",
+  "eventId": "trace_4877d46d663db2c2b74c596cb15c353f",
+  "rootSpan": {
+    "spanId": "80a48fc7fffed935",
+    "traceId": "4877d46d663db2c2b74c596cb15c353f",
+    "name": "GET",
+    "kind": "client",
+    "startTime": 1789315800074,
+    "endTime": 1789315801394.0142,
+    "duration": 1320.0142,
+    "exclusiveDuration": 1320.01416015625,
+    "status": "unset",
+    "attributes": {
+      "http.request.method": "GET",
+      "server.address": "api.cloudinary.com",
+      "server.port": 443,
+      "url.full": "https://REDACTED:REDACTED@api.cloudinary.com/v1_1/dnctmzmmx/ping",
+      "http.response.status_code": 200,
+      "network.peer.address": "34.198.231.109",
+      "network.peer.port": 443,
+      "network.protocol.version": "1.1"
+    },
+    "events": [],
+    "links": [],
+    "children": []
+  },
+  "spanCount": 1,
+  "totalDuration": 1320.0142,
+  "isPartial": false,
+  "metadata": {
+    "sdkName": "@pulse-apm/node",
+    "sdkVersion": "8.1.2",
+    "applicationName": "paypalproject",
+    "applicationVersion": "1.0.0",
+    "projectId": "cubicle-project-001",
+    "environment": "production",
+    "release": "8.0.0"
+  },
+  "sessionId": "df729728-b2fd-410b-a23b-821423e205d2",
+  "tailSampled": false,
+  "hasError": false,
+  "isSlow": true,
+  "timestamp": 1789315801497,
+  "tags": {},
+  "request": null,
+  "errors": [],
+  "logs": [],
+  "waterfall": {
+    "traceId": "4877d46d663db2c2b74c596cb15c353f",
+    "roots": [
+      {
+        "spanId": "80a48fc7fffed935",
+        "originalMissingId": null,
+        "parentSpanId": null,
+        "name": "GET",
+        "kind": "client",
+        "status": "unset",
+        "statusMessage": null,
+        "startTime": 1789315800074,
+        "endTime": 1789315801394.0142,
+        "duration": 1320.0142,
+        "exclusiveDuration": 1320.01416015625,
+        "offsetMs": 0,
+        "offsetPercent": 0,
+        "durationPercent": 100,
+        "attributes": {
+          "http.request.method": "GET",
+          "server.address": "api.cloudinary.com",
+          "server.port": 443,
+          "url.full": "https://REDACTED:REDACTED@api.cloudinary.com/v1_1/dnctmzmmx/ping",
+          "http.response.status_code": 200,
+          "network.peer.address": "34.198.231.109",
+          "network.peer.port": 443,
+          "network.protocol.version": "1.1"
+        },
+        "events": [],
+        "links": [],
+        "isVirtualMissingParent": false,
+        "isMissingParent": false,
+        "isOrphan": false,
+        "children": []
+      }
+    ],
+    "displayList": [
+      {
+        "spanId": "80a48fc7fffed935",
+        "originalMissingId": null,
+        "parentSpanId": null,
+        "name": "GET",
+        "kind": "client",
+        "status": "unset",
+        "statusMessage": null,
+        "startTime": 1789315800074,
+        "endTime": 1789315801394.0142,
+        "duration": 1320.0142,
+        "exclusiveDuration": 1320.01416015625,
+        "offsetMs": 0,
+        "offsetPercent": 0,
+        "durationPercent": 100,
+        "attributes": {
+          "http.request.method": "GET",
+          "server.address": "api.cloudinary.com",
+          "server.port": 443,
+          "url.full": "https://REDACTED:REDACTED@api.cloudinary.com/v1_1/dnctmzmmx/ping",
+          "http.response.status_code": 200,
+          "network.peer.address": "34.198.231.109",
+          "network.peer.port": 443,
+          "network.protocol.version": "1.1"
+        },
+        "events": [],
+        "links": [],
+        "isVirtualMissingParent": false,
+        "isMissingParent": false,
+        "isOrphan": false,
+        "children": [],
+        "displayDepth": 0,
+        "rowId": "80a48fc7fffed935",
+        "hasChildren": false
+      }
+    ],
+    "traceStartTime": 1789315800074,
+    "traceEndTime": 1789315801394.0142,
+    "totalDuration": 1320.0142,
+    "missingParents": [],
+    "missingParentNodesCount": 0,
+    "spanCount": 1
+  },
+  "spans": [
+    {
+      "spanId": "80a48fc7fffed935",
+      "traceId": "4877d46d663db2c2b74c596cb15c353f",
+      "parentSpanId": null,
+      "name": "GET",
+      "kind": "client",
+      "startTime": 1789315800074,
+      "endTime": 1789315801394.0142,
+      "duration": 1320.0142,
+      "exclusiveDuration": 1320.01416015625,
+      "status": "unset",
+      "statusMessage": null,
+      "attributes": {
+        "http.request.method": "GET",
+        "server.address": "api.cloudinary.com",
+        "server.port": 443,
+        "url.full": "https://REDACTED:REDACTED@api.cloudinary.com/v1_1/dnctmzmmx/ping",
+        "http.response.status_code": 200,
+        "network.peer.address": "34.198.231.109",
+        "network.peer.port": 443,
+        "network.protocol.version": "1.1"
+      },
+      "events": [],
+      "links": [],
+      "metadata": {
+        "sdkName": "@pulse-apm/node",
+        "sdkVersion": "8.1.2",
+        "applicationName": "paypalproject",
+        "applicationVersion": "1.0.0",
+        "projectId": "cubicle-project-001",
+        "environment": "production",
+        "release": "8.0.0"
+      },
+      "sessionId": "df729728-b2fd-410b-a23b-821423e205d2",
+      "requestId": "cb88af35-66ee-41bd-85e3-fdec4f80d1dd",
+      "tags": {
+        "framework": "express"
+      },
+      "isSampled": true,
+      "traceFlags": 1,
+      "database": null,
+      "errorCount": 0,
+      "logCount": 0,
+      "_provenance": {
+        "category": "spans",
+        "filename": "span_1789315802044_span_80a48fc7fffed935.json",
+        "relativePath": "cubicle/spans/span_1789315802044_span_80a48fc7fffed935.json",
+        "sizeBytes": 1196,
+        "mtime": "2026-09-13T16:10:02.191Z"
+      }
+    }
+  ],
+  "_provenance": {
+    "category": "traces",
+    "filename": "trace_1789315801729_trace_4877d46d663db2c2b74c596cb15c353f.json",
+    "relativePath": "cubicle/traces/trace_1789315801729_trace_4877d46d663db2c2b74c596cb15c353f.json",
+    "sizeBytes": 1339,
+    "mtime": "2026-09-13T16:10:01.745Z"
+  }
+}
