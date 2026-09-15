@@ -8,4 +8,4 @@
 /** SDK package name used in telemetry, tracers, and exporters. */
 export const SDK_NAME = '@pulse-apm/node';
 /** SDK semantic version — corresponds to increments in `package.json`. */
-export const SDK_VERSION = '8.1.2';
+export const SDK_VERSION = '8.4.1';

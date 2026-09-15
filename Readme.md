@@ -2,8 +2,8 @@
 
 > Enterprise-grade observability and distributed tracing SDK for Node.js applications, built on OpenTelemetry with automated database interception, truthful timing attribution, adaptive sampling, and detached background execution support.
 
-[![Version](https://img.shields.io/badge/version-8.3.12-blue.svg)](package.json)
-[![Tests](https://img.shields.io/badge/tests-459%20passing-brightgreen.svg)]()
+[![Version](https://img.shields.io/badge/version-8.4.1-blue.svg)](package.json)
+[![Tests](https://img.shields.io/badge/tests-459%20passing%20(623%20with%20harness)-brightgreen.svg)]()
 [![Node](https://img.shields.io/badge/node-%3E%3D18.19.0-green.svg)]()
 [![License](https://img.shields.io/badge/license-ISC-blue.svg)](package.json)
 
@@ -44,15 +44,16 @@
 
 ## Features
 
-- **Turnkey Auto-Instrumentation**: Automatically instruments HTTP/HTTPS, Express, Fastify, PostgreSQL (`pg`), Redis (`redis`, `ioredis`), MongoDB, MySQL2, Prisma, BullMQ, Axios, Undici, and `fetch`.
-- **Truthful Timing & Exclusive Durations**: Zero synthetic duration clamping. High-resolution monotonic interval calculation separates Node.js CPU execution time from database and network wait time.
+- **Turnkey Auto-Instrumentation**: Automatically instruments HTTP/HTTPS, Express, Fastify, PostgreSQL (`pg`), Redis (`redis`, `ioredis`), MongoDB, Mongoose ODM, MySQL2, Prisma, BullMQ, Nodemailer, Axios, Undici, GraphQL, and native `fetch`.
+- **Truthful Timing & Exclusive Durations**: Zero synthetic duration clamping with 1.0ms event-loop jitter tolerance. High-resolution monotonic interval calculation separates Node.js CPU execution time from database and network wait time, eliminating negative exclusive durations.
 - **Detached Background Traces**: First-class support for post-response asynchronous tasks (emails, webhooks, queue publish) via causal `SpanLink` without leaking HTTP trace memory.
 - **Dynamic Adaptive Sampling**: Scales non-error trace volume dynamically under system pressure (`CRITICAL`: 10%, `PRESSURED`: 50%, `ELEVATED`: 80%) to optimize ingestion costs in high-throughput services (>10,000 RPS) while **guaranteeing 100% error preservation**.
-- **Zero-Dependency Native `.env` Discovery**: Automatically loads your host project's `.env` for endpoint and control-plane configuration without external dependencies.
+- **Zero-Dependency Native `.env` Discovery**: Automatically loads your host project's `.env` for endpoint and control-plane configuration without external dependencies (`PULSE_ENDPOINT`, `PULSE_API_URL`, `BACKEND_URL`, `PULSE_API_KEY`).
 - **Ultra-Fast Sub-10ms Startup**: Bypasses IPv6 DNS resolution fallback delays with automatic origin normalization, HTTP keep-alive, and Redis lookup cache alignment.
 - **Resilient Pipeline & Orphan Recovery**: Cycle-safe bounded orphan recovery grafts unvisited child subtrees onto root traces; LRU trace deduplication stops duplicate emissions; startup index noise is suppressed.
 - **Deep Recursive PII Sanitization**: Masks credit card numbers, passwords, JWTs, JSON string attributes, URL basic authentication credentials, and `set-cookie` headers.
 - **Hardened Graceful Shutdown**: Automatic `SIGTERM`/`SIGINT` listeners drain in-flight batches across all transport routes before container termination.
+- **Multi-Route Multiplexed Transport**: Dedicated priority queues and batch managers across 10 distinct telemetry routes with automatic HTTP 429 quota exhaustion handling and self-recovery.
 
 ---
 
@@ -332,11 +333,15 @@ When auto-instrumentation is enabled, you **do not need to write manual spans** 
 | Technology | Supported Clients | What is Captured |
 |---|---|---|
 | **PostgreSQL** | `pg`, `pg-pool` | Sanitized SQL (`db.statement`), table, query latency, errors |
-| **Redis** | `redis` (v4+), `ioredis` (v4, v5) | Command name, sanitized key, pipelining, multi/exec blocks |
-| **MongoDB** | `mongodb` (v4, v5, v6), `mongoose` | Collection, operation (`find`, `update`), latency |
+| **Redis** | `redis` (v4+), `ioredis` (v4, v5) | Command name, sanitized key, pipelining, multi/exec blocks, credentials redacted |
+| **MongoDB** | `mongodb` (v4, v5, v6) | Collection, operation (`find`, `update`), latency, startup index command filtering |
+| **Mongoose ODM** | `mongoose` (v5, v6, v7, v8) | Model queries, `.exec()`, thenables, deferred connection buffering detection (`db.mongodb.buffering`), deduplicated against driver |
 | **MySQL** | `mysql2` | Sanitized SQL, query latency, connection pool events |
-| **Prisma** | `@prisma/client` | Query engine operations, query latency |
-| **HTTP Clients**| `axios`, native `http`/`https`, `fetch`, `undici` | Outgoing URL, status code, latency, W3C headers injected |
+| **Prisma** | `@prisma/client` | Query engine operations, query latency, interactive transactions via `$extends(pulsePrismaExtension())` |
+| **Message Queues** | `bullmq` (v2 - v5) | Job creation, execution latency, queue name, worker delays |
+| **Transactional Email** | `nodemailer` | Outbound dispatch latency, transport, subject, recipient domain (PII-protected) |
+| **GraphQL** | `graphql` | Query & mutation execution, resolver latency, document parsing |
+| **HTTP Clients**| `axios`, native `http`/`https`, `fetch`, `undici` | Outgoing URL, status code, latency, W3C TraceContext headers injected |
 
 In every request trace, the SDK automatically presents:
 1. **Total query count** (e.g. 4 PostgreSQL queries + 2 Redis commands).
