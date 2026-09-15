@@ -84,8 +84,9 @@ ALREADY_SET=should_not_overwrite
         assert.equal(requestCaptured, true, 'Init request sent');
         assert.equal(capturedApiKeyHeader, 'env-api-key-test-123', 'API key sent from environment');
     });
-    it('5. init() accepts endpoint and baseUrl directly in options without validation error', async () => {
+    it('5. init() resolves endpoint from PULSE_ENDPOINT environment variable without code overrides', async () => {
         let capturedUrl = '';
+        process.env['PULSE_ENDPOINT'] = 'http://127.0.0.1:3000';
         globalThis.fetch = (async (url) => {
             capturedUrl = String(url);
             return new Response(JSON.stringify({
@@ -106,8 +107,8 @@ ALREADY_SET=should_not_overwrite
         });
         await init({
             apiKey: 'test-options-key',
-            endpoint: 'http://127.0.0.1:3000',
         });
-        assert.ok(capturedUrl.startsWith('http://127.0.0.1:3000/v1/init'), 'Requested endpoint specified in options');
+        assert.ok(capturedUrl.startsWith('http://127.0.0.1:3000/v1/init'), 'Requested endpoint resolved from PULSE_ENDPOINT environment');
+        delete process.env['PULSE_ENDPOINT'];
     });
 });

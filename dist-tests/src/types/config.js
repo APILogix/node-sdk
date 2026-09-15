@@ -60,7 +60,6 @@ export function isMemoryLimit(mem) {
 export const sdkInitOptionsSchema = z.object({
     apiKey: z.string().trim().min(1, 'apiKey is required'),
     initTimeoutMs: z.number().int().min(100).max(30000).optional(),
-    endpoint: z.string().trim().min(1).optional(),
     handleSignals: z.boolean().optional(),
     applicationName: z.string().trim().min(1).optional(),
     applicationVersion: z.string().trim().min(1).optional(),

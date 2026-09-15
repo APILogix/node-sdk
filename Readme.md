@@ -184,13 +184,14 @@ PULSE_ENDPOINT=http://127.0.0.1:3000
 
 The SDK resolves your backend ingestion endpoint using the following order of precedence:
 
-1. `endpoint` option passed to `init({ apiKey, endpoint: '...' })`
-2. `PULSE_ENDPOINT` environment variable (from `.env` or system)
-3. `PULSE_API_URL` environment variable
-4. `PULSE_BASE_URL` environment variable
-5. `BACKEND_URL` environment variable
-6. `SDK_BASE_URL` environment variable
-7. Default production origin (`http://127.0.0.1:5000`)
+1. `PULSE_ENDPOINT` environment variable (from `.env` or system environment)
+2. `PULSE_API_URL` environment variable
+3. `PULSE_BASE_URL` environment variable
+4. `BACKEND_URL` environment variable
+5. `SDK_BASE_URL` environment variable
+6. Default production origin (`http://127.0.0.1:5000`)
+
+> **Security & Decoupling:** Backend endpoints are strictly resolved via environment variables or the SDK's built-in origin. Endpoints cannot be overridden via `init()` arguments in code, ensuring infrastructure routing remains decoupled from application business logic.
 
 ---
 
@@ -595,7 +596,7 @@ await Pulse.init('pls_live_your_api_key_here')
 // 2. Options object (Recommended for custom infrastructure/hooks)
 await Pulse.init({
   apiKey: process.env.PULSE_API_KEY!,
-  endpoint: 'https://collector.internal.corp',
+  debug: false,
 })
 
 // 3. Zero-Code ESM (via package.json or node CLI with PULSE_API_KEY in .env)
@@ -607,7 +608,6 @@ await Pulse.init({
 | Option | Type | Default | What You Should Do | What The SDK Does Internally |
 |---|---|---|---|---|
 | **`apiKey`** | `string` | *Required* | Pass your Pulse APM project key, or set `PULSE_API_KEY` in your `.env`. | Authenticates with the control plane via `/v1/init` to download project identity, feature flags, entitlements, and sampling rules. |
-| **`endpoint`** | `string` | `http://127.0.0.1:5000` or `PULSE_ENDPOINT` | Specify if using an internal collector, VPC proxy, on-premise backend, or mock server. | Sets the base URL for control plane config negotiation (`/v1/init`, `/v1/sdk-config`) and transport data ingestion routes. |
 | **`initTimeoutMs`** | `number` | `1500` | Adjust if your service boots in high-latency network environments (min: `100`, max: `30000`). | **Fail-Open Deadline:** If the backend does not respond within this window, the SDK aborts initialization and allows your host application to boot normally without telemetry. |
 | **`handleSignals`** | `boolean` | `true` | Leave `true` in production containers (Docker/Kubernetes). Set `false` only if your framework manages `SIGTERM`/`SIGINT`. | Intercepts `SIGTERM` and `SIGINT` signals to flush queued spans and batches before the container process exits. |
 | **`shutdownTimeoutMs`** | `number` | `5000` | Set according to your Kubernetes `terminationGracePeriodSeconds` (min: `1000`, max: `60000`). | Maximum time allocated for in-flight batches across all transport routes to flush during graceful shutdown. |

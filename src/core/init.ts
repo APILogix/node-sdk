@@ -118,7 +118,6 @@ async function initialize(options: SDKInitOptions): Promise<Readonly<RemoteConfi
     const remoteClient = new RemoteConfigClient({
       apiKey: options.apiKey,
       initTimeoutMs: options.initTimeoutMs,
-      baseUrl: options.endpoint,
     })
     const response = await remoteClient.initialize()
     const config = manager.initialize(remoteClient, response.config)

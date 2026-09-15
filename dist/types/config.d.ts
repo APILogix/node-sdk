@@ -442,8 +442,6 @@ export interface SDKInitOptions {
     readonly apiKey: string;
     /** Startup request deadline in milliseconds (default: 1500). Failure leaves telemetry disabled. */
     readonly initTimeoutMs?: number | undefined;
-    /** Custom backend ingestion / control plane endpoint (overrides default or PULSE_ENDPOINT). */
-    readonly endpoint?: string | undefined;
     /** Whether to automatically register SIGTERM/SIGINT listeners for graceful shutdown (default: true). */
     readonly handleSignals?: boolean | undefined;
     readonly applicationName?: string | undefined;
@@ -466,7 +464,6 @@ export interface SDKInitOptions {
 export declare const sdkInitOptionsSchema: z.ZodObject<{
     apiKey: z.ZodString;
     initTimeoutMs: z.ZodOptional<z.ZodNumber>;
-    endpoint: z.ZodOptional<z.ZodString>;
     handleSignals: z.ZodOptional<z.ZodBoolean>;
     applicationName: z.ZodOptional<z.ZodString>;
     applicationVersion: z.ZodOptional<z.ZodString>;
