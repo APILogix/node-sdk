@@ -198,24 +198,17 @@ The SDK resolves your backend ingestion endpoint using the following order of pr
 
 In services handling high throughput (>10,000 RPS), static trace sampling can result in high telemetry ingestion costs and risk event-loop lag during sudden traffic spikes.
 
-To optimize ingestion volume while safeguarding system performance, enable **Adaptive Sampling**:
+Pulse APM provides **Dynamic Adaptive Sampling** governed entirely via the **Pulse Control Plane / Remote Configuration** (`sampling.adaptive = true`).
 
-```typescript
-import { init } from '@pulse-apm/node'
+> **Enterprise Zero-Code Governance:** You do **not** need to configure or hardcode sampling flags in your application code. Your operations or SRE team enables and tunes adaptive sampling dynamically from the Pulse dashboard without code changes or pod redeployments.
 
-await init({
-  apiKey: process.env.PULSE_API_KEY!,
-  adaptiveSampling: true, // Enables dynamic system pressure scaling
-})
-```
-
-### How Adaptive Sampling Works:
-* Continuously evaluates system pressure (`adaptivePressure`) by monitoring heap memory utilization and event-loop lag:
-  * **`HEALTHY`**: Retains 100% of the remotely configured sample rate.
+### How Adaptive Sampling Works Under the Hood:
+* The SDK continuously evaluates system pressure (`adaptivePressure`) by monitoring heap memory utilization and event-loop lag:
+  * **`HEALTHY`**: Retains 100% of the remotely configured baseline sample rate.
   * **`ELEVATED`**: Dynamically throttles non-error telemetry to at most **80%** of the configured rate.
   * **`PRESSURED`**: Dynamically throttles non-error telemetry to at most **50%** of the configured rate.
   * **`CRITICAL`**: Dynamically throttles non-error telemetry to at most **10%** of the configured rate (`reason: 'adaptive_pressure'`).
-* **Non-Negotiable Error Guarantee**: Errors (`eventType === 'errors'`) are **100% exempt** from adaptive reduction. Even under `CRITICAL` memory/lag pressure, 100% of errors are captured and dispatched.
+* **Non-Negotiable Error Guarantee**: Errors (`eventType === 'errors'`) are **100% exempt** from adaptive reduction. Even under `CRITICAL` memory or event-loop pressure, 100% of errors are captured and dispatched.
 
 ---
 
@@ -583,51 +576,59 @@ The SDK includes several enterprise pipeline protections:
 | `flush(timeoutMs)` | Force-flushes in-flight spans and events. | `await flush(1000)` |
 | `shutdown(timeoutMs)` | Drains telemetry and cleanly releases resources. | `await shutdown(2000)` |
 
-### `init()` Options Reference (3-Tier Enterprise Structure)
+### `init(options)` Complete Options Reference
 
-In enterprise architectures, **runtime telemetry policy** (sampling rates, kill switches, PII blacklists, transport batching) is centrally governed by the remote control plane. Options passed to `init()` strictly control **local process-level integration concerns**.
+In enterprise observability architectures, **runtime telemetry policy** (baseline sampling rates, dynamic adaptive sampling rules, kill switches, PII scrubbing blacklists, transport batch sizes, rate limits) is **centrally governed by the Pulse APM remote control plane**.
+
+Options passed to `init()` strictly govern **local process-level integration and runtime lifecycle concerns**.
+
+#### Invocation Styles
+
+Pulse supports three ergonomic ways to initialize:
 
 ```typescript
-import { init } from '@pulse-apm/node'
+import { Pulse, init } from '@pulse-apm/node'
 
-// ─── TIER 1: Core Configuration (Standard Production Usage) ─────────────────
-await init({
-  apiKey: 'pls_live_abcdef1234567890', // Required: Project authentication key
+// 1. Shorthand string (Minimalist)
+await Pulse.init('pls_live_your_api_key_here')
+
+// 2. Options object (Recommended for custom infrastructure/hooks)
+await Pulse.init({
+  apiKey: process.env.PULSE_API_KEY!,
+  endpoint: 'https://collector.internal.corp',
 })
 
-// ─── TIER 2: Infrastructure & Lifecycle (DevOps, K8s & High-Throughput) ────
-await init({
-  apiKey: 'pls_live_abcdef1234567890',
-  endpoint: 'http://internal-collector.corp:3000', // Custom VPC forward-proxy / backend origin
-  adaptiveSampling: true,                          // Dynamic rate scaling under load (>10k RPS)
-  handleSignals: true,                             // Intercept SIGTERM/SIGINT for container drain (default: true)
-  initTimeoutMs: 1500,                             // Fail-open startup deadline (default: 1500ms)
-  shutdownTimeoutMs: 5000,                         // Maximum container termination drain window (default: 5000ms)
-})
-
-// ─── TIER 3: Pipeline & Compliance Hooks (InfoSec & Framework Authors) ──────
-await init({
-  apiKey: 'pls_live_abcdef1234567890',
-  beforeSend: (event) => {
-    // Custom payload transformation or emergency redaction before export
-    return event
-  },
-  beforeBreadcrumb: (crumb) => {
-    // Custom breadcrumb filtering
-    return crumb
-  },
-  sourceMaps: {
-    paths: ['./dist'],                             // Container filesystem path to source maps
-    allowRemote: false,
-  },
-  maxBreadcrumbs: 100,                             // Memory heap buffer limit (default: 100)
-  debug: false,                                    // Diagnostic logging to stdout (default: false)
-  logLevel: 'info',                                // Diagnostic severity ('debug' | 'info' | 'warning' | 'error')
-})
+// 3. Zero-Code ESM (via package.json or node CLI with PULSE_API_KEY in .env)
+// node --import @pulse-apm/node/register server.js
 ```
 
-#### Why are `sampleRate`, `enableTracing`, and `dataScrubbing` absent from `init()`?
-Enterprise environments operate dozens or hundreds of microservices. Changing a sampling rate during an incident, enabling a kill switch, or updating a redacted PII field must **never require a code commit, CI/CD pipeline run, or pod redeployment**. The SDK synchronizes these policies dynamically via the Pulse remote control plane.
+#### Exhaustive Options Specification
+
+| Option | Type | Default | What You Should Do | What The SDK Does Internally |
+|---|---|---|---|---|
+| **`apiKey`** | `string` | *Required* | Pass your Pulse APM project key, or set `PULSE_API_KEY` in your `.env`. | Authenticates with the control plane via `/v1/init` to download project identity, feature flags, entitlements, and sampling rules. |
+| **`endpoint`** | `string` | `http://127.0.0.1:5000` or `PULSE_ENDPOINT` | Specify if using an internal collector, VPC proxy, on-premise backend, or mock server. | Sets the base URL for control plane config negotiation (`/v1/init`, `/v1/sdk-config`) and transport data ingestion routes. |
+| **`initTimeoutMs`** | `number` | `1500` | Adjust if your service boots in high-latency network environments (min: `100`, max: `30000`). | **Fail-Open Deadline:** If the backend does not respond within this window, the SDK aborts initialization and allows your host application to boot normally without telemetry. |
+| **`handleSignals`** | `boolean` | `true` | Leave `true` in production containers (Docker/Kubernetes). Set `false` only if your framework manages `SIGTERM`/`SIGINT`. | Intercepts `SIGTERM` and `SIGINT` signals to flush queued spans and batches before the container process exits. |
+| **`shutdownTimeoutMs`** | `number` | `5000` | Set according to your Kubernetes `terminationGracePeriodSeconds` (min: `1000`, max: `60000`). | Maximum time allocated for in-flight batches across all transport routes to flush during graceful shutdown. |
+| **`applicationName`** | `string` | Detected from `package.json` | Specify only if you want to override the `name` field in your `package.json`. | Emitted in trace resource attributes (`service.name`) for distributed service catalog identification. |
+| **`applicationVersion`** | `string` | Detected from `package.json` | Specify only if you want to override the `version` field in your `package.json`. | Emitted in trace resource attributes (`service.version`) for release tracking and regression detection. |
+| **`packageJsonPath`** | `string` | `process.cwd()/package.json` | Provide if your `package.json` is located in a non-standard subfolder or monorepo root. | Resolves application metadata (`name`, `version`, `dependencies`) during bootstrap. |
+| **`maxBreadcrumbs`** | `number` | `100` | Tune between `0` and `1000` depending on memory constraints. | Allocates an in-memory ring buffer for contextual breadcrumbs attached to error events. |
+| **`debug`** | `boolean` | `false` | Set `true` during local development or troubleshooting to inspect SDK internal activity. | Logs detailed telemetry lifecycle events (batch dispatch, hook attachment, network responses) to stdout. |
+| **`logLevel`** | `'debug' \| 'info' \| 'warning' \| 'error' \| 'fatal'` | `'info'` | Set minimum log level for SDK internal diagnostics. | Filters stdout diagnostic output emitted by the SDK's internal logger. |
+| **`beforeSend`** | `(event) => event \| null \| Promise<event \| null>` | `undefined` | Inspect, enrich, or redact events before dispatch. Return `null` to drop an event. | Executes synchronously or asynchronously in the event pipeline immediately before queuing for export. |
+| **`beforeBreadcrumb`** | `(crumb) => crumb \| null` | `undefined` | Filter or sanitize breadcrumbs before recording. Return `null` to drop a breadcrumb. | Executes synchronously before a breadcrumb is committed to the active context ring buffer. |
+| **`plugins`** | `SDKPlugin[]` | `[]` | Provide custom plugins implementing Pulse lifecycle extension points. | Initializes modular extensions with access to the SDK client lifecycle and event pipeline. |
+| **`eventProcessors`** | `EventProcessor[]` | `[]` | Supply pre-pipeline custom transformers. | Runs sequential transformation passes on raw events prior to pipeline validation. |
+| **`sourceMaps`** | `object` | `undefined` | Configure `{ paths: ['./dist'], allowRemote: false }` for production TypeScript/bundled apps. | Loads local `.map` files to map production minified stack frames back to original source files. |
+
+#### Why are `sampleRate`, `adaptiveSampling`, and `killswitches` absent from `init()`?
+
+In enterprise microservice ecosystems (often running 50–500+ pods across multiple clusters), telemetry policy must **never be coupled to code commits, build pipelines, or container redeployments**:
+1. **Zero-Downtime Incident Response**: If a downstream database experiences an outage or an ingestion cluster faces heavy load, SRE teams can enable adaptive sampling, drop sample rates, or engage subsystem kill switches **instantly** via the Pulse APM dashboard.
+2. **Centralized Ingestion Governance**: Sampling rates and volume limits are tuned centrally to match organization ingestion quotas, eliminating configuration drift across different developer teams.
+3. **Automatic System Protection**: When `sampling.adaptive` is enabled remotely, the SDK's `adaptivePressure` engine automatically monitors host event-loop lag and heap memory, dynamically throttling non-error traces while **guaranteeing 100% error capture**.
 
 ---
 

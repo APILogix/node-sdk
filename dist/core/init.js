@@ -114,8 +114,7 @@ async function initialize(options) {
         client.setInitResponse(response);
         client.applyRemoteIdentity(config);
         const killswitchEngine = KillswitchEngine.initialize(config.killswitches);
-        const isAdaptive = options.adaptiveSampling ??
-            config.sampling.adaptive ??
+        const isAdaptive = config.sampling.adaptive ??
             config.features.adaptiveSampling ??
             false;
         const samplingEngine = SamplingEngine.initialize(config.sampling, {

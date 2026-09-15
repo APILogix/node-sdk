@@ -128,7 +128,6 @@ async function initialize(options: SDKInitOptions): Promise<Readonly<RemoteConfi
 
     const killswitchEngine = KillswitchEngine.initialize(config.killswitches)
     const isAdaptive =
-      options.adaptiveSampling ??
       config.sampling.adaptive ??
       config.features.adaptiveSampling ??
       false

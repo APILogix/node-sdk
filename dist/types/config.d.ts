@@ -446,8 +446,6 @@ export interface SDKInitOptions {
     readonly endpoint?: string | undefined;
     /** Whether to automatically register SIGTERM/SIGINT listeners for graceful shutdown (default: true). */
     readonly handleSignals?: boolean | undefined;
-    /** Enable dynamic adaptive sampling based on system pressure (default: false). */
-    readonly adaptiveSampling?: boolean | undefined;
     readonly applicationName?: string | undefined;
     readonly applicationVersion?: string | undefined;
     readonly packageJsonPath?: string | undefined;
@@ -470,7 +468,6 @@ export declare const sdkInitOptionsSchema: z.ZodObject<{
     initTimeoutMs: z.ZodOptional<z.ZodNumber>;
     endpoint: z.ZodOptional<z.ZodString>;
     handleSignals: z.ZodOptional<z.ZodBoolean>;
-    adaptiveSampling: z.ZodOptional<z.ZodBoolean>;
     applicationName: z.ZodOptional<z.ZodString>;
     applicationVersion: z.ZodOptional<z.ZodString>;
     packageJsonPath: z.ZodOptional<z.ZodString>;

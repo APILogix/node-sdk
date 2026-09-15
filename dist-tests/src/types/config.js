@@ -62,7 +62,6 @@ export const sdkInitOptionsSchema = z.object({
     initTimeoutMs: z.number().int().min(100).max(30000).optional(),
     endpoint: z.string().trim().min(1).optional(),
     handleSignals: z.boolean().optional(),
-    adaptiveSampling: z.boolean().optional(),
     applicationName: z.string().trim().min(1).optional(),
     applicationVersion: z.string().trim().min(1).optional(),
     packageJsonPath: z.string().trim().min(1).optional(),
