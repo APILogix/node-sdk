@@ -156,7 +156,7 @@ export function fastifyPulsePlugin(
 
       const store = createContextStore(
         requestId,
-        options.maxBreadcrumbs ?? client.options?.maxBreadcrumbs ?? 100,
+        options.maxBreadcrumbs ?? 100,
         {
           userId,
           sessionId,

@@ -85,7 +85,7 @@ export function monitorMiddleware(options = {}) {
             getUrl: { value: () => req.originalUrl || req.url, enumerable: false, configurable: true, writable: true },
             getRoute: { value: () => normalizedRoute(req), enumerable: false, configurable: true, writable: true },
         });
-        const store = createContextStore(requestId, options.maxBreadcrumbs ?? client.options?.maxBreadcrumbs ?? 100, {
+        const store = createContextStore(requestId, options.maxBreadcrumbs ?? 100, {
             userId,
             sessionId,
             extra,

@@ -447,7 +447,6 @@ export interface SDKInitOptions {
     readonly applicationName?: string | undefined;
     readonly applicationVersion?: string | undefined;
     readonly packageJsonPath?: string | undefined;
-    readonly maxBreadcrumbs?: number | undefined;
     readonly plugins?: readonly SDKPlugin[] | undefined;
     readonly eventProcessors?: readonly EventProcessor[] | undefined;
     readonly beforeBreadcrumb?: BreadcrumbProcessor | undefined;
@@ -468,7 +467,6 @@ export declare const sdkInitOptionsSchema: z.ZodObject<{
     applicationName: z.ZodOptional<z.ZodString>;
     applicationVersion: z.ZodOptional<z.ZodString>;
     packageJsonPath: z.ZodOptional<z.ZodString>;
-    maxBreadcrumbs: z.ZodOptional<z.ZodNumber>;
     plugins: z.ZodOptional<z.ZodReadonly<z.ZodArray<z.ZodCustom<SDKPlugin, SDKPlugin>>>>;
     eventProcessors: z.ZodOptional<z.ZodReadonly<z.ZodArray<z.ZodCustom<EventProcessor, EventProcessor>>>>;
     beforeBreadcrumb: z.ZodOptional<z.ZodCustom<BreadcrumbProcessor, BreadcrumbProcessor>>;

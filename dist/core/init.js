@@ -97,7 +97,7 @@ async function initialize(options) {
     const logger = getLogger();
     const manager = ConfigManager.getInstance();
     client.setOptions(options);
-    client.initBreadcrumbs(options.maxBreadcrumbs ?? 100);
+    client.initBreadcrumbs(100);
     logger.info('Telemetry initialization started', {
         endpoint: '/v1/init',
     });

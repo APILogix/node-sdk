@@ -64,7 +64,6 @@ export const sdkInitOptionsSchema = z.object({
     applicationName: z.string().trim().min(1).optional(),
     applicationVersion: z.string().trim().min(1).optional(),
     packageJsonPath: z.string().trim().min(1).optional(),
-    maxBreadcrumbs: z.number().int().min(0).max(1000).optional(),
     plugins: z.array(z.custom()).readonly().optional(),
     eventProcessors: z.array(z.custom()).readonly().optional(),
     beforeBreadcrumb: z.custom(value => typeof value === 'function').optional(),

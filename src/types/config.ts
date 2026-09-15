@@ -592,7 +592,6 @@ export interface SDKInitOptions {
   readonly applicationName?: string | undefined
   readonly applicationVersion?: string | undefined
   readonly packageJsonPath?: string | undefined
-  readonly maxBreadcrumbs?: number | undefined
   readonly plugins?: readonly SDKPlugin[] | undefined
   readonly eventProcessors?: readonly EventProcessor[] | undefined
   readonly beforeBreadcrumb?: BreadcrumbProcessor | undefined
@@ -616,7 +615,6 @@ export const sdkInitOptionsSchema = z.object({
   applicationName: z.string().trim().min(1).optional(),
   applicationVersion: z.string().trim().min(1).optional(),
   packageJsonPath: z.string().trim().min(1).optional(),
-  maxBreadcrumbs: z.number().int().min(0).max(1000).optional(),
   plugins: z.array(z.custom<SDKPlugin>()).readonly().optional(),
   eventProcessors: z.array(z.custom<EventProcessor>()).readonly().optional(),
   beforeBreadcrumb: z.custom<BreadcrumbProcessor>(value => typeof value === 'function').optional(),

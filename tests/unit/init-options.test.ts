@@ -8,7 +8,6 @@ describe('SDK initialization option boundary', () => {
       apiKey: 'test-key',
       applicationName: 'orders',
       applicationVersion: '1.2.3',
-      maxBreadcrumbs: 100,
       debug: true,
       shutdownTimeoutMs: 5_000,
       initTimeoutMs: 500,
