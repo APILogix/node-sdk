@@ -623,6 +623,78 @@ await Pulse.init({
 | **`eventProcessors`** | `EventProcessor[]` | `[]` | Supply pre-pipeline custom transformers. | Runs sequential transformation passes on raw events prior to pipeline validation. |
 | **`sourceMaps`** | `object` | `undefined` | Configure `{ paths: ['./dist'], allowRemote: false }` for production TypeScript/bundled apps. | Loads local `.map` files to map production minified stack frames back to original source files. |
 
+#### Practical Usage Examples for Kept Options
+
+##### 1. Production Kubernetes / Docker Deployment
+```typescript
+import { Pulse } from '@pulse-apm/node'
+
+await Pulse.init({
+  apiKey: process.env.PULSE_API_KEY!,
+  // Fail-open network deadline: if control plane is unreachable, boot app after 2s without blocking
+  initTimeoutMs: 2000,
+  // Match Kubernetes terminationGracePeriodSeconds (e.g. 5s drain ceiling)
+  shutdownTimeoutMs: 5000,
+  // Automatically drain and flush telemetry on SIGTERM/SIGINT
+  handleSignals: true,
+})
+```
+
+##### 2. Single-File Bundles & Monorepos (Explicit Service Identity)
+```typescript
+import { Pulse } from '@pulse-apm/node'
+
+await Pulse.init({
+  apiKey: process.env.PULSE_API_KEY!,
+  // Explicitly tag service catalog identity when package.json is not in working directory
+  applicationName: 'payments-checkout-service',
+  applicationVersion: '2.4.1',
+  sourceMaps: {
+    paths: ['./dist'], // Resolve minified production stack frames to original TypeScript source
+  },
+})
+```
+
+##### 3. Enterprise Compliance, Custom Redaction & Dropping Events (`beforeSend`)
+```typescript
+import { Pulse } from '@pulse-apm/node'
+
+await Pulse.init({
+  apiKey: process.env.PULSE_API_KEY!,
+  // Inspect, redact, or drop telemetry before it enters the network queue
+  beforeSend: (event) => {
+    // Drop health check / synthetic ping traces
+    if (event.type === 'request' && (event as any).route === '/healthz') {
+      return null // Returning null drops the event completely
+    }
+    // Redact proprietary internal customer tokens
+    if (event.metadata && typeof event.metadata === 'object') {
+      delete (event.metadata as any).internalAuthSecret
+    }
+    return event
+  },
+  // Filter or sanitize breadcrumbs
+  beforeBreadcrumb: (crumb) => {
+    if (crumb.category === 'internal-debug') {
+      return null // Drop noisy breadcrumb
+    }
+    return crumb
+  },
+})
+```
+
+##### 4. Local Troubleshooting & Detailed Diagnostics
+```typescript
+import { Pulse } from '@pulse-apm/node'
+
+await Pulse.init({
+  apiKey: process.env.PULSE_API_KEY!,
+  debug: true,       // Emits verbose SDK startup, hook attachments, and batch metrics to stdout
+  logLevel: 'debug', // Minimum log severity filter ('debug' | 'info' | 'warning' | 'error')
+})
+```
+
+
 #### Why are `sampleRate`, `adaptiveSampling`, and `killswitches` absent from `init()`?
 
 In enterprise microservice ecosystems (often running 50–500+ pods across multiple clusters), telemetry policy must **never be coupled to code commits, build pipelines, or container redeployments**:
