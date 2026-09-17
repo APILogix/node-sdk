@@ -1,13 +1,15 @@
 /**
- * QuotaController — Independent Telemetry Quota & Entitlement Life-Cycle Management.
+ * QuotaController — Transport Rate-Limit & Backpressure Controller.
  *
- * Requirements:
- * 1. Decoupled from local hardware pressure (RAM/CPU/lag).
- * 2. Manages explicit quota states: QUOTA_OK, QUOTA_NEAR_LIMIT, QUOTA_EXHAUSTED, QUOTA_RESET.
- * 3. Never kills or disables SDK instrumentation, batching, or the host application.
- * 4. Automatic recovery when reset timestamp passes or when successful server responses arrive.
- * 5. Bounded retention during exhaustion — no unbounded RAM backlogs or replay storms.
- * 6. Never requires an application or server restart to resume telemetry.
+ * Architectural Separation:
+ * 1. The Pulse backend is the single source of truth for customer usage,
+ *    monthly quotas, billing entitlement, subscription plans, and quota resets.
+ * 2. The SDK does NOT maintain customer billing state or calculate usage.
+ * 3. This controller is strictly a transport-level mechanism to protect the
+ *    host application and backend during temporary HTTP 429 rate-limiting.
+ * 4. Automatic recovery resumes normal transmission when Retry-After expires
+ *    or when successful 2xx responses arrive, with zero application restarts.
+ * 5. P0 fatal/crash telemetry is NEVER dropped, even under rate-limit backoff.
  */
 
 import { EventEmitter } from 'node:events'
@@ -16,19 +18,28 @@ import { getLogger } from '../utils/logger.js'
 
 export interface QuotaStatusSnapshot {
   readonly state: QuotaState
+  /** @deprecated Quota limits are owned by Pulse backend. Always null in SDK. */
   readonly quotaLimit: number | null
+  /** @deprecated Quota usage accounting is owned by Pulse backend. Always null in SDK. */
   readonly quotaUsed: number | null
+  /** @deprecated Quota remaining is owned by Pulse backend. Always null in SDK. */
   readonly quotaRemaining: number | null
+  /** @deprecated Quota reset scheduling is owned by Pulse backend. Always null in SDK. */
   readonly quotaResetAt: number | null
+  /** Active backoff delay in ms derived from Retry-After header. */
   readonly retryAfterMs: number | null
+  /** Number of non-critical events dropped locally during active rate-limiting. */
   readonly droppedEventsCount: number
+  /** Drops categorized by telemetry priority. */
+  readonly droppedByPriority: Readonly<Record<TelemetryPriority, number>>
+  /** Whether the SDK is currently in rate-limit backoff state. */
   readonly isExhausted: boolean
 }
 
 export interface QuotaControllerOptions {
-  /** Optional fallback reset window if none provided by server headers. Default: 60,000ms */
+  /** Fallback backoff duration in ms if none provided by Retry-After. Default: 60,000ms */
   readonly defaultResetWindowMs?: number
-  /** Max high-priority events retained during quota exhaustion. Default: 200 */
+  /** Max high-priority events retained during backoff. Default: 200 */
   readonly maxExhaustedRetention?: number
 }
 
@@ -36,20 +47,22 @@ export class QuotaController extends EventEmitter {
   private static instance: QuotaController | null = null
 
   private state: QuotaState = 'QUOTA_OK'
-  private quotaLimit: number | null = null
-  private quotaUsed: number | null = null
-  private quotaResetAt: number | null = null
   private retryAfterMs: number | null = null
+  private backoffUntilMs: number | null = null
   private droppedEventsCount = 0
+  private droppedByPriority: Record<TelemetryPriority, number> = {
+    p0_critical: 0,
+    p1_error: 0,
+    p2_request: 0,
+    p3_low: 0,
+  }
   private recoveryTimer: NodeJS.Timeout | null = null
   private readonly defaultResetWindowMs: number
-  private readonly maxExhaustedRetention: number
   private destroyed = false
 
   constructor(options: QuotaControllerOptions = {}) {
     super()
     this.defaultResetWindowMs = options.defaultResetWindowMs ?? 60_000
-    this.maxExhaustedRetention = options.maxExhaustedRetention ?? 200
   }
 
   static getInstance(): QuotaController {
@@ -78,10 +91,11 @@ export class QuotaController extends EventEmitter {
 
   /**
    * Determine whether an event of the given priority should be admitted
-   * under current quota conditions.
+   * under current transport rate-limit conditions.
    *
-   * - QUOTA_OK / QUOTA_NEAR_LIMIT: admits all priorities.
-   * - QUOTA_EXHAUSTED: admits P0 (fatal/crash) and critical P1; suppresses P2/P3.
+   * - QUOTA_OK: admits all priorities.
+   * - QUOTA_EXHAUSTED (Rate-Limited): admits P0 (fatal/crash) to guarantee delivery;
+   *   sheds non-critical telemetry to protect host application memory while backend throttles.
    */
   shouldAdmit(priority: TelemetryPriority): boolean {
     this.checkAutoRecovery()
@@ -90,17 +104,20 @@ export class QuotaController extends EventEmitter {
       return true
     }
 
-    // Never drop P0 fatal/crash telemetry even when quota is exhausted
+    // Never drop P0 fatal/crash telemetry even during rate-limit backoff
     if (priority === 'p0_critical') {
       return true
     }
 
     this.droppedEventsCount++
+    this.droppedByPriority[priority] = (this.droppedByPriority[priority] ?? 0) + 1
     return false
   }
 
   /**
-   * Inspect HTTP response status and headers for quota & rate limiting signals.
+   * Inspect HTTP response status and headers for transport rate-limiting signals.
+   * Billing/usage headers (x-pulse-quota-*) are intentionally ignored as billing
+   * is owned entirely by the Pulse backend.
    */
   inspectResponse(status: number, headers?: Headers | Record<string, string | string[] | undefined>): void {
     if (this.destroyed) return
@@ -122,126 +139,75 @@ export class QuotaController extends EventEmitter {
     }
 
     const retryAfterHeader = headerGetter('retry-after')
-    const quotaStatusHeader = headerGetter('x-pulse-quota-status')
-    const quotaResetHeader = headerGetter('x-pulse-quota-reset') ?? headerGetter('x-ratelimit-reset')
-    const quotaLimitHeader = headerGetter('x-pulse-quota-limit') ?? headerGetter('x-ratelimit-limit')
-    const quotaRemainingHeader = headerGetter('x-pulse-quota-remaining') ?? headerGetter('x-ratelimit-remaining')
 
-    // Parse Retry-After if present
+    // Parse standard HTTP Retry-After if present
     if (retryAfterHeader) {
       const parsed = parseRetryAfter(retryAfterHeader)
       if (parsed !== null) {
         this.retryAfterMs = parsed
-        this.quotaResetAt = Date.now() + parsed
+        this.backoffUntilMs = Date.now() + parsed
       }
     }
 
-    // Parse Quota Limit & Remaining
-    if (quotaLimitHeader) {
-      const parsed = Number(quotaLimitHeader)
-      if (!Number.isNaN(parsed) && parsed >= 0) this.quotaLimit = parsed
-    }
-    if (quotaRemainingHeader) {
-      const parsed = Number(quotaRemainingHeader)
-      if (!Number.isNaN(parsed) && parsed >= 0) {
-        if (this.quotaLimit !== null) this.quotaUsed = Math.max(0, this.quotaLimit - parsed)
-        if (parsed === 0) {
-          this.setQuotaExhausted('server_header_remaining_zero')
-          return
-        }
-      }
-    }
-
-    // Parse Reset Timestamp
-    if (quotaResetHeader) {
-      const resetMs = parseResetTimestamp(quotaResetHeader)
-      if (resetMs !== null) {
-        this.quotaResetAt = resetMs
-      }
-    }
-
-    // Handle 429 (Too Many Requests / Quota Exceeded) and 402 (Payment Required)
-    if (status === 429 || status === 402) {
-      this.setQuotaExhausted(status === 402 ? 'http_402_payment_required' : 'http_429_quota_exhausted')
+    // Handle 429 (Too Many Requests / Ingestion Rate Limited)
+    if (status === 429) {
+      this.setQuotaExhausted('http_429_rate_limited')
       return
     }
 
-    // Handle Explicit Quota Status Header
-    if (quotaStatusHeader) {
-      const statusLower = quotaStatusHeader.trim().toLowerCase()
-      if (statusLower === 'exhausted' || statusLower === 'exceeded') {
-        this.setQuotaExhausted('server_header_exhausted')
-        return
-      }
-      if (statusLower === 'near_limit' || statusLower === 'warning') {
-        this.setQuotaNearLimit()
-        return
-      }
-      if (statusLower === 'ok' || statusLower === 'active') {
-        this.setQuotaOk('server_header_ok')
-        return
-      }
-    }
-
-    // Handle 2xx Success: telemetry accepted by backend
+    // Handle 2xx Success: telemetry accepted by backend -> restores normal ingestion
     if (status >= 200 && status < 300) {
-      const isStillExhausted = quotaStatusHeader !== null && (quotaStatusHeader.toLowerCase() === 'exhausted' || quotaStatusHeader.toLowerCase() === 'exceeded')
-      if (!isStillExhausted) {
-        this.setQuotaOk('successful_telemetry_ack')
-      }
+      this.setQuotaOk('successful_telemetry_ack')
     }
   }
 
   /**
-   * Transition to QUOTA_EXHAUSTED state.
+   * Transition to rate-limited backoff state (labeled QUOTA_EXHAUSTED for backwards compatibility).
    */
-  setQuotaExhausted(reason = 'quota_exceeded'): void {
+  setQuotaExhausted(reason = 'rate_limited'): void {
     if (this.destroyed) return
 
     const previousState = this.state
     this.state = 'QUOTA_EXHAUSTED'
 
-    if (!this.quotaResetAt || this.quotaResetAt <= Date.now()) {
-      const resetDuration = this.retryAfterMs ?? this.defaultResetWindowMs
-      this.quotaResetAt = Date.now() + resetDuration
+    if (!this.backoffUntilMs || this.backoffUntilMs <= Date.now()) {
+      const backoffDuration = this.retryAfterMs ?? this.defaultResetWindowMs
+      this.backoffUntilMs = Date.now() + backoffDuration
     }
 
     this.scheduleAutoRecovery()
 
     if (previousState !== 'QUOTA_EXHAUSTED') {
-      getLogger().warn('[QuotaController] Quota exhausted — non-critical telemetry transmission paused', {
+      getLogger().warn('[QuotaController] Ingestion throttled (HTTP 429) — non-critical telemetry paused for rate-limit protection', {
         reason,
-        resetAt: this.quotaResetAt ? new Date(this.quotaResetAt).toISOString() : 'unknown',
+        backoffUntil: new Date(this.backoffUntilMs).toISOString(),
         retryAfterMs: this.retryAfterMs,
       })
       this.emit('quota_exhausted', this.getSnapshot())
     }
   }
 
+  /**
+   * @deprecated Billing warnings are owned by the backend. Kept as no-op for backwards compatibility.
+   */
   setQuotaNearLimit(): void {
-    if (this.destroyed) return
-    const previous = this.state
-    if (previous !== 'QUOTA_EXHAUSTED') {
-      this.state = 'QUOTA_NEAR_LIMIT'
-      if (previous !== 'QUOTA_NEAR_LIMIT') {
-        this.emit('quota_near_limit', this.getSnapshot())
-      }
-    }
+    // No-op: SDK does not maintain customer billing warning state
   }
 
   /**
-   * Transition to QUOTA_OK state.
+   * Transition to QUOTA_OK state when rate-limiting clears.
    */
-  setQuotaOk(reason = 'quota_restored'): void {
+  setQuotaOk(reason = 'rate_limit_restored'): void {
     if (this.destroyed) return
 
     const previousState = this.state
     this.state = 'QUOTA_OK'
     this.retryAfterMs = null
+    this.backoffUntilMs = null
     this.clearRecoveryTimer()
 
     if (previousState === 'QUOTA_EXHAUSTED') {
-      getLogger().info('[QuotaController] Quota restored — telemetry transmission resumed automatically', {
+      getLogger().info('[QuotaController] Rate-limit backoff cleared — telemetry transmission resumed automatically', {
         reason,
         droppedDuringExhaustion: this.droppedEventsCount,
       })
@@ -250,18 +216,15 @@ export class QuotaController extends EventEmitter {
   }
 
   getSnapshot(): QuotaStatusSnapshot {
-    const remaining = this.quotaLimit !== null && this.quotaUsed !== null
-      ? Math.max(0, this.quotaLimit - this.quotaUsed)
-      : null
-
     return {
       state: this.state,
-      quotaLimit: this.quotaLimit,
-      quotaUsed: this.quotaUsed,
-      quotaRemaining: remaining,
-      quotaResetAt: this.quotaResetAt,
+      quotaLimit: null,
+      quotaUsed: null,
+      quotaRemaining: null,
+      quotaResetAt: null,
       retryAfterMs: this.retryAfterMs,
       droppedEventsCount: this.droppedEventsCount,
+      droppedByPriority: { ...this.droppedByPriority },
       isExhausted: this.state === 'QUOTA_EXHAUSTED',
     }
   }
@@ -271,21 +234,28 @@ export class QuotaController extends EventEmitter {
     this.clearRecoveryTimer()
     this.removeAllListeners()
     this.state = 'QUOTA_OK'
+    this.droppedEventsCount = 0
+    this.droppedByPriority = {
+      p0_critical: 0,
+      p1_error: 0,
+      p2_request: 0,
+      p3_low: 0,
+    }
   }
 
   private checkAutoRecovery(): void {
     if (this.state === 'QUOTA_EXHAUSTED') {
-      if (this.quotaResetAt && Date.now() >= this.quotaResetAt) {
-        this.setQuotaOk('reset_timestamp_elapsed')
+      if (this.backoffUntilMs && Date.now() >= this.backoffUntilMs) {
+        this.setQuotaOk('rate_limit_window_elapsed')
       }
     }
   }
 
   private scheduleAutoRecovery(): void {
     this.clearRecoveryTimer()
-    if (!this.quotaResetAt) return
+    if (!this.backoffUntilMs) return
 
-    const delayMs = Math.max(500, this.quotaResetAt - Date.now())
+    const delayMs = Math.max(50, this.backoffUntilMs - Date.now())
     this.recoveryTimer = setTimeout(() => {
       this.recoveryTimer = null
       this.checkAutoRecovery()
@@ -320,27 +290,6 @@ function parseRetryAfter(headerValue: string): number | null {
   if (!Number.isNaN(dateMs)) {
     const diff = dateMs - Date.now()
     return Math.max(0, Math.min(3_600_000, diff))
-  }
-
-  return null
-}
-
-function parseResetTimestamp(headerValue: string): number | null {
-  const trimmed = headerValue.trim()
-  if (!trimmed) return null
-
-  const num = Number(trimmed)
-  if (!Number.isNaN(num) && num > 0) {
-    // If < 1e11 it's likely epoch in seconds; otherwise epoch in ms
-    if (num < 100_000_000_000) {
-      return num * 1000
-    }
-    return num
-  }
-
-  const dateMs = Date.parse(trimmed)
-  if (!Number.isNaN(dateMs)) {
-    return dateMs
   }
 
   return null

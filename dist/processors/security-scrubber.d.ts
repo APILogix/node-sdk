@@ -25,6 +25,12 @@ export declare class SecurityScrubber {
     private static readonly IPV4_PATTERN;
     private static readonly BRACKETED_IPV6_PATTERN;
     private static readonly IPV6_CANDIDATE_PATTERN;
+    private static readonly CREDIT_CARD_PATTERN;
+    private static readonly SSN_PATTERN;
+    /**
+     * Validate a credit card Primary Account Number (PAN) using the Luhn mod-10 algorithm.
+     */
+    static isValidLuhn(digits: string): boolean;
     private constructor();
     private updateHasScrubRules;
     static initialize(config: PrivacyConfig): SecurityScrubber;

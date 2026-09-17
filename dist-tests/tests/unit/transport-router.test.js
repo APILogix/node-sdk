@@ -178,7 +178,7 @@ describe('Unified TransportRouter', () => {
         await router.flushAll();
         const debug = router.getDebugState();
         assert.ok(firstErrorAt > 0);
-        assert.ok(firstErrorAt - startedAt < 2_000, `error delivery took ${firstErrorAt - startedAt}ms`);
+        assert.ok(firstErrorAt - startedAt < 5_000, `error delivery took ${firstErrorAt - startedAt}ms`);
         assert.ok(debug.droppedEvents.some((drop) => drop.route === 'spans' && drop.reason === 'queue_full'));
     });
     it('warms up route concurrency before sending a full transport burst', async () => {

@@ -52,6 +52,8 @@
  * ```
  */
 import { getLogger } from '../utils/logger.js';
+let lastAnomalyLogTimeMs = 0;
+const ANOMALY_LOG_THROTTLE_MS = 1000;
 export function computeExclusiveDuration(parentStartMs, parentEndMs, childIntervals) {
     const inclusiveDuration = Math.max(0, parentEndMs - parentStartMs);
     if (childIntervals.length === 0) {
@@ -63,12 +65,16 @@ export function computeExclusiveDuration(parentStartMs, parentEndMs, childInterv
     const JITTER_TOLERANCE_MS = 1.0;
     for (const child of childIntervals) {
         if (child.startTime < parentStartMs - JITTER_TOLERANCE_MS || child.endTime > parentEndMs + JITTER_TOLERANCE_MS) {
-            getLogger().warn('Span timing anomaly: child interval exceeds parent boundaries', {
-                parentStartMs,
-                parentEndMs,
-                childStartTime: child.startTime,
-                childEndTime: child.endTime,
-            });
+            const now = Date.now();
+            if (now - lastAnomalyLogTimeMs >= ANOMALY_LOG_THROTTLE_MS) {
+                lastAnomalyLogTimeMs = now;
+                getLogger().warn('Span timing anomaly: child interval exceeds parent boundaries', {
+                    parentStartMs,
+                    parentEndMs,
+                    childStartTime: child.startTime,
+                    childEndTime: child.endTime,
+                });
+            }
         }
         const clampedStart = Math.max(parentStartMs, child.startTime);
         const clampedEnd = Math.min(parentEndMs, child.endTime);

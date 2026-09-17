@@ -31,6 +31,32 @@ export class SecurityScrubber {
     static IPV4_PATTERN = /\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b/g;
     static BRACKETED_IPV6_PATTERN = /\[([0-9A-Fa-f:.]+)(%[0-9A-Za-z_.-]+)?\](?::\d{1,5})?/g;
     static IPV6_CANDIDATE_PATTERN = /(?<![0-9A-Za-z])([0-9A-Fa-f:.]+(?:%[0-9A-Za-z_.-]+)?)(?![0-9A-Za-z])/g;
+    // Credit Card Primary Account Numbers: 13-19 digits, formatted (4-4-4-4, 4-6-5) or contiguous
+    static CREDIT_CARD_PATTERN = /(?<!\d)(?:\d{4}[-\s]\d{4}[-\s]\d{4}[-\s]\d{1,4}|\d{4}[-\s]\d{6}[-\s]\d{4,5}|\d{13,19})(?!\d)/g;
+    // US Social Security Numbers (Area != 000, 666, 900-999; Group != 00; Serial != 0000)
+    static SSN_PATTERN = /(?<!\d)(?!000|666|9\d{2})(\d{3})[- ](?!00)(\d{2})[- ](?!0000)(\d{4})(?!\d)/g;
+    /**
+     * Validate a credit card Primary Account Number (PAN) using the Luhn mod-10 algorithm.
+     */
+    static isValidLuhn(digits) {
+        if (digits.length < 13 || digits.length > 19)
+            return false;
+        let sum = 0;
+        let shouldDouble = false;
+        for (let i = digits.length - 1; i >= 0; i--) {
+            let digit = parseInt(digits.charAt(i), 10);
+            if (Number.isNaN(digit))
+                return false;
+            if (shouldDouble) {
+                digit *= 2;
+                if (digit > 9)
+                    digit -= 9;
+            }
+            sum += digit;
+            shouldDouble = !shouldDouble;
+        }
+        return sum % 10 === 0;
+    }
     constructor(config) {
         this.scrubbingConfig = { ...config.scrubbing };
         this.piiConfig = { ...config.piiDetection };
@@ -39,8 +65,13 @@ export class SecurityScrubber {
         this.updateHasScrubRules();
     }
     updateHasScrubRules() {
+        const hasPii = this.piiConfig.enabled && (this.piiConfig.maskEmails ||
+            this.piiConfig.maskPhones ||
+            this.piiConfig.maskIPs ||
+            this.piiConfig.maskCreditCards !== false ||
+            this.piiConfig.maskSSNs !== false);
         this.hasScrubRules = !!((this.scrubbingConfig.enabled && (this.sensitiveHeaders.size > 0 || this.sensitiveFields.size > 0)) ||
-            (this.piiConfig.enabled && (this.piiConfig.maskEmails || this.piiConfig.maskPhones || this.piiConfig.maskIPs)));
+            hasPii);
     }
     static initialize(config) {
         if (SecurityScrubber.instance) {
@@ -63,7 +94,11 @@ export class SecurityScrubber {
             const clone = { ...event };
             const hasHeaderRules = this.scrubbingConfig.enabled && this.sensitiveHeaders.size > 0;
             const hasFieldRules = this.scrubbingConfig.enabled && this.sensitiveFields.size > 0;
-            const hasPiiRules = this.piiConfig.enabled && (this.piiConfig.maskEmails || this.piiConfig.maskPhones || this.piiConfig.maskIPs);
+            const hasPiiRules = this.piiConfig.enabled && (this.piiConfig.maskEmails ||
+                this.piiConfig.maskPhones ||
+                this.piiConfig.maskIPs ||
+                this.piiConfig.maskCreditCards !== false ||
+                this.piiConfig.maskSSNs !== false);
             const needsDeepScrub = hasFieldRules || hasHeaderRules || hasPiiRules;
             // Shallow clone objects that we'll mutate — but only when we actually
             // have rules that require inspecting them. Previously these clones
@@ -134,6 +169,15 @@ export class SecurityScrubber {
         const key = rawKey.toLowerCase();
         if (this.sensitiveFields.has(key) || this.sensitiveHeaders.has(key))
             return true;
+        const normalized = key.replace(/[-_]/g, '');
+        for (const f of this.sensitiveFields) {
+            if (f.replace(/[-_]/g, '') === normalized)
+                return true;
+        }
+        for (const h of this.sensitiveHeaders) {
+            if (h.replace(/[-_]/g, '') === normalized)
+                return true;
+        }
         const parts = key.split(/[\.:]/);
         const lastPart = parts[parts.length - 1];
         if (lastPart && (this.sensitiveFields.has(lastPart) || this.sensitiveHeaders.has(lastPart))) {
@@ -175,7 +219,10 @@ export class SecurityScrubber {
                 }
                 if (this.scrubbingConfig.enabled) {
                     str = str.replace(/Bearer\s+[A-Za-z0-9_\-\.]+/gi, 'Bearer [Redacted]');
+                    str = str.replace(/Basic\s+[A-Za-z0-9+/=]{10,}/gi, 'Basic [Redacted]');
                     str = str.replace(/eyJ[a-zA-Z0-9_-]{10,}\.eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}/g, '[Redacted]');
+                    str = str.replace(/\b(sk_live_[0-9a-zA-Z]{24,}|pk_live_[0-9a-zA-Z]{24,}|rk_live_[0-9a-zA-Z]{24,})\b/g, '[Redacted]');
+                    str = str.replace(/\b(AKIA[0-9A-Z]{16})\b/g, '[Redacted]');
                     str = str.replace(/\b(api[-_]?key|api[-_]?secret|access[-_]?token|refresh[-_]?token|client[-_]?secret|password|secret|token|authorization|x-api-key|x-auth-token)=([^\s&,;"']+)/gi, '$1=[Redacted]');
                 }
                 return str;
@@ -257,16 +304,20 @@ export class SecurityScrubber {
                     parsed.password = REDACTED;
                 changed = true;
             }
-            for (const param of this.sensitiveFields) {
-                if (parsed.searchParams.has(param)) {
+            for (const [param] of Array.from(parsed.searchParams.entries())) {
+                if (this.isKeySensitive(param)) {
                     parsed.searchParams.set(param, REDACTED);
                     changed = true;
                 }
             }
-            return changed ? parsed.toString() : url;
+            let res = changed ? parsed.toString() : url;
+            if (this.piiConfig.enabled) {
+                res = this.scrubPiiInString(res);
+            }
+            return res;
         }
         catch {
-            return url;
+            return this.piiConfig.enabled ? this.scrubPiiInString(url) : url;
         }
     }
     scrubBodyFields(obj, depth = 0) {
@@ -340,6 +391,20 @@ export class SecurityScrubber {
     }
     scrubPiiInString(str) {
         let result = str;
+        // Credit Card Primary Account Number (PAN) scrubbing with Luhn validation
+        if (this.piiConfig.maskCreditCards !== false) {
+            result = result.replace(SecurityScrubber.CREDIT_CARD_PATTERN, (match) => {
+                const raw = match.replace(/[-\s]/g, '');
+                if (raw.length >= 13 && raw.length <= 19 && SecurityScrubber.isValidLuhn(raw)) {
+                    return REDACTED;
+                }
+                return match;
+            });
+        }
+        // US Social Security Number (SSN) scrubbing
+        if (this.piiConfig.maskSSNs !== false) {
+            result = result.replace(SecurityScrubber.SSN_PATTERN, REDACTED);
+        }
         if (this.piiConfig.maskEmails) {
             result = result.replace(SecurityScrubber.EMAIL_PATTERN, '[email]');
         }

@@ -69,46 +69,62 @@ export function isOtelInstrumentationError(err) {
     if (!(err instanceof TypeError))
         return false;
     const message = err.message || '';
-    if (!message.includes('Cannot read properties of null') &&
-        !message.includes('Cannot read property') &&
-        !message.includes('of null') &&
-        !message.includes('of undefined')) {
+    const isNullPropertyError = message.includes('Cannot read properties of null') ||
+        message.includes('Cannot read property') ||
+        message.includes('of null') ||
+        message.includes('of undefined');
+    if (!isNullPropertyError) {
         return false;
     }
     const stack = err.stack || '';
-    // Check for OTel HTTP instrumentation frames
+    // Invariant 1: Stack MUST contain OpenTelemetry HTTP instrumentation
     const hasOtelHttpFrame = stack.includes('@opentelemetry/instrumentation-http') ||
         stack.includes('instrumentation-http') ||
         stack.includes('HttpInstrumentation');
-    // Check for Node.js internal HTTP client frames
-    const hasNodeHttpFrame = stack.includes('node:_http_client') ||
-        stack.includes('node:_http_agent') ||
-        stack.includes('node:_http_outgoing') ||
-        stack.includes('node:_http_server');
-    // Check for socket/net lifecycle frames
-    const hasSocketFrame = stack.includes('node:net') ||
-        stack.includes('Socket.') ||
-        stack.includes('onSocketClose') ||
-        stack.includes('socketCloseListener') ||
-        stack.includes('onSocketFinish');
-    // At least one OTel or HTTP internal frame must be present
-    if (!hasOtelHttpFrame && !hasNodeHttpFrame && !hasSocketFrame) {
+    if (!hasOtelHttpFrame) {
         return false;
     }
-    // Bonus confidence: if the error involves known OTel utility patterns
-    const hasOtelUtilPattern = stack.includes('getIncomingRequestAttributes') ||
+    // Invariant 2: Find the throw site (first frame that is not a Node runtime dispatcher)
+    const stackLines = stack.split('\n');
+    let throwSiteFrame = null;
+    for (let i = 1; i < stackLines.length; i++) {
+        const line = stackLines[i].trim();
+        if (!line.startsWith('at '))
+            continue;
+        // Skip Node runtime event dispatchers if they precede the throw site
+        if (line.includes('(node:events') ||
+            line.includes('node:internal/process') ||
+            line.includes('node:internal/task_queues')) {
+            continue;
+        }
+        throwSiteFrame = line;
+        break;
+    }
+    // If a throw site frame is identified, it MUST originate from OTel HTTP instrumentation
+    if (throwSiteFrame) {
+        const isThrowInOtel = throwSiteFrame.includes('@opentelemetry/instrumentation-http') ||
+            throwSiteFrame.includes('instrumentation-http') ||
+            throwSiteFrame.includes('HttpInstrumentation');
+        // If the throw site is in user application code or another library, it is NOT an OTel error
+        if (!isThrowInOtel) {
+            return false;
+        }
+    }
+    // Invariant 3: Must involve known OTel instrumentation patterns/methods
+    const hasOtelMethod = stack.includes('getIncomingRequestAttributes') ||
         stack.includes('getOutgoingRequestAttributes') ||
         stack.includes('_traceClientRequest') ||
         stack.includes('_onServerResponseFinish') ||
         stack.includes('_closeHttpSpan') ||
         stack.includes('setSpanWithError') ||
-        // The specific crash: accessing .res on a null object
-        message.includes("reading 'res'") ||
+        stack.includes('HttpInstrumentation');
+    const hasOtelProperty = message.includes("reading 'res'") ||
         message.includes("reading 'statusCode'") ||
         message.includes("reading 'socket'") ||
         message.includes("reading 'remoteAddress'") ||
-        message.includes("reading 'headers'");
-    return hasOtelHttpFrame || hasOtelUtilPattern || (hasNodeHttpFrame && hasSocketFrame);
+        message.includes("reading 'headers'") ||
+        message.includes("reading 'encrypted'");
+    return hasOtelMethod && hasOtelProperty;
 }
 /**
  * Install the HTTP lifecycle guard.

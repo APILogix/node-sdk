@@ -53,16 +53,24 @@ ALREADY_SET=should_not_overwrite
     assert.equal(resolveApiBaseUrl(), 'https://ingest.pulse-apm.io')
   })
 
-  it('3. resolveApiBaseUrl respects BACKEND_URL and PULSE_BASE_URL precedence', () => {
+  it('3. resolveApiBaseUrl respects PULSE_API_URL and PULSE_BASE_URL precedence and ignores generic BACKEND_URL', () => {
     delete process.env['PULSE_ENDPOINT']
     delete process.env['PULSE_API_URL']
-    delete process.env['SDK_BASE_URL']
+    delete process.env['PULSE_BASE_URL']
 
-    process.env['BACKEND_URL'] = 'http://localhost:5000'
-    assert.equal(resolveApiBaseUrl(), 'http://127.0.0.1:5000')
-
+    // Generic BACKEND_URL must be ignored to prevent host application env collisions
+    process.env['BACKEND_URL'] = 'http://localhost:9999'
     process.env['PULSE_BASE_URL'] = 'http://127.0.0.1:4000'
     assert.equal(resolveApiBaseUrl(), 'http://127.0.0.1:4000')
+
+    process.env['PULSE_API_URL'] = 'http://127.0.0.1:4001'
+    assert.equal(resolveApiBaseUrl(), 'http://127.0.0.1:4001')
+
+    delete process.env['PULSE_API_URL']
+    delete process.env['PULSE_BASE_URL']
+    // When only generic BACKEND_URL is set, it must not be used (falls back to DEFAULT_API_BASE_URL)
+    assert.equal(resolveApiBaseUrl(), 'http://127.0.0.1:5000')
+    delete process.env['BACKEND_URL']
   })
 
   it('4. init() automatically falls back to process.env.PULSE_API_KEY when apiKey is omitted', async () => {

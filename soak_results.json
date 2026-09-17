@@ -1,0 +1,41 @@
+{
+  "durationSeconds": 30,
+  "totalEventsInjected": 52600,
+  "baselineHeapMb": 35.95,
+  "finalHeapMb": 71.17,
+  "plateauDriftPct": 42.75,
+  "shutdownMs": 96.5,
+  "shutdownTimedOut": false,
+  "snapshots": [
+    {
+      "elapsedSec": 5,
+      "heapUsedMb": 49.07,
+      "rssMb": 197.58,
+      "totalEventsInjected": 8800
+    },
+    {
+      "elapsedSec": 10,
+      "heapUsedMb": 63.98,
+      "rssMb": 219.25,
+      "totalEventsInjected": 17600
+    },
+    {
+      "elapsedSec": 15,
+      "heapUsedMb": 58.07,
+      "rssMb": 219.18,
+      "totalEventsInjected": 26400
+    },
+    {
+      "elapsedSec": 20,
+      "heapUsedMb": 44.82,
+      "rssMb": 214.69,
+      "totalEventsInjected": 35200
+    },
+    {
+      "elapsedSec": 25,
+      "heapUsedMb": 63.03,
+      "rssMb": 223.72,
+      "totalEventsInjected": 44000
+    }
+  ]
+}

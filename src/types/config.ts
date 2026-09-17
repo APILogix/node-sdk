@@ -224,6 +224,8 @@ export interface PiiDetectionConfig {
   readonly maskEmails: boolean
   readonly maskPhones: boolean
   readonly maskIPs: boolean
+  readonly maskCreditCards?: boolean
+  readonly maskSSNs?: boolean
 }
 
 // ─── Limits ─────────────────────────────────────────────────────────────────
@@ -599,6 +601,19 @@ export interface SDKInitOptions {
   readonly debug?: boolean | undefined
   readonly logLevel?: SeverityLevel | undefined
   readonly shutdownTimeoutMs?: number | undefined
+  /**
+   * Whether to terminate the process after an uncaughtException once telemetry flush
+   * has completed or timed out (default: true). Set to false for custom crash supervisors or test environments.
+   */
+  readonly exitOnUncaughtException?: boolean | undefined
+  /**
+   * Maximum time in milliseconds to wait for crash telemetry to flush before process termination (default: 2000).
+   */
+  readonly crashTimeoutMs?: number | undefined
+  /**
+   * Optional callback invoked right before process termination on uncaughtException.
+   */
+  readonly onFatalError?: ((error: Error) => void) | undefined
   readonly sourceMaps?: {
     readonly paths?: readonly string[] | undefined
     readonly allowRemote?: boolean | undefined
@@ -626,6 +641,9 @@ export const sdkInitOptionsSchema = z.object({
   debug: z.boolean().optional(),
   logLevel: z.enum(['debug', 'info', 'warning', 'error', 'fatal']).optional(),
   shutdownTimeoutMs: z.number().int().min(1000).max(60000).optional(),
+  exitOnUncaughtException: z.boolean().optional(),
+  crashTimeoutMs: z.number().int().min(100).max(30000).optional(),
+  onFatalError: z.custom<(error: Error) => void>(value => typeof value === 'function').optional(),
   sourceMaps: z
     .object({
       paths: z.array(z.string()).readonly().optional(),

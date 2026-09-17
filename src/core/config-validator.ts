@@ -275,6 +275,8 @@ function validatePrivacy(value: unknown, errors: string[]): void {
     for (const key of ['enabled', 'maskEmails', 'maskPhones', 'maskIPs'] as const) {
       boolean(pii, key, `privacy.piiDetection.${key}`, errors)
     }
+    if ('maskCreditCards' in pii) boolean(pii, 'maskCreditCards', 'privacy.piiDetection.maskCreditCards', errors)
+    if ('maskSSNs' in pii) boolean(pii, 'maskSSNs', 'privacy.piiDetection.maskSSNs', errors)
   }
 }
 

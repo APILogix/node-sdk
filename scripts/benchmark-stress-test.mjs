@@ -3,7 +3,7 @@
  *
  * Evaluates:
  * 1. Sustained Telemetry Capture Throughput (Events/sec & microsecond latency)
- * 2. High-Throughput Adaptive Sampling Under Load (>10k RPS) & 100% Error Invariant
+ * 2. Adaptive sampling behavior under synthetic high-volume event load
  * 3. Complex Trace Tree Aggregation & Cycle-Safe Orphan Span Recovery
  * 4. Deep Recursive Security & PII Scrubbing Throughput
  * 5. SDK Startup & Handshake Latency (<10ms target)
@@ -93,7 +93,7 @@ async function createBenchmarkServer() {
           },
           limits: {
             ...DEFAULT_REMOTE_CONFIG.limits,
-            maxQueueSize: 200000,
+            maxQueueSize: 100000,
           },
         };
 
@@ -144,9 +144,9 @@ async function runBenchmarkSuite() {
     for (let i = 0; i < 10; i++) {
       await shutdown(500);
       const t0 = performance.now();
+      process.env['PULSE_ENDPOINT'] = server.url;
       await init({
         apiKey: 'pls_live_bench_key_123',
-        endpoint: server.url,
         handleSignals: false,
       });
       const t1 = performance.now();
@@ -260,7 +260,7 @@ async function runBenchmarkSuite() {
         errorPreservation100Pct: errorRate === 100.0,
       };
 
-      console.log(`  ✓ State: ${state.padEnd(9)} | Trace Rate: ${traceRate.toFixed(1)}% | Error Rate: ${errorRate.toFixed(1)}% (100% Invariant: ${errorRate === 100.0})`);
+      console.log(`  ✓ State: ${state.padEnd(9)} | Trace Rate: ${traceRate.toFixed(1)}% | Fatal Error Sampling Rate: ${errorRate.toFixed(1)}%`);
     }
     adaptivePressure.getState = origGetState;
     benchmarkResults.adaptiveSampling = adaptiveResults;
@@ -404,13 +404,13 @@ async function runBenchmarkSuite() {
     console.log(' BENCHMARK SUMMARY & PERFORMANCE MATRIX');
     console.log('='.repeat(80));
     console.table({
-      '1. Startup Latency': { Metric: `${benchmarkResults.startup.avgMs} ms`, SLA: '< 10.0 ms', Status: 'PASSED' },
-      '2. Ingestion Throughput': { Metric: `${benchmarkResults.throughput.eventsPerSec.toLocaleString()} events/sec`, SLA: '≥ 5,000 events/sec', Status: 'PASSED' },
-      '3. Mean Capture Overhead': { Metric: `${benchmarkResults.throughput.meanCaptureMicros} µs/event`, SLA: '< 50.0 µs', Status: 'PASSED' },
-      '4. Adaptive Pressure Scaling': { Metric: '100% Errors / 10% Traces at Critical', SLA: '100% Error Guarantee', Status: 'PASSED' },
-      '5. Trace Tree Aggregation': { Metric: `${benchmarkResults.traceAggregation.spansPerSec.toLocaleString()} spans/sec`, SLA: '≥ 25,000 spans/sec', Status: 'PASSED' },
-      '6. Deep PII Scrubbing': { Metric: `${benchmarkResults.securityScrubbing.payloadsPerSec.toLocaleString()} ops/sec`, SLA: '≥ 50,000 ops/sec', Status: 'PASSED' },
-      '7. Shutdown Drain Latency': { Metric: `${benchmarkResults.gracefulShutdown.durationMs} ms`, SLA: '< 5,000 ms', Status: 'PASSED' },
+      '1. Startup Latency': { Metric: `${benchmarkResults.startup.avgMs} ms`, SLA: '< 10.0 ms target (synthetic)', Status: Number(benchmarkResults.startup.avgMs) < 10 ? 'PASSED' : 'NOT MET' },
+      '2. Synthetic Event Throughput': { Metric: `${benchmarkResults.throughput.eventsPerSec.toLocaleString()} events/sec`, SLA: 'Informational; not HTTP RPS', Status: 'OBSERVED' },
+      '3. Mean Capture Overhead': { Metric: `${benchmarkResults.throughput.meanCaptureMicros} µs/event`, SLA: 'Informational; workload-specific', Status: 'OBSERVED' },
+      '4. Adaptive Pressure Scaling': { Metric: 'Fatal error sampling bypass observed', SLA: 'Sampling priority only; delivery not guaranteed', Status: 'OBSERVED' },
+      '5. Trace Tree Aggregation': { Metric: `${benchmarkResults.traceAggregation.spansPerSec.toLocaleString()} spans/sec`, SLA: 'Informational; synthetic trace workload', Status: 'OBSERVED' },
+      '6. Deep PII Scrubbing': { Metric: `${benchmarkResults.securityScrubbing.payloadsPerSec.toLocaleString()} ops/sec`, SLA: 'Informational; payload-specific', Status: 'OBSERVED' },
+      '7. Shutdown Drain Latency': { Metric: `${benchmarkResults.gracefulShutdown.durationMs} ms`, SLA: '< 5,000 ms', Status: benchmarkResults.gracefulShutdown.timedOut ? 'NOT MET' : 'PASSED' },
     });
     console.log('='.repeat(80) + '\n');
 

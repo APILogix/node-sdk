@@ -73,6 +73,9 @@ export const sdkInitOptionsSchema = z.object({
     debug: z.boolean().optional(),
     logLevel: z.enum(['debug', 'info', 'warning', 'error', 'fatal']).optional(),
     shutdownTimeoutMs: z.number().int().min(1000).max(60000).optional(),
+    exitOnUncaughtException: z.boolean().optional(),
+    crashTimeoutMs: z.number().int().min(100).max(30000).optional(),
+    onFatalError: z.custom(value => typeof value === 'function').optional(),
     sourceMaps: z
         .object({
         paths: z.array(z.string()).readonly().optional(),

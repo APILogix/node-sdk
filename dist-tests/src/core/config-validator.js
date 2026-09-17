@@ -231,6 +231,10 @@ function validatePrivacy(value, errors) {
         for (const key of ['enabled', 'maskEmails', 'maskPhones', 'maskIPs']) {
             boolean(pii, key, `privacy.piiDetection.${key}`, errors);
         }
+        if ('maskCreditCards' in pii)
+            boolean(pii, 'maskCreditCards', 'privacy.piiDetection.maskCreditCards', errors);
+        if ('maskSSNs' in pii)
+            boolean(pii, 'maskSSNs', 'privacy.piiDetection.maskSSNs', errors);
     }
 }
 function validateLimits(value, errors) {

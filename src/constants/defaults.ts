@@ -35,9 +35,7 @@ export function resolveApiBaseUrl(): string {
     const customUrl =
       process.env['PULSE_ENDPOINT'] ||
       process.env['PULSE_API_URL'] ||
-      process.env['PULSE_BASE_URL'] ||
-      process.env['BACKEND_URL'] ||
-      process.env['SDK_BASE_URL']
+      process.env['PULSE_BASE_URL']
     if (customUrl && typeof customUrl === 'string' && customUrl.trim().length > 0) {
       let resolved = customUrl.trim()
       if (resolved.endsWith('/')) resolved = resolved.slice(0, -1)
@@ -248,6 +246,8 @@ export const DEFAULT_PRIVACY: Readonly<PrivacyConfig> = Object.freeze({
     maskEmails: true,
     maskPhones: true,
     maskIPs: true,
+    maskCreditCards: true,
+    maskSSNs: true,
   }),
 })
 

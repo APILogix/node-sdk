@@ -8,9 +8,7 @@ export function resolveApiBaseUrl() {
     if (typeof process !== 'undefined' && process.env) {
         const customUrl = process.env['PULSE_ENDPOINT'] ||
             process.env['PULSE_API_URL'] ||
-            process.env['PULSE_BASE_URL'] ||
-            process.env['BACKEND_URL'] ||
-            process.env['SDK_BASE_URL'];
+            process.env['PULSE_BASE_URL'];
         if (customUrl && typeof customUrl === 'string' && customUrl.trim().length > 0) {
             let resolved = customUrl.trim();
             if (resolved.endsWith('/'))
@@ -205,6 +203,8 @@ export const DEFAULT_PRIVACY = Object.freeze({
         maskEmails: true,
         maskPhones: true,
         maskIPs: true,
+        maskCreditCards: true,
+        maskSSNs: true,
     }),
 });
 export const DEFAULT_INSTRUMENTATION = Object.freeze({

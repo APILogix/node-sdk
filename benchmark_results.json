@@ -1,19 +1,19 @@
 {
   "startup": {
-    "avgMs": "21.30",
-    "p95Ms": "61.21",
+    "avgMs": "551.23",
+    "p95Ms": "2765.12",
     "samples": 10,
     "targetSub10Ms": false
   },
   "throughput": {
     "totalEvents": 100000,
-    "durationMs": "2896.4",
-    "eventsPerSec": 34526,
-    "meanCaptureMicros": "28.96",
-    "p50CaptureMicros": "103.75",
-    "p95CaptureMicros": "316.19",
-    "p99CaptureMicros": "546.94",
-    "heapDeltaMb": "34.95 MB"
+    "durationMs": "3977.3",
+    "eventsPerSec": 25143,
+    "meanCaptureMicros": "39.77",
+    "p50CaptureMicros": "198.35",
+    "p95CaptureMicros": "617.95",
+    "p99CaptureMicros": "1808.05",
+    "heapDeltaMb": "30.83 MB"
   },
   "adaptiveSampling": {
     "HEALTHY": {
@@ -40,24 +40,24 @@
   "traceAggregation": {
     "totalSpans": 50000,
     "totalTraces": 1000,
-    "durationMs": "127.7",
-    "spansPerSec": 391415,
+    "durationMs": "611.4",
+    "spansPerSec": 81776,
     "orphanGraftPass": "Verified (Cycle-safe)"
   },
   "securityScrubbing": {
     "totalPayloads": 50000,
-    "durationMs": "2794.5",
-    "payloadsPerSec": 17892,
-    "nanosPerScrub": "55890 ns"
+    "durationMs": "7943.8",
+    "payloadsPerSec": 6294,
+    "nanosPerScrub": "158876 ns"
   },
   "queueSaturation": {
     "eventsInjected": 200000,
-    "durationMs": "206862.5",
-    "heapUsedMb": "59.70 MB",
+    "durationMs": "39617.9",
+    "heapUsedMb": "130.90 MB",
     "memoryBounded": true
   },
   "gracefulShutdown": {
-    "durationMs": "2.4",
+    "durationMs": "2315.2",
     "timedOut": false,
     "stepErrors": 0
   }

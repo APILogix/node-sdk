@@ -19,8 +19,17 @@ import { isOtelInstrumentationError } from "./http-lifecycle-guard.js"
 import { SecurityScrubber } from "../processors/security-scrubber.js"
 import { Severity } from "../types/severity.js"
 import { createContextStore, withContext, getRequestContext } from "../core/context.js"
+import { client } from "../core/client.js"
 
 let registered = false
+let isCrashing = false
+
+/**
+ * Returns whether the SDK is actively executing an emergency crash flush sequence.
+ */
+export function isProcessCrashing(): boolean {
+  return isCrashing
+}
 
 // Store handler references for proper cleanup
 let uncaughtHandler: ((err: Error) => void) | null = null
@@ -70,18 +79,18 @@ export function setupGlobalErrorHandlers() {
   // ─── Uncaught Exception Handler ─────────────────────────────────────
   if (errorsConfig.captureUncaughtExceptions !== false) {
     uncaughtHandler = (err: Error) => {
+      // ─── Crash Storm / Re-entrancy Guard ─────────────────────────
+      if (isCrashing) {
+        try {
+          process.stderr.write(`[Pulse] Secondary uncaught exception during crash flush: ${err?.stack || err?.message || err}\n`)
+        } catch {}
+        return
+      }
+      isCrashing = true
+
       // ─── OTel Instrumentation Lifecycle Error Filter ──────────────
-      // OTel's HTTP instrumentation has a known race condition where
-      // socket destruction before response formation causes a TypeError
-      // in internal utility functions. These are non-fatal lifecycle
-      // artifacts of the instrumentation layer, NOT application errors.
-      //
-      // Logging at warn level (not triggering crash-flush) is correct
-      // because:
-      // 1. The span has already been closed by OTel's own guard
-      // 2. No user data is lost — the request was already aborted
-      // 3. Crash-flushing for these would mask real application crashes
       if (isOtelInstrumentationError(err)) {
+        isCrashing = false
         logger.debug('OTel instrumentation lifecycle error (non-fatal, suppressed)', {
           error: err.message,
           hint: 'Socket destroyed before HTTP response — known OTel race condition',
@@ -96,27 +105,67 @@ export function setupGlobalErrorHandlers() {
         withContext(store, () => {
           captureError(err, 'fatal')
         })
-      } catch {
-        // captureError should never throw, but we double-guard here
+      } catch (captureErr) {
+        try {
+          process.stderr.write(`[Pulse] Failed to capture uncaught exception: ${captureErr}\n`)
+        } catch {}
       }
 
-      logger.error("Uncaught exception detected — attempting to flush telemetry events", {
+      logger.error("Uncaught exception detected — flushing telemetry before process termination", {
         error: err.message,
         stack: err.stack,
       })
 
       // Installing an uncaughtException listener suppresses Node's default
-      // non-zero termination. Preserve fatal process semantics while still
-      // allowing the bounded crash flush to run.
-      if (!process.exitCode) process.exitCode = 1
+      // non-zero termination. Preserve fatal process semantics.
+      if (!process.exitCode || process.exitCode === 0) {
+        process.exitCode = 1
+      }
 
-      // Use the bounded crashFlush() to give the transport a real chance
-      // to drain the error event before the process terminates. Unlike the
-      // previous fire-and-forget dynamic import, crashFlush() is bounded
-      // by a hard timeout (2s default) so the process won't hang.
-      crashFlush().catch(() => {
-        // Best-effort — if flush fails, we've already captured the error
-      })
+      const clientOptions = client.options
+      // By default, terminate the process after crash flush completes.
+      // Callers can opt out explicitly by setting `exitOnUncaughtException: false`.
+      const shouldExit = clientOptions?.exitOnUncaughtException !== false
+      const crashTimeoutMs = clientOptions?.crashTimeoutMs ?? 2_000
+      const onFatalError = clientOptions?.onFatalError
+      const targetExitCode = process.exitCode || 1
+
+      // Hard fallback timer — guarantees process exits even if crashFlush hangs or deadlocks
+      let fallbackTimer: NodeJS.Timeout | undefined
+      if (shouldExit) {
+        fallbackTimer = setTimeout(() => {
+          try {
+            process.stderr.write('[Pulse] Crash flush timeout reached — forcing process termination\n')
+          } catch {}
+          if (typeof onFatalError === 'function') {
+            try { onFatalError(err) } catch {}
+          }
+          process.exit(targetExitCode)
+        }, crashTimeoutMs + 500)
+        fallbackTimer.unref?.()
+      }
+
+      // Execute bounded crash flush before terminating
+      void (async () => {
+        try {
+          await crashFlush(crashTimeoutMs)
+        } catch (flushErr) {
+          try {
+            process.stderr.write(`[Pulse] Error during crash flush: ${flushErr}\n`)
+          } catch {}
+        } finally {
+          if (fallbackTimer) {
+            clearTimeout(fallbackTimer)
+            fallbackTimer = undefined
+          }
+          if (typeof onFatalError === 'function') {
+            try { onFatalError(err) } catch {}
+          }
+          if (shouldExit) {
+            process.exit(targetExitCode)
+          }
+        }
+      })()
     }
 
     process.on("uncaughtException", uncaughtHandler)
@@ -256,6 +305,7 @@ let consoleErrorReentry = false
  * setupGlobalErrorHandlers (no-op).
  */
 export function resetGlobalErrorHandlers() {
+  isCrashing = false
   if (uncaughtHandler) {
     process.removeListener("uncaughtException", uncaughtHandler)
     uncaughtHandler = null

@@ -220,7 +220,8 @@ export function getSDKHealth(): {
   queueDeadLetter: number
   memory: { level: string; heapUsedMb: number; heapUtilization: number; effectiveLimitMb: number; effectiveUtilization: number }
   pressure: { state: string; score: number; level: string }
-  quota: { state: string; isExhausted: boolean; droppedEventsCount: number }
+  quota: { state: string; isExhausted: boolean; droppedEventsCount: number; droppedByPriority?: Record<string, number> }
+  routeCircuits?: Record<string, string>
   loadShedder: { totalShed: number; totalAdmitted: number; groupsAdmitted: number; groupsShed: number }
   session: { totalSessions: number; crashFreeRate: number; currentSessionId: string | null }
   pluginCount: number
@@ -277,7 +278,11 @@ export function getSDKHealth(): {
       state: quotaSnapshot.state,
       isExhausted: quotaSnapshot.isExhausted,
       droppedEventsCount: quotaSnapshot.droppedEventsCount,
+      droppedByPriority: quotaSnapshot.droppedByPriority,
     },
+    routeCircuits: transportHealth
+      ? Object.fromEntries(Object.entries(transportHealth.routes).map(([k, r]) => [k, r.circuitState]))
+      : {},
     loadShedder: {
       totalShed: shedderStats.totalShed,
       totalAdmitted: shedderStats.totalAdmitted,

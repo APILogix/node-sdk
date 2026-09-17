@@ -147,7 +147,6 @@ function detectBaseOtelResource() {
                 envDetector,
                 processDetector,
                 osDetector,
-                hostDetector,
                 serviceInstanceIdDetector,
             ],
         });

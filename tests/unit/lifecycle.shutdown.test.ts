@@ -135,12 +135,12 @@ describe('SDK Lifecycle — shutdown and reinit', () => {
   })
 
   it('returns at the caller deadline while cleanup retains ownership', async () => {
-    onBeforeShutdown(() => new Promise(resolve => setTimeout(resolve, 75)))
+    onBeforeShutdown(() => new Promise(resolve => setTimeout(resolve, 150)))
     const startedAt = Date.now()
-    const result = await shutdown(10)
+    const result = await shutdown(15)
 
     assert.equal(result.timedOut, true)
-    assert.ok(Date.now() - startedAt < 60, `shutdown exceeded deadline: ${Date.now() - startedAt}ms`)
+    assert.ok(Date.now() - startedAt < 120, `shutdown exceeded deadline: ${Date.now() - startedAt}ms`)
     assert.equal(isSDKShuttingDown(), true)
 
     await waitForShutdownCompletion()

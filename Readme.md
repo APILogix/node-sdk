@@ -21,10 +21,13 @@
 - [High-Throughput Services & Adaptive Sampling](#high-throughput-services--adaptive-sampling)
 - [Ultra-Fast Initialization Latency](#ultra-fast-initialization-latency)
 - [Framework Integration](#framework-integration)
+  - [Integration contract: where and when to call APIs](#integration-contract-where-and-when-to-call-apis)
+  - [Monitor middleware: configuration-to-capability matrix](#monitor-middleware-configuration-to-capability-matrix)
   - [Express.js Integration](#expressjs-integration)
     - [Express ESM Example](#express-esm-example)
     - [Express CommonJS Example](#express-commonjs-example)
   - [Fastify Integration](#fastify-integration)
+  - [Automatic instrumentation and load order](#automatic-instrumentation-and-load-order)
 - [Database & Cache Auto-Instrumentation](#database--cache-auto-instrumentation)
 - [Custom Function & Business Logic Tracing](#custom-function--business-logic-tracing)
   - [In-Request Function Tracing (`withSpan`)](#in-request-function-tracing-withspan)
@@ -35,6 +38,9 @@
   - [Explicit Error Capture (`captureError`)](#explicit-error-capture-captureerror)
   - [Breadcrumbs, User Identity & Tags](#breadcrumbs-user-identity--tags)
 - [Custom Metrics Tracking](#custom-metrics-tracking)
+- [Capture APIs beyond requests and spans](#capture-apis-beyond-requests-and-spans)
+  - [Feature availability and no-op rules](#feature-availability-and-no-op-rules)
+- [Context, identity, and correlation](#context-identity-and-correlation)
 - [Lifecycle & Hardened Graceful Shutdown](#lifecycle--hardened-graceful-shutdown)
 - [Resilient Pipeline & Telemetry Integrity](#resilient-pipeline--telemetry-integrity)
 - [API Reference](#api-reference)
@@ -47,9 +53,9 @@
 - **Turnkey Auto-Instrumentation**: Automatically instruments HTTP/HTTPS, Express, Fastify, PostgreSQL (`pg`), Redis (`redis`, `ioredis`), MongoDB, Mongoose ODM, MySQL2, Prisma, BullMQ, Nodemailer, Axios, Undici, GraphQL, and native `fetch`.
 - **Truthful Timing & Exclusive Durations**: Zero synthetic duration clamping with 1.0ms event-loop jitter tolerance. High-resolution monotonic interval calculation separates Node.js CPU execution time from database and network wait time, eliminating negative exclusive durations.
 - **Detached Background Traces**: First-class support for post-response asynchronous tasks (emails, webhooks, queue publish) via causal `SpanLink` without leaking HTTP trace memory.
-- **Dynamic Adaptive Sampling**: Scales non-error trace volume dynamically under system pressure (`CRITICAL`: 10%, `PRESSURED`: 50%, `ELEVATED`: 80%) to optimize ingestion costs in high-throughput services (>10,000 RPS) while **guaranteeing 100% error preservation**.
+- **Dynamic Adaptive Sampling**: Scales non-error trace volume dynamically under system pressure (`CRITICAL`: 10%, `PRESSURED`: 50%, `ELEVATED`: 80%) to optimize ingestion costs in high-throughput services, with **priority error preservation** (fatal errors bypass adaptive sampling; fatal/crash events receive reserved capacity during rate-limit backoff).
 - **Zero-Dependency Native `.env` Discovery**: Automatically loads your host project's `.env` for endpoint and control-plane configuration without external dependencies (`PULSE_ENDPOINT`, `PULSE_API_URL`, `BACKEND_URL`, `PULSE_API_KEY`).
-- **Ultra-Fast Sub-10ms Startup**: Bypasses IPv6 DNS resolution fallback delays with automatic origin normalization, HTTP keep-alive, and Redis lookup cache alignment.
+- **Low-Overhead Initialization**: Optimized startup path with DNS origin normalization, HTTP keep-alive socket reuse, and lightweight configuration caching. Actual startup time depends on control-plane latency, network conditions, and enabled instrumentation.
 - **Resilient Pipeline & Orphan Recovery**: Cycle-safe bounded orphan recovery grafts unvisited child subtrees onto root traces; LRU trace deduplication stops duplicate emissions; startup index noise is suppressed.
 - **Deep Recursive PII Sanitization**: Masks credit card numbers, passwords, JWTs, JSON string attributes, URL basic authentication credentials, and `set-cookie` headers.
 - **Hardened Graceful Shutdown**: Automatic `SIGTERM`/`SIGINT` listeners drain in-flight batches across all transport routes before container termination.
@@ -210,13 +216,13 @@ Pulse APM provides **Dynamic Adaptive Sampling** governed entirely via the **Pul
   * **`ELEVATED`**: Dynamically throttles non-error telemetry to at most **80%** of the configured rate.
   * **`PRESSURED`**: Dynamically throttles non-error telemetry to at most **50%** of the configured rate.
   * **`CRITICAL`**: Dynamically throttles non-error telemetry to at most **10%** of the configured rate (`reason: 'adaptive_pressure'`).
-* **Non-Negotiable Error Guarantee**: Errors (`eventType === 'errors'`) are **100% exempt** from adaptive reduction. Even under `CRITICAL` memory or event-loop pressure, 100% of errors are captured and dispatched.
+* **Priority Error Handling**: Fatal errors are exempt from adaptive reduction. This prevents intentional adaptive sampling from removing crash-critical telemetry, but it does not guarantee backend delivery during process termination, queue exhaustion, serialization failure, or network outage.
 
 ---
 
-## Ultra-Fast Initialization Latency
+## Low-Overhead Initialization Latency
 
-SDK startup is engineered for sub-millisecond to sub-10ms execution:
+SDK startup is engineered to minimize initialization overhead. Measure startup in your deployment because control-plane latency, DNS, network connectivity, and active instrumentations affect the result:
 * **IPv6 DNS Bypass**: When communicating with local endpoints (`localhost`), Node.js `fetch` (Undici) resolves IPv6 `::1` before falling back to `127.0.0.1`, which can induce a 1–3 second OS timeout. The SDK automatically normalizes `localhost` to `127.0.0.1`, eliminating DNS lookup lag.
 * **HTTP Keep-Alive**: All control-plane handshakes reuse TCP connections with `Connection: keep-alive`.
 * **Redis Cache Alignment**: The `/v1/init` payload structure is aligned with the backend's Redis lookup caching (`getApiKeyMapping` + `getInitDelivery`), ensuring sub-millisecond responses on cache hits.
@@ -224,6 +230,44 @@ SDK startup is engineered for sub-millisecond to sub-10ms execution:
 ---
 
 ## Framework Integration
+
+### Integration contract: where and when to call APIs
+
+Pulse is process-scoped. Call `init()` exactly once during process bootstrap, before the server starts accepting traffic and before driver modules are loaded when using the ESM loader. Register framework middleware/plugins once while constructing the application. Call capture and tracing APIs at the point where the business action occurs; they inherit the active request/trace context automatically.
+
+| Concern | Call | Placement | Result |
+|---|---|---|---|
+| Bootstrap | `await init(...)` | First application bootstrap step | Downloads the authoritative project configuration and starts enabled subsystems. |
+| Express requests | `app.use(monitorMiddleware(...))` | After body parsers, before routes | Creates request context, enriches the active server span, and emits one request event at `finish`/`close`. |
+| Express errors | `app.use(expressErrorHandler())` | After routes, before the final error responder | Captures `next(err)` and associates it with the request trace. |
+| Fastify requests | `fastify.register(fastifyPulsePlugin, options)` | Before routes | Creates request context and emits request/error telemetry on completion. |
+| Custom work | `withSpan(...)` | Around the operation | Adds a child span to the current trace. |
+| Post-response work | `withBackgroundSpan(...)` | At task dispatch | Creates detached work with a causal link to the originating trace. |
+| Explicit errors | `captureError(...)` | In a `catch` block when adding business context | Records the error without replacing normal error handling. |
+| Shutdown | `await shutdown(...)` | Signal handler or framework shutdown hook | Flushes and releases SDK resources. |
+
+### Monitor middleware: configuration-to-capability matrix
+
+`monitorMiddleware()` is the Express request boundary. It does not replace body parsing, authentication, routing, or your error response middleware. Register body parsers and authentication middleware before it when their values should be visible in the request context.
+
+The middleware's effective behavior is the intersection of the local call, remote `features`, remote `instrumentation`, remote `privacy`, sampling, entitlements, and kill switches:
+
+| Remote/local control | Enabled behavior | Disabled behavior |
+|---|---|---|
+| `features.requestCapture` + request entitlement | Emits request event with method, route, status, latency, request/response sizes, IDs, and trace correlation. | No automatic request event. |
+| `features.tracing` + `instrumentation.express.enabled` + tracing entitlement | Creates/uses the HTTP server span and nests supported child spans. | Request context may still exist, but no automatic HTTP trace is emitted. |
+| `privacy.capture.headers` | Attaches request/response headers after scrubbing. | Header payloads are omitted. |
+| `privacy.capture.query` | Attaches query parameters after scrubbing. | Query payload is omitted. |
+| `privacy.capture.body` | Attaches the parsed request body and body size. | Body payload is omitted; body parsing still belongs to Express. |
+| `privacy.capture.response` | Allows response payload capture where supported by the active response-capture path. | Response payload is omitted. |
+| `privacy.capture.cookies` | Allows cookie data to be considered for capture. | Cookies are omitted. |
+| `privacy.scrubbing.enabled` | Redacts configured headers/fields. | Configured redaction is not applied by that scrubber; keep capture disabled for sensitive payloads. |
+| `privacy.piiDetection.*` | Masks detected emails, phones, IPs, cards, or SSNs according to flags. | That PII detector is inactive. |
+| `sampling.routes` | Applies the longest matching URL-prefix rate; a rate of `0` silences that event type. | Global sampling rate applies. |
+| `killswitches.disableSDK`, `disableTracing`, `disableErrors`, `disableTransport` | Immediately suppresses the corresponding pipeline or subsystem. | Normal processing continues. |
+| `expressErrorHandler()` | Captures errors passed to `next(err)` and records exceptions on the active span. | Your application still handles the error, but this automatic error bridge is absent. |
+
+The middleware is fail-open: telemetry failures are contained and do not change the application's response path. It emits completion telemetry once, on either `finish` or `close`, and captures request errors from `next(err)` and response errors. Automatic request capture is not the same as structured log capture; enable/use `captureLog()` separately for application logs.
 
 ### Express.js Integration
 
@@ -323,6 +367,27 @@ fastify.get('/api/health', async (request, reply) => {
 
 await fastify.listen({ port: 3000 })
 ```
+
+### Automatic instrumentation and load order
+
+Automatic instrumentation is controlled by the remote `instrumentation` block. For CommonJS, initialize before requiring instrumented libraries. For native ESM, preload `@pulse-apm/node/register` with `node --import` so hooks are installed before static imports. `registerAutoInstrumentations()` is available for applications that manage their own bootstrap and need explicit registration; call it after `init()` and before creating clients. Do not combine multiple bootstrap strategies unless you have verified that the library is not patched twice.
+
+Use the dedicated factories when you need explicit control or a library is created outside the normal bootstrap path:
+
+```typescript
+import {
+  createAxiosInstrumentation, createGraphQLInstrumentation,
+  createPrismaInstrumentation, createMongoDBInstrumentation,
+  createMongooseInstrumentation, createRedisInstrumentation,
+  createBullMQInstrumentation, createPgInstrumentation,
+  createMySQLInstrumentation,
+} from '@pulse-apm/node'
+
+// Create/register these using the host library's instrumentation mechanism
+// after init(), using the exported *InstrumentationOptions types.
+```
+
+Automatic instrumentation is subject to both its library flag and the top-level feature/entitlement gate. For example, enabling `instrumentation.pg` cannot produce spans when `features.tracing` or the tracing entitlement is disabled.
 
 ---
 
@@ -431,7 +496,7 @@ If you use custom database drivers or raw connection pools:
 ```typescript
 import { withDbSpan } from '@pulse-apm/node'
 
-const users = await withDbSpan('postgresql', 'SELECT', async (span) => {
+const users = await withDbSpan({ system: 'postgresql', operation: 'SELECT' }, async (span) => {
   span.setAttribute('db.sql.table', 'users')
   return await rawPool.query('SELECT * FROM users')
 })
@@ -509,6 +574,74 @@ recordHistogram('checkout.processing_time_ms', 142.5, {
 // 3. Gauges (active connections, memory)
 setGauge('worker.active_jobs', 12)
 ```
+
+## Capture APIs beyond requests and spans
+
+All public capture functions are safe to call from application code. They pass through normalization, privacy processing, sampling, entitlement checks, queue limits, and transport. A rejected `EventReceipt` means the event was not admitted; it is not an application exception.
+
+```typescript
+import {
+  captureMessage, captureLog, captureCronCheckIn,
+  startProfile, stopProfile, captureReplay, captureEvent,
+} from '@pulse-apm/node'
+
+captureMessage('Cache warmed', 'info', { component: 'startup' })
+captureLog('info', 'Order accepted', { orderId: order.id, tenantId: tenant.id })
+
+captureCronCheckIn('nightly-reconciliation', 'in_progress')
+try {
+  await reconcile()
+  captureCronCheckIn('nightly-reconciliation', 'ok')
+} catch (error) {
+  captureCronCheckIn('nightly-reconciliation', 'error')
+  throw error
+}
+
+if (await startProfile('checkout-profile')) {
+  try { await runExpensiveOperation() } finally { await stopProfile('checkout-profile') }
+}
+
+// Session replay is a low-level segment API. Use only with approved privacy policy.
+captureReplay('session-123', 1, replayEvents)
+
+const receipt = captureEvent({ type: 'event', name: 'domain.order.completed', data: { orderId: order.id } })
+await receipt.processed
+```
+
+### Feature availability and no-op rules
+
+Remote configuration is authoritative and can change without redeploying. `features.*` controls whether a subsystem exists; `entitlements.*` controls plan access; `killswitches.*` can suppress it operationally; sampling can still reduce accepted volume. Core manual `captureError`, `captureMessage`, local scope/context, `flush`, and `shutdown` remain available even when optional families are disabled. `captureLog`, custom metrics, profiling, replay, and cron check-ins are no-ops when their entitlement or feature is unavailable.
+
+| Feature family | Main APIs / automatic paths | Required remote controls |
+|---|---|---|
+| Errors | `captureError`; uncaught exceptions, unhandled rejections, console errors | `features.errors`, `entitlements.errors`, `errors.*`, `disableErrors` |
+| Requests | `monitorMiddleware`, Fastify plugin, `captureRequest` | `features.requestCapture`, request entitlement, sampling |
+| Tracing | `startSpan`, `withSpan`, `withSpanSync`, HTTP/DB/framework spans | `features.tracing`, tracing entitlement, instrumentation flag |
+| Metrics | `captureMetric`, counters, gauges, histograms, runtime/GC/event-loop metrics | custom metrics entitlement; runtime flags for automatic metrics; `disableMetrics` |
+| Logs | `captureLog`, console capture | `features.logging`, `logs.*`, logging entitlement, `disableLogs` |
+| Profiling | `startProfile`, `stopProfile` | `features.profiling`, profiling entitlement, `profiling.*`, `disableProfiling` |
+| Replay | `captureReplay` | `features.sessionReplay`, replay entitlement, `replay.*` |
+| Crons | `captureCronCheckIn` | `features.crons`, cron entitlement, `crons.*` |
+
+## Context, identity, and correlation
+
+Set request-scoped identity after authentication and before the operation you want correlated. Use `withScope()` for isolated concurrent work; use `withContext()`/`bindContext()` when handing work to callbacks or custom async boundaries.
+
+```typescript
+import { setUser, setTag, setExtra, addBreadcrumb, withScope } from '@pulse-apm/node'
+
+setUser({ id: user.id, email: user.email, tenantId: tenant.id })
+setTag('tenant.plan', tenant.plan)
+setExtra('feature_flags', enabledFlags)
+addBreadcrumb({ category: 'checkout', message: 'Payment authorization started', level: 'info' })
+
+await withScope(async () => {
+  setTag('operation.mode', 'reconciliation')
+  await reconcile()
+})
+```
+
+For distributed services, use `injectTraceContext(carrier)` on outbound work and `extractTraceContext(carrier)` at the receiving boundary when the integration does not already inject W3C/B3 headers. The active `traceId` and `spanId` are available through `getTraceId()` and `getSpanId()`.
 
 ---
 
@@ -704,7 +837,7 @@ await Pulse.init({
 In enterprise microservice ecosystems (often running 50–500+ pods across multiple clusters), telemetry policy must **never be coupled to code commits, build pipelines, or container redeployments**:
 1. **Zero-Downtime Incident Response**: If a downstream database experiences an outage or an ingestion cluster faces heavy load, SRE teams can enable adaptive sampling, drop sample rates, or engage subsystem kill switches **instantly** via the Pulse APM dashboard.
 2. **Centralized Ingestion Governance**: Sampling rates and volume limits are tuned centrally to match organization ingestion quotas, eliminating configuration drift across different developer teams.
-3. **Automatic System Protection**: When `sampling.adaptive` is enabled remotely, the SDK's `adaptivePressure` engine automatically monitors host event-loop lag and heap memory, dynamically throttling non-error traces while **guaranteeing 100% error capture**.
+3. **Automatic System Protection**: When `sampling.adaptive` is enabled remotely, the SDK's `adaptivePressure` engine automatically monitors host event-loop lag and heap memory, dynamically throttling non-error traces while prioritizing fatal error capture.
 
 ---
 

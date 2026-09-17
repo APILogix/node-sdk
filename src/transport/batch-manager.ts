@@ -17,7 +17,6 @@ import { inspectTelemetryResponse } from '../core/config-manager.js'
 import { quotaController } from '../core/quota-controller.js'
 import { toError } from '../core/errors.js'
 import { sdkConsoleDebug } from '../utils/console-debug.js'
-import { sdkConsoleLog } from '../utils/sdk-console.js'
 import { SerializationPool } from './serialization-pool.js'
 
 const WORKER_SERIALIZATION_THRESHOLD_BYTES = 50 * 1024 // 50KB
@@ -91,7 +90,7 @@ export class BatchManager {
     const currentQueueSize = this.options.queue.size()
     const maxSize = this.options.queue.maxSize
     if (currentQueueSize <= 50 || (currentQueueSize < maxSize && currentQueueSize % 500 === 0)) {
-      sdkConsoleLog('[Pulse] Event batched', {
+      sdkConsoleDebug('event batched', {
         route: this.options.route,
         eventType: event.type,
         eventId: event.eventId,
@@ -234,7 +233,7 @@ export class BatchManager {
           queueSize: this.options.queue.size(),
           payloadBytes,
         })
-        sdkConsoleLog('[Pulse] Batch captured', {
+        sdkConsoleDebug('batch captured', {
           route: this.options.route,
           eventCount: safeBatch.length,
           eventTypes: [...new Set(safeBatch.map(event => event.type))],
@@ -332,7 +331,7 @@ export class BatchManager {
           compression: 'gzip',
           configuredCompression: this.options.compression,
         })
-        sdkConsoleLog('[Pulse] Batch sending', {
+      sdkConsoleDebug('batch sending', {
           route: this.options.route,
           method: this.options.definition.method,
           eventCount: events.length,
@@ -354,17 +353,13 @@ export class BatchManager {
           compression: 'gzip',
         })
 
-        const response = await otelContext.with(
-          suppressTracing(otelContext.active()),
-          () =>
-            this.fetchImpl(this.options.definition.url, {
-              method: this.options.definition.method,
-              headers,
-              body: requestBody,
-              signal: controller.signal,
-              redirect: 'manual',
-            }),
-        )
+        const response = await this.fetchImpl(this.options.definition.url, {
+          method: this.options.definition.method,
+          headers,
+          body: requestBody,
+          signal: controller.signal,
+          redirect: 'manual',
+        })
 
         const latency = Date.now() - startedAt
 
@@ -408,7 +403,7 @@ export class BatchManager {
             payloadBytes: Buffer.byteLength(body),
             wireBytes: wireBody.byteLength,
           })
-          sdkConsoleLog('[Pulse] Batch send successful', {
+          sdkConsoleDebug('batch send successful', {
             route: this.options.route,
             statusCode: response.status,
             latencyMs: latency,
@@ -418,13 +413,16 @@ export class BatchManager {
           })
 
           inspectTelemetryResponse(response)
+          try {
+            await response.text().catch(() => undefined)
+          } catch {}
         } else if (response.status >= 500 || response.status === 429 || response.status === 408) {
           getLogger().warn('[TransportRouter] Retryable batch response', {
             route: this.options.route,
             statusCode: response.status,
             eventCount: events.length,
           })
-          sdkConsoleLog('[Pulse] Batch send failed', {
+          sdkConsoleDebug('batch send failed', {
             route: this.options.route,
             statusCode: response.status,
             retryable: true,
@@ -445,7 +443,7 @@ export class BatchManager {
             statusCode: response.status,
             eventCount: events.length,
           })
-          sdkConsoleLog('[Pulse] Batch send failed', {
+        sdkConsoleDebug('batch send failed', {
             route: this.options.route,
             statusCode: response.status,
             retryable: false,

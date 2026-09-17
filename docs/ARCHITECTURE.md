@@ -111,7 +111,7 @@ The Control Plane subsystem is responsible for authenticating the SDK, discoveri
 2. **Endpoint Precedence Resolution**:
    * Ingestion endpoint priority:
      $$\text{options.endpoint} \;\to\; \text{PULSE\_ENDPOINT} \;\to\; \text{PULSE\_API\_URL} \;\to\; \text{PULSE\_BASE\_URL} \;\to\; \text{BACKEND\_URL} \;\to\; \text{SDK\_BASE\_URL} \;\to\; \text{http://127.0.0.1:5000}$$
-3. **Sub-10ms Startup & IPv6 DNS Fallback Bypass**:
+3. **Low-Overhead Startup (15–25ms) & IPv6 DNS Fallback Bypass**:
    * Node.js `fetch` (Undici) resolves `localhost` to IPv6 `::1` before falling back to `127.0.0.1`. When IPv6 is unconfigured or blocked, this incurs a 1,000–3,000ms OS socket timeout.
    * `resolveApiBaseUrl()` and `normalizeBaseUrl()` automatically rewrite `http://localhost[:port]` to `http://127.0.0.1[:port]`, eliminating DNS lookup delays.
    * Added `Connection: keep-alive` to reuse TCP connections.

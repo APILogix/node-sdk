@@ -20,6 +20,7 @@ describe('SDK initialization option boundary', () => {
         }
     });
     for (const [name, value] of Object.entries({
+        endpoint: 'https://api.example.test',
         baseUrl: 'https://api.example.test',
         timeoutMs: 5_000,
         service: 'orders',

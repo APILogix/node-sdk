@@ -138,7 +138,11 @@ export function getSDKHealth() {
             state: quotaSnapshot.state,
             isExhausted: quotaSnapshot.isExhausted,
             droppedEventsCount: quotaSnapshot.droppedEventsCount,
+            droppedByPriority: quotaSnapshot.droppedByPriority,
         },
+        routeCircuits: transportHealth
+            ? Object.fromEntries(Object.entries(transportHealth.routes).map(([k, r]) => [k, r.circuitState]))
+            : {},
         loadShedder: {
             totalShed: shedderStats.totalShed,
             totalAdmitted: shedderStats.totalAdmitted,

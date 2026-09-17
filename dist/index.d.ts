@@ -123,7 +123,9 @@ export declare function getSDKHealth(): {
         state: string;
         isExhausted: boolean;
         droppedEventsCount: number;
+        droppedByPriority?: Record<string, number>;
     };
+    routeCircuits?: Record<string, string>;
     loadShedder: {
         totalShed: number;
         totalAdmitted: number;

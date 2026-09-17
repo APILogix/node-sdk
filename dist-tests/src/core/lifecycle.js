@@ -31,7 +31,7 @@ import { getLogger } from '../utils/logger.js';
 import { teardownPlugins } from '../plugins/index.js';
 import { shutdownTracer, flushTracer } from '../tracing/tracer.js';
 import { resetSessionManager } from '../session/session-manager.js';
-import { resetGlobalErrorHandlers } from '../instrumentation/global-errors.js';
+import { resetGlobalErrorHandlers, isProcessCrashing } from '../instrumentation/global-errors.js';
 import { errorDeduplicator } from '../processors/deduplicator.js';
 import { persistentStorage } from '../storage/persistent-storage.js';
 import { metricsRegistry } from '../metrics/registry.js';
@@ -95,6 +95,19 @@ export function onBeforeShutdown(hook) {
  * @returns A ShutdownResult describing what happened. Never throws.
  */
 export async function shutdown(timeoutMs) {
+    if (isProcessCrashing()) {
+        getLogger().warn('Shutdown requested while process is crashing — yielding to emergency crash flush');
+        if (shutdownPromise)
+            return shutdownPromise;
+        return {
+            completed: false,
+            timedOut: false,
+            durationMs: 0,
+            remainingEvents: eventQueue.size(),
+            deadLetterCount: eventQueue.getDeadLetterCount(),
+            stepErrors: [{ step: 'crash_flush_in_progress', error: new Error('Emergency crash flush is active') }],
+        };
+    }
     if (shutdownPromise) {
         getLogger().debug('Shutdown already in progress, joining existing call');
         return shutdownPromise;
@@ -158,6 +171,12 @@ export async function crashFlush(timeoutMs = 2_000) {
             const router = TransportRouter.getInstance();
             if (router) {
                 await router.flushAll();
+            }
+            try {
+                await SerializationPool.reset();
+            }
+            catch {
+                // Best-effort worker termination
             }
         })();
         await Promise.race([drainPromise, timeoutPromise]);

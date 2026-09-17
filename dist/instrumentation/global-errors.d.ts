@@ -9,6 +9,10 @@
  * (rejections don't crash the process by default in modern Node.js).
  */
 /**
+ * Returns whether the SDK is actively executing an emergency crash flush sequence.
+ */
+export declare function isProcessCrashing(): boolean;
+/**
  * Register process-level error handlers based on remote config.
  *
  * Idempotent: if already registered, this is a no-op so a second call from

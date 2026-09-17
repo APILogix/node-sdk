@@ -183,6 +183,8 @@ export interface PiiDetectionConfig {
     readonly maskEmails: boolean;
     readonly maskPhones: boolean;
     readonly maskIPs: boolean;
+    readonly maskCreditCards?: boolean;
+    readonly maskSSNs?: boolean;
 }
 export type MemoryLimit = number | 'auto';
 /**
@@ -454,6 +456,19 @@ export interface SDKInitOptions {
     readonly debug?: boolean | undefined;
     readonly logLevel?: SeverityLevel | undefined;
     readonly shutdownTimeoutMs?: number | undefined;
+    /**
+     * Whether to terminate the process after an uncaughtException once telemetry flush
+     * has completed or timed out (default: true). Set to false for custom crash supervisors or test environments.
+     */
+    readonly exitOnUncaughtException?: boolean | undefined;
+    /**
+     * Maximum time in milliseconds to wait for crash telemetry to flush before process termination (default: 2000).
+     */
+    readonly crashTimeoutMs?: number | undefined;
+    /**
+     * Optional callback invoked right before process termination on uncaughtException.
+     */
+    readonly onFatalError?: ((error: Error) => void) | undefined;
     readonly sourceMaps?: {
         readonly paths?: readonly string[] | undefined;
         readonly allowRemote?: boolean | undefined;
@@ -480,6 +495,9 @@ export declare const sdkInitOptionsSchema: z.ZodObject<{
         warning: "warning";
     }>>;
     shutdownTimeoutMs: z.ZodOptional<z.ZodNumber>;
+    exitOnUncaughtException: z.ZodOptional<z.ZodBoolean>;
+    crashTimeoutMs: z.ZodOptional<z.ZodNumber>;
+    onFatalError: z.ZodOptional<z.ZodCustom<(error: Error) => void, (error: Error) => void>>;
     sourceMaps: z.ZodOptional<z.ZodObject<{
         paths: z.ZodOptional<z.ZodReadonly<z.ZodArray<z.ZodString>>>;
         allowRemote: z.ZodOptional<z.ZodBoolean>;

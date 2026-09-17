@@ -120,21 +120,29 @@ export function enqueueEvent(rawEvent: SDKEvent | Event): EventReceipt {
     ? rawEvent.eventId
     : generateId()
   const internalTelemetry = isInternalTelemetryEvent(rawEvent)
+  const rawRecord = rawEvent as Record<string, unknown>
+  const isFatalCrash = rawRecord['type'] === 'error' && (
+    rawRecord['severity'] === 'fatal' ||
+    rawRecord['mechanism'] === 'uncaughtException' ||
+    (typeof rawRecord['mechanism'] === 'object' && rawRecord['mechanism'] !== null && (rawRecord['mechanism'] as Record<string, unknown>)['type'] === 'uncaughtException')
+  )
+
   sdkConsoleDebug('event accepted', {
     eventType,
     eventId,
     initialized: client.initialized,
     internalTelemetry,
+    isFatalCrash,
   })
 
-  // Gate 1: Reject events during shutdown
-  if (isSDKShuttingDown() && !internalTelemetry) {
+  // Gate 1: Reject events during shutdown (fatal crash telemetry is exempt)
+  if (isSDKShuttingDown() && !internalTelemetry && !isFatalCrash) {
     logger.debug('Event rejected — telemetry is shutting down', { eventType })
     return rejectedReceipt(eventId, 'sdk_shutting_down')
   }
 
-  // Gate 1.1: Reject new events once the pipeline has begun draining.
-  if (pipelineDraining && !internalTelemetry) {
+  // Gate 1.1: Reject new events once the pipeline has begun draining (fatal crash telemetry is exempt)
+  if (pipelineDraining && !internalTelemetry && !isFatalCrash) {
     return rejectedReceipt(eventId, 'pipeline_draining')
   }
 
@@ -145,7 +153,6 @@ export function enqueueEvent(rawEvent: SDKEvent | Event): EventReceipt {
   }
 
   // Synchronously resolve context IDs (traceId, spanId, requestId) so correlation groups are accurate
-  const rawRecord = rawEvent as Record<string, unknown>
   const ctx = getRequestContext()
   const traceId = (typeof rawRecord['traceId'] === 'string' && rawRecord['traceId'])
     ? rawRecord['traceId']
@@ -559,6 +566,10 @@ function isSampled(event: SDKEvent): boolean {
     case 'request':
       return sampling.shouldSampleRequest(event.requestId, event.route ?? event.url).sampled
     case 'error':
+      // Fatal crashes must NEVER be dropped by sampling
+      if (event.severity === 'fatal' || event.mechanism === 'uncaughtException') {
+        return true
+      }
       return sampling.shouldSampleError(event.eventId ?? event.fingerprint ?? event.message).sampled
     case 'message':
       return sampling.shouldSampleMessage(event.eventId ?? event.message).sampled
