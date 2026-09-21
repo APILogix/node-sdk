@@ -1,6 +1,6 @@
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { init, shutdown, startSpan, withSpan } from '../../src/index.js'
+import { init, shutdown, startSpan, withSpan, SpanDurationTracker, computeExclusiveDuration } from '../../src/index.js'
 import { TEST_REMOTE_CONFIG } from '../fixtures/remote-config.js'
 
 const originalFetch = globalThis.fetch
@@ -143,5 +143,35 @@ describe('Pulse SDK Trace/Span Consistency', () => {
     assert.strictEqual(childTraceId, incomingTraceId, 'Child span should inherit incoming traceparent traceId')
 
     if (listeners['finish']) listeners['finish']()
+  })
+
+  it('SpanDurationTracker deduplicates identical child interval recordings', () => {
+    const tracker = new SpanDurationTracker()
+    tracker.recordChildInterval('trace-dedup-1', 'parent-1', 100.5, 200.75)
+    tracker.recordChildInterval('trace-dedup-1', 'parent-1', 100.5, 200.75)
+    const intervals = tracker.getChildIntervals('trace-dedup-1', 'parent-1')
+    assert.strictEqual(intervals.length, 1, 'Duplicate child interval must not be recorded twice')
+    const first = intervals[0]
+    assert.ok(first)
+    assert.strictEqual(first.startTime, 100.5)
+    assert.strictEqual(first.endTime, 200.75)
+  })
+
+  it('computeExclusiveDuration correctly computes exclusive duration and respects 20ms jitter tolerance', () => {
+    // Parent span: 100ms -> 300ms (inclusive duration: 200ms)
+    // Child span 1: 120ms -> 170ms (duration: 50ms)
+    // Child span 2: 200ms -> 230ms (duration: 30ms)
+    // Child with minor clock jitter: starts at 90ms (within 20ms tolerance of parentStart 100ms)
+    const breakdown = computeExclusiveDuration(100, 300, [
+      { startTime: 120, endTime: 170 },
+      { startTime: 200, endTime: 230 },
+      { startTime: 90, endTime: 98 },
+    ])
+
+    assert.strictEqual(breakdown.inclusiveDuration, 200)
+    // Non-overlapping child intervals: (170 - 120) + (230 - 200) = 80ms
+    assert.strictEqual(breakdown.childDuration, 80)
+    // Exclusive duration: 200 - 80 = 120ms
+    assert.strictEqual(breakdown.exclusiveDuration, 120)
   })
 })

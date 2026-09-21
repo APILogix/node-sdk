@@ -102,11 +102,13 @@ async function initialize(options) {
         endpoint: '/v1/init',
     });
     try {
-        // Startup performs one network operation. No config prefetch, retry,
-        // fallback, or immediate /v1/sdk-config request exists.
+        // Startup performs one config operation. Transient failures may use the
+        // bounded /v1/init retry; there is no config prefetch, fallback, or
+        // immediate /v1/sdk-config request.
         const remoteClient = new RemoteConfigClient({
             apiKey: options.apiKey,
             initTimeoutMs: options.initTimeoutMs,
+            initRetries: options.initRetries,
         });
         const response = await remoteClient.initialize();
         const config = manager.initialize(remoteClient, response.config);
@@ -126,6 +128,17 @@ async function initialize(options) {
         tenantGovernor.configure(config.limits.tenantGovernance);
         persistenceGovernor.configure(config.limits.persistenceGovernance);
         SerializationPool.initialize(2);
+        // Disk replay is required before initialization completes, but it does not
+        // depend on transport construction or subsystem registration. Start it
+        // early so its file I/O overlaps SDK-owned CPU setup instead of extending
+        // the application readiness path.
+        const apiKeyHash = createHash('sha256').update(options.apiKey).digest('hex');
+        persistentStorage.configure({ apiKeyHash });
+        const persistedEventsPromise = persistentStorage.init();
+        // This work is awaited before readiness below. Attach a rejection handler
+        // now as well so strict Node unhandled-rejection policies cannot observe a
+        // fast disk failure during the parallel setup window.
+        void persistedEventsPromise.catch(() => { });
         const transportRouter = await TransportRouter.initialize(config.transport, options.apiKey, undefined, config.limits);
         if (config.killswitches.disableTransport || config.killswitches.disableSDK)
             transportRouter.disable();
@@ -152,9 +165,6 @@ async function initialize(options) {
             await initializePlugins(options.plugins, config, client.metadata);
         for (const processor of options.eventProcessors ?? [])
             client.registerEventProcessor(processor);
-        const apiKeyHash = createHash('sha256').update(options.apiKey).digest('hex');
-        persistentStorage.configure({ apiKeyHash });
-        const persistedEvents = await persistentStorage.init();
         if (options.sourceMaps) {
             sourceMapResolver.configure({
                 sourceMapPaths: options.sourceMaps.paths ? [...options.sourceMaps.paths] : [],
@@ -169,7 +179,10 @@ async function initialize(options) {
         metricsRegistry.start();
         configureAdaptivePressure(config);
         adaptivePressure.start();
-        await configurePayloadScrubber(config);
+        // Dynamic module loading is independent of the remaining local setup.
+        // Await it before the SDK accepts capture traffic below.
+        const payloadScrubberPromise = configurePayloadScrubber(config);
+        void payloadScrubberPromise.catch(() => { });
         const resources = detectResources(client.metadata.sdkVersion);
         const startTracing = async () => {
             const active = manager.getConfig();
@@ -362,6 +375,8 @@ async function initialize(options) {
         // Await any asynchronous instrumentation setups (e.g. Axios ESM patching)
         await waitForPendingInstrumentations();
         // Only now may capture paths leave the pre-init buffer.
+        await payloadScrubberPromise;
+        const persistedEvents = await persistedEventsPromise;
         client.markInitialized();
         filterBufferedEvents(config);
         await replayBufferedEvents(persistedEvents);

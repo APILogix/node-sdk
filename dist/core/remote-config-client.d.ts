@@ -14,6 +14,7 @@ export interface InitResponse {
 interface RemoteConfigClientOptions {
     readonly apiKey: string;
     readonly initTimeoutMs?: number | undefined;
+    readonly initRetries?: number | undefined;
     readonly baseUrl?: string | undefined;
     readonly timeoutMs?: number | undefined;
     readonly fetchImpl?: typeof fetch | undefined;
@@ -21,20 +22,27 @@ interface RemoteConfigClientOptions {
 /**
  * The SDK's sole control-plane network client.
  *
- * It intentionally knows only two operations. Neither operation retries or
- * polls; callers decide when a request is allowed.
+ * It intentionally knows only two operations. Startup has a bounded retry for
+ * transient failures; refreshes neither retry nor poll.
  */
 export declare class RemoteConfigClient {
     private readonly apiKey;
     private readonly baseUrl;
     private readonly timeoutMs;
     private readonly initTimeoutMs;
+    private readonly initRetries;
     private readonly fetchImpl;
     constructor(options: RemoteConfigClientOptions);
     /** Perform the one and only startup request. */
     initialize(): Promise<InitResponse>;
     /** Download a complete replacement snapshot after a telemetry change signal. */
     fetchLatest(): Promise<unknown>;
+    /**
+     * Retries only transient startup failures. The configured init timeout is a
+     * deadline for the entire sequence, not a timeout per attempt, so enabling
+     * reliability never turns a 1.5s startup budget into a multi-second stall.
+     */
+    private postInitWithRetry;
     private post;
 }
 export {};

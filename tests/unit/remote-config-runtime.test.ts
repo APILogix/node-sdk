@@ -51,6 +51,7 @@ describe('single-source remote configuration runtime', () => {
     const remote = new RemoteConfigClient({
       apiKey: 'key',
       initTimeoutMs: 20,
+      initRetries: 0,
       fetchImpl: async (_input, options) => {
         calls++
         signal = options?.signal
@@ -69,6 +70,77 @@ describe('single-source remote configuration runtime', () => {
       fetchImpl: async () => ({ text: () => new Promise<string>(() => {}) }) as Response,
     })
     await assert.rejects(remote.initialize(), /timed out/)
+  })
+
+  it('retries one transient init response and returns the validated snapshot', async () => {
+    let calls = 0
+    const snapshot = config()
+    const remote = new RemoteConfigClient({
+      apiKey: 'key',
+      initTimeoutMs: 500,
+      fetchImpl: async () => {
+        calls++
+        return calls === 1
+          ? response({ error: 'temporarily unavailable' }, 503)
+          : response(initPayload(snapshot))
+      },
+    })
+
+    const result = await remote.initialize()
+    assert.equal(calls, 2)
+    assert.equal(result.config.sdk.projectId, snapshot.sdk.projectId)
+  })
+
+  it('does not retry permanent init failures', async () => {
+    let calls = 0
+    const remote = new RemoteConfigClient({
+      apiKey: 'key',
+      fetchImpl: async () => {
+        calls++
+        return response({ error: 'invalid API key' }, 401)
+      },
+    })
+
+    await assert.rejects(remote.initialize(), /Control-plane request failed/)
+    assert.equal(calls, 1)
+  })
+
+  it('does not wait past the startup deadline for a Retry-After response', async () => {
+    let calls = 0
+    const remote = new RemoteConfigClient({
+      apiKey: 'key',
+      initTimeoutMs: 100,
+      fetchImpl: async () => {
+        calls++
+        return new Response(JSON.stringify({ error: 'rate limited' }), {
+          status: 429,
+          headers: { 'retry-after': '1' },
+        })
+      },
+    })
+
+    const startedAt = performance.now()
+    await assert.rejects(remote.initialize(), /Control-plane request failed/)
+    assert.ok(performance.now() - startedAt < 100, 'Retry-After must not extend init timeout')
+    assert.equal(calls, 1)
+  })
+
+  it('keeps retries within the configured total startup deadline', async () => {
+    let calls = 0
+    const remote = new RemoteConfigClient({
+      apiKey: 'key',
+      initTimeoutMs: 100,
+      fetchImpl: async () => {
+        calls++
+        return new Promise<Response>(() => {})
+      },
+    })
+    const startedAt = performance.now()
+    await assert.rejects(remote.initialize(), /timed out/)
+    const elapsedMs = performance.now() - startedAt
+
+    assert.ok(calls >= 1 && calls <= 2, `expected one bounded retry sequence, got ${calls} attempts`)
+    assert.ok(elapsedMs < 180, `init retry exceeded its 100ms deadline: ${elapsedMs}ms`)
   })
 
   it('performs one header-auth /v1/init request and no startup config request', async () => {

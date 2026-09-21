@@ -29,6 +29,7 @@ import { SDK_NAME, SDK_VERSION } from '../constants/version.js'
 import { getLogger } from '../utils/logger.js'
 import { generateId } from '../utils/uuid.js'
 import { extractTraceContext } from '../tracing/context-propagation.js'
+import { getTraceAggregator } from '../tracing/trace-aggregator.js'
 import {
   captureBodySnapshot,
   evaluateCaptureGate,
@@ -527,10 +528,24 @@ function captureFastifyCompletion(
   }
 
   if (state.createdServerSpan && state.activeSpan) {
-    try {
-      state.activeSpan.end()
-    } catch (endErr) {
-      getLogger().error('Failed to end Fastify server span', { error: endErr })
+    const serverSpan = state.activeSpan
+    const traceId = serverSpan.spanContext().traceId
+    let ended = false
+    const endFastifySpan = () => {
+      if (ended) return
+      ended = true
+      try {
+        serverSpan.end()
+      } catch (endErr) {
+        getLogger().error('Failed to end Fastify server span', { error: endErr })
+      }
+    }
+
+    const aggregator = getTraceAggregator()
+    if (aggregator.getActiveSpanCount(traceId) > 1) {
+      aggregator.waitForActiveChildren(traceId, endFastifySpan, 10000)
+    } else {
+      endFastifySpan()
     }
   }
 

@@ -240,25 +240,24 @@ function createHttpInstrumentationInstance(httpEnabled, httpsEnabled) {
                                 return;
                             const aggregator = getTraceAggregator();
                             const activeCount = aggregator.getActiveSpanCount(traceId);
-                            const executeEnd = () => {
+                            const executeEnd = (delayed = false) => {
                                 if (ended)
                                     return;
                                 ended = true;
-                                originalEnd.apply(this, args.length > 0 ? args : undefined);
+                                // If delayed waiting for active children, omit stale responseEndTime in args
+                                // so OpenTelemetry stamps the actual current monotonic timestamp.
+                                if (delayed) {
+                                    originalEnd.apply(this);
+                                }
+                                else {
+                                    originalEnd.apply(this, args.length > 0 ? args : undefined);
+                                }
                             };
                             if (activeCount > 1) {
-                                aggregator.waitForActiveChildren(traceId, executeEnd, 10000);
+                                aggregator.waitForActiveChildren(traceId, () => executeEnd(true), 10000);
                             }
                             else {
-                                setImmediate(() => {
-                                    const countNow = aggregator.getActiveSpanCount(traceId);
-                                    if (countNow > 1) {
-                                        aggregator.waitForActiveChildren(traceId, executeEnd, 10000);
-                                    }
-                                    else {
-                                        executeEnd();
-                                    }
-                                });
+                                executeEnd(false);
                             }
                         };
                     }

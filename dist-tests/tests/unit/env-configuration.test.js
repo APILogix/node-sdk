@@ -59,6 +59,13 @@ ALREADY_SET=should_not_overwrite
         assert.equal(resolveApiBaseUrl(), 'http://127.0.0.1:5000');
         delete process.env['BACKEND_URL'];
     });
+    it('uses the scoped SDK_BASE_URL compatibility alias when no Pulse endpoint is configured', () => {
+        delete process.env['PULSE_ENDPOINT'];
+        delete process.env['PULSE_API_URL'];
+        delete process.env['PULSE_BASE_URL'];
+        process.env['SDK_BASE_URL'] = 'http://localhost:4100/';
+        assert.equal(resolveApiBaseUrl(), 'http://127.0.0.1:4100');
+    });
     it('4. init() automatically falls back to process.env.PULSE_API_KEY when apiKey is omitted', async () => {
         process.env['PULSE_API_KEY'] = 'env-api-key-test-123';
         let requestCaptured = false;

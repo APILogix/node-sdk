@@ -35,7 +35,12 @@ export function resolveApiBaseUrl(): string {
     const customUrl =
       process.env['PULSE_ENDPOINT'] ||
       process.env['PULSE_API_URL'] ||
-      process.env['PULSE_BASE_URL']
+      process.env['PULSE_BASE_URL'] ||
+      // Legacy SDK integration tests and deployed applications use this
+      // scoped alias. Keep generic BACKEND_URL intentionally unsupported to
+      // avoid accidentally routing telemetry through a host application's
+      // unrelated backend.
+      process.env['SDK_BASE_URL']
     if (customUrl && typeof customUrl === 'string' && customUrl.trim().length > 0) {
       let resolved = customUrl.trim()
       if (resolved.endsWith('/')) resolved = resolved.slice(0, -1)

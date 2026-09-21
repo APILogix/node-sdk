@@ -54,7 +54,7 @@
 import { getLogger } from '../utils/logger.js';
 let lastAnomalyLogTimeMs = 0;
 const ANOMALY_LOG_THROTTLE_MS = 1000;
-export function computeExclusiveDuration(parentStartMs, parentEndMs, childIntervals) {
+export function computeExclusiveDuration(parentStartMs, parentEndMs, childIntervals, spanName) {
     const inclusiveDuration = Math.max(0, parentEndMs - parentStartMs);
     if (childIntervals.length === 0) {
         return { inclusiveDuration, exclusiveDuration: inclusiveDuration, childDuration: 0 };
@@ -62,13 +62,14 @@ export function computeExclusiveDuration(parentStartMs, parentEndMs, childInterv
     // Step 1: Collect valid child intervals truthfully without clamping.
     // P0.4: Do not modify or clamp child start/end to hide lifecycle defects.
     const validIntervals = [];
-    const JITTER_TOLERANCE_MS = 1.0;
+    const JITTER_TOLERANCE_MS = 20.0;
     for (const child of childIntervals) {
         if (child.startTime < parentStartMs - JITTER_TOLERANCE_MS || child.endTime > parentEndMs + JITTER_TOLERANCE_MS) {
             const now = Date.now();
             if (now - lastAnomalyLogTimeMs >= ANOMALY_LOG_THROTTLE_MS) {
                 lastAnomalyLogTimeMs = now;
                 getLogger().warn('Span timing anomaly: child interval exceeds parent boundaries', {
+                    spanName,
                     parentStartMs,
                     parentEndMs,
                     childStartTime: child.startTime,
@@ -162,7 +163,11 @@ export class SpanDurationTracker {
             intervals = [];
             traceEntry.children.set(parentSpanId, intervals);
         }
-        intervals.push({ startTime, endTime });
+        // Deduplicate: avoid recording duplicate intervals from both processor and exporter
+        const exists = intervals.some(i => Math.abs(i.startTime - startTime) < 0.001 && Math.abs(i.endTime - endTime) < 0.001);
+        if (!exists) {
+            intervals.push({ startTime, endTime });
+        }
     }
     /**
      * Get buffered child intervals for a specific span.

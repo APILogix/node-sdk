@@ -178,7 +178,11 @@ export function monitorMiddleware(options = {}) {
                             if (createdServerSpan && activeSpan) {
                                 const serverSpan = activeSpan;
                                 const traceId = serverSpan.spanContext().traceId;
+                                let ended = false;
                                 const endServerSpan = () => {
+                                    if (ended)
+                                        return;
+                                    ended = true;
                                     try {
                                         serverSpan.end();
                                     }
@@ -191,14 +195,6 @@ export function monitorMiddleware(options = {}) {
                                     aggregator.waitForActiveChildren(traceId, endServerSpan, 10000);
                                 }
                                 else {
-                                    setImmediate(() => {
-                                        if (aggregator.getActiveSpanCount(traceId) > 1) {
-                                            aggregator.waitForActiveChildren(traceId, endServerSpan, 10000);
-                                        }
-                                        else {
-                                            endServerSpan();
-                                        }
-                                    });
                                     endServerSpan();
                                 }
                             }

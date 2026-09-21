@@ -589,6 +589,11 @@ export interface SDKInitOptions {
   readonly apiKey: string
   /** Startup request deadline in milliseconds (default: 1500). Failure leaves telemetry disabled. */
   readonly initTimeoutMs?: number | undefined
+  /**
+   * Number of retries for transient /v1/init failures (default: 1). The
+   * complete attempt sequence remains within initTimeoutMs.
+   */
+  readonly initRetries?: number | undefined
   /** Whether to automatically register SIGTERM/SIGINT listeners for graceful shutdown (default: true). */
   readonly handleSignals?: boolean | undefined
   readonly applicationName?: string | undefined
@@ -626,6 +631,7 @@ export interface SDKInitOptions {
 export const sdkInitOptionsSchema = z.object({
   apiKey: z.string().trim().min(1, 'apiKey is required'),
   initTimeoutMs: z.number().int().min(100).max(30000).optional(),
+  initRetries: z.number().int().min(0).max(3).optional(),
   handleSignals: z.boolean().optional(),
   applicationName: z.string().trim().min(1).optional(),
   applicationVersion: z.string().trim().min(1).optional(),

@@ -545,10 +545,13 @@ export class TraceAggregator {
     this.pending.delete(traceId)
     this.markFinalized(traceId)
 
-    // Clean up span duration tracker now that the trace is finalized
-    try {
-      spanDurationTracker.cleanupTrace(traceId)
-    } catch {}
+    // Clean up span duration tracker after a grace period so BatchSpanProcessor (2000ms delay)
+    // can complete its export pass without losing child intervals.
+    setTimeout(() => {
+      try {
+        spanDurationTracker.cleanupTrace(traceId)
+      } catch {}
+    }, 10000).unref?.()
 
     const logger = getLogger()
 
@@ -624,9 +627,9 @@ export class TraceAggregator {
         rootAggregated.children.sort((a, b) => a.startTime - b.startTime)
       }
 
-      // Calculate total duration from root (or max child end minus min start for partials)
+      // Calculate total duration from root (or max child end minus min start)
       let totalDuration = (rootSpanEvent.duration as number) ?? 0
-      if (isPartial && spans.length > 1) {
+      if (spans.length > 1) {
         const minStart = spans.reduce((min, s) => Math.min(min, (s.startTime as number) ?? min), (rootSpanEvent.startTime as number) ?? 0)
         const maxEnd = spans.reduce((max, s) => Math.max(max, (s.endTime as number) ?? max), (rootSpanEvent.endTime as number) ?? 0)
         if (maxEnd > minStart) {
@@ -732,15 +735,27 @@ export class TraceAggregator {
       .filter(child => !visited || !visited.has(child.spanId as string))
       .map(child => this.buildTree(child, childrenByParent, visited))
 
+    const rawStartTime = rootEvent.startTime as number
+    const rawEndTime = rootEvent.endTime as number
+    let startTime = rawStartTime
+    let endTime = rawEndTime
+    if (children.length > 0) {
+      for (const child of children) {
+        if (child.startTime < startTime) startTime = child.startTime
+        if (child.endTime > endTime) endTime = child.endTime
+      }
+    }
+    const duration = Math.max((rootEvent.duration as number) ?? 0, endTime - startTime)
+
     return {
       spanId: rootSpanId,
       traceId: rootEvent.traceId as string | undefined,
       parentSpanId: rootEvent.parentSpanId as string | undefined,
       name: rootEvent.name as string,
       kind: rootEvent.kind as string | undefined,
-      startTime: rootEvent.startTime as number,
-      endTime: rootEvent.endTime as number,
-      duration: rootEvent.duration as number,
+      startTime,
+      endTime,
+      duration,
       exclusiveDuration: rootEvent.exclusiveDuration as number | undefined,
       status: rootEvent.status as string,
       statusMessage: rootEvent.statusMessage as string | undefined,

@@ -412,11 +412,14 @@ export class TraceAggregator {
         // Remove from pending before processing to prevent re-entry
         this.pending.delete(traceId);
         this.markFinalized(traceId);
-        // Clean up span duration tracker now that the trace is finalized
-        try {
-            spanDurationTracker.cleanupTrace(traceId);
-        }
-        catch { }
+        // Clean up span duration tracker after a grace period so BatchSpanProcessor (2000ms delay)
+        // can complete its export pass without losing child intervals.
+        setTimeout(() => {
+            try {
+                spanDurationTracker.cleanupTrace(traceId);
+            }
+            catch { }
+        }, 10000).unref?.();
         const logger = getLogger();
         try {
             const spans = Array.from(trace.spans.values());
@@ -482,9 +485,9 @@ export class TraceAggregator {
                 }
                 rootAggregated.children.sort((a, b) => a.startTime - b.startTime);
             }
-            // Calculate total duration from root (or max child end minus min start for partials)
+            // Calculate total duration from root (or max child end minus min start)
             let totalDuration = rootSpanEvent.duration ?? 0;
-            if (isPartial && spans.length > 1) {
+            if (spans.length > 1) {
                 const minStart = spans.reduce((min, s) => Math.min(min, s.startTime ?? min), rootSpanEvent.startTime ?? 0);
                 const maxEnd = spans.reduce((max, s) => Math.max(max, s.endTime ?? max), rootSpanEvent.endTime ?? 0);
                 if (maxEnd > minStart) {
@@ -571,15 +574,28 @@ export class TraceAggregator {
         const children = rawChildren
             .filter(child => !visited || !visited.has(child.spanId))
             .map(child => this.buildTree(child, childrenByParent, visited));
+        const rawStartTime = rootEvent.startTime;
+        const rawEndTime = rootEvent.endTime;
+        let startTime = rawStartTime;
+        let endTime = rawEndTime;
+        if (children.length > 0) {
+            for (const child of children) {
+                if (child.startTime < startTime)
+                    startTime = child.startTime;
+                if (child.endTime > endTime)
+                    endTime = child.endTime;
+            }
+        }
+        const duration = Math.max(rootEvent.duration ?? 0, endTime - startTime);
         return {
             spanId: rootSpanId,
             traceId: rootEvent.traceId,
             parentSpanId: rootEvent.parentSpanId,
             name: rootEvent.name,
             kind: rootEvent.kind,
-            startTime: rootEvent.startTime,
-            endTime: rootEvent.endTime,
-            duration: rootEvent.duration,
+            startTime,
+            endTime,
+            duration,
             exclusiveDuration: rootEvent.exclusiveDuration,
             status: rootEvent.status,
             statusMessage: rootEvent.statusMessage,

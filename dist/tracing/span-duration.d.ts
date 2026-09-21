@@ -49,7 +49,7 @@ export interface DurationBreakdown {
     /** Total non-overlapping wall-clock time covered by child spans. */
     readonly childDuration: number;
 }
-export declare function computeExclusiveDuration(parentStartMs: number, parentEndMs: number, childIntervals: ReadonlyArray<SpanInterval>): DurationBreakdown;
+export declare function computeExclusiveDuration(parentStartMs: number, parentEndMs: number, childIntervals: ReadonlyArray<SpanInterval>, spanName?: string): DurationBreakdown;
 /**
  * In-memory buffer that tracks child span intervals per trace for
  * exclusive duration computation at export time.

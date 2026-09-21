@@ -177,7 +177,7 @@ function spanToEvent(span) {
     const ctx = span.spanContext();
     const attrs = span.attributes;
     const status = span.status;
-    const durationMs = hrTimeToMs(span.duration);
+    const rawDurationMs = hrTimeToMs(span.duration);
     const parentSpanId = span.parentSpanContext?.spanId;
     const statusLabel = status.code === 0 ? 'unset' : status.code === 1 ? 'ok' : 'error';
     // Read one immutable snapshot for all policy applied to this span.
@@ -215,13 +215,26 @@ function spanToEvent(span) {
         if (maxAttrs >= 2)
             filteredAttrs['pulse.original_attribute_count'] = attrEntries.length;
     }
-    const startTimeMs = hrTimeToMs(span.startTime);
-    const endTimeMs = hrTimeToMs(span.endTime);
+    const rawStartTimeMs = hrTimeToMs(span.startTime);
+    const rawEndTimeMs = hrTimeToMs(span.endTime);
+    const childIntervals = spanDurationTracker.getChildIntervals(ctx.traceId, ctx.spanId);
+    // Ensure parent span boundaries envelop all asynchronous child operations
+    // so child intervals never exceed parent boundaries in distributed trace trees.
+    let startTimeMs = rawStartTimeMs;
+    let endTimeMs = rawEndTimeMs;
+    if (childIntervals.length > 0) {
+        for (const child of childIntervals) {
+            if (child.startTime < startTimeMs)
+                startTimeMs = child.startTime;
+            if (child.endTime > endTimeMs)
+                endTimeMs = child.endTime;
+        }
+    }
+    const durationMs = Math.max(rawDurationMs, endTimeMs - startTimeMs);
     // Compute exclusive (self) duration by subtracting merged child
     // span intervals from this span's total duration. This enables
     // performance attribution: "DB took 50ms, business logic 400ms".
-    const childIntervals = spanDurationTracker.getChildIntervals(ctx.traceId, ctx.spanId);
-    const durationBreakdown = computeExclusiveDuration(startTimeMs, endTimeMs, childIntervals);
+    const durationBreakdown = computeExclusiveDuration(startTimeMs, endTimeMs, childIntervals, span.name);
     return {
         type: 'span',
         eventId: `span_${ctx.spanId}`,

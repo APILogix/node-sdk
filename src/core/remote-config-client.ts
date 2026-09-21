@@ -8,6 +8,9 @@ import { getLogger } from '../utils/logger.js'
 
 const CONTROL_PLANE_TIMEOUT_MS = 5_000
 const INIT_TIMEOUT_MS = 1_500
+const DEFAULT_INIT_RETRIES = 1
+const MAX_INIT_RETRIES = 3
+const INIT_RETRY_BASE_DELAY_MS = 50
 const CONTROL_PLANE_PATH_PREFIX = ''
 
 export interface InitResponse {
@@ -26,6 +29,7 @@ export interface InitResponse {
 interface RemoteConfigClientOptions {
   readonly apiKey: string
   readonly initTimeoutMs?: number | undefined
+  readonly initRetries?: number | undefined
   readonly baseUrl?: string | undefined
   readonly timeoutMs?: number | undefined
   readonly fetchImpl?: typeof fetch | undefined
@@ -34,14 +38,15 @@ interface RemoteConfigClientOptions {
 /**
  * The SDK's sole control-plane network client.
  *
- * It intentionally knows only two operations. Neither operation retries or
- * polls; callers decide when a request is allowed.
+ * It intentionally knows only two operations. Startup has a bounded retry for
+ * transient failures; refreshes neither retry nor poll.
  */
 export class RemoteConfigClient {
   private readonly apiKey: string
   private readonly baseUrl: string
   private readonly timeoutMs: number
   private readonly initTimeoutMs: number
+  private readonly initRetries: number
   private readonly fetchImpl: typeof fetch
 
   constructor(options: RemoteConfigClientOptions) {
@@ -50,12 +55,13 @@ export class RemoteConfigClient {
     this.baseUrl = normalizeBaseUrl(options.baseUrl ?? resolveApiBaseUrl())
     this.timeoutMs = options.timeoutMs ?? CONTROL_PLANE_TIMEOUT_MS
     this.initTimeoutMs = options.initTimeoutMs ?? options.timeoutMs ?? INIT_TIMEOUT_MS
+    this.initRetries = Math.floor(Math.min(MAX_INIT_RETRIES, Math.max(0, options.initRetries ?? DEFAULT_INIT_RETRIES)))
     this.fetchImpl = options.fetchImpl ?? fetch
   }
 
   /** Perform the one and only startup request. */
   async initialize(): Promise<InitResponse> {
-    const payload = await this.post('/v1/init')
+    const payload = await this.postInitWithRetry()
     const normalized = normalizeInitResponse(payload)
     if (!normalized) {
       throw new SDKError(
@@ -99,9 +105,63 @@ export class RemoteConfigClient {
     return payload
   }
 
-  private async post(path: '/v1/init' | '/v1/sdk-config'): Promise<unknown> {
+  /**
+   * Retries only transient startup failures. The configured init timeout is a
+   * deadline for the entire sequence, not a timeout per attempt, so enabling
+   * reliability never turns a 1.5s startup budget into a multi-second stall.
+   */
+  private async postInitWithRetry(): Promise<unknown> {
+    const startedAt = Date.now()
+    let lastError: unknown
+
+    for (let attempt = 0; attempt <= this.initRetries; attempt++) {
+      const elapsedMs = Date.now() - startedAt
+      const remainingMs = this.initTimeoutMs - elapsedMs
+      if (remainingMs <= 0) break
+
+      // Reserve an equal share of the remaining deadline for every attempt
+      // that has not run yet. This gives a retry a real chance after a stalled
+      // first request while retaining the caller's overall startup bound.
+      const attemptsRemaining = this.initRetries - attempt + 1
+      const attemptTimeoutMs = Math.max(1, Math.floor(remainingMs / attemptsRemaining))
+      try {
+        return await this.post('/v1/init', attemptTimeoutMs)
+      } catch (error) {
+        lastError = error
+        if (attempt === this.initRetries || !isRetryableInitError(error)) throw error
+
+        const afterAttemptMs = this.initTimeoutMs - (Date.now() - startedAt)
+        if (afterAttemptMs <= 1) break
+        const retryAfterMs = retryAfterFrom(error)
+        // Respect a server-directed retry delay when it still fits in the
+        // caller's deadline. Waiting longer would make the SDK miss startup
+        // readiness without providing another useful attempt.
+        if (retryAfterMs !== undefined && retryAfterMs >= afterAttemptMs) throw error
+        const delayMs = retryAfterMs ?? Math.min(
+          INIT_RETRY_BASE_DELAY_MS * (2 ** attempt),
+          Math.max(1, Math.floor(afterAttemptMs / 4)),
+        )
+        getLogger().warn('[RemoteConfigClient] Retrying transient init failure', {
+          endpoint: '/v1/init',
+          attempt: attempt + 1,
+          retryInMs: delayMs,
+          remainingMs: afterAttemptMs,
+          errorCode: error instanceof SDKError ? error.code : undefined,
+        })
+        await delay(delayMs)
+      }
+    }
+
+    if (lastError) throw lastError
+    throw new SDKError('Control-plane request timed out', 'NETWORK_ERROR', {
+      reason: 'timeout',
+      timeoutMs: this.initTimeoutMs,
+    })
+  }
+
+  private async post(path: '/v1/init' | '/v1/sdk-config', timeoutOverrideMs?: number): Promise<unknown> {
     const controller = new AbortController()
-    const timeoutMs = path === '/v1/init' ? this.initTimeoutMs : this.timeoutMs
+    const timeoutMs = timeoutOverrideMs ?? (path === '/v1/init' ? this.initTimeoutMs : this.timeoutMs)
     let timer: ReturnType<typeof setTimeout>
     const deadline = new Promise<never>((_resolve, reject) => {
       timer = setTimeout(() => {
@@ -161,9 +221,13 @@ export class RemoteConfigClient {
         getLogger().info('[RemoteConfigClient] Init route response served', summarizeInitRoutePayload(payload))
       }
       if (!response.ok) {
+        const retryAfter = retryAfterMs(response.headers.get('retry-after'))
         throw new SDKError('Control-plane request failed', 'HTTP_ERROR', {
           statusCode: response.status,
           status: response.status,
+          ...(retryAfter !== undefined
+            ? { retryAfterMs: retryAfter }
+            : {}),
         })
       }
 
@@ -225,6 +289,36 @@ function normalizeBaseUrl(value: string): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+/** Only retry failures that an immediate repeat can plausibly recover. */
+function isRetryableInitError(error: unknown): boolean {
+  if (!(error instanceof SDKError)) return true
+  if (error.code === 'NETWORK_ERROR') return true
+  if (error.code !== 'HTTP_ERROR') return false
+
+  const status = error.context['statusCode']
+  return typeof status === 'number'
+    && (status === 408 || status === 425 || status === 429 || status >= 500)
+}
+
+function retryAfterFrom(error: unknown): number | undefined {
+  if (!(error instanceof SDKError)) return undefined
+  const value = error.context['retryAfterMs']
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined
+}
+
+function retryAfterMs(value: string | null): number | undefined {
+  if (!value) return undefined
+  const seconds = Number(value)
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.ceil(seconds * 1_000)
+  const timestamp = Date.parse(value)
+  if (!Number.isNaN(timestamp)) return Math.max(0, timestamp - Date.now())
+  return undefined
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms))
 }
 
 function normalizeInitResponse(payload: unknown): InitResponse | null {
