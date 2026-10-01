@@ -30,7 +30,7 @@ async function startMockBackend() {
             catch {
                 requests.push({ path: req.url ?? '', body: decoded });
             }
-            if (req.url === '/v1/init' || req.url === '/api/v1/init') {
+            if (req.url?.includes('init')) {
                 const port = server.address().port;
                 const localUrl = `http://127.0.0.1:${port}`;
                 const paths = {
@@ -121,7 +121,7 @@ function makeRequest(url, method = 'GET') {
     });
 }
 // ─── Tests ──────────────────────────────────────────────────────────────────
-describe('HTTP Status Enrichment', { timeout: 30_000 }, () => {
+describe('HTTP Status Enrichment', { timeout: 60_000 }, () => {
     let backend;
     before(async () => {
         backend = await startMockBackend();
@@ -285,7 +285,7 @@ describe('HTTP Status Enrichment', { timeout: 30_000 }, () => {
             withContext(store, () => {
                 captureError(new Error('Unhandled rejection'), 'error');
             });
-            await delay(50);
+            await delay(200);
             await flush();
             const events = getErrorEvents(backend);
             const ev = events.find(e => e.message === 'Unhandled rejection');

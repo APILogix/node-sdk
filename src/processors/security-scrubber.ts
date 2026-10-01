@@ -32,6 +32,10 @@ export class SecurityScrubber {
   // them on every event.
   private sensitiveHeaders: Set<string>
   private sensitiveFields: Set<string>
+  private normalizedHeaders: Set<string>
+  private normalizedFields: Set<string>
+  private readonly keySensitivityCache = new Map<string, boolean>()
+  private static readonly MAX_CACHE_SIZE = 2000
 
   // PII patterns
   private static readonly EMAIL_PATTERN = /(?<![a-zA-Z0-9._%+-])[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g
@@ -70,7 +74,21 @@ export class SecurityScrubber {
 
     this.sensitiveHeaders = new Set(config.scrubbing.headers.map((h: string) => h.toLowerCase()))
     this.sensitiveFields = new Set(config.scrubbing.fields.map((f: string) => f.toLowerCase()))
+    this.normalizedHeaders = new Set(config.scrubbing.headers.map((h: string) => h.toLowerCase().replace(/[-_]/g, '')))
+    this.normalizedFields = new Set(config.scrubbing.fields.map((f: string) => f.toLowerCase().replace(/[-_]/g, '')))
     this.updateHasScrubRules()
+  }
+
+  getPrivacyConfig(): PrivacyConfig {
+    return {
+      capture: { headers: true, body: true, response: false, query: true, cookies: false },
+      scrubbing: {
+        enabled: this.scrubbingConfig.enabled,
+        headers: [...this.sensitiveHeaders],
+        fields: [...this.sensitiveFields],
+      },
+      piiDetection: { ...this.piiConfig },
+    }
   }
 
   private updateHasScrubRules() {
@@ -191,23 +209,33 @@ export class SecurityScrubber {
    */
   private isKeySensitive(rawKey: string): boolean {
     if (!this.scrubbingConfig.enabled) return false
+    const cached = this.keySensitivityCache.get(rawKey)
+    if (cached !== undefined) return cached
+
     const key = rawKey.toLowerCase()
-    if (this.sensitiveFields.has(key) || this.sensitiveHeaders.has(key)) return true
+    let isSensitive = false
 
-    const normalized = key.replace(/[-_]/g, '')
-    for (const f of this.sensitiveFields) {
-      if (f.replace(/[-_]/g, '') === normalized) return true
-    }
-    for (const h of this.sensitiveHeaders) {
-      if (h.replace(/[-_]/g, '') === normalized) return true
+    if (this.sensitiveFields.has(key) || this.sensitiveHeaders.has(key)) {
+      isSensitive = true
+    } else {
+      const normalized = key.replace(/[-_]/g, '')
+      if (this.normalizedFields.has(normalized) || this.normalizedHeaders.has(normalized)) {
+        isSensitive = true
+      } else {
+        const parts = key.split(/[\.:]/)
+        const lastPart = parts[parts.length - 1]
+        if (lastPart && (this.sensitiveFields.has(lastPart) || this.sensitiveHeaders.has(lastPart))) {
+          isSensitive = true
+        }
+      }
     }
 
-    const parts = key.split(/[\.:]/)
-    const lastPart = parts[parts.length - 1]
-    if (lastPart && (this.sensitiveFields.has(lastPart) || this.sensitiveHeaders.has(lastPart))) {
-      return true
+    if (this.keySensitivityCache.size >= SecurityScrubber.MAX_CACHE_SIZE) {
+      const oldestKey = this.keySensitivityCache.keys().next().value
+      if (oldestKey !== undefined) this.keySensitivityCache.delete(oldestKey)
     }
-    return false
+    this.keySensitivityCache.set(rawKey, isSensitive)
+    return isSensitive
   }
 
   /**
@@ -290,6 +318,9 @@ export class SecurityScrubber {
 
     this.sensitiveHeaders = new Set(newPrivacy.scrubbing.headers.map((h: string) => h.toLowerCase()))
     this.sensitiveFields = new Set(newPrivacy.scrubbing.fields.map((f: string) => f.toLowerCase()))
+    this.normalizedHeaders = new Set(newPrivacy.scrubbing.headers.map((h: string) => h.toLowerCase().replace(/[-_]/g, '')))
+    this.normalizedFields = new Set(newPrivacy.scrubbing.fields.map((f: string) => f.toLowerCase().replace(/[-_]/g, '')))
+    this.keySensitivityCache.clear()
     this.updateHasScrubRules()
 
     getLogger().info('[SecurityScrubber] Config updated')
@@ -467,6 +498,7 @@ export class SecurityScrubber {
 
   destroy(): void {
     this.destroyed = true
+    this.keySensitivityCache.clear()
     SecurityScrubber.instance = null
   }
 

@@ -4,6 +4,7 @@ import { resolveApiBaseUrl } from '../constants/defaults.js'
 import type { RemoteConfigResponse } from '../types/config.js'
 import { SDKError, toError } from './errors.js'
 import { validateApiKey } from './api-key.js'
+import { hmacSha256, sha256 } from '../utils/hash.js'
 import { getLogger } from '../utils/logger.js'
 
 const CONTROL_PLANE_TIMEOUT_MS = 5_000

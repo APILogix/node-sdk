@@ -44,6 +44,7 @@ import { SDK_NAME, SDK_VERSION } from '../constants/version.js'
 import { getLogger } from '../utils/logger.js'
 import { generateId } from '../utils/uuid.js'
 import { extractTraceContext } from '../tracing/context-propagation.js'
+import { startSpan } from '../tracing/tracer.js'
 import { getTraceAggregator } from '../tracing/trace-aggregator.js'
 import {
   captureBodySnapshot,
@@ -74,6 +75,156 @@ export interface PulseExpressOptions {
    * client can spoof them. Default: no trusted proxies (socket IP wins).
    */
   readonly trustedProxies?: readonly string[]
+  /**
+   * If true, instruments Express middleware layers to measure execution duration.
+   * Emits child spans for middlewares that exceed `minMiddlewareDurationMs` (default: 2ms)
+   * or throw an error.
+   */
+  readonly instrumentMiddleware?: boolean
+  /**
+   * Minimum duration in milliseconds for a middleware to emit a child span.
+   * Prevents telemetry flooding from microsecond-fast middlewares.
+   * Default: 2.0 ms.
+   */
+  readonly minMiddlewareDurationMs?: number
+  /**
+   * Middleware names to skip profiling (e.g. ['query', 'expressInit']).
+   */
+  readonly ignoreMiddlewares?: readonly (string | RegExp)[]
+}
+
+
+const LAYER_PATCH_GUARD = Symbol.for('pulse-sdk.express.layer-patched')
+
+function isLayerIgnored(name: string, ignoreMiddlewares?: readonly (string | RegExp)[]): boolean {
+  if (!ignoreMiddlewares || ignoreMiddlewares.length === 0) return false
+  return ignoreMiddlewares.some((pattern) => {
+    if (typeof pattern === 'string') return name === pattern
+    if (pattern instanceof RegExp) return pattern.test(name)
+    return false
+  })
+}
+
+/**
+ * Patch Express Layer.prototype once to measure middleware execution durations.
+ * Only emits spans if duration >= minDurationMs or if an error is encountered.
+ */
+export function ensureExpressLayersInstrumented(
+  app: any,
+  minDurationMs: number = 2,
+  ignoreMiddlewares?: readonly (string | RegExp)[]
+): void {
+  const globalState = globalThis as any
+  if (globalState[LAYER_PATCH_GUARD]) return
+
+  const router = app?.router || app?._router
+  if (!router || !Array.isArray(router.stack) || router.stack.length === 0) return
+
+  const layerProto = Object.getPrototypeOf(router.stack[0])
+  if (!layerProto) return
+
+  // Express 5: handleRequest / handleError; Express 4: handle_request / handle_error
+  const handleMethod = typeof layerProto.handleRequest === 'function'
+    ? 'handleRequest'
+    : (typeof layerProto.handle_request === 'function' ? 'handle_request' : null)
+
+  if (!handleMethod) return
+
+  const originalHandle = layerProto[handleMethod]
+
+  layerProto[handleMethod] = function pulseLayerHandle(this: any, req: any, res: any, next: any) {
+    const layerName = this.name || (this.handle && this.handle.name) || '<anonymous>'
+
+    if (
+      layerName === 'pulseExpressMiddleware' ||
+      layerName === 'expressInit' ||
+      layerName === 'query' ||
+      layerName === 'router' ||
+      isLayerIgnored(layerName, ignoreMiddlewares)
+    ) {
+      return originalHandle.call(this, req, res, next)
+    }
+
+    const activeSpan = trace.getActiveSpan()
+    if (!activeSpan) {
+      return originalHandle.call(this, req, res, next)
+    }
+
+    const startTime = Date.now()
+    const startHr = process.hrtime.bigint()
+    let recorded = false
+
+    const recordTiming = (err?: unknown) => {
+      if (recorded) return
+      recorded = true
+
+      const endHr = process.hrtime.bigint()
+      const durationMs = Number(endHr - startHr) / 1e6
+
+      if (durationMs >= minDurationMs || err) {
+        try {
+          const span = startSpan(`express.middleware - ${layerName}`, {
+            startTime,
+            kind: 'internal',
+            attributes: {
+              'express.layer.name': layerName,
+              'express.layer.type': 'middleware',
+              'express.layer.duration_ms': Math.round(durationMs * 100) / 100,
+            },
+          })
+          if (err) {
+            const error = err instanceof Error ? err : new Error(String(err))
+            span.recordError(error)
+            span.setStatus('error', error.message)
+          } else {
+            span.setStatus('ok')
+          }
+          span.end(startTime + Math.max(1, durationMs))
+        } catch {
+          // Fail-open
+        }
+      }
+    }
+
+    const onFinish = () => recordTiming()
+    if (res && typeof res.once === 'function') {
+      res.once('finish', onFinish)
+    }
+
+    const wrappedNext = (err?: unknown) => {
+      if (res && typeof res.removeListener === 'function') {
+        res.removeListener('finish', onFinish)
+      }
+      recordTiming(err)
+      return next(err)
+    }
+
+    try {
+      return originalHandle.call(this, req, res, wrappedNext)
+    } catch (syncErr) {
+      if (res && typeof res.removeListener === 'function') {
+        res.removeListener('finish', onFinish)
+      }
+      recordTiming(syncErr)
+      throw syncErr
+    }
+  }
+
+  globalState[LAYER_PATCH_GUARD] = true
+}
+
+/**
+ * Programmatically instrument an Express Application to profile middleware execution.
+ */
+export function instrumentExpress(
+  app: any,
+  options?: Pick<PulseExpressOptions, 'minMiddlewareDurationMs' | 'ignoreMiddlewares'>
+): void {
+  ensureExpressLayersInstrumented(
+    app,
+    options?.minMiddlewareDurationMs ?? 2,
+    options?.ignoreMiddlewares
+  )
 }
 
 export function monitorMiddleware(options: PulseExpressOptions = {}) {
@@ -81,6 +232,13 @@ export function monitorMiddleware(options: PulseExpressOptions = {}) {
     // Resolve the path *once*, defensively. Express attaches `path` only after
     // routing, so callers placing the middleware before any routes still get
     // a usable value via originalUrl/url.
+    if (options.instrumentMiddleware && (req as any).app) {
+      ensureExpressLayersInstrumented(
+        (req as any).app,
+        options.minMiddlewareDurationMs ?? 2,
+        options.ignoreMiddlewares
+      )
+    }
     const path = ((req.path || req.originalUrl || req.url || '/').split('?')[0]) || '/'
 
     // Cheap framework-level ignore — short-circuits before we touch any

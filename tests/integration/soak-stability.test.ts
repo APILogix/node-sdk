@@ -48,7 +48,7 @@ async function startMockBackend(): Promise<MockBackendServer> {
       const port = (server.address() as { port: number }).port
       const localUrl = `http://127.0.0.1:${port}`
 
-      if (req.url === '/v1/init') {
+      if (req.url?.includes('init')) {
         const routePaths: Record<string, string> = {
           errors: '/api/v1/errors',
           events: '/api/v1/events',
@@ -67,16 +67,16 @@ async function startMockBackend(): Promise<MockBackendServer> {
             { ...route, url: `${localUrl}${routePaths[name]}`, batchSize: 500, flushIntervalMs: 50, timeoutMs: 3_000 },
           ])
         )
-        res.writeHead(200, { 'content-type': 'application/json' })
+        res.writeHead(200, { 'content-type': 'application/json', connection: 'close' })
         res.end(
           JSON.stringify({
             success: true,
-            projectId: 'soak-test-project',
+            projectId: 'test-project',
             environment: 'test',
             release: '1.0.0',
             config: {
               ...BAKED_IN_REMOTE_CONFIG,
-              sdk: { projectId: 'soak-test-project', service: 'soak-test', environment: 'test', release: '1.0.0' },
+              sdk: { projectId: 'test-project', service: 'test-service', environment: 'test', release: '1.0.0' },
               features: {
                 ...BAKED_IN_REMOTE_CONFIG.features,
                 tracing: true,
@@ -126,12 +126,12 @@ async function startMockBackend(): Promise<MockBackendServer> {
         } catch {
           // ignore parsing error
         }
-        res.writeHead(200, { 'content-type': 'application/json' })
+        res.writeHead(200, { 'content-type': 'application/json', connection: 'close' })
         res.end(JSON.stringify({ success: true }))
         return
       }
 
-      res.writeHead(200, { 'content-type': 'application/json' })
+      res.writeHead(200, { 'content-type': 'application/json', connection: 'close' })
       res.end('{"status":"ok"}')
     })
   })
@@ -175,6 +175,7 @@ describe('test_multi_cycle_soak: Memory Stability & Leak Prevention', { timeout:
 
   it('runs 5 consecutive high-volume telemetry soak cycles and verifies bounded post-GC heap stabilization', async () => {
     process.env['PULSE_ENDPOINT'] = mockBackend.url
+    process.env['SDK_BASE_URL'] = mockBackend.url
     await init({
       apiKey: 'test-soak-api-key',
       initTimeoutMs: 10_000,
@@ -217,14 +218,14 @@ describe('test_multi_cycle_soak: Memory Stability & Leak Prevention', { timeout:
       cycleHeapSnapshots.push(postGcHeap)
     }
 
-    // Invariant 1: Peak retained heap is strictly bounded (< 3x baseline heap)
+    // Invariant 1: Peak retained heap is strictly bounded (< 4x baseline heap)
     const maxRetainedHeap = Math.max(...cycleHeapSnapshots)
     assert.ok(
       maxRetainedHeap < baselineHeap * 4,
       `Retained heap (${(maxRetainedHeap / 1024 / 1024).toFixed(2)} MB) must not exceed 4x baseline (${(baselineHeap / 1024 / 1024).toFixed(2)} MB)`
     )
 
-    // Invariant 2: Plateau stabilization — memory delta between later cycles must stabilize (< 10% drift)
+    // Invariant 2: Plateau stabilization — memory delta between later cycles must stabilize (< 25% drift)
     if (cycleHeapSnapshots.length >= 3) {
       const laterCycles = cycleHeapSnapshots.slice(2)
       const minLater = Math.min(...laterCycles)
@@ -240,6 +241,7 @@ describe('test_multi_cycle_soak: Memory Stability & Leak Prevention', { timeout:
     // Invariant 3: Clean shutdown converges within bounded deadline
     const shutdownResult = await shutdown(5_000)
     delete process.env['PULSE_ENDPOINT']
+    delete process.env['SDK_BASE_URL']
     assert.strictEqual(shutdownResult.timedOut, false, 'Shutdown must complete without timing out')
     assert.strictEqual(client.initialized, false, 'Client must be uninitialized after shutdown')
   })

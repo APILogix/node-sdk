@@ -1,13 +1,37 @@
 import { Worker } from 'worker_threads'
 import { getLogger } from '../utils/logger.js'
-import type { CompressionAlgorithm } from '../utils/compression.js'
-import { compress } from '../utils/compression.js'
+import { type CompressionAlgorithm, compressGzip, compressBrotli } from '../utils/compression.js'
+import { SecurityScrubber } from '../processors/security-scrubber.js'
+import type { PrivacyConfig } from '../types/config.js'
+import type { SDKEvent } from '../types/event.js'
+
+export interface SerializeBatchOptions {
+  readonly events: readonly unknown[]
+  readonly route?: string | undefined
+  readonly timestamp?: number | undefined
+  readonly privacyConfig?: PrivacyConfig | undefined
+  readonly compression: CompressionAlgorithm
+  readonly maxPayloadBytes?: number | undefined
+}
+
+export interface SerializeBatchResult {
+  readonly buffer: Buffer
+  readonly algorithm: CompressionAlgorithm
+  readonly originalSize: number
+  readonly compressedSize: number
+  readonly tooLarge?: boolean
+}
+
+const MAX_PENDING_REQUESTS = 64
 
 export class SerializationPool {
   private workers: Worker[] = []
   private readyWorkers = new Set<Worker>()
   private roundRobinIndex = 0
-  private pendingRequests = new Map<number, { resolve: (val: any) => void, reject: (err: any) => void, timer: NodeJS.Timeout }>()
+  private pendingRequests = new Map<
+    number,
+    { resolve: (val: any) => void; reject: (err: any) => void; timer: NodeJS.Timeout }
+  >()
   private destroyed = false
   private static instance: SerializationPool | null = null
   private nextId = 0
@@ -38,8 +62,25 @@ export class SerializationPool {
       if (req) {
         clearTimeout(req.timer)
         this.pendingRequests.delete(msg.id)
-        if (msg.error) req.reject(new Error(msg.error))
-        else req.resolve({ buffer: Buffer.isBuffer(msg.buffer) ? msg.buffer : Buffer.from(msg.buffer), algorithm: msg.algorithm, originalSize: msg.originalSize, compressedSize: msg.compressedSize })
+        if (msg.error) {
+          req.reject(new Error(msg.error))
+        } else if (msg.tooLarge) {
+          req.resolve({
+            buffer: Buffer.alloc(0),
+            algorithm: 'none',
+            originalSize: msg.originalSize ?? 0,
+            compressedSize: 0,
+            tooLarge: true,
+          })
+        } else {
+          req.resolve({
+            buffer: Buffer.isBuffer(msg.buffer) ? msg.buffer : Buffer.from(msg.buffer),
+            algorithm: msg.algorithm,
+            originalSize: msg.originalSize,
+            compressedSize: msg.compressedSize,
+            tooLarge: false,
+          })
+        }
       }
     })
     worker.on('error', (err) => {
@@ -59,9 +100,6 @@ export class SerializationPool {
     this.workers = this.workers.filter(w => w !== worker)
     this.readyWorkers.delete(worker)
     this.roundRobinIndex = 0
-    // An error is followed by exit. Automatic replacement from both handlers
-    // amplified failures into an unbounded worker restart loop. Degrade to
-    // remaining workers/main-thread serialization until the next SDK lifecycle.
   }
 
   static initialize(poolSize = 2) {
@@ -74,39 +112,105 @@ export class SerializationPool {
     return SerializationPool.instance
   }
 
-  async serialize(events: unknown, compression: CompressionAlgorithm): Promise<{ buffer: Buffer, algorithm: CompressionAlgorithm, originalSize: number, compressedSize: number }> {
+  async serialize(
+    events: unknown,
+    compression: CompressionAlgorithm,
+  ): Promise<{ buffer: Buffer; algorithm: CompressionAlgorithm; originalSize: number; compressedSize: number }> {
+    const res = await this.serializeBatch({
+      events: Array.isArray(events) ? events : [events],
+      compression,
+    })
+    return {
+      buffer: res.buffer,
+      algorithm: res.algorithm,
+      originalSize: res.originalSize,
+      compressedSize: res.compressedSize,
+    }
+  }
+
+  async serializeBatch(options: SerializeBatchOptions): Promise<SerializeBatchResult> {
     this.startWorkers()
     const ready = [...this.readyWorkers]
-    if (ready.length === 0 || this.destroyed) {
-      return this.fallbackSerialize(events, compression)
+    if (ready.length === 0 || this.destroyed || this.pendingRequests.size >= MAX_PENDING_REQUESTS) {
+      return this.fallbackSerializeBatch(options)
     }
 
     const worker = ready[this.roundRobinIndex % ready.length]!
     this.roundRobinIndex = (this.roundRobinIndex + 1) % ready.length
 
     const id = this.nextId++
-    return new Promise<{ buffer: Buffer, algorithm: CompressionAlgorithm, originalSize: number, compressedSize: number }>((resolve, reject) => {
+    return new Promise<SerializeBatchResult>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pendingRequests.delete(id)
         reject(new Error('Serialization worker timeout'))
       }, 5000)
 
       this.pendingRequests.set(id, { resolve, reject, timer })
-      worker.postMessage({ id, events, compression })
+      try {
+        worker.postMessage({
+          id,
+          events: options.events,
+          route: options.route,
+          timestamp: options.timestamp,
+          privacyConfig: options.privacyConfig,
+          compression: options.compression,
+          maxPayloadBytes: options.maxPayloadBytes,
+        })
+      } catch (postErr) {
+        clearTimeout(timer)
+        this.pendingRequests.delete(id)
+        reject(postErr)
+      }
     }).catch((err) => {
-      getLogger().warn('Worker serialization failed, falling back to main thread', { error: err })
-      return this.fallbackSerialize(events, compression)
+      getLogger().debug('Worker serialization failed, falling back to main thread', { error: err })
+      return this.fallbackSerializeBatch(options)
     })
   }
 
-  private async fallbackSerialize(events: unknown, compression: CompressionAlgorithm) {
-    const jsonStr = JSON.stringify(events)
-    const buf = Buffer.from(jsonStr)
-    const result = await compress(buf, compression)
-    return { buffer: Buffer.from(result.buffer), algorithm: result.algorithm, originalSize: result.originalSize, compressedSize: result.compressedSize }
+  private async fallbackSerializeBatch(options: SerializeBatchOptions): Promise<SerializeBatchResult> {
+    const { events, route, timestamp, privacyConfig, compression, maxPayloadBytes } = options
+    let safeEvents = events
+    if (privacyConfig && Array.isArray(events)) {
+      const scrubber = SecurityScrubber.getInstance() ?? SecurityScrubber.initialize(privacyConfig)
+      safeEvents = scrubber.scrubBatch(events as SDKEvent[])
+    }
+    const payload = route
+      ? { events: safeEvents, route, timestamp: timestamp ?? Date.now() }
+      : safeEvents
+    const jsonStr = JSON.stringify(payload)
+    const buf = Buffer.from(jsonStr, 'utf8')
+    const originalSize = buf.byteLength
+
+    if (typeof maxPayloadBytes === 'number' && maxPayloadBytes > 0 && originalSize > maxPayloadBytes) {
+      return {
+        buffer: Buffer.alloc(0),
+        algorithm: 'none',
+        originalSize,
+        compressedSize: 0,
+        tooLarge: true,
+      }
+    }
+
+    let compressedBuf: Buffer = buf
+    let algorithm = compression
+    if (compression === 'gzip') {
+      compressedBuf = Buffer.from(await compressGzip(buf))
+    } else if (compression === 'brotli') {
+      compressedBuf = Buffer.from(await compressBrotli(buf))
+    } else {
+      algorithm = 'none'
+    }
+
+    return {
+      buffer: compressedBuf,
+      algorithm,
+      originalSize,
+      compressedSize: compressedBuf.byteLength,
+      tooLarge: false,
+    }
   }
 
-  async shutdown() {
+  async shutdown(): Promise<void> {
     this.destroyed = true
     for (const req of this.pendingRequests.values()) {
       clearTimeout(req.timer)
@@ -118,12 +222,6 @@ export class SerializationPool {
     this.readyWorkers.clear()
   }
 
-  /**
-   * Terminate the worker pool and clear the singleton. Awaits worker
-   * termination so a shutdown/reinit cycle never leaks worker threads —
-   * the previous fire-and-forget `void shutdown()` let workers outlive
-   * the SDK and kept the host process alive.
-   */
   static async reset(): Promise<void> {
     if (SerializationPool.instance) {
       await SerializationPool.instance.shutdown()

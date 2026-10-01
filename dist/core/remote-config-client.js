@@ -3,6 +3,7 @@ import { suppressTracing } from '@opentelemetry/core';
 import { resolveApiBaseUrl } from '../constants/defaults.js';
 import { SDKError, toError } from './errors.js';
 import { validateApiKey } from './api-key.js';
+import { hmacSha256, sha256 } from '../utils/hash.js';
 import { getLogger } from '../utils/logger.js';
 const CONTROL_PLANE_TIMEOUT_MS = 5_000;
 const INIT_TIMEOUT_MS = 1_500;

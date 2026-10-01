@@ -14,7 +14,7 @@
  */
 
 import {
-    trace,
+    trace as otelTrace,
     type Tracer,
     type Span,
     type SpanOptions as OTelSpanOptions,
@@ -91,7 +91,7 @@ const PULSE_INTERNAL_CONTEXT_KEY = Symbol.for('pulse-sdk.internal-context')
  * `end()` / `setAttribute()` on, but nothing is recorded or exported.
  */
 function createNoopSpan(_name?: string): PulseSpan {
-    return new PulseSpan(trace.wrapSpanContext(INVALID_SPAN_CONTEXT))
+    return new PulseSpan(otelTrace.wrapSpanContext(INVALID_SPAN_CONTEXT))
 }
 
 /**
@@ -426,7 +426,7 @@ export function initTracer(config: Readonly<RemoteConfigResponse>, customResourc
     try {
         const globalState = globalThis as typeof globalThis & { [TRACER_PROVIDER_SYMBOL]?: true }
         if (globalState[TRACER_PROVIDER_SYMBOL]) {
-            tracer = trace.getTracer(SDK_NAME, SDK_VERSION)
+            tracer = otelTrace.getTracer(SDK_NAME, SDK_VERSION)
             initialized = true
             ownsProvider = false
             logger.info('OpenTelemetry tracer provider already registered by Pulse telemetry; reusing global provider')
@@ -494,7 +494,7 @@ export function initTracer(config: Readonly<RemoteConfigResponse>, customResourc
         ownsProvider = true
 
         // Get the tracer instance
-        tracer = trace.getTracer(SDK_NAME, SDK_VERSION)
+        tracer = otelTrace.getTracer(SDK_NAME, SDK_VERSION)
 
         initialized = true
 
@@ -522,11 +522,11 @@ export function initTracer(config: Readonly<RemoteConfigResponse>, customResourc
  * Used by every span-creating helper to capture the *parent* before opening
  * a new active scope. We can't do this lookup inside `tracer.startActiveSpan`'s
  * callback because by then the new span is already installed as active, and
- * `trace.getActiveSpan()` would return the new span itself.
+ * `otelTrace.getActiveSpan()` would return the new span itself.
  */
 function snapshotActiveSpanId(): string | undefined {
     try {
-        return trace.getActiveSpan()?.spanContext().spanId
+        return otelTrace.getActiveSpan()?.spanContext().spanId
     } catch {
         return undefined
     }
@@ -793,6 +793,181 @@ export function withSpanSync<T>(
         : tracer.startActiveSpan(name, otelOptions, runCallback)
 }
 
+
+/**
+ * Execute a synchronous or asynchronous function within an active span.
+ * Automatically detects whether the callback returns a Promise and tracks
+ * the full asynchronous or synchronous duration.
+ *
+ * @example
+ * ```ts
+ * // Async usage
+ * const user = await trace('db.getUser', () => UserModel.findById(id))
+ *
+ * // Sync usage
+ * const hash = trace('crypto.hash', () => computeHash(data))
+ * ```
+ */
+export function trace<T>(
+    name: string,
+    fnOrOptions: ((span: PulseSpan) => T | Promise<T>) | SpanOptions,
+    optionsOrFn?: SpanOptions | ((span: PulseSpan) => T | Promise<T>)
+): T | Promise<T> {
+    const { fn, options } = resolveWithSpanArgs<T>(fnOrOptions as any, optionsOrFn as any)
+
+    if (!tracer || !customSpansAllowed()) {
+        const span = startSpan(name, options)
+        try {
+            const result = fn(span)
+            if (result && typeof (result as any).then === 'function') {
+                return (result as Promise<any>).then(
+                    (val) => {
+                        span.setStatus('ok')
+                        span.end()
+                        return val
+                    },
+                    (err) => {
+                        if (err instanceof Error) span.recordError(err)
+                        span.setStatus('error', err instanceof Error ? err.message : String(err))
+                        span.end()
+                        throw err
+                    }
+                ) as Promise<T>
+            }
+            span.setStatus('ok')
+            span.end()
+            return result
+        } catch (err) {
+            if (err instanceof Error) span.recordError(err)
+            span.setStatus('error', err instanceof Error ? err.message : String(err))
+            span.end()
+            throw err
+        }
+    }
+
+    const otelOptions = toOtelSpanOptions(options)
+    const parentContext = resolveParentContext(options?.parent)
+    const parentSpanId = resolveParentSpanId(options, parentContext)
+    const isRoot = parentSpanId === undefined
+
+    const runCallback = (span: Span): T | Promise<T> => {
+        const pulseSpan = new PulseSpan(span, parentSpanId)
+        if (isRoot) {
+            try {
+                const subsystem = ProfilingSubsystem.getInstance()
+                if (subsystem) void subsystem.startCpuProfile(pulseSpan.traceId, pulseSpan.spanId)
+            } catch (err) {
+                getLogger().warn('Failed to start CPU profile for root span', { error: err })
+            }
+        }
+
+        try {
+            const result = fn(pulseSpan)
+            if (result && typeof (result as any).then === 'function') {
+                return (result as Promise<any>).then(
+                    (val) => {
+                        pulseSpan.setStatus('ok')
+                        if (isRoot) {
+                            try {
+                                const subsystem = ProfilingSubsystem.getInstance()
+                                if (subsystem) void subsystem.stopCpuProfile(pulseSpan.traceId)
+                            } catch (err) {
+                                getLogger().warn('Failed to stop CPU profile for root span', { error: err })
+                            }
+                        }
+                        pulseSpan.end()
+                        return val
+                    },
+                    (err) => {
+                        if (err instanceof Error) pulseSpan.recordError(err)
+                        pulseSpan.setStatus('error', err instanceof Error ? err.message : String(err))
+                        if (isRoot) {
+                            try {
+                                const subsystem = ProfilingSubsystem.getInstance()
+                                if (subsystem) void subsystem.stopCpuProfile(pulseSpan.traceId)
+                            } catch (e) {
+                                getLogger().warn('Failed to stop CPU profile for root span', { error: e })
+                            }
+                        }
+                        pulseSpan.end()
+                        throw err
+                    }
+                ) as Promise<T>
+            }
+
+            pulseSpan.setStatus('ok')
+            if (isRoot) {
+                try {
+                    const subsystem = ProfilingSubsystem.getInstance()
+                    if (subsystem) void subsystem.stopCpuProfile(pulseSpan.traceId)
+                } catch (err) {
+                    getLogger().warn('Failed to stop CPU profile for root span', { error: err })
+                }
+            }
+            pulseSpan.end()
+            return result
+        } catch (err) {
+            if (err instanceof Error) pulseSpan.recordError(err)
+            pulseSpan.setStatus('error', err instanceof Error ? err.message : String(err))
+            if (isRoot) {
+                try {
+                    const subsystem = ProfilingSubsystem.getInstance()
+                    if (subsystem) void subsystem.stopCpuProfile(pulseSpan.traceId)
+                } catch (e) {
+                    getLogger().warn('Failed to stop CPU profile for root span', { error: e })
+                }
+            }
+            pulseSpan.end()
+            throw err
+        }
+    }
+
+    return (parentContext
+        ? tracer.startActiveSpan(name, otelOptions, parentContext, runCallback)
+        : tracer.startActiveSpan(name, otelOptions, runCallback)) as T | Promise<T>
+}
+
+/**
+ * Wrap a function so every invocation runs within an active span.
+ * Works seamlessly for both synchronous and asynchronous functions, preserving
+ * the original function's parameters, return type, and `this` context.
+ *
+ * @example
+ * ```ts
+ * const hashPassword = wrap('auth.hash', (password: string) => {
+ *   return bcrypt.hash(password, 10)
+ * })
+ *
+ * // Call anywhere - automatically traces:
+ * const hashed = await hashPassword('secret')
+ * ```
+ */
+export function wrap<F extends (...args: any[]) => any>(
+    name: string,
+    fn: F,
+    options?: SpanOptions
+): F {
+    if (typeof fn !== 'function') {
+        throw new TypeError('wrap requires a target function')
+    }
+
+    const wrapped = function (this: any, ...args: Parameters<F>): ReturnType<F> {
+        return trace(name, () => fn.apply(this, args), options) as ReturnType<F>
+    }
+
+    Object.defineProperty(wrapped, 'name', {
+        value: fn.name ? `pulseWrapped_${fn.name}` : `pulseWrapped_${name}`,
+        configurable: true,
+    })
+    Object.defineProperty(wrapped, 'length', {
+        value: fn.length,
+        configurable: true,
+    })
+
+    return wrapped as F
+}
+
+
 // ─── Background / Detached Spans ──────────────────────────────────────────
 
 export const MAX_CONCURRENT_BACKGROUND_SPANS = 1000
@@ -927,7 +1102,7 @@ export async function withBackgroundSpan<T>(
             originatingSpanId = sc.spanId
         }
     } else {
-        const activeSpan = trace.getActiveSpan()
+        const activeSpan = otelTrace.getActiveSpan()
         if (activeSpan) {
             const sc = activeSpan.spanContext()
             originatingTraceId = sc.traceId
@@ -1099,7 +1274,7 @@ export function startBackgroundSpan(name: string, options?: BackgroundSpanOption
                 originatingSpanId = sc.spanId
             }
         } else {
-            const activeSpan = trace.getActiveSpan()
+            const activeSpan = otelTrace.getActiveSpan()
             if (activeSpan) {
                 const sc = activeSpan.spanContext()
                 originatingTraceId = sc.traceId
@@ -1169,7 +1344,7 @@ export function startBackgroundSpan(name: string, options?: BackgroundSpanOption
  * Get the currently active span (if any).
  */
 export function getActiveSpan(): PulseSpan | null {
-    const span = trace.getActiveSpan()
+    const span = otelTrace.getActiveSpan()
     if (!span) return null
     return new PulseSpan(span)
 }
@@ -1255,7 +1430,7 @@ export async function shutdownTracer(): Promise<void> {
             await localProvider.shutdown()
             delete (globalThis as typeof globalThis & { [TRACER_PROVIDER_SYMBOL]?: true })[TRACER_PROVIDER_SYMBOL]
             try {
-                trace.disable()
+                otelTrace.disable()
             } catch {}
             try {
                 otelContext.disable()
@@ -1376,13 +1551,13 @@ function resolveParentContext(parent?: import('./span.js').SpanOptions['parent']
         return parent as Context
     }
     if (typeof (parent as any).getOTelSpan === 'function') {
-        return trace.setSpan(otelContext.active(), (parent as any).getOTelSpan())
+        return otelTrace.setSpan(otelContext.active(), (parent as any).getOTelSpan())
     }
     if ((parent as any).otelSpan) {
-        return trace.setSpan(otelContext.active(), (parent as any).otelSpan)
+        return otelTrace.setSpan(otelContext.active(), (parent as any).otelSpan)
     }
     if (typeof (parent as any).spanContext === 'function') {
-        return trace.setSpan(otelContext.active(), parent as Span)
+        return otelTrace.setSpan(otelContext.active(), parent as Span)
     }
     if (typeof (parent as any).traceId === 'string' && typeof (parent as any).spanId === 'string') {
         const spanContext: import('@opentelemetry/api').SpanContext = {
@@ -1392,7 +1567,7 @@ function resolveParentContext(parent?: import('./span.js').SpanOptions['parent']
             ...(typeof (parent as any).isRemote === 'boolean' ? { isRemote: (parent as any).isRemote } : {}),
             ...((parent as any).traceState ? { traceState: (parent as any).traceState } : {}),
         }
-        return trace.setSpanContext(otelContext.active(), spanContext)
+        return otelTrace.setSpanContext(otelContext.active(), spanContext)
     }
     return undefined
 }
@@ -1406,7 +1581,7 @@ function resolveParentSpanId(options?: SpanOptions, parentContext?: Context): st
     }
     if (parentContext) {
         try {
-            const span = trace.getSpan(parentContext)
+            const span = otelTrace.getSpan(parentContext)
             if (span) return span.spanContext().spanId
         } catch {}
     }

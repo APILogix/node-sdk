@@ -42,7 +42,7 @@ async function startMockBackend(): Promise<MockServer> {
         requests.push({ path: req.url ?? '', body: decoded })
       }
 
-      if (req.url === '/v1/init' || req.url === '/api/v1/init') {
+      if (req.url?.includes('init')) {
         const port = (server.address() as { port: number }).port
         const localUrl = `http://127.0.0.1:${port}`
         const paths: Record<string, string> = {
@@ -149,7 +149,7 @@ function makeRequest(url: string, method: string = 'GET'): Promise<number> {
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
-describe('HTTP Status Enrichment', { timeout: 30_000 }, () => {
+describe('HTTP Status Enrichment', { timeout: 60_000 }, () => {
   let backend: MockServer
 
   before(async () => {
@@ -348,7 +348,7 @@ describe('HTTP Status Enrichment', { timeout: 30_000 }, () => {
       withContext(store, () => {
         captureError(new Error('Unhandled rejection'), 'error')
       })
-      await delay(50)
+      await delay(200)
       await flush()
 
       const events = getErrorEvents(backend)

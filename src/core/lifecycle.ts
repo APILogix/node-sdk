@@ -49,6 +49,7 @@ import { SecurityScrubber } from '../processors/security-scrubber.js'
 import { LoggingSubsystem } from '../subsystems/logging-subsystem.js'
 import { ProfilingSubsystem } from '../subsystems/profiling-subsystem.js'
 import { CronSubsystem } from '../subsystems/cron-subsystem.js'
+import { RuntimeMetricsSubsystem } from '../subsystems/runtime-metrics-subsystem.js'
 import { tenantGovernor } from './tenant-isolation.js'
 import { cardinalityGovernor } from '../utils/cardinality-governor.js'
 import { adaptivePressure } from '../utils/adaptive-pressure.js'
@@ -398,6 +399,7 @@ async function runOrchestratedShutdown(stepErrors: ShutdownStepError[]): Promise
     // meant graceful shutdown could lose the last batch.
     await metricsRegistry.flush()
     await withTimeout(otelMetrics.shutdown(), SUBSYSTEM_STEP_TIMEOUT_MS, 'metrics shutdown timed out')
+    RuntimeMetricsSubsystem.resetInstance()
     metricsRegistry.stop()
   }, stepErrors)
 
@@ -508,6 +510,7 @@ async function runUnconditionalCleanup(stepErrors: ShutdownStepError[]): Promise
   runSync('logging-subsystem.reset', () => LoggingSubsystem.reset(), stepErrors)
   runSync('profiling-subsystem.reset', () => ProfilingSubsystem.reset(), stepErrors)
   runSync('cron-subsystem.reset', () => CronSubsystem.reset(), stepErrors)
+  runSync('runtime-metrics-subsystem.reset', () => RuntimeMetricsSubsystem.resetInstance(), stepErrors)
   runSync('session.reset', () => resetSessionManager(), stepErrors)
   runSync('signal-handlers.reset', () => resetSignalHandlers(), stepErrors)
   runSync('auto-instrumentations.reset', () => resetAutoInstrumentations(), stepErrors)

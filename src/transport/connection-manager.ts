@@ -51,7 +51,6 @@ class Semaphore {
         if (settled) return
         settled = true
         clearTimeout(timer)
-        this.available--
         resolve(true)
       }
 

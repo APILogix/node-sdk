@@ -201,74 +201,16 @@ export class BatchManager {
     }
   }
 
-  private nextSerializableBatch(): { events: SDKEvent[]; body: string } | null {
+  private nextSerializableBatch(): { events: SDKEvent[] } | null {
     const targetSize = this.effectiveMaxBatchSize()
-    let batch = this.options.queue.drain(targetSize)
-    while (batch.length > 0) {
-      const scrubber = SecurityScrubber.getInstance()
-      const safeBatch = scrubber ? scrubber.scrubBatch(batch) : batch.map(e => sanitizeEvent(e))
-
-      const payload = { events: safeBatch, route: this.options.route, timestamp: Date.now() }
-      let body: string
-      let payloadBytes: number
-      try {
-        body = JSON.stringify(payload)
-        payloadBytes = Buffer.byteLength(body)
-      } catch {
-        this.totalDropped += batch.length
-        this.options.onDrop?.({
-          route: this.options.route,
-          reason: 'serialization_failed',
-          count: batch.length,
-          eventType: batch[0]?.type,
-        })
-        return null
-      }
-
-      if (payloadBytes <= this.options.maxPayloadBytes) {
-        getLogger().info('[TransportRouter] Batch captured', {
-          route: this.options.route,
-          eventCount: safeBatch.length,
-          eventTypes: [...new Set(safeBatch.map(event => event.type))],
-          queueSize: this.options.queue.size(),
-          payloadBytes,
-        })
-        sdkConsoleDebug('batch captured', {
-          route: this.options.route,
-          eventCount: safeBatch.length,
-          eventTypes: [...new Set(safeBatch.map(event => event.type))],
-          payloadBytes,
-        })
-        sdkConsoleDebug('batch built', {
-          route: this.options.route,
-          eventCount: safeBatch.length,
-          eventTypes: [...new Set(safeBatch.map(event => event.type))],
-          payloadBytes,
-        })
-        return { events: safeBatch, body }
-      }
-
-      if (batch.length === 1) {
-        this.totalDropped++
-        this.options.onDrop?.({
-          route: this.options.route,
-          reason: 'event_too_large',
-          count: 1,
-          eventType: batch[0]?.type,
-        })
-        return null
-      }
-
-      const half = Math.max(1, Math.floor(batch.length / 2))
-      const overflow = batch.splice(half)
-      this.options.queue.requeueFront(overflow)
-    }
-    return null
+    const batch = this.options.queue.drain(targetSize)
+    if (batch.length === 0) return null
+    return { events: batch }
   }
 
-  private async sendBatch(batch: { events: SDKEvent[]; body: string }): Promise<void> {
+  private async sendBatch(batch: { events: SDKEvent[] }): Promise<void> {
     const startedAt = Date.now()
-    const { events, body } = batch
+    const { events } = batch
     const lease = await this.options.connectionManager.acquire(this.options.route)
     if (!lease) {
       this.activeBatches.delete(events)
@@ -282,24 +224,113 @@ export class BatchManager {
 
     try {
       const isGzip = this.options.compression === 'gzip'
-      const rawBody = Buffer.from(body, 'utf8')
-      let wireBody: Buffer
-
-      // Delegate batches exceeding 50KB to worker threads (SerializationPool)
-      // to offload JSON stringification and compression from the event loop during sustained >50k RPS workloads.
+      const compressionAlgo = isGzip ? 'gzip' : 'none'
+      const scrubber = SecurityScrubber.getInstance()
+      const privacyConfig = scrubber?.getPrivacyConfig()
       const pool = SerializationPool.getInstance()
-      if (rawBody.byteLength >= WORKER_SERIALIZATION_THRESHOLD_BYTES && pool && isGzip) {
-        try {
-          const payload = { events, route: this.options.route, timestamp: Date.now() }
-          const res = await pool.serialize(payload, 'gzip')
-          wireBody = res.buffer
-        } catch (poolErr) {
-          getLogger().debug('[BatchManager] SerializationPool offload failed, falling back to main-thread compression', { error: poolErr })
-          wireBody = await compressGzip(rawBody)
+
+      let wireBody: Buffer
+      let originalPayloadBytes: number
+
+      try {
+        let serializeResult: import('./serialization-pool.js').SerializeBatchResult
+        if (pool) {
+          serializeResult = await pool.serializeBatch({
+            events,
+            route: this.options.route,
+            timestamp: Date.now(),
+            privacyConfig,
+            compression: compressionAlgo,
+            maxPayloadBytes: this.options.maxPayloadBytes,
+          })
+        } else {
+          const safeBatch = scrubber ? scrubber.scrubBatch(events) : events.map(e => sanitizeEvent(e))
+          const payload = { events: safeBatch, route: this.options.route, timestamp: Date.now() }
+          const jsonStr = JSON.stringify(payload)
+          const rawBuf = Buffer.from(jsonStr, 'utf8')
+          const compressed = isGzip ? await compressGzip(rawBuf) : rawBuf
+          serializeResult = {
+            buffer: compressed,
+            algorithm: compressionAlgo,
+            originalSize: rawBuf.byteLength,
+            compressedSize: compressed.byteLength,
+            tooLarge: rawBuf.byteLength > this.options.maxPayloadBytes,
+          }
         }
-      } else {
-        wireBody = isGzip ? await compressGzip(rawBody) : rawBody
+
+        if (serializeResult.tooLarge) {
+          lease.release(true)
+          this.activeBatches.delete(events)
+          this.activeSends--
+          this.batched -= events.length
+
+          if (events.length === 1) {
+            this.totalDropped++
+            this.options.onDrop?.({
+              route: this.options.route,
+              reason: 'event_too_large',
+              count: 1,
+              eventType: events[0]?.type,
+            })
+            return
+          }
+
+          const half = Math.max(1, Math.floor(events.length / 2))
+          const firstHalf = events.slice(0, half)
+          const secondHalf = events.slice(half)
+          this.options.queue.requeueFront(secondHalf)
+          this.activeSends++
+          this.batched += firstHalf.length
+          this.activeBatches.add(firstHalf)
+          const sendPromise = this.sendBatch({ events: firstHalf })
+          this.activeSendPromises.add(sendPromise)
+          void sendPromise.then(
+            () => this.activeSendPromises.delete(sendPromise),
+            error => {
+              this.activeSendPromises.delete(sendPromise)
+              getLogger().warn('[TransportRouter] Unhandled batch send failure', { route: this.options.route, error })
+            },
+          )
+          return
+        }
+
+        wireBody = serializeResult.buffer
+        originalPayloadBytes = serializeResult.originalSize
+      } catch (serializeErr) {
+        lease.release(true)
+        this.activeBatches.delete(events)
+        this.activeSends--
+        this.batched -= events.length
+        this.totalDropped += events.length
+        this.options.onDrop?.({
+          route: this.options.route,
+          reason: 'serialization_failed',
+          count: events.length,
+          eventType: events[0]?.type,
+        })
+        return
       }
+
+      getLogger().info('[TransportRouter] Batch captured', {
+        route: this.options.route,
+        eventCount: events.length,
+        eventTypes: [...new Set(events.map(event => event.type))],
+        queueSize: this.options.queue.size(),
+        payloadBytes: originalPayloadBytes,
+      })
+      sdkConsoleDebug('batch captured', {
+        route: this.options.route,
+        eventCount: events.length,
+        eventTypes: [...new Set(events.map(event => event.type))],
+        payloadBytes: originalPayloadBytes,
+      })
+      sdkConsoleDebug('batch built', {
+        route: this.options.route,
+        eventCount: events.length,
+        eventTypes: [...new Set(events.map(event => event.type))],
+        payloadBytes: originalPayloadBytes,
+      })
+
       const headers: Record<string, string> = {
         'Content-Type': this.options.definition.contentType,
         Authorization: `Bearer ${this.options.apiKey}`,
@@ -392,7 +423,7 @@ export class BatchManager {
             this.retryAttempts.delete(key)
             this.firstAttemptTimestamps.delete(key)
           }
-          costGovernor.recordBytesSent(Buffer.byteLength(body))
+          costGovernor.recordBytesSent(originalPayloadBytes)
           this.discardOnSuccess(events)
 
           getLogger().info('[TransportRouter] Batch send successful', {
@@ -400,7 +431,7 @@ export class BatchManager {
             statusCode: response.status,
             latencyMs: latency,
             eventCount: events.length,
-            payloadBytes: Buffer.byteLength(body),
+            payloadBytes: originalPayloadBytes,
             wireBytes: wireBody.byteLength,
           })
           sdkConsoleDebug('batch send successful', {
@@ -408,7 +439,7 @@ export class BatchManager {
             statusCode: response.status,
             latencyMs: latency,
             eventCount: events.length,
-            payloadBytes: Buffer.byteLength(body),
+            payloadBytes: originalPayloadBytes,
             wireBytes: wireBody.byteLength,
           })
 

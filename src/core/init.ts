@@ -34,6 +34,7 @@ import { metricsRegistry } from '../metrics/registry.js'
 import { LoggingSubsystem } from '../subsystems/logging-subsystem.js'
 import { ProfilingSubsystem } from '../subsystems/profiling-subsystem.js'
 import { CronSubsystem } from '../subsystems/cron-subsystem.js'
+import { RuntimeMetricsSubsystem } from '../subsystems/runtime-metrics-subsystem.js'
 import { getSessionManager, resetSessionManager } from '../session/session-manager.js'
 import { processEvent } from './event-pipeline.js'
 import { eventQueue } from '../transport/queue.js'
@@ -243,7 +244,11 @@ async function initialize(options: SDKInitOptions): Promise<Readonly<RemoteConfi
         resources,
       )
     }
-    const stopMetrics = async (): Promise<void> => { await otelMetrics.shutdown() }
+    RuntimeMetricsSubsystem.getInstance().configure(config)
+    const stopMetrics = async (): Promise<void> => {
+      RuntimeMetricsSubsystem.getInstance().stop()
+      await otelMetrics.shutdown()
+    }
     await featureController.register('metrics', startMetrics, stopMetrics)
     killswitchEngine.registerSubsystem('disableMetrics', {
       shutdown: stopMetrics,
@@ -352,6 +357,7 @@ async function initialize(options: SDKInitOptions): Promise<Readonly<RemoteConfi
       features: async ({ diff, current }) => {
         await featureController.handleConfigChange(diff, current)
         if (pressureFeaturesChanged(diff)) configureAdaptivePressure(current)
+        RuntimeMetricsSubsystem.getInstance().handleConfigChange(diff, current)
       },
       limits: ({ diff, current }) => {
         limitsEngine.handleConfigChange(diff, current)

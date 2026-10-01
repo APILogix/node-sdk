@@ -332,6 +332,9 @@ export interface ProfilingConfig {
   readonly sampleRate: number
   readonly maxDurationMs: number
   readonly sampleIntervalMicroseconds?: number | undefined
+  readonly continuous?: boolean | undefined
+  readonly continuousIntervalMs?: number | undefined
+  readonly sampleRateHz?: number | undefined
 }
 
 export interface SessionReplayConfig {

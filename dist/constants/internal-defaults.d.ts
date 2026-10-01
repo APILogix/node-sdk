@@ -47,8 +47,13 @@ export declare const LOGGING_DEFAULTS: Readonly<{
 export declare const PROFILING_DEFAULTS: Readonly<{
     readonly cpu: true;
     readonly heap: true;
-    /** Hard upper bound on a single profile's duration. */
+    /** Hard upper bound on a single profile duration. */
     readonly maxDurationMs: 30000;
+    /** Continuous wall-clock profiling defaults */
+    readonly continuous: false;
+    readonly continuousIntervalMs: 60000;
+    readonly continuousSampleRateHz: 99;
+    readonly sampleIntervalMicroseconds: 10100;
 }>;
 /**
  * Tracing internals. Anything that's not in the wire schema lives here.

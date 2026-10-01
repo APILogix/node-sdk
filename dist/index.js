@@ -30,8 +30,9 @@ import { captureMetric } from './capture/captureMetric.js';
 import { captureLog } from './capture/captureLog.js';
 import { addBreadcrumb, getTraceId, getSpanId } from './core/context.js';
 import { setUser, setTag, setTags, setContext } from './core/scope.js';
-import { startSpan, withSpan } from './tracing/tracer.js';
-import { startDbSpan, withDbSpan } from './tracing/db-span.js';
+import { startSpan, withSpan, withSpanSync, withBackgroundSpan, startBackgroundSpan, trace, wrap, } from './tracing/tracer.js';
+import { incrementCounter, setGauge, recordHistogram, addUpDownCounter, } from './capture/captureMetric.js';
+import { startDbSpan, withDbSpan, withDbSpanSync } from './tracing/db-span.js';
 import { registerBootstrapAutoInstrumentations } from './instrumentation/auto-instrument.js';
 registerBootstrapAutoInstrumentations();
 // ─── Lifecycle ──────────────────────────────────────────────────────────────
@@ -54,11 +55,11 @@ export { addBreadcrumb, getRequestContext, getTraceId, getSpanId, withContext, c
 // ─── Scope management ──────────────────────────────────────────────────────
 export { setUser, setTag, setTags, removeTag, setExtra, setExtras, removeExtra, setContext, getScopeData, clearScope, withScope, } from './core/scope.js';
 // ─── Tracing (manual span APIs) ─────────────────────────────────────────────
-export { startSpan, withSpan, withSpanSync, withBackgroundSpan, startBackgroundSpan, getActiveBackgroundSpanCount, getActiveSpan, flushTracer, } from './tracing/tracer.js';
+export { startSpan, withSpan, withSpanSync, withBackgroundSpan, startBackgroundSpan, trace, wrap, getActiveBackgroundSpanCount, getActiveSpan, flushTracer, } from './tracing/tracer.js';
 export { startDbSpan, withDbSpan, withDbSpanSync } from './tracing/db-span.js';
 export { extractTraceContext, injectTraceContext } from './tracing/context-propagation.js';
 // ─── Framework instrumentation ──────────────────────────────────────────────
-export { monitorMiddleware, expressErrorHandler } from './instrumentation/express.js';
+export { monitorMiddleware, expressErrorHandler, instrumentExpress } from './instrumentation/express.js';
 export { fastifyPulsePlugin } from './instrumentation/fastify.js';
 export { registerAutoInstrumentations } from './instrumentation/auto-instrument.js';
 export { registerEsmLoaderHooks } from './instrumentation/esm-loader.js';
@@ -69,7 +70,7 @@ export { createMongooseInstrumentation, MongooseInstrumentation } from './instru
 export { createRedisInstrumentation } from './instrumentation/redis.js';
 export { createBullMQInstrumentation } from './instrumentation/bullmq.js';
 export { createAxiosInstrumentation } from './instrumentation/axios.js';
-export { createPgInstrumentation } from './instrumentation/pg.js';
+export { createPgInstrumentation, patchPgPoolConnectOnce } from './instrumentation/pg.js';
 export { createMySQLInstrumentation } from './instrumentation/mysql.js';
 export { patchEventEmitter, unpatchEventEmitter } from './instrumentation/event-emitter-patch.js';
 export { installHttpLifecycleGuard, uninstallHttpLifecycleGuard, isOtelInstrumentationError } from './instrumentation/http-lifecycle-guard.js';
@@ -195,6 +196,10 @@ export const Pulse = {
     captureEvent,
     captureMetric,
     captureLog,
+    incrementCounter,
+    setGauge,
+    recordHistogram,
+    addUpDownCounter,
     addBreadcrumb,
     setUser,
     setTag,
@@ -202,8 +207,14 @@ export const Pulse = {
     setContext,
     startSpan,
     withSpan,
+    withSpanSync,
+    withBackgroundSpan,
+    startBackgroundSpan,
+    trace,
+    wrap,
     startDbSpan,
     withDbSpan,
+    withDbSpanSync,
     getTraceId,
     getSpanId,
     getSDKHealth,

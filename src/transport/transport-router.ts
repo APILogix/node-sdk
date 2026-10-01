@@ -313,8 +313,6 @@ export class TransportRouter {
     this.dropped.length = 0
     this.dropLogCount = 0
 
-    // Phase 3: detach the singleton pointer only if it still references this
-    // instance — concurrent reinit may have already swapped it out.
     if (TransportRouter.instance === this) {
       TransportRouter.instance = null
     }

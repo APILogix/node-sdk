@@ -31,8 +31,22 @@ import { captureMetric } from './capture/captureMetric.js'
 import { captureLog } from './capture/captureLog.js'
 import { addBreadcrumb, getTraceId, getSpanId } from './core/context.js'
 import { setUser, setTag, setTags, setContext } from './core/scope.js'
-import { startSpan, withSpan } from './tracing/tracer.js'
-import { startDbSpan, withDbSpan } from './tracing/db-span.js'
+import {
+  startSpan,
+  withSpan,
+  withSpanSync,
+  withBackgroundSpan,
+  startBackgroundSpan,
+  trace,
+  wrap,
+} from './tracing/tracer.js'
+import {
+  incrementCounter,
+  setGauge,
+  recordHistogram,
+  addUpDownCounter,
+} from './capture/captureMetric.js'
+import { startDbSpan, withDbSpan, withDbSpanSync } from './tracing/db-span.js'
 import type { SDKInitOptions, RemoteConfigResponse } from './types/config.js'
 import { registerBootstrapAutoInstrumentations } from './instrumentation/auto-instrument.js'
 
@@ -96,6 +110,8 @@ export {
   withSpanSync,
   withBackgroundSpan,
   startBackgroundSpan,
+  trace,
+  wrap,
   getActiveBackgroundSpanCount,
   getActiveSpan,
   flushTracer,
@@ -108,7 +124,7 @@ export type { BackgroundSpanOptions } from './tracing/tracer.js'
 
 // ─── Framework instrumentation ──────────────────────────────────────────────
 
-export { monitorMiddleware, expressErrorHandler } from './instrumentation/express.js'
+export { monitorMiddleware, expressErrorHandler, instrumentExpress } from './instrumentation/express.js'
 export type { PulseExpressOptions } from './instrumentation/express.js'
 export { fastifyPulsePlugin } from './instrumentation/fastify.js'
 export type { PulseFastifyOptions } from './instrumentation/fastify.js'
@@ -128,7 +144,7 @@ export { createBullMQInstrumentation } from './instrumentation/bullmq.js'
 export type { BullMQInstrumentationOptions } from './instrumentation/bullmq.js'
 export { createAxiosInstrumentation } from './instrumentation/axios.js'
 export type { AxiosInstrumentationOptions } from './instrumentation/axios.js'
-export { createPgInstrumentation } from './instrumentation/pg.js'
+export { createPgInstrumentation, patchPgPoolConnectOnce } from './instrumentation/pg.js'
 export type { PgInstrumentationOptions } from './instrumentation/pg.js'
 export { createMySQLInstrumentation } from './instrumentation/mysql.js'
 export type { MySQLInstrumentationOptions } from './instrumentation/mysql.js'
@@ -336,6 +352,10 @@ export const Pulse = {
   captureEvent,
   captureMetric,
   captureLog,
+  incrementCounter,
+  setGauge,
+  recordHistogram,
+  addUpDownCounter,
   addBreadcrumb,
   setUser,
   setTag,
@@ -343,8 +363,14 @@ export const Pulse = {
   setContext,
   startSpan,
   withSpan,
+  withSpanSync,
+  withBackgroundSpan,
+  startBackgroundSpan,
+  trace,
+  wrap,
   startDbSpan,
   withDbSpan,
+  withDbSpanSync,
   getTraceId,
   getSpanId,
   getSDKHealth,

@@ -64,7 +64,7 @@
  */
 
 import { existsSync, unlinkSync, statSync } from 'fs'
-import { appendFile, mkdir, readFile, rename, stat, unlink, writeFile } from 'fs/promises'
+import { appendFile, copyFile, mkdir, readFile, rename, stat, unlink, writeFile } from 'fs/promises'
 import { join, dirname } from 'path'
 import { tmpdir } from 'os'
 import { createHash } from 'crypto'
@@ -567,7 +567,7 @@ class PersistentStorage {
     try {
       if (existsSync(this.dataFile)) {
         const rotatedFile = `${this.dataFile}.${Date.now()}.bak`
-        await rename(this.dataFile, rotatedFile)
+        await safeAtomicRename(this.dataFile, rotatedFile)
         logger.debug('Persistent storage: file rotated', { oldFile: rotatedFile })
       }
     } catch (error) {
@@ -604,7 +604,7 @@ class PersistentStorage {
       }
 
       await writeFile(this.tempFile, content, { encoding: 'utf8', mode: 0o600 })
-      await rename(this.tempFile, this.dataFile)
+      await safeAtomicRename(this.tempFile, this.dataFile)
     })
   }
 
@@ -669,3 +669,36 @@ function withIoTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string)
     if (timer) clearTimeout(timer)
   }) as Promise<T>
 }
+
+/**
+ * Windows-safe atomic rename with retry and fallback.
+ * On Windows (NTFS), destination files locked by indexers/antivirus or brief
+ * open handles throw EPERM/EBUSY. Retries with backoff and falls back to
+ * copy+unlink to guarantee non-crashing compaction.
+ */
+async function safeAtomicRename(source: string, target: string): Promise<void> {
+  const isWindows = process.platform === 'win32'
+  const maxAttempts = isWindows ? 5 : 2
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      await rename(source, target)
+      return
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code
+      if (code === 'EPERM' || code === 'EBUSY' || code === 'EACCES' || code === 'EEXIST') {
+        if (attempt < maxAttempts - 1) {
+          if (isWindows) {
+            await unlink(target).catch(() => {})
+          }
+          await new Promise(r => setTimeout(r, (attempt + 1) * 10))
+          continue
+        }
+        await copyFile(source, target)
+        await unlink(source).catch(() => {})
+        return
+      }
+      throw err
+    }
+  }
+}
+

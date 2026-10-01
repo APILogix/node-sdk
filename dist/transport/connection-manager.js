@@ -28,7 +28,6 @@ class Semaphore {
                     return;
                 settled = true;
                 clearTimeout(timer);
-                this.available--;
                 resolve(true);
             };
             this.waiters.push(wake);

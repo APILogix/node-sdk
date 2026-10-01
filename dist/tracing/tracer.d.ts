@@ -94,6 +94,37 @@ export declare function withSpan<T>(name: string, fnOrOptions: ((span: PulseSpan
  * `withSpan` is preferred everywhere else.
  */
 export declare function withSpanSync<T>(name: string, fnOrOptions: ((span: PulseSpan) => T) | SpanOptions, optionsOrFn?: SpanOptions | ((span: PulseSpan) => T)): T;
+/**
+ * Execute a synchronous or asynchronous function within an active span.
+ * Automatically detects whether the callback returns a Promise and tracks
+ * the full asynchronous or synchronous duration.
+ *
+ * @example
+ * ```ts
+ * // Async usage
+ * const user = await trace('db.getUser', () => UserModel.findById(id))
+ *
+ * // Sync usage
+ * const hash = trace('crypto.hash', () => computeHash(data))
+ * ```
+ */
+export declare function trace<T>(name: string, fnOrOptions: ((span: PulseSpan) => T | Promise<T>) | SpanOptions, optionsOrFn?: SpanOptions | ((span: PulseSpan) => T | Promise<T>)): T | Promise<T>;
+/**
+ * Wrap a function so every invocation runs within an active span.
+ * Works seamlessly for both synchronous and asynchronous functions, preserving
+ * the original function's parameters, return type, and `this` context.
+ *
+ * @example
+ * ```ts
+ * const hashPassword = wrap('auth.hash', (password: string) => {
+ *   return bcrypt.hash(password, 10)
+ * })
+ *
+ * // Call anywhere - automatically traces:
+ * const hashed = await hashPassword('secret')
+ * ```
+ */
+export declare function wrap<F extends (...args: any[]) => any>(name: string, fn: F, options?: SpanOptions): F;
 export declare const MAX_CONCURRENT_BACKGROUND_SPANS = 1000;
 /**
  * Get the current number of concurrently active background spans.

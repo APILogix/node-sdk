@@ -1,6 +1,8 @@
 import { Worker } from 'worker_threads';
 import { getLogger } from '../utils/logger.js';
-import { compress } from '../utils/compression.js';
+import { compressGzip, compressBrotli } from '../utils/compression.js';
+import { SecurityScrubber } from '../processors/security-scrubber.js';
+const MAX_PENDING_REQUESTS = 64;
 export class SerializationPool {
     poolSize;
     workers = [];
@@ -39,10 +41,27 @@ export class SerializationPool {
             if (req) {
                 clearTimeout(req.timer);
                 this.pendingRequests.delete(msg.id);
-                if (msg.error)
+                if (msg.error) {
                     req.reject(new Error(msg.error));
-                else
-                    req.resolve({ buffer: Buffer.isBuffer(msg.buffer) ? msg.buffer : Buffer.from(msg.buffer), algorithm: msg.algorithm, originalSize: msg.originalSize, compressedSize: msg.compressedSize });
+                }
+                else if (msg.tooLarge) {
+                    req.resolve({
+                        buffer: Buffer.alloc(0),
+                        algorithm: 'none',
+                        originalSize: msg.originalSize ?? 0,
+                        compressedSize: 0,
+                        tooLarge: true,
+                    });
+                }
+                else {
+                    req.resolve({
+                        buffer: Buffer.isBuffer(msg.buffer) ? msg.buffer : Buffer.from(msg.buffer),
+                        algorithm: msg.algorithm,
+                        originalSize: msg.originalSize,
+                        compressedSize: msg.compressedSize,
+                        tooLarge: false,
+                    });
+                }
             }
         });
         worker.on('error', (err) => {
@@ -61,9 +80,6 @@ export class SerializationPool {
         this.workers = this.workers.filter(w => w !== worker);
         this.readyWorkers.delete(worker);
         this.roundRobinIndex = 0;
-        // An error is followed by exit. Automatic replacement from both handlers
-        // amplified failures into an unbounded worker restart loop. Degrade to
-        // remaining workers/main-thread serialization until the next SDK lifecycle.
     }
     static initialize(poolSize = 2) {
         if (!SerializationPool.instance) {
@@ -74,10 +90,22 @@ export class SerializationPool {
         return SerializationPool.instance;
     }
     async serialize(events, compression) {
+        const res = await this.serializeBatch({
+            events: Array.isArray(events) ? events : [events],
+            compression,
+        });
+        return {
+            buffer: res.buffer,
+            algorithm: res.algorithm,
+            originalSize: res.originalSize,
+            compressedSize: res.compressedSize,
+        };
+    }
+    async serializeBatch(options) {
         this.startWorkers();
         const ready = [...this.readyWorkers];
-        if (ready.length === 0 || this.destroyed) {
-            return this.fallbackSerialize(events, compression);
+        if (ready.length === 0 || this.destroyed || this.pendingRequests.size >= MAX_PENDING_REQUESTS) {
+            return this.fallbackSerializeBatch(options);
         }
         const worker = ready[this.roundRobinIndex % ready.length];
         this.roundRobinIndex = (this.roundRobinIndex + 1) % ready.length;
@@ -88,17 +116,67 @@ export class SerializationPool {
                 reject(new Error('Serialization worker timeout'));
             }, 5000);
             this.pendingRequests.set(id, { resolve, reject, timer });
-            worker.postMessage({ id, events, compression });
+            try {
+                worker.postMessage({
+                    id,
+                    events: options.events,
+                    route: options.route,
+                    timestamp: options.timestamp,
+                    privacyConfig: options.privacyConfig,
+                    compression: options.compression,
+                    maxPayloadBytes: options.maxPayloadBytes,
+                });
+            }
+            catch (postErr) {
+                clearTimeout(timer);
+                this.pendingRequests.delete(id);
+                reject(postErr);
+            }
         }).catch((err) => {
-            getLogger().warn('Worker serialization failed, falling back to main thread', { error: err });
-            return this.fallbackSerialize(events, compression);
+            getLogger().debug('Worker serialization failed, falling back to main thread', { error: err });
+            return this.fallbackSerializeBatch(options);
         });
     }
-    async fallbackSerialize(events, compression) {
-        const jsonStr = JSON.stringify(events);
-        const buf = Buffer.from(jsonStr);
-        const result = await compress(buf, compression);
-        return { buffer: Buffer.from(result.buffer), algorithm: result.algorithm, originalSize: result.originalSize, compressedSize: result.compressedSize };
+    async fallbackSerializeBatch(options) {
+        const { events, route, timestamp, privacyConfig, compression, maxPayloadBytes } = options;
+        let safeEvents = events;
+        if (privacyConfig && Array.isArray(events)) {
+            const scrubber = SecurityScrubber.getInstance() ?? SecurityScrubber.initialize(privacyConfig);
+            safeEvents = scrubber.scrubBatch(events);
+        }
+        const payload = route
+            ? { events: safeEvents, route, timestamp: timestamp ?? Date.now() }
+            : safeEvents;
+        const jsonStr = JSON.stringify(payload);
+        const buf = Buffer.from(jsonStr, 'utf8');
+        const originalSize = buf.byteLength;
+        if (typeof maxPayloadBytes === 'number' && maxPayloadBytes > 0 && originalSize > maxPayloadBytes) {
+            return {
+                buffer: Buffer.alloc(0),
+                algorithm: 'none',
+                originalSize,
+                compressedSize: 0,
+                tooLarge: true,
+            };
+        }
+        let compressedBuf = buf;
+        let algorithm = compression;
+        if (compression === 'gzip') {
+            compressedBuf = Buffer.from(await compressGzip(buf));
+        }
+        else if (compression === 'brotli') {
+            compressedBuf = Buffer.from(await compressBrotli(buf));
+        }
+        else {
+            algorithm = 'none';
+        }
+        return {
+            buffer: compressedBuf,
+            algorithm,
+            originalSize,
+            compressedSize: compressedBuf.byteLength,
+            tooLarge: false,
+        };
     }
     async shutdown() {
         this.destroyed = true;
@@ -111,12 +189,6 @@ export class SerializationPool {
         this.workers = [];
         this.readyWorkers.clear();
     }
-    /**
-     * Terminate the worker pool and clear the singleton. Awaits worker
-     * termination so a shutdown/reinit cycle never leaks worker threads —
-     * the previous fire-and-forget `void shutdown()` let workers outlive
-     * the SDK and kept the host process alive.
-     */
     static async reset() {
         if (SerializationPool.instance) {
             await SerializationPool.instance.shutdown();

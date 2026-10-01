@@ -30,6 +30,8 @@
   - [Automatic instrumentation and load order](#automatic-instrumentation-and-load-order)
 - [Database & Cache Auto-Instrumentation](#database--cache-auto-instrumentation)
 - [Custom Function & Business Logic Tracing](#custom-function--business-logic-tracing)
+  - [Zero-Boilerplate Function Decoration (`Pulse.wrap`)](#zero-boilerplate-function-decoration-pulsewrap)
+  - [Ergonomic Function Tracing (`Pulse.trace`)](#ergonomic-function-tracing-pulsetrace)
   - [In-Request Function Tracing (`withSpan`)](#in-request-function-tracing-withspan)
   - [Synchronous Function Tracing (`withSpanSync`)](#synchronous-function-tracing-withspansync)
 - [Detached Background Work (`withBackgroundSpan`)](#detached-background-work-withbackgroundspan)
@@ -273,6 +275,28 @@ The middleware is fail-open: telemetry failures are contained and do not change 
 
 To capture incoming HTTP requests, route parameters, response status codes, payload sizes, and correlate errors, mount `monitorMiddleware()` early in your middleware chain and `expressErrorHandler()` after all routes.
 
+
+#### Middleware & Router Layer Timing Instrumentation
+
+In enterprise applications, slow middleware execution (such as session database retrieval, bcrypt password hashing, JWT signature verification, or external authorization calls) often creates large unexplained gaps in trace waterfalls.
+
+Enable **middleware timing instrumentation** with intelligent duration thresholding to automatically emit child spans for slow or failing middleware layers without creating telemetry flooding from sub-millisecond parsers:
+
+```typescript
+app.use(monitorMiddleware({
+  // Automatically profile subsequent middleware layers
+  instrumentMiddleware: true,
+  // Only emit child spans for middlewares taking >= 2ms (or throwing an error)
+  minMiddlewareDurationMs: 2,
+  // Optional: skip profiling specific noisy or internal layers
+  ignoreMiddlewares: ['query', 'expressInit'],
+}))
+
+// Alternatively, instrument programmatically:
+import { instrumentExpress } from '@pulse-apm/node'
+instrumentExpress(app, { minMiddlewareDurationMs: 2 })
+```
+
 #### Express ESM Example
 
 ```typescript
@@ -413,11 +437,59 @@ In every request trace, the SDK automatically presents:
 2. **Exact execution time of each query** (e.g. `SELECT users`: 12.4ms).
 3. **Internal Node.js execution time** (computed via `exclusiveDuration`, separating CPU execution from database wait time).
 
+### PostgreSQL Connection Pool Wait Time & Saturation Tracking
+
+In high-concurrency environments, applications often suffer from database connection pool starvation. When all pool connections are busy, incoming requests queue up waiting for an available client.
+
+The SDK automatically instruments `pg.Pool.prototype.connect()`:
+- **Intelligent Thresholding**: Immediate checkouts from idle connections (<1ms) create zero span overhead.
+- **Starvation Detection**: When checkout requires waiting ($ge 1\text{ms}$) or fails with a connection timeout, the SDK emits a `db.pool.acquire` span with pool diagnostics:
+  - `db.pool.total`: Total connections in pool.
+  - `db.pool.idle`: Idle connections available.
+  - `db.pool.waiting`: Requests currently queued waiting for a connection.
+  - `db.pool.acquire_duration_ms`: Exact milliseconds spent waiting for connection checkout.
+- **Rows Affected**: Query spans automatically record `db.rows_affected` captured directly from PostgreSQL query result objects.
+
+
 ---
 
 ## Custom Function & Business Logic Tracing
 
 Use `withSpan` to track custom business logic, external API integrations, or computationally expensive algorithms within the current request context.
+
+### Zero-Boilerplate Function Decoration (`Pulse.wrap`)
+
+Wrap any existing synchronous or asynchronous function once without changing call sites. Every invocation will automatically execute inside an active OpenTelemetry span, propagate context across async boundaries, record errors, and set proper status:
+
+```typescript
+import { Pulse } from '@pulse-apm/node'
+
+// Decorate an asynchronous function
+export const hashPassword = Pulse.wrap('auth.hashPassword', async (password: string) => {
+  return await bcrypt.hash(password, 10)
+})
+
+// Decorate a synchronous method
+export const calculateTax = Pulse.wrap('billing.calculateTax', (amount: number, rate: number) => {
+  return amount * rate
+})
+
+// Callsites remain 100% identical and automatically produce trace spans:
+const hash = await hashPassword('super-secret')
+```
+
+### Ergonomic Function Tracing (`Pulse.trace`)
+
+Directly trace an inline block of code (async or sync) without having to decide between `withSpan` or `withSpanSync`:
+
+```typescript
+import { Pulse } from '@pulse-apm/node'
+
+const user = await Pulse.trace('user.fetchProfile', async (span) => {
+  span.setAttribute('user.id', userId)
+  return await db.users.findById(userId)
+})
+```
 
 ### In-Request Function Tracing (`withSpan`)
 
@@ -489,18 +561,99 @@ app.post('/api/checkout', async (req, res) => {
 
 ---
 
-## Custom Database Spans (`withDbSpan`)
+## Database Observability & Slow Query Detection
 
-If you use custom database drivers or raw connection pools:
+Pulse provides automated and manual database tracing with connection pool monitoring and slow query detection.
+
+### 1. Automated PostgreSQL Pool & Query Instrumentation
+
+PostgreSQL (`pg`) auto-instrumentation automatically:
+- **Tracks Pool Checkout Wait Time**: Emits `db.pool.acquire` child spans whenever connection acquisition takes $\ge 1\text{ms}$ or times out, reporting connection pool saturation metrics:
+  - `db.pool.total`: Total connections in the pool
+  - `db.pool.idle`: Idle connections available
+  - `db.pool.waiting`: Queued requests waiting for a free connection
+- **Instruments Query Rows & Duration**: Captures `db.rows_affected`, SQL statements, and statement execution latency.
+
+### 2. Slow Database Query Detection & Tagging
+
+Queries exceeding the slow query threshold (default: `100ms`) are automatically flagged to isolate slow database operations:
+- `db.slow_query`: `true`
+- `db.slow_query_threshold_ms`: Configured threshold in milliseconds (e.g. `100`)
+
+### 3. Custom Database Spans (`withDbSpan`, `withDbSpanSync`)
+
+For custom database drivers, ORMs, or raw connection pools, use `withDbSpan` or `withDbSpanSync`:
 
 ```typescript
-import { withDbSpan } from '@pulse-apm/node'
+import { Pulse, withDbSpan, withDbSpanSync } from '@pulse-apm/node'
 
-const users = await withDbSpan({ system: 'postgresql', operation: 'SELECT' }, async (span) => {
-  span.setAttribute('db.sql.table', 'users')
-  return await rawPool.query('SELECT * FROM users')
-})
+// Async query with custom slow query threshold
+const users = await Pulse.withDbSpan(
+  {
+    system: 'postgresql',
+    operation: 'SELECT',
+    statement: 'SELECT * FROM users WHERE active = true',
+    slowQueryThresholdMs: 50, // Flag queries slower than 50ms (default: 100ms)
+  },
+  async (span) => {
+    span.setAttribute('db.sql.table', 'users')
+    return await rawPool.query('SELECT * FROM users WHERE active = true')
+  }
+)
+
+// Synchronous query (e.g., SQLite / better-sqlite3)
+const row = Pulse.withDbSpanSync(
+  {
+    system: 'sqlite',
+    operation: 'SELECT',
+    statement: 'SELECT * FROM config WHERE key = ?',
+    slowQueryThresholdMs: 20,
+  },
+  (span) => {
+    return sqliteDb.prepare('SELECT * FROM config WHERE key = ?').get('theme')
+  }
+)
 ```
+
+---
+
+---
+
+## Continuous Wall-Clock CPU Profiling (Remote-Config Governed)
+
+Pulse features an enterprise-grade **Continuous Wall-Clock CPU Profiler** designed to collect low-overhead code-level execution profiles across production Node.js services.
+
+### 1. Centrally Governed via Remote Config (Zero Local Boilerplate)
+
+Consistent with Pulse APM architecture, continuous profiling does **not** require hardcoded local options in `init()`. It is dynamically enabled and managed from the **Pulse APM remote control plane**:
+
+```json
+{
+  "features": {
+    "profiling": true,
+    "continuousProfiling": true
+  },
+  "profiling": {
+    "enabled": true,
+    "continuous": true,
+    "continuousIntervalMs": 60000,
+    "sampleRateHz": 99,
+    "sampleIntervalMicroseconds": 10100
+  }
+}
+```
+
+When the control plane toggles continuous profiling:
+- The SDK automatically starts the V8 wall-clock profiler without requiring an application restart.
+- Disabling the feature from the control plane immediately stops profiling and tears down inspector sessions.
+- Modifying the chunk interval or sampling frequency applies dynamically at runtime.
+
+### 2. Low-Overhead Sampling Architecture (<1% CPU)
+
+- **99Hz Sampling Rate**: Samples execution stacks every ~10,100 microseconds (99Hz) to eliminate harmonic lock with standard timer intervals while keeping CPU overhead below 1%.
+- **Chunked Periodic Transmission**: Periodically stops, flushes, and restarts chunks (default: every 60 seconds) so the backend continuously receives fresh profile trees.
+- **Trace & Span Correlation**: Active distributed traces occurring within each chunk window are automatically tagged into the profile payload (`activeTraceIds`), enabling instant jump from slow trace waterfalls to code-level flamegraphs.
+- **Process Lifecycle Safety**: Continuous interval timers are unreferenced (`timer.unref()`), ensuring background profiling never prevents graceful Node.js process termination.
 
 ---
 
@@ -574,6 +727,24 @@ recordHistogram('checkout.processing_time_ms', 142.5, {
 // 3. Gauges (active connections, memory)
 setGauge('worker.active_jobs', 12)
 ```
+
+### Automatic Node.js & V8 Runtime Metrics
+
+When the SDK initializes, the **Enterprise Runtime Metrics Subsystem** automatically begins low-overhead background collection (polled on an unref timer every 15 seconds) of essential Node.js and V8 engine vitals, feeding directly into the Pulse APM Runtime Dashboard:
+
+| Metric Name | Type | Description |
+| :--- | :--- | :--- |
+| `runtime.heap.used` | Gauge | V8 memory allocated to active objects (bytes). |
+| `runtime.heap.total` | Gauge | Total V8 memory allocated for the heap (bytes). |
+| `runtime.memory.rss` | Gauge | Resident Set Size — total memory occupied in RAM (bytes). |
+| `runtime.memory.external` | Gauge | Memory bound to C++ objects linked to V8 (Buffers, etc.). |
+| `runtime.handles.active` | Gauge | Number of active event loop handles (sockets, timers, servers). |
+| `runtime.eventloop.lag` | Gauge | High-precision p99 event loop delay via native `monitorEventLoopDelay` (ms). |
+| `runtime.eventloop.utilization` | Gauge | Event loop utilization ratio (0.0 to 1.0) via `performance.eventLoopUtilization`. |
+| `runtime.gc.pause` | Histogram | Garbage collection pause duration (ms) tagged with `gc_type`. |
+
+*Collection is automatic, zero-dependency, and can be dynamically toggled via remote configuration (`features.runtimeMetrics`, `features.eventLoopMonitoring`, `features.gcMonitoring`).*
+
 
 ## Capture APIs beyond requests and spans
 
@@ -700,13 +871,17 @@ The SDK includes several enterprise pipeline protections:
 | Function / Export | Purpose | Common Usage |
 |---|---|---|
 | `init(options)` | Standard process-level SDK initialization function. | `await init({ apiKey: '...' })` or `await init('...')` |
-| `monitorMiddleware(options)` | Express request & context monitoring middleware. | `app.use(monitorMiddleware())` |
+| `monitorMiddleware(options)` | Express request & context monitoring middleware with optional layer timing. | `app.use(monitorMiddleware({ instrumentMiddleware: true }))` |
+| `instrumentExpress(app, options)` | Programmatically profile Express middleware layers. | `instrumentExpress(app, { minMiddlewareDurationMs: 2 })` |
 | `expressErrorHandler()` | Express error capture middleware. | `app.use(expressErrorHandler())` |
 | `fastifyPulsePlugin` | Fastify request monitoring plugin. | `await fastify.register(fastifyPulsePlugin)` |
+| `wrap(name, fn, options)` / `Pulse.wrap` | Wraps an async or sync function to auto-trace all invocations. | `const fn = Pulse.wrap('calc', calcFn)` |
+| `trace(name, fn, options)` / `Pulse.trace` | Traces an async or sync callback with auto-completion. | `await Pulse.trace('calc', () => ...)` |
 | `withSpan(name, fn, options)` | Executes an async function within a child span. | `await withSpan('calc', async (span) => ...)` |
 | `withSpanSync(name, fn, options)` | Executes a sync function within a child span. | `withSpanSync('parse', (span) => ...)` |
 | `withBackgroundSpan(name, options, fn)` | Detached post-response task with causal `SpanLink`. | `withBackgroundSpan('email', { timeoutMs }, fn)` |
-| `withDbSpan(system, op, fn, options)` | Manual database query span helper. | `await withDbSpan('postgresql', 'SELECT', fn)` |
+| `withDbSpan(system, op, fn, options)` | Manual async database query span helper with slow query detection. | `await withDbSpan('postgresql', 'SELECT', fn)` |
+| `withDbSpanSync(system, op, fn, options)` | Manual sync database query span helper with slow query detection. | `withDbSpanSync('sqlite', 'SELECT', fn)` |
 | `captureError(err, context)` | Authoritative error recording API. | `captureError(new Error('...'))` |
 | `addBreadcrumb(crumb)` | Appends a diagnostic breadcrumb to current context. | `addBreadcrumb({ message: 'step 1' })` |
 | `setUser(user)` | Associates user identity with request and errors. | `setUser({ id: '123' })` |

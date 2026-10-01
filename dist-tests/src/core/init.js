@@ -29,6 +29,7 @@ import { metricsRegistry } from '../metrics/registry.js';
 import { LoggingSubsystem } from '../subsystems/logging-subsystem.js';
 import { ProfilingSubsystem } from '../subsystems/profiling-subsystem.js';
 import { CronSubsystem } from '../subsystems/cron-subsystem.js';
+import { RuntimeMetricsSubsystem } from '../subsystems/runtime-metrics-subsystem.js';
 import { getSessionManager, resetSessionManager } from '../session/session-manager.js';
 import { processEvent } from './event-pipeline.js';
 import { eventQueue } from '../transport/queue.js';
@@ -218,7 +219,11 @@ async function initialize(options) {
                 cardinalityLimit: 2_000,
             }, resources);
         };
-        const stopMetrics = async () => { await otelMetrics.shutdown(); };
+        RuntimeMetricsSubsystem.getInstance().configure(config);
+        const stopMetrics = async () => {
+            RuntimeMetricsSubsystem.getInstance().stop();
+            await otelMetrics.shutdown();
+        };
         await featureController.register('metrics', startMetrics, stopMetrics);
         killswitchEngine.registerSubsystem('disableMetrics', {
             shutdown: stopMetrics,
@@ -302,6 +307,7 @@ async function initialize(options) {
                 await featureController.handleConfigChange(diff, current);
                 if (pressureFeaturesChanged(diff))
                     configureAdaptivePressure(current);
+                RuntimeMetricsSubsystem.getInstance().handleConfigChange(diff, current);
             },
             limits: ({ diff, current }) => {
                 limitsEngine.handleConfigChange(diff, current);

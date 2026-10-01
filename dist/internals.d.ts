@@ -60,3 +60,4 @@ export { getLogger, jsonLogger, setLogFormat, getLogFormat } from './utils/logge
 export type { RemoteConfigResponse, FeaturesConfig, SamplingConfig, RouteSamplingRates, InstrumentationConfig, PrivacyConfig, PrivacyCaptureConfig, ScrubbingConfig, PiiDetectionConfig, LimitsConfig, PersistenceGovernanceConfig, KillswitchesConfig, TransportRemoteConfig, TransportRouteConfig, TransportRouteName, TransportRetryConfig, TransportQueueConfig, ConfigMeta, ConfigDiff, } from './types/config.js';
 export { REMOTE_CONFIG_SCHEMA_VERSION } from './types/config.js';
 export type { TransportResult, IngestPayload, TransportHealth, TransportAdapter, RouteTransportHealth, MultiRouteTransportHealth, } from './types/transport.js';
+export { RuntimeMetricsSubsystem, RUNTIME_METRIC_NAMES } from './subsystems/runtime-metrics-subsystem.js';

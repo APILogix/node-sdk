@@ -134,6 +134,13 @@ export class PulseSpan implements OTelSpan {
         return this._parentSpanId
     }
 
+    /**
+     * Get the current span attributes (read-only snapshot).
+     */
+    get attributes(): Attributes {
+        return (this._span as any).attributes ?? {}
+    }
+
     /** Whether this span is still recording (not ended). */
     isRecording(): boolean {
         return this._span.isRecording()

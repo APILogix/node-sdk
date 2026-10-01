@@ -71,6 +71,12 @@ export class PulseSpan {
     get parentSpanId() {
         return this._parentSpanId;
     }
+    /**
+     * Get the current span attributes (read-only snapshot).
+     */
+    get attributes() {
+        return this._span.attributes ?? {};
+    }
     /** Whether this span is still recording (not ended). */
     isRecording() {
         return this._span.isRecording();

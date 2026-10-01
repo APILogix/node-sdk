@@ -20,6 +20,10 @@ export declare class SecurityScrubber {
     private hasScrubRules;
     private sensitiveHeaders;
     private sensitiveFields;
+    private normalizedHeaders;
+    private normalizedFields;
+    private readonly keySensitivityCache;
+    private static readonly MAX_CACHE_SIZE;
     private static readonly EMAIL_PATTERN;
     private static readonly PHONE_PATTERN;
     private static readonly IPV4_PATTERN;
@@ -32,6 +36,7 @@ export declare class SecurityScrubber {
      */
     static isValidLuhn(digits: string): boolean;
     private constructor();
+    getPrivacyConfig(): PrivacyConfig;
     private updateHasScrubRules;
     static initialize(config: PrivacyConfig): SecurityScrubber;
     static getInstance(): SecurityScrubber | null;

@@ -3,10 +3,50 @@ export function startDbSpan(options) {
     return startSpan(dbSpanName(options), toSpanOptions(options));
 }
 export async function withDbSpan(options, fn) {
-    return withSpan(dbSpanName(options), toSpanOptions(options), fn);
+    const thresholdMs = options.slowQueryThresholdMs ?? 100;
+    const start = Date.now();
+    return withSpan(dbSpanName(options), toSpanOptions(options), async (span) => {
+        try {
+            const result = await fn(span);
+            const durationMs = Date.now() - start;
+            if (durationMs >= thresholdMs) {
+                span.setAttribute('db.slow_query', true);
+                span.setAttribute('db.slow_query_threshold_ms', thresholdMs);
+            }
+            return result;
+        }
+        catch (err) {
+            const durationMs = Date.now() - start;
+            if (durationMs >= thresholdMs) {
+                span.setAttribute('db.slow_query', true);
+                span.setAttribute('db.slow_query_threshold_ms', thresholdMs);
+            }
+            throw err;
+        }
+    });
 }
 export function withDbSpanSync(options, fn) {
-    return withSpanSync(dbSpanName(options), toSpanOptions(options), fn);
+    const thresholdMs = options.slowQueryThresholdMs ?? 100;
+    const start = Date.now();
+    return withSpanSync(dbSpanName(options), toSpanOptions(options), (span) => {
+        try {
+            const result = fn(span);
+            const durationMs = Date.now() - start;
+            if (durationMs >= thresholdMs) {
+                span.setAttribute('db.slow_query', true);
+                span.setAttribute('db.slow_query_threshold_ms', thresholdMs);
+            }
+            return result;
+        }
+        catch (err) {
+            const durationMs = Date.now() - start;
+            if (durationMs >= thresholdMs) {
+                span.setAttribute('db.slow_query', true);
+                span.setAttribute('db.slow_query_threshold_ms', thresholdMs);
+            }
+            throw err;
+        }
+    });
 }
 function toSpanOptions(options) {
     const attributes = {
