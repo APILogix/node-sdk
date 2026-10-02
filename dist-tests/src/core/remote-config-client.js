@@ -5,11 +5,13 @@ import { SDKError, toError } from './errors.js';
 import { validateApiKey } from './api-key.js';
 import { hmacSha256, sha256 } from '../utils/hash.js';
 import { getLogger } from '../utils/logger.js';
+import { isRetryableError } from './retry-classifier.js';
 const CONTROL_PLANE_TIMEOUT_MS = 5_000;
-const INIT_TIMEOUT_MS = 1_500;
-const DEFAULT_INIT_RETRIES = 1;
+const INIT_TIMEOUT_MS = 3_000;
+const DEFAULT_INIT_RETRIES = 2;
 const MAX_INIT_RETRIES = 3;
-const INIT_RETRY_BASE_DELAY_MS = 50;
+const INIT_RETRY_BASE_DELAY_MS = 150;
+const INIT_RETRY_MAX_DELAY_MS = 1_000;
 const CONTROL_PLANE_PATH_PREFIX = '';
 /**
  * The SDK's sole control-plane network client.
@@ -92,7 +94,7 @@ export class RemoteConfigClient {
             }
             catch (error) {
                 lastError = error;
-                if (attempt === this.initRetries || !isRetryableInitError(error))
+                if (attempt === this.initRetries || !isRetryableError(error))
                     throw error;
                 const afterAttemptMs = this.initTimeoutMs - (Date.now() - startedAt);
                 if (afterAttemptMs <= 1)
@@ -103,7 +105,10 @@ export class RemoteConfigClient {
                 // readiness without providing another useful attempt.
                 if (retryAfterMs !== undefined && retryAfterMs >= afterAttemptMs)
                     throw error;
-                const delayMs = retryAfterMs ?? Math.min(INIT_RETRY_BASE_DELAY_MS * (2 ** attempt), Math.max(1, Math.floor(afterAttemptMs / 4)));
+                const baseExponential = Math.min(INIT_RETRY_MAX_DELAY_MS, INIT_RETRY_BASE_DELAY_MS * (2 ** attempt));
+                const jitterMultiplier = 0.5 + Math.random();
+                const jitteredDelay = Math.round(baseExponential * jitterMultiplier);
+                const delayMs = retryAfterMs ?? Math.min(jitteredDelay, Math.max(1, Math.floor(afterAttemptMs / 2)));
                 getLogger().warn('[RemoteConfigClient] Retrying transient init failure', {
                     endpoint: '/v1/init',
                     attempt: attempt + 1,
@@ -246,18 +251,6 @@ function normalizeBaseUrl(value) {
 }
 function isRecord(value) {
     return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
-/** Only retry failures that an immediate repeat can plausibly recover. */
-function isRetryableInitError(error) {
-    if (!(error instanceof SDKError))
-        return true;
-    if (error.code === 'NETWORK_ERROR')
-        return true;
-    if (error.code !== 'HTTP_ERROR')
-        return false;
-    const status = error.context['statusCode'];
-    return typeof status === 'number'
-        && (status === 408 || status === 425 || status === 429 || status >= 500);
 }
 function retryAfterFrom(error) {
     if (!(error instanceof SDKError))

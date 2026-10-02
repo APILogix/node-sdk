@@ -58,6 +58,7 @@ import { QuotaController } from './quota-controller.js'
 import { costGovernor } from '../utils/cost-governor.js'
 import { persistenceGovernor } from '../storage/persistence-governor.js'
 import { resetFingerprintCache } from '../processors/fingerprint.js'
+import { BackgroundRecoveryWorker } from './recovery-worker.js'
 
 // ─── Module State ───────────────────────────────────────────────────────────
 
@@ -141,6 +142,10 @@ export async function shutdown(timeoutMs?: number): Promise<ShutdownResult> {
   }
 
   shuttingDown = true
+  BackgroundRecoveryWorker.stop()
+  if (client.getState() !== 'stopping' && client.getState() !== 'stopped') {
+    client.setState('stopping')
+  }
   const promise = runShutdown(timeoutMs)
   shutdownPromise = promise
   return promise
@@ -291,6 +296,9 @@ async function runShutdown(timeoutMs?: number): Promise<ShutdownResult> {
       await runOrchestratedShutdown(stepErrors)
     } catch (err) {
       stepErrors.push({ step: 'orchestrator', error: err })
+    }
+    if (client.getState() === 'stopping') {
+      try { client.setState('stopped') } catch {}
     }
     await runUnconditionalCleanup(stepErrors)
   })()

@@ -23,14 +23,14 @@ import { trace as otelTrace } from '@opentelemetry/api';
 // ─── Configuration ──────────────────────────────────────────────────────────
 let debugMode = false;
 let logPrefix = 'Pulse';
-let minimumLogLevel = Severity.Warning;
+let minimumLogLevel = Severity.Info;
 /**
  * Enable or disable debug logging globally.
  * Called during SDK initialization based on `options.debug`.
  */
 export function setDebugMode(enabled) {
     debugMode = enabled;
-    minimumLogLevel = enabled ? Severity.Debug : Severity.Warning;
+    minimumLogLevel = enabled ? Severity.Debug : Severity.Info;
 }
 /**
  * Set the minimum SDK internal log level.
@@ -141,27 +141,33 @@ function writeStderr(line) {
         /* stderr closed — nothing we can do */
     }
 }
+function stripPrefix(message) {
+    if (message.startsWith(`[${logPrefix}]`)) {
+        return message.slice(logPrefix.length + 2).trim();
+    }
+    return message;
+}
 // ─── Console Logger (Sentry-style) ─────────────────────────────────────────
 export const consoleLogger = {
     debug(message, context) {
         if (!severityMeetsThreshold(Severity.Debug, minimumLogLevel))
             return;
-        writeStdout(`[${logPrefix}] DEBUG: ${message}${formatContext(context)}`);
+        writeStdout(`[${logPrefix}] DEBUG: ${stripPrefix(message)}${formatContext(context)}`);
     },
     info(message, context) {
         if (!severityMeetsThreshold(Severity.Info, minimumLogLevel))
             return;
-        writeStdout(`[${logPrefix}] INFO: ${message}${formatContext(context)}`);
+        writeStdout(`[${logPrefix}] INFO: ${stripPrefix(message)}${formatContext(context)}`);
     },
     warn(message, context) {
         if (!severityMeetsThreshold(Severity.Warning, minimumLogLevel))
             return;
-        writeStderr(`[${logPrefix}] WARN: ${message}${formatContext(context)}`);
+        writeStderr(`[${logPrefix}] WARN: ${stripPrefix(message)}${formatContext(context)}`);
     },
     error(message, context) {
         if (!severityMeetsThreshold(Severity.Error, minimumLogLevel))
             return;
-        writeStderr(`[${logPrefix}] ERROR: ${message}${formatContext(context)}`);
+        writeStderr(`[${logPrefix}] ERROR: ${stripPrefix(message)}${formatContext(context)}`);
     },
 };
 // ─── Structured JSON Logger (Production-grade) ─────────────────────────────
@@ -222,7 +228,7 @@ function emitJsonLog(level, message, context) {
         timestamp: new Date().toISOString(),
         level,
         logger: logPrefix,
-        message,
+        message: stripPrefix(message),
     };
     // Inject trace correlation if available
     if (trace.traceId)

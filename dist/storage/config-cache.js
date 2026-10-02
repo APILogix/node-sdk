@@ -1,0 +1,87 @@
+import { createHash } from 'node:crypto';
+import { mkdir, readFile, writeFile, unlink } from 'node:fs/promises';
+import { join } from 'node:path';
+import { assertRemoteConfig } from '../core/config-validator.js';
+import { getLogger } from '../utils/logger.js';
+function getCacheDir() {
+    return join(process.cwd(), '.pulse');
+}
+function getCacheFilePath(apiKey) {
+    const hash = createHash('sha256').update(apiKey).digest('hex');
+    return join(getCacheDir(), `config-cache-${hash}.json`);
+}
+/**
+ * Save a validated RemoteConfigResponse to disk for cold-start LKG recovery.
+ * Never writes raw API keys, Authorization headers, tokens, or credentials.
+ * Asynchronous and fire-and-forget: errors are logged at debug level and swallowed.
+ */
+export async function saveConfigCache(apiKey, response) {
+    if (!apiKey || !response.config)
+        return;
+    try {
+        const dir = getCacheDir();
+        await mkdir(dir, { recursive: true });
+        const payload = {
+            version: 1,
+            cachedAt: new Date().toISOString(),
+            projectId: response.projectId,
+            environment: response.environment,
+            release: response.release,
+            ...(response.configRevision !== undefined ? { configRevision: response.configRevision } : {}),
+            config: response.config,
+        };
+        const filePath = getCacheFilePath(apiKey);
+        await writeFile(filePath, JSON.stringify(payload, null, 2), 'utf8');
+        getLogger().debug('[Pulse] Saved Last-Known-Good configuration cache to disk');
+    }
+    catch (error) {
+        getLogger().debug('[Pulse] Failed to write configuration cache to disk', { error });
+    }
+}
+/**
+ * Load and validate a cached Last-Known-Good configuration from disk.
+ * Returns null if the cache does not exist, cannot be read, or fails schema validation.
+ */
+export async function loadConfigCache(apiKey) {
+    if (!apiKey)
+        return null;
+    try {
+        const filePath = getCacheFilePath(apiKey);
+        const raw = await readFile(filePath, 'utf8');
+        const parsed = JSON.parse(raw);
+        if (!parsed || parsed.version !== 1 || !parsed.config) {
+            return null;
+        }
+        // Validate the cached config using the authoritative schema validator
+        assertRemoteConfig(parsed.config);
+        const response = {
+            success: true,
+            projectId: parsed.projectId || parsed.config.sdk.projectId,
+            environment: parsed.environment || parsed.config.sdk.environment,
+            release: parsed.release || parsed.config.sdk.release,
+            organizationId: '',
+            config: parsed.config,
+            ...(parsed.configRevision !== undefined ? { configRevision: parsed.configRevision } : {}),
+        };
+        getLogger().info('[Pulse] Loaded validated Last-Known-Good configuration from cache');
+        return response;
+    }
+    catch (error) {
+        getLogger().debug('[Pulse] Could not load configuration cache', { error });
+        return null;
+    }
+}
+/**
+ * Remove cached configuration from disk (used during tests or key revocation).
+ */
+export async function clearConfigCache(apiKey) {
+    if (!apiKey)
+        return;
+    try {
+        const filePath = getCacheFilePath(apiKey);
+        await unlink(filePath);
+    }
+    catch {
+        // Ignore if file doesn't exist
+    }
+}

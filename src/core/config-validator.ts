@@ -500,6 +500,12 @@ function validateMeta(value: unknown, errors: string[]): void {
   }
   nonEmptyString(value, 'generatedBy', 'meta.generatedBy', errors)
   optionalNonEmptyString(value, 'configHash', 'meta.configHash', errors)
+  if ('configRevision' in (value as Record<string, unknown>)) {
+    const rev = (value as Record<string, unknown>)['configRevision']
+    if (rev !== undefined && rev !== null && (typeof rev !== 'number' || !Number.isInteger(rev))) {
+      errors.push('meta.configRevision must be an integer or null')
+    }
+  }
 }
 
 function validateBooleanSection(

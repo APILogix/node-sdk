@@ -71,4 +71,30 @@ describe('application startup with unavailable telemetry', () => {
       globalThis.fetch = originalFetch
     }
   })
+
+  it('preserves API key, SDK options, event queue, and bootstrap hooks in dormant state when init fails', async () => {
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = async () => {
+      return new Response(JSON.stringify({ error: 'service unavailable' }), { status: 503 })
+    }
+    try {
+      const res = await init({ apiKey: 'preserved-api-key', initTimeoutMs: 100, initRetries: 0 })
+      assert.equal(res, undefined)
+      assert.equal(client.initialized, false)
+      // Check that client options and API key were preserved
+      assert.equal(client.getApiKey(), 'preserved-api-key')
+      assert.equal(client.options?.apiKey, 'preserved-api-key')
+      assert.equal(client.options?.initTimeoutMs, 100)
+
+      // Check that bootstrap auto-instrumentation hooks were NOT destroyed
+      const guardSymbol = Symbol.for('pulse-sdk.auto-instrumentation.registered')
+      const bootstrapSymbol = Symbol.for('pulse-sdk.auto-instrumentation.bootstrap')
+      const g = globalThis as Record<symbol, unknown>
+      assert.equal(g[guardSymbol], true, 'Instrumentation guard must remain true')
+      assert.equal(g[bootstrapSymbol], true, 'Bootstrap guard must remain true')
+    } finally {
+      await shutdown(500)
+      globalThis.fetch = originalFetch
+    }
+  })
 })

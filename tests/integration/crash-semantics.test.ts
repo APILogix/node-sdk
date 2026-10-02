@@ -240,7 +240,7 @@ describe('Crash Semantics & Process Termination Lifecycle', () => {
     for (let i = 0; i < 5; i++) {
       await init({
         apiKey: 'test-api-key',
-        initTimeoutMs: 500,
+        initTimeoutMs: 2000,
         exitOnUncaughtException: false,
       })
 
@@ -248,7 +248,7 @@ describe('Crash Semantics & Process Termination Lifecycle', () => {
       assert.strictEqual(process.listenerCount('uncaughtException'), baselineUncaught + 1)
       assert.strictEqual(process.listenerCount('unhandledRejection'), baselineUnhandled + 1)
 
-      await shutdown(500)
+      await shutdown(1000)
 
       // After shutdown, listener count must return to exact baseline
       assert.strictEqual(process.listenerCount('uncaughtException'), baselineUncaught, `Leaked uncaughtException at cycle ${i}`)

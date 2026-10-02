@@ -5,3 +5,6 @@ import type { RemoteConfigResponse, SDKInitOptions } from '../types/config.js';
  * a runtime configuration or start telemetry with defaults.
  */
 export declare function init(options: string | SDKInitOptions): Promise<Readonly<RemoteConfigResponse> | undefined>;
+declare function enterDormantState(_error?: unknown): Promise<void>;
+export declare const cleanupFailedInitialization: typeof enterDormantState;
+export {};

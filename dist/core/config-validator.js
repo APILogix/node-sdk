@@ -445,6 +445,12 @@ function validateMeta(value, errors) {
     }
     nonEmptyString(value, 'generatedBy', 'meta.generatedBy', errors);
     optionalNonEmptyString(value, 'configHash', 'meta.configHash', errors);
+    if ('configRevision' in value) {
+        const rev = value['configRevision'];
+        if (rev !== undefined && rev !== null && (typeof rev !== 'number' || !Number.isInteger(rev))) {
+            errors.push('meta.configRevision must be an integer or null');
+        }
+    }
 }
 function validateBooleanSection(value, name, keys, errors) {
     if (!section(value, name, errors))

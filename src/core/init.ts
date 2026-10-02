@@ -25,6 +25,7 @@ import { TRACING_DEFAULTS } from '../constants/internal-defaults.js'
 import { initTracer, shutdownTracer } from '../tracing/tracer.js'
 import {
   registerAutoInstrumentations,
+  registerBootstrapAutoInstrumentations,
   resetAutoInstrumentations,
   waitForPendingInstrumentations,
 } from '../instrumentation/auto-instrument.js'
@@ -73,6 +74,7 @@ export async function init(options: string | SDKInitOptions): Promise<Readonly<R
 
 
   await waitForShutdownCompletion()
+  registerBootstrapAutoInstrumentations()
   setDebugMode(normalizedOptions.debug ?? false)
   if (normalizedOptions.logLevel) setLogLevel(normalizedOptions.logLevel)
   validateInitOptions(normalizedOptions)
@@ -108,6 +110,7 @@ async function initialize(options: SDKInitOptions): Promise<Readonly<RemoteConfi
   const manager = ConfigManager.getInstance()
   client.setOptions(options)
   client.initBreadcrumbs(100)
+  client.setState('initializing')
 
   logger.info('Telemetry initialization started', {
     endpoint: '/v1/init',
@@ -451,8 +454,8 @@ async function initialize(options: SDKInitOptions): Promise<Readonly<RemoteConfi
     })
     return manager.getConfig()
   } catch (error) {
-    logger.error('Telemetry initialization failed; host application will continue without telemetry', { error })
-    await cleanupFailedInitialization()
+    logger.error('Telemetry initialization failed; entering dormant state', { error })
+    await enterDormantState(error)
     return undefined
   }
 }
@@ -525,11 +528,11 @@ async function replayBufferedEvents(persisted: readonly unknown[]): Promise<void
   }
 }
 
-async function cleanupFailedInitialization(): Promise<void> {
+async function enterDormantState(_error?: unknown): Promise<void> {
+  // Non-destructive transition: clean up any partially constructed transport
+  // router or runtime engines from a mid-flight failure, but preserve bootstrap
+  // instrumentation, OTel provider/context, event queue, client options, and API key.
   try { await TransportRouter.reset() } catch {}
-  try { await shutdownTracer() } catch {}
-  try { resetAutoInstrumentations() } catch {}
-  try { resetGlobalErrorHandlers() } catch {}
   try { FeatureController.reset() } catch {}
   try { KillswitchEngine.reset() } catch {}
   try { EntitlementGate.reset() } catch {}
@@ -537,5 +540,7 @@ async function cleanupFailedInitialization(): Promise<void> {
   try { LimitsEngine.reset() } catch {}
   try { SecurityScrubber.reset() } catch {}
   ConfigManager.reset()
-  client.clear()
+  client.clearConfig()
 }
+
+export const cleanupFailedInitialization = enterDormantState

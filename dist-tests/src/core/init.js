@@ -22,7 +22,7 @@ import { quotaController } from './quota-controller.js';
 import { costGovernor } from '../utils/cost-governor.js';
 import { TRACING_DEFAULTS } from '../constants/internal-defaults.js';
 import { initTracer, shutdownTracer } from '../tracing/tracer.js';
-import { registerAutoInstrumentations, resetAutoInstrumentations, waitForPendingInstrumentations, } from '../instrumentation/auto-instrument.js';
+import { registerAutoInstrumentations, registerBootstrapAutoInstrumentations, resetAutoInstrumentations, waitForPendingInstrumentations, } from '../instrumentation/auto-instrument.js';
 import { setupGlobalErrorHandlers, resetGlobalErrorHandlers } from '../instrumentation/global-errors.js';
 import { otelMetrics } from '../metrics/otel-adapter.js';
 import { metricsRegistry } from '../metrics/registry.js';
@@ -66,6 +66,7 @@ export async function init(options) {
         }
     }
     await waitForShutdownCompletion();
+    registerBootstrapAutoInstrumentations();
     setDebugMode(normalizedOptions.debug ?? false);
     if (normalizedOptions.logLevel)
         setLogLevel(normalizedOptions.logLevel);
@@ -99,6 +100,7 @@ async function initialize(options) {
     const manager = ConfigManager.getInstance();
     client.setOptions(options);
     client.initBreadcrumbs(100);
+    client.setState('initializing');
     logger.info('Telemetry initialization started', {
         endpoint: '/v1/init',
     });
@@ -398,8 +400,8 @@ async function initialize(options) {
         return manager.getConfig();
     }
     catch (error) {
-        logger.error('Telemetry initialization failed; host application will continue without telemetry', { error });
-        await cleanupFailedInitialization();
+        logger.error('Telemetry initialization failed; entering dormant state', { error });
+        await enterDormantState(error);
         return undefined;
     }
 }
@@ -468,21 +470,12 @@ async function replayBufferedEvents(persisted) {
             await new Promise(resolve => setImmediate(resolve));
     }
 }
-async function cleanupFailedInitialization() {
+async function enterDormantState(_error) {
+    // Non-destructive transition: clean up any partially constructed transport
+    // router or runtime engines from a mid-flight failure, but preserve bootstrap
+    // instrumentation, OTel provider/context, event queue, client options, and API key.
     try {
         await TransportRouter.reset();
-    }
-    catch { }
-    try {
-        await shutdownTracer();
-    }
-    catch { }
-    try {
-        resetAutoInstrumentations();
-    }
-    catch { }
-    try {
-        resetGlobalErrorHandlers();
     }
     catch { }
     try {
@@ -510,5 +503,6 @@ async function cleanupFailedInitialization() {
     }
     catch { }
     ConfigManager.reset();
-    client.clear();
+    client.clearConfig();
 }
+export const cleanupFailedInitialization = enterDormantState;

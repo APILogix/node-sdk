@@ -33,7 +33,7 @@ export interface Logger {
 
 let debugMode = false
 let logPrefix = 'Pulse'
-let minimumLogLevel: SeverityLevel = Severity.Warning
+let minimumLogLevel: SeverityLevel = Severity.Info
 
 /**
  * Enable or disable debug logging globally.
@@ -41,7 +41,7 @@ let minimumLogLevel: SeverityLevel = Severity.Warning
  */
 export function setDebugMode(enabled: boolean): void {
   debugMode = enabled
-  minimumLogLevel = enabled ? Severity.Debug : Severity.Warning
+  minimumLogLevel = enabled ? Severity.Debug : Severity.Info
 }
 
 /**
@@ -168,27 +168,34 @@ function writeStderr(line: string): void {
   }
 }
 
+function stripPrefix(message: string): string {
+  if (message.startsWith(`[${logPrefix}]`)) {
+    return message.slice(logPrefix.length + 2).trim()
+  }
+  return message
+}
+
 // ─── Console Logger (Sentry-style) ─────────────────────────────────────────
 
 export const consoleLogger: Logger = {
   debug(message: string, context?: Record<string, unknown>): void {
     if (!severityMeetsThreshold(Severity.Debug, minimumLogLevel)) return
-    writeStdout(`[${logPrefix}] DEBUG: ${message}${formatContext(context)}`)
+    writeStdout(`[${logPrefix}] DEBUG: ${stripPrefix(message)}${formatContext(context)}`)
   },
 
   info(message: string, context?: Record<string, unknown>): void {
     if (!severityMeetsThreshold(Severity.Info, minimumLogLevel)) return
-    writeStdout(`[${logPrefix}] INFO: ${message}${formatContext(context)}`)
+    writeStdout(`[${logPrefix}] INFO: ${stripPrefix(message)}${formatContext(context)}`)
   },
 
   warn(message: string, context?: Record<string, unknown>): void {
     if (!severityMeetsThreshold(Severity.Warning, minimumLogLevel)) return
-    writeStderr(`[${logPrefix}] WARN: ${message}${formatContext(context)}`)
+    writeStderr(`[${logPrefix}] WARN: ${stripPrefix(message)}${formatContext(context)}`)
   },
 
   error(message: string, context?: Record<string, unknown>): void {
     if (!severityMeetsThreshold(Severity.Error, minimumLogLevel)) return
-    writeStderr(`[${logPrefix}] ERROR: ${message}${formatContext(context)}`)
+    writeStderr(`[${logPrefix}] ERROR: ${stripPrefix(message)}${formatContext(context)}`)
   },
 }
 
@@ -256,7 +263,7 @@ function emitJsonLog(
     timestamp: new Date().toISOString(),
     level,
     logger: logPrefix,
-    message,
+    message: stripPrefix(message),
   }
 
   // Inject trace correlation if available

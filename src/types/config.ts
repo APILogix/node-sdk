@@ -465,6 +465,7 @@ export interface ConfigMeta {
   readonly generatedAt: string
   readonly generatedBy: string
   readonly configHash?: string | undefined
+  readonly configRevision?: number | null | undefined
 }
 
 // ─── Config Diff ────────────────────────────────────────────────────────────
@@ -590,10 +591,10 @@ export function isMemoryLimit(mem: unknown): mem is MemoryLimit {
  */
 export interface SDKInitOptions {
   readonly apiKey: string
-  /** Startup request deadline in milliseconds (default: 1500). Failure leaves telemetry disabled. */
+  /** Startup request deadline in milliseconds (default: 3000). Failure leaves telemetry disabled. */
   readonly initTimeoutMs?: number | undefined
   /**
-   * Number of retries for transient /v1/init failures (default: 1). The
+   * Number of retries for transient /v1/init failures (default: 2). The
    * complete attempt sequence remains within initTimeoutMs.
    */
   readonly initRetries?: number | undefined
