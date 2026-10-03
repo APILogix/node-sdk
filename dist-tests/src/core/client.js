@@ -119,7 +119,9 @@ class SDKClient {
         this.initMetadataValue = null;
     }
     clear() {
-        this.stateMachine.reset();
+        if (this.stateMachine.getState() !== 'stopped') {
+            this.stateMachine.reset();
+        }
         this.initMetadataValue = null;
         this.apiKeyValue = null;
         this.initIdentityValue = null;
@@ -145,7 +147,13 @@ class SDKClient {
         this.pendingInitIdentityValue = null;
     }
     hasSamePendingIdentity(options) {
-        return this.pendingInitIdentityValue === createInitIdentity(options);
+        if (this.pendingInitIdentityValue !== null) {
+            return this.pendingInitIdentityValue === createInitIdentity(options);
+        }
+        if (this.initIdentityValue !== null) {
+            return this.initIdentityValue === createInitIdentity(options);
+        }
+        return false;
     }
     get singleFlightCoordinator() {
         return this.singleFlight;

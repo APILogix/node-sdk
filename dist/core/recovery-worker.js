@@ -4,7 +4,12 @@ import { RemoteConfigClient } from './remote-config-client.js';
 import { ConfigManager } from './config-manager.js';
 import { classifyError, isPermanentError } from './retry-classifier.js';
 import { isSDKShuttingDown } from './lifecycle.js';
-const DEFAULT_BASE_DELAY_MS = 1_000;
+function getDefaultBaseDelayMs() {
+    if (typeof process !== 'undefined' && process.env && process.env['PULSE_TEST_RECOVERY_DELAY_MS']) {
+        return Math.max(10, Number(process.env['PULSE_TEST_RECOVERY_DELAY_MS']));
+    }
+    return 1_000;
+}
 const DEFAULT_MAX_DELAY_MS = 300_000; // 5 minutes
 export class BackgroundRecoveryWorker {
     static activeInstance = null;
@@ -19,7 +24,7 @@ export class BackgroundRecoveryWorker {
     stopped = false;
     constructor(options, workerOptions) {
         this.options = options;
-        this.baseDelayMs = workerOptions?.baseDelayMs ?? DEFAULT_BASE_DELAY_MS;
+        this.baseDelayMs = workerOptions?.baseDelayMs ?? getDefaultBaseDelayMs();
         this.maxDelayMs = workerOptions?.maxDelayMs ?? DEFAULT_MAX_DELAY_MS;
         this.activateFn = workerOptions?.activateFn;
     }
@@ -73,7 +78,7 @@ export class BackgroundRecoveryWorker {
         }
     }
     scheduleNextAttempt(retryAfterMs) {
-        if (this.stopped || isSDKShuttingDown() || client.getState() === 'stopped') {
+        if (this.stopped || isSDKShuttingDown() || client.getState() === 'stopping' || client.getState() === 'stopped') {
             this.stop();
             return;
         }
@@ -95,7 +100,7 @@ export class BackgroundRecoveryWorker {
         this.timer.unref?.();
     }
     async executeAttempt() {
-        if (this.stopped || isSDKShuttingDown() || client.getState() === 'stopped') {
+        if (this.stopped || isSDKShuttingDown() || client.getState() === 'stopping' || client.getState() === 'stopped') {
             this.stop();
             return;
         }
@@ -103,10 +108,11 @@ export class BackgroundRecoveryWorker {
         const logger = getLogger();
         logger.info(`[Pulse] SDK recovery attempt #${this.attempt}.`);
         try {
+            client.setPendingIdentity(this.options);
             const coordinator = client.singleFlightCoordinator;
             await coordinator.execute(async () => {
-                if (this.abortController.signal.aborted) {
-                    throw new Error('Recovery aborted');
+                if (this.abortController.signal.aborted || this.stopped || isSDKShuttingDown() || client.getState() === 'stopping' || client.getState() === 'stopped') {
+                    return undefined;
                 }
                 const remoteClient = new RemoteConfigClient({
                     apiKey: this.options.apiKey,
@@ -117,7 +123,7 @@ export class BackgroundRecoveryWorker {
                 if (!initResponse) {
                     throw new Error('Empty init response received during recovery');
                 }
-                if (this.stopped || isSDKShuttingDown()) {
+                if (this.stopped || isSDKShuttingDown() || client.getState() === 'stopping' || client.getState() === 'stopped') {
                     return undefined;
                 }
                 if (this.activateFn) {
@@ -125,14 +131,14 @@ export class BackgroundRecoveryWorker {
                 }
                 return ConfigManager.getCurrent()?.getConfigOrNull() ?? undefined;
             });
-            if (this.stopped || isSDKShuttingDown()) {
+            if (this.stopped || isSDKShuttingDown() || client.getState() === 'stopping' || client.getState() === 'stopped') {
                 return;
             }
             logger.info('[Pulse] SDK recovery succeeded. Telemetry is now fully initialized.');
             this.stop();
         }
         catch (error) {
-            if (this.stopped || isSDKShuttingDown()) {
+            if (this.stopped || isSDKShuttingDown() || client.getState() === 'stopping' || client.getState() === 'stopped') {
                 return;
             }
             const decision = classifyError(error);
@@ -146,6 +152,9 @@ export class BackgroundRecoveryWorker {
             }
             // Schedule next attempt with backoff
             this.scheduleNextAttempt(decision.retryAfterMs);
+        }
+        finally {
+            client.clearPendingIdentity();
         }
     }
 }

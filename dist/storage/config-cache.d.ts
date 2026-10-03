@@ -10,6 +10,11 @@ export interface CachedConfigPayload {
     readonly config: RemoteConfigResponse;
 }
 /**
+ * @deprecated Disk-based configuration caching has been intentionally removed
+ * from the SDK initialization and recovery lifecycle in favor of in-memory
+ * configuration + asynchronous background recovery. This ensures 100% portability
+ * across serverless, read-only, containerized, and permission-restricted environments.
+ *
  * Save a validated RemoteConfigResponse to disk for cold-start LKG recovery.
  * Never writes raw API keys, Authorization headers, tokens, or credentials.
  * Asynchronous and fire-and-forget: errors are logged at debug level and swallowed.

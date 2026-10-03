@@ -147,7 +147,9 @@ class SDKClient {
   }
 
   clear(): void {
-    this.stateMachine.reset()
+    if (this.stateMachine.getState() !== 'stopped') {
+      this.stateMachine.reset()
+    }
     this.initMetadataValue = null
     this.apiKeyValue = null
     this.initIdentityValue = null
@@ -177,7 +179,13 @@ class SDKClient {
   }
 
   hasSamePendingIdentity(options: SDKInitOptions): boolean {
-    return this.pendingInitIdentityValue === createInitIdentity(options)
+    if (this.pendingInitIdentityValue !== null) {
+      return this.pendingInitIdentityValue === createInitIdentity(options)
+    }
+    if (this.initIdentityValue !== null) {
+      return this.initIdentityValue === createInitIdentity(options)
+    }
+    return false
   }
 
   get singleFlightCoordinator(): SingleFlight<Readonly<RemoteConfigResponse> | undefined> {

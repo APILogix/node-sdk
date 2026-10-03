@@ -3,9 +3,12 @@ import { sdkInitOptionsSchema } from '../types/config.js';
 import { client } from './client.js';
 import { SDKError } from './errors.js';
 import { loadEnvFileSafely } from '../utils/env-loader.js';
-import { waitForShutdownCompletion, registerSignalHandlers } from './lifecycle.js';
+import { waitForShutdownCompletion, registerSignalHandlers, isSDKShuttingDown } from './lifecycle.js';
 import { getLogger, setDebugMode, setLogLevel } from '../utils/logger.js';
 import { RemoteConfigClient } from './remote-config-client.js';
+import { assertRemoteConfig } from './config-validator.js';
+import { classifyError, isPermanentError } from './retry-classifier.js';
+import { BackgroundRecoveryWorker } from './recovery-worker.js';
 import { ConfigManager } from './config-manager.js';
 import { ConfigApplier } from './config-applier.js';
 import { KillswitchEngine } from './killswitch-engine.js';
@@ -66,6 +69,9 @@ export async function init(options) {
         }
     }
     await waitForShutdownCompletion();
+    if (client.getState() === 'stopped') {
+        client.setState('created');
+    }
     registerBootstrapAutoInstrumentations();
     setDebugMode(normalizedOptions.debug ?? false);
     if (normalizedOptions.logLevel)
@@ -84,6 +90,12 @@ export async function init(options) {
         }
         return existing;
     }
+    if (client.getState() === 'recovering') {
+        if (!client.hasSameIdentity(normalizedOptions)) {
+            throw new SDKError('Telemetry initialization already in progress with different options', 'SDK_INIT_IN_PROGRESS');
+        }
+        BackgroundRecoveryWorker.stop();
+    }
     client.setPendingIdentity(normalizedOptions);
     const operation = initialize(normalizedOptions);
     client.setInitPromise(operation);
@@ -97,7 +109,6 @@ export async function init(options) {
 }
 async function initialize(options) {
     const logger = getLogger();
-    const manager = ConfigManager.getInstance();
     client.setOptions(options);
     client.initBreadcrumbs(100);
     client.setState('initializing');
@@ -114,6 +125,22 @@ async function initialize(options) {
             initRetries: options.initRetries,
         });
         const response = await remoteClient.initialize();
+        return await activateSDK(remoteClient, response, options, 'cold_start');
+    }
+    catch (error) {
+        logger.error('Telemetry initialization failed; entering dormant state', { error });
+        await enterDormantState(error, options);
+        return undefined;
+    }
+}
+export async function activateSDK(remoteClient, response, options, mode = 'cold_start') {
+    const logger = getLogger();
+    const manager = ConfigManager.getInstance();
+    if (isSDKShuttingDown() || client.getState() === 'stopping' || client.getState() === 'stopped') {
+        return undefined;
+    }
+    try {
+        assertRemoteConfig(response.config);
         const config = manager.initialize(remoteClient, response.config);
         client.setInitResponse(response);
         client.applyRemoteIdentity(config);
@@ -384,6 +411,10 @@ async function initialize(options) {
         await waitForPendingInstrumentations();
         // Only now may capture paths leave the pre-init buffer.
         await payloadScrubberPromise;
+        // Final shutdown check before marking initialized
+        if (isSDKShuttingDown() || client.getState() === 'stopping' || client.getState() === 'stopped') {
+            return undefined;
+        }
         const persistedEvents = await persistedEventsPromise;
         client.markInitialized();
         filterBufferedEvents(config);
@@ -392,6 +423,9 @@ async function initialize(options) {
         const pressureSnapshot = adaptivePressure.getSnapshot();
         const quotaSnapshot = quotaController.getSnapshot();
         logger.info('Telemetry initialized from remote configuration', {
+            mode,
+            sdkVersion: client.metadata.sdkVersion,
+            projectId: config.sdk.projectId,
             activeSubsystems: featureController.getActiveSubsystems(),
             pressureState: pressureSnapshot.state,
             pressureScore: pressureSnapshot.score,
@@ -400,8 +434,8 @@ async function initialize(options) {
         return manager.getConfig();
     }
     catch (error) {
-        logger.error('Telemetry initialization failed; entering dormant state', { error });
-        await enterDormantState(error);
+        logger.error('Telemetry activation failed; entering dormant state', { error });
+        await enterDormantState(error, options);
         return undefined;
     }
 }
@@ -470,7 +504,7 @@ async function replayBufferedEvents(persisted) {
             await new Promise(resolve => setImmediate(resolve));
     }
 }
-async function enterDormantState(_error) {
+async function enterDormantState(_error, options) {
     // Non-destructive transition: clean up any partially constructed transport
     // router or runtime engines from a mid-flight failure, but preserve bootstrap
     // instrumentation, OTel provider/context, event queue, client options, and API key.
@@ -504,5 +538,27 @@ async function enterDormantState(_error) {
     catch { }
     ConfigManager.reset();
     client.clearConfig();
+    if (client.getState() !== 'stopping' && client.getState() !== 'stopped') {
+        if (client.getState() !== 'recovering' && client.getState() !== 'created') {
+            try {
+                client.setState('recovering');
+            }
+            catch { }
+        }
+    }
+    const recoveryOptions = options ?? client.options;
+    const decision = classifyError(_error);
+    if (recoveryOptions && !isSDKShuttingDown() && client.getState() === 'recovering' && !decision.permanent && !isPermanentError(_error)) {
+        BackgroundRecoveryWorker.start(recoveryOptions, {
+            activateFn: async (response) => {
+                const recoveryRemoteClient = new RemoteConfigClient({
+                    apiKey: recoveryOptions.apiKey,
+                    initTimeoutMs: recoveryOptions.initTimeoutMs ?? 5_000,
+                    initRetries: 0,
+                });
+                await activateSDK(recoveryRemoteClient, response, recoveryOptions, 'recovery');
+            },
+        });
+    }
 }
 export const cleanupFailedInitialization = enterDormantState;
