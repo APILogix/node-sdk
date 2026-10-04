@@ -302,6 +302,7 @@ export class SecurityScrubber {
         }
         return result
       }
+      if (typeof value === 'bigint') return value.toString()
       return value
     } catch {
       return REDACTED

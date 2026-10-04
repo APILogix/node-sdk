@@ -111,33 +111,79 @@ export class TransportEventQueue {
     return events
   }
 
-  /** Requeue failed events at the front while preserving critical reserve. */
+  /**
+   * Requeue failed events at the front while preserving critical reserve.
+   * Runs in O(n + k) linear time instead of O(n * k) under queue pressure (SEC-07).
+   */
   requeueFront(events: readonly SDKEvent[]): void {
+    if (!events || events.length === 0) return
+
+    // Pass 1: Classify events to requeue in reverse order (matching prepend order)
+    const toPrepend: SDKEvent[] = []
+    let ordinaryCount = this.count - this.criticalCount
+    const ordinaryCapacity = this.capacity - this.criticalReserve
+    let totalCount = this.count
+    let nonCriticalInQueue = ordinaryCount
+    let evictionsNeeded = 0
+
     for (let index = events.length - 1; index >= 0; index--) {
       const event = events[index]
       if (!event) continue
       const critical = isCritical(event)
-      const ordinaryCount = this.count - this.criticalCount
-      const ordinaryCapacity = this.capacity - this.criticalReserve
 
-      if (!critical && ordinaryCount >= ordinaryCapacity) {
-        this.notifyDrop(event)
-        continue
-      }
-      if (this.count >= this.capacity) {
-        if (!critical) {
+      if (!critical) {
+        if (ordinaryCount >= ordinaryCapacity || totalCount >= this.capacity) {
           this.notifyDrop(event)
           continue
         }
-        const offset = this.findOldestNonCritical()
-        if (offset < 0) {
-          this.notifyDrop(event)
-          continue
+        ordinaryCount++
+        totalCount++
+        toPrepend.push(event)
+      } else {
+        // Critical event
+        if (totalCount >= this.capacity) {
+          if (nonCriticalInQueue > evictionsNeeded) {
+            evictionsNeeded++
+            toPrepend.push(event)
+          } else {
+            this.notifyDrop(event)
+          }
+        } else {
+          totalCount++
+          toPrepend.push(event)
         }
-        const evicted = this.removeAt(offset)
-        if (evicted) this.notifyDrop(evicted)
       }
-      this.prepend(event)
+    }
+
+    if (toPrepend.length === 0) return
+
+    // Pass 2: If evictions are needed, evict the oldest non-critical events in a single O(n) pass
+    if (evictionsNeeded > 0) {
+      const newBuffer = new Array<SDKEvent | undefined>(this.capacity)
+      let newCount = 0
+      let evicted = 0
+
+      for (let offset = 0; offset < this.count; offset++) {
+        const slot = (this.head + offset) % this.capacity
+        const item = this.buffer[slot] as SDKEvent
+        if (!item) continue
+
+        if (evicted < evictionsNeeded && !isCritical(item)) {
+          evicted++
+          this.notifyDrop(item)
+        } else {
+          newBuffer[newCount++] = item
+        }
+      }
+
+      this.buffer = newBuffer
+      this.head = 0
+      this.count = newCount
+    }
+
+    // Pass 3: Prepend all accepted events into the buffer in O(k)
+    for (let i = 0; i < toPrepend.length; i++) {
+      this.prepend(toPrepend[i]!)
     }
   }
 

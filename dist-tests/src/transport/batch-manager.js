@@ -15,6 +15,7 @@ import { quotaController } from '../core/quota-controller.js';
 import { toError } from '../core/errors.js';
 import { sdkConsoleDebug } from '../utils/console-debug.js';
 import { SerializationPool } from './serialization-pool.js';
+import { safeJsonStringify } from '../utils/safe-json.js';
 const WORKER_SERIALIZATION_THRESHOLD_BYTES = 50 * 1024; // 50KB
 const WARMUP_SUCCESS_THRESHOLD = 5;
 const MAX_BATCH_RETENTION_AGE_MS = 300_000; // 5 minutes max retention before dropping stale retries
@@ -203,7 +204,7 @@ export class BatchManager {
                 else {
                     const safeBatch = scrubber ? scrubber.scrubBatch(events) : events.map(e => sanitizeEvent(e));
                     const payload = { events: safeBatch, route: this.options.route, timestamp: Date.now() };
-                    const jsonStr = JSON.stringify(payload);
+                    const jsonStr = safeJsonStringify(payload);
                     const rawBuf = Buffer.from(jsonStr, 'utf8');
                     const compressed = isGzip ? await compressGzip(rawBuf) : rawBuf;
                     serializeResult = {
@@ -248,6 +249,38 @@ export class BatchManager {
                 originalPayloadBytes = serializeResult.originalSize;
             }
             catch (serializeErr) {
+                if (events.length > 1) {
+                    getLogger().warn('[TransportRouter] Batch serialization failed, isolating problematic events', {
+                        route: this.options.route,
+                        error: serializeErr,
+                        eventCount: events.length,
+                    });
+                    const validEvents = [];
+                    for (const ev of events) {
+                        try {
+                            const testSafe = scrubber ? scrubber.scrubBatch([ev]) : [sanitizeEvent(ev)];
+                            safeJsonStringify(testSafe[0]);
+                            validEvents.push(ev);
+                        }
+                        catch {
+                            this.totalDropped++;
+                            this.options.onDrop?.({
+                                route: this.options.route,
+                                reason: 'serialization_failed',
+                                count: 1,
+                                eventType: ev?.type,
+                            });
+                        }
+                    }
+                    lease.release(true);
+                    this.activeBatches.delete(events);
+                    this.activeSends--;
+                    this.batched -= events.length;
+                    if (validEvents.length > 0) {
+                        this.options.queue.requeueFront(validEvents);
+                    }
+                    return;
+                }
                 lease.release(true);
                 this.activeBatches.delete(events);
                 this.activeSends--;
@@ -261,7 +294,7 @@ export class BatchManager {
                 });
                 return;
             }
-            getLogger().info('[TransportRouter] Batch captured', {
+            getLogger().debug('[TransportRouter] Batch captured', {
                 route: this.options.route,
                 eventCount: events.length,
                 eventTypes: [...new Set(events.map(event => event.type))],
@@ -300,7 +333,7 @@ export class BatchManager {
             try {
                 const requestBody = new ArrayBuffer(wireBody.byteLength);
                 new Uint8Array(requestBody).set(wireBody);
-                getLogger().info('[TransportRouter] Sending batch', {
+                getLogger().debug('[TransportRouter] Sending batch', {
                     route: this.options.route,
                     method: this.options.definition.method,
                     eventCount: events.length,
@@ -366,7 +399,7 @@ export class BatchManager {
                     }
                     costGovernor.recordBytesSent(originalPayloadBytes);
                     this.discardOnSuccess(events);
-                    getLogger().info('[TransportRouter] Batch send successful', {
+                    getLogger().debug('[TransportRouter] Batch send successful', {
                         route: this.options.route,
                         statusCode: response.status,
                         latencyMs: latency,

@@ -21,7 +21,6 @@ import {
   resolveClientIp,
   matchesIgnoredPath,
 } from '../../src/instrumentation/request-capture-utils.js'
-import { TokenBucketRateLimiter, SlidingWindowRateLimiter } from '../../src/transport/rate-limit.js'
 import { CircuitBreaker } from '../../src/transport/circuit-breaker.js'
 import { compress, contentEncoding } from '../../src/utils/compression.js'
 import { CardinalityGovernor } from '../../src/utils/cardinality-governor.js'
@@ -452,27 +451,7 @@ describe('Comprehensive Edge Cases — All 10 SDK Subsystems', () => {
   // ──────────────────────────────────────────────────────────────────────────
   // 6. Rate Limiting & Circuit Breaker
   // ──────────────────────────────────────────────────────────────────────────
-  describe('6. Rate Limiting & Circuit Breaker Resilience', () => {
-    it('TokenBucketRateLimiter sanitizes non-finite options and enforces capacity', () => {
-      const limiter = new TokenBucketRateLimiter({ capacity: NaN, refillRate: -5 })
-      assert.equal(limiter.getState().capacity, 10)
-      assert.ok(limiter.tryAcquire())
-
-      const smallLimiter = new TokenBucketRateLimiter({ capacity: 2, refillRate: 100 })
-      assert.equal(smallLimiter.tryAcquire(), true)
-      assert.equal(smallLimiter.tryAcquire(), true)
-      assert.equal(smallLimiter.tryAcquire(), false)
-    })
-
-    it('SlidingWindowRateLimiter sanitizes non-finite options and tracks sliding window', () => {
-      const limiter = new SlidingWindowRateLimiter({ maxRequests: NaN, windowMs: -100 })
-      assert.equal(limiter.getState().capacity, 10)
-
-      const bounded = new SlidingWindowRateLimiter({ maxRequests: 2, windowMs: 1000 })
-      assert.equal(bounded.tryAcquire(), true)
-      assert.equal(bounded.tryAcquire(), true)
-      assert.equal(bounded.tryAcquire(), false)
-    })
+  describe('6. Circuit Breaker Resilience', () => {
 
     it('CircuitBreaker constructor sanitizes NaN, negative, or zero options safely', () => {
       const breaker = new CircuitBreaker({

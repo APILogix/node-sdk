@@ -6,6 +6,7 @@ import { loadEnvFileSafely } from '../utils/env-loader.js';
 import { waitForShutdownCompletion, registerSignalHandlers, isSDKShuttingDown } from './lifecycle.js';
 import { getLogger, setDebugMode, setLogLevel } from '../utils/logger.js';
 import { RemoteConfigClient } from './remote-config-client.js';
+import { validateApiKey } from './api-key.js';
 import { assertRemoteConfig } from './config-validator.js';
 import { classifyError, isPermanentError } from './retry-classifier.js';
 import { BackgroundRecoveryWorker } from './recovery-worker.js';
@@ -69,20 +70,42 @@ export async function init(options) {
         }
     }
     await waitForShutdownCompletion();
+    if (isSDKShuttingDown() || client.getState() === 'stopping') {
+        return undefined;
+    }
     if (client.getState() === 'stopped') {
         client.setState('created');
     }
-    registerBootstrapAutoInstrumentations();
     setDebugMode(normalizedOptions.debug ?? false);
     if (normalizedOptions.logLevel)
         setLogLevel(normalizedOptions.logLevel);
-    validateInitOptions(normalizedOptions);
+    const validationError = checkInitOptions(normalizedOptions);
+    if (validationError) {
+        const logger = getLogger();
+        if (validationError.code === 'INVALID_API_KEY' || validationError.code === 'SDK_API_KEY_MISSING') {
+            logger.error('[Pulse] SDK disabled: missing or invalid API key');
+        }
+        else {
+            logger.error('[Pulse] SDK disabled: invalid telemetry init options');
+        }
+        resetAutoInstrumentations();
+        eventQueue.drainAll();
+        await enterDormantState(validationError, normalizedOptions);
+        if (client.getState() !== 'stopping' && client.getState() !== 'stopped') {
+            try {
+                client.setState('disabled');
+            }
+            catch { }
+        }
+        return undefined;
+    }
     if (client.initialized) {
         if (!client.hasSameIdentity(normalizedOptions)) {
             throw new SDKError('Telemetry already initialized with different options', 'SDK_ALREADY_INITIALIZED');
         }
         return ConfigManager.getInstance().getConfig();
     }
+    registerBootstrapAutoInstrumentations();
     const existing = client.getInitPromise();
     if (existing) {
         if (!client.hasSamePendingIdentity(normalizedOptions)) {
@@ -109,6 +132,9 @@ export async function init(options) {
 }
 async function initialize(options) {
     const logger = getLogger();
+    if (isSDKShuttingDown() || client.getState() === 'stopping' || client.getState() === 'stopped') {
+        return undefined;
+    }
     client.setOptions(options);
     client.initBreadcrumbs(100);
     client.setState('initializing');
@@ -125,9 +151,15 @@ async function initialize(options) {
             initRetries: options.initRetries,
         });
         const response = await remoteClient.initialize();
+        if (isSDKShuttingDown() || client.getState() === 'stopping' || client.getState() === 'stopped') {
+            return undefined;
+        }
         return await activateSDK(remoteClient, response, options, 'cold_start');
     }
     catch (error) {
+        if (isSDKShuttingDown() || client.getState() === 'stopping' || client.getState() === 'stopped') {
+            return undefined;
+        }
         logger.error('Telemetry initialization failed; entering dormant state', { error });
         await enterDormantState(error, options);
         return undefined;
@@ -439,12 +471,27 @@ export async function activateSDK(remoteClient, response, options, mode = 'cold_
         return undefined;
     }
 }
-function validateInitOptions(options) {
+function checkInitOptions(options) {
+    try {
+        validateApiKey(options.apiKey);
+    }
+    catch (err) {
+        if (err instanceof SDKError)
+            return err;
+        return new SDKError('apiKey is required', 'INVALID_API_KEY');
+    }
     const result = sdkInitOptionsSchema.safeParse(options);
-    if (result.success)
-        return;
-    const issues = result.error.issues.map(issue => `${issue.path.join('.')}: ${issue.message}`);
-    throw new SDKError(`Invalid telemetry init options: ${issues.join('; ')}`, 'INVALID_INIT_OPTIONS', { issues });
+    if (!result.success) {
+        const issues = result.error.issues.map(issue => `${issue.path.join('.')}: ${issue.message}`);
+        const isApiKeyIssue = result.error.issues.some(issue => issue.path.includes('apiKey'));
+        return new SDKError(`Invalid telemetry init options: ${issues.join('; ')}`, isApiKeyIssue ? 'INVALID_API_KEY' : 'INVALID_INIT_OPTIONS', { issues });
+    }
+    return null;
+}
+function validateInitOptions(options) {
+    const error = checkInitOptions(options);
+    if (error)
+        throw error;
 }
 function getQueueUtilization() {
     let utilization = eventQueue.getUtilization();
@@ -539,7 +586,7 @@ async function enterDormantState(_error, options) {
     ConfigManager.reset();
     client.clearConfig();
     if (client.getState() !== 'stopping' && client.getState() !== 'stopped') {
-        if (client.getState() !== 'recovering' && client.getState() !== 'created') {
+        if (client.getState() !== 'recovering' && client.getState() !== 'created' && client.getState() !== 'disabled') {
             try {
                 client.setState('recovering');
             }

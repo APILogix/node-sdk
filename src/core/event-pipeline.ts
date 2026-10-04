@@ -146,6 +146,11 @@ export function enqueueEvent(rawEvent: SDKEvent | Event): EventReceipt {
     return rejectedReceipt(eventId, 'pipeline_draining')
   }
 
+  // Gate 1.4: SDK disabled due to invalid configuration
+  if (client.getState() === 'disabled') {
+    return rejectedReceipt(eventId, 'sdk_disabled')
+  }
+
   // Gate 1.5: Global killswitch — SDK disabled via remote config
   const killswitchEngine = KillswitchEngine.getInstance()
   if (killswitchEngine?.isSDKDisabled()) {
@@ -282,7 +287,7 @@ export async function processEventAsync(rawEvent: SDKEvent | Event, assignedEven
 
   try {
     const killswitch = KillswitchEngine.getInstance()
-    if (killswitch?.isSDKDisabled()) {
+    if (killswitch?.isSDKDisabled() || client.getState() === 'disabled') {
       return false
     }
 

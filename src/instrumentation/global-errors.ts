@@ -36,7 +36,6 @@ let uncaughtHandler: ((err: Error) => void) | null = null
 let rejectionHandler: ((reason: unknown) => void) | null = null
 let originalConsoleError: (typeof console.error) | null = null
 let consoleErrorWrapped = false
-let originalStackTraceLimit: number | undefined = undefined
 
 /** Error-handler mechanics are SDK internals; remote config only gates errors. */
 function getErrorsConfig(): {
@@ -69,12 +68,9 @@ export function setupGlobalErrorHandlers() {
   const errorsConfig = getErrorsConfig()
   const logger = getLogger()
 
-  // ─── Stack Trace Limit Override ──────────────────────────────────────
-  if (errorsConfig.stackTraceLimit) {
-    originalStackTraceLimit = Error.stackTraceLimit
-    Error.stackTraceLimit = errorsConfig.stackTraceLimit
-    logger.debug(`Error.stackTraceLimit set to ${errorsConfig.stackTraceLimit}`)
-  }
+  // Note: Error.stackTraceLimit is intentionally NOT mutated globally to preserve
+  // host application performance and behavior (SEC-11). Stack capture uses
+  // localized V8 prepareStackTrace or caller-scoped depth limits.
 
   // ─── Uncaught Exception Handler ─────────────────────────────────────
   if (errorsConfig.captureUncaughtExceptions !== false) {
@@ -325,12 +321,6 @@ export function resetGlobalErrorHandlers() {
     }
     originalConsoleError = null
     consoleErrorWrapped = false
-  }
-
-  // Restore stack trace limit
-  if (originalStackTraceLimit !== undefined) {
-    Error.stackTraceLimit = originalStackTraceLimit
-    originalStackTraceLimit = undefined
   }
 
   registered = false

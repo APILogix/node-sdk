@@ -345,7 +345,7 @@ export class TransportRouter {
       const priority = toQueuePriority(routeRemote.priority)
       if (!priority) throw new TransportConfigurationError('Route priority is invalid', { route })
       const maxSize = config.queue.maxSize
-      getLogger().info('[TransportRouter] Configured route', {
+      getLogger().debug('[TransportRouter] Configured route', {
         route,
         batchSize: routeRemote.batchSize,
         flushIntervalMs: routeRemote.flushIntervalMs,

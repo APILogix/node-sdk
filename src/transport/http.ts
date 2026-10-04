@@ -9,6 +9,7 @@ import { generateId } from '../utils/uuid.js'
 import { context } from '@opentelemetry/api'
 import { suppressTracing } from '@opentelemetry/core'
 import { SerializationPool } from './serialization-pool.js'
+import { safeJsonStringify } from '../utils/safe-json.js'
 
 export interface PostJsonOptions {
   /** Whether to log failures (disable for init to avoid noise). */
@@ -63,7 +64,7 @@ export async function postJson<T>(
           encoding = contentEncoding(res.algorithm)
         }
       } else {
-        const jsonString = JSON.stringify(body)
+        const jsonString = safeJsonStringify(body)
         payload = jsonString
 
         // Apply compression if requested

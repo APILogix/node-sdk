@@ -50,7 +50,11 @@ import { startDbSpan, withDbSpan, withDbSpanSync } from './tracing/db-span.js'
 import type { SDKInitOptions, RemoteConfigResponse } from './types/config.js'
 import { registerBootstrapAutoInstrumentations } from './instrumentation/auto-instrument.js'
 
-registerBootstrapAutoInstrumentations()
+try {
+  registerBootstrapAutoInstrumentations()
+} catch {
+  // Safe fail-open: bootstrap auto-instrumentation must never crash host application import (SEC-08)
+}
 
 // ─── Lifecycle ──────────────────────────────────────────────────────────────
 

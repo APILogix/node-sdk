@@ -30,6 +30,7 @@ export function classifyError(error: unknown): RetryDecision {
       error.code === 'INVALID_INIT_RESPONSE' ||
       error.code === 'INVALID_REMOTE_CONFIG' ||
       error.code === 'INVALID_INIT_OPTIONS' ||
+      error.code === 'INVALID_API_KEY' ||
       error.code === 'SDK_API_KEY_MISSING' ||
       error.code === 'SDK_ALREADY_INITIALIZED' ||
       error.code === 'INVALID_URL'

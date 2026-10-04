@@ -3,6 +3,7 @@ import { gzipSync, brotliCompressSync, constants as zlibConstants } from 'zlib'
 import { SecurityScrubber } from '../processors/security-scrubber.js'
 import type { PrivacyConfig } from '../types/config.js'
 import type { SDKEvent } from '../types/event.js'
+import { safeJsonStringify } from '../utils/safe-json.js'
 
 let workerScrubber: SecurityScrubber | null = null
 let currentPrivacyConfigJson = ''
@@ -39,7 +40,7 @@ if (parentPort) {
         ? { events: safeEvents, route, timestamp: timestamp ?? Date.now() }
         : safeEvents
 
-      const jsonStr = JSON.stringify(payload)
+      const jsonStr = safeJsonStringify(payload)
       let buffer = Buffer.from(jsonStr, 'utf8')
       const originalSize = buffer.byteLength
 

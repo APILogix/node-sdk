@@ -86,7 +86,7 @@ export class EventQueue {
         const p = priority ?? getPriority(event)
         const tier = this.tiers[p]
 
-        if (tier.events.length >= tier.maxSize) {
+        if (tier.events.length >= tier.maxSize || this.size() >= this.maxSize) {
             // Try to make room by shedding lower-priority events
             if (p === 'critical' && this.shedLowerPriority('high')) {
                 // Made room by shedding — continue
@@ -97,6 +97,12 @@ export class EventQueue {
                 this.notifyDrop('queue_full', 1)
                 return false
             }
+        }
+
+        if (this.size() >= this.maxSize) {
+            tier.droppedCount += 1
+            this.notifyDrop('queue_full', 1)
+            return false
         }
 
         tier.events.push(event)
@@ -207,7 +213,9 @@ export class EventQueue {
         this.retryQueue = []
         for (const priority of ['critical', 'high', 'normal'] as const) {
             this.tiers[priority].events = []
+            this.tiers[priority].droppedCount = 0
         }
+        this.configure(1000)
     }
 
     onDrop(handler: ((info: { reason: string; count: number }) => void) | null) {

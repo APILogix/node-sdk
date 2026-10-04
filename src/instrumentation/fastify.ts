@@ -498,17 +498,20 @@ function captureFastifyCompletion(
   state.captured = true
 
   const statusCode = reply.statusCode ?? reply.raw?.statusCode ?? 0
-  const bodySnapshot = captureBodySnapshot(request.body, state.captureBody)
+  const latencyMs = Date.now() - state.startTime
   const responseSize = readContentLength(reply.getHeader?.('content-length'))
+  const rawBody = request.body
+  const rawHeaders = request.headers
+  const rawQuery = request.query
+  const route = normalizedRoute(request)
 
   const currentActiveSpan = trace.getActiveSpan() ?? state.activeSpan
   if (currentActiveSpan) {
-    const route = normalizedRoute(request)
     const enrichmentAttrs: Record<string, string | number | boolean> = {
       'http.route': route,
       'http.status_code': statusCode,
       'pulse.request_id': state.requestId,
-      'pulse.latency_ms': Date.now() - state.startTime,
+      'pulse.latency_ms': latencyMs,
     }
     if (state.tenantId) enrichmentAttrs['pulse.tenant_id'] = state.tenantId
     if (state.userId) enrichmentAttrs['pulse.user_id'] = state.userId
@@ -516,7 +519,6 @@ function captureFastifyCompletion(
     if (state.clientIp) enrichmentAttrs['http.client_ip'] = state.clientIp
     if (state.userAgent) enrichmentAttrs['http.user_agent'] = state.userAgent
     if (state.referer) enrichmentAttrs['http.referer'] = state.referer
-    if (bodySnapshot.bodySize !== undefined) enrichmentAttrs['http.request.body.size'] = bodySnapshot.bodySize
     if (responseSize !== undefined) enrichmentAttrs['http.response.body.size'] = responseSize
     currentActiveSpan.setAttributes(enrichmentAttrs)
 
@@ -549,28 +551,43 @@ function captureFastifyCompletion(
     }
   }
 
-  captureRequest({
-    type: 'request',
-    requestId: state.requestId,
-    method: request.method,
-    url: normalizedRoute(request),
-    statusCode,
-    latency: Date.now() - state.startTime,
-    timestamp: Date.now(),
-    traceId: getTraceId() ?? state.store.traceId ?? state.activeSpan?.spanContext().traceId,
-    spanId: getSpanId() ?? state.store.spanId ?? state.activeSpan?.spanContext().spanId,
-    ...(state.userId ? { userId: state.userId } : {}),
-    ...(state.tenantId ? { tenantId: state.tenantId } : {}),
-    ...(state.sessionId ? { sessionId: state.sessionId } : {}),
-    ...(state.clientIp ? { clientIp: state.clientIp } : {}),
-    ...(state.userAgent ? { userAgent: state.userAgent } : {}),
-    ...(state.referer ? { referer: state.referer } : {}),
-    ...(state.captureHeaders ? { headers: scrubHeadersSafe(request.headers) } : {}),
-    ...(state.captureQuery && isRecord(request.query) ? { query: scrubQuery(request.query) } : {}),
-    ...(bodySnapshot.body ? { body: bodySnapshot.body } : {}),
-    ...(bodySnapshot.bodySize !== undefined ? { bodySize: bodySnapshot.bodySize } : {}),
-    ...(responseSize !== undefined ? { responseSize } : {}),
-    route: normalizedRoute(request),
+  // SEC-05: Defer heavy body snapshotting, PII scrubbing, and captureRequest
+  // via setImmediate so the HTTP response cycle returns instantly to the event loop.
+  setImmediate(() => {
+    try {
+      const bodySnapshot = captureBodySnapshot(rawBody, state.captureBody)
+      if (currentActiveSpan && bodySnapshot.bodySize !== undefined) {
+        try {
+          currentActiveSpan.setAttribute('http.request.body.size', bodySnapshot.bodySize)
+        } catch {}
+      }
+
+      captureRequest({
+        type: 'request',
+        requestId: state.requestId,
+        method: request.method,
+        url: route,
+        statusCode,
+        latency: latencyMs,
+        timestamp: Date.now(),
+        traceId: getTraceId() ?? state.store.traceId ?? state.activeSpan?.spanContext().traceId,
+        spanId: getSpanId() ?? state.store.spanId ?? state.activeSpan?.spanContext().spanId,
+        ...(state.userId ? { userId: state.userId } : {}),
+        ...(state.tenantId ? { tenantId: state.tenantId } : {}),
+        ...(state.sessionId ? { sessionId: state.sessionId } : {}),
+        ...(state.clientIp ? { clientIp: state.clientIp } : {}),
+        ...(state.userAgent ? { userAgent: state.userAgent } : {}),
+        ...(state.referer ? { referer: state.referer } : {}),
+        ...(state.captureHeaders ? { headers: scrubHeadersSafe(rawHeaders) } : {}),
+        ...(state.captureQuery && isRecord(rawQuery) ? { query: scrubQuery(rawQuery) } : {}),
+        ...(bodySnapshot.body ? { body: bodySnapshot.body } : {}),
+        ...(bodySnapshot.bodySize !== undefined ? { bodySize: bodySnapshot.bodySize } : {}),
+        ...(responseSize !== undefined ? { responseSize } : {}),
+        route,
+      })
+    } catch (err) {
+      getLogger().error('captureFastifyCompletion deferred capture failed', { error: err })
+    }
   })
 }
 

@@ -491,106 +491,136 @@ export function registerAutoInstrumentations(): void {
   delete g[BOOTSTRAP_GUARD]
   g[TEARDOWN_REGISTRY] = []
 
-  registerEsmLoaderHooks()
+  try {
+    registerEsmLoaderHooks()
+  } catch (err) {
+    logger.debug('ESM loader hooks registration failed', { error: String(err) })
+  }
 
   const registry: Record<string, any> = {}
 
+  const safeRegister = (name: string, factory: () => any) => {
+    try {
+      const inst = factory()
+      if (inst) registry[name] = inst
+    } catch (err) {
+      logger.debug(`Auto-instrumentation creation skipped for ${name}`, { error: String(err) })
+    }
+  }
+
   if (resolved.http || resolved.https) {
-    registry.http = createHttpInstrumentationInstance(resolved.http, resolved.https)
+    safeRegister('http', () => createHttpInstrumentationInstance(resolved.http, resolved.https))
   }
 
   if (resolved.express) {
-    registry.express = new ExpressInstrumentation()
+    safeRegister('express', () => new ExpressInstrumentation())
   }
 
   if (resolved.fastify) {
-    registry.fastify = new FastifyOtelInstrumentation({
+    safeRegister('fastify', () => new FastifyOtelInstrumentation({
       registerOnInitialization: true,
       instrumentHooks: resolved.fastifyConfig.captureHooks,
-    })
+    }))
   }
 
   if (resolved.undici) {
-    registry.undici = createUndiciInstrumentationInstance()
+    safeRegister('undici', () => createUndiciInstrumentationInstance())
   }
 
   if (resolved.graphql) {
-    registry.graphql = createGraphQLInstrumentation(resolved.graphqlConfig, resolved.graphqlConfig)
+    safeRegister('graphql', () => createGraphQLInstrumentation(resolved.graphqlConfig, resolved.graphqlConfig))
   }
 
   if (resolved.prisma) {
-    registry.prisma = createPrismaInstrumentation(resolved.prismaConfig, resolved.prismaConfig)
+    safeRegister('prisma', () => createPrismaInstrumentation(resolved.prismaConfig, resolved.prismaConfig))
   }
 
   if (resolved.mongodb) {
-    registry.mongodb = createMongoDBInstrumentation(
+    safeRegister('mongodb', () => createMongoDBInstrumentation(
       true,
       { enhancedDatabaseReporting: resolved.captureConfig.body, requireParentSpan: false },
       resolved.captureConfig
-    )
-    registry.mongoose = createMongooseInstrumentation(true, resolved.captureConfig)
+    ))
+    safeRegister('mongoose', () => createMongooseInstrumentation(true, resolved.captureConfig))
   }
 
   if (resolved.redis) {
-    registry.redis = createRedisInstrumentation(true, resolved.redisConfig, resolved.captureConfig)
-    registry.ioredis = createIORedisInstrumentation(true, resolved.redisConfig, resolved.captureConfig)
+    safeRegister('redis', () => createRedisInstrumentation(true, resolved.redisConfig, resolved.captureConfig))
+    safeRegister('ioredis', () => createIORedisInstrumentation(true, resolved.redisConfig, resolved.captureConfig))
   }
 
   if (resolved.bullmq) {
-    registry.bullmq = createBullMQInstrumentation(true, resolved.bullmqConfig, resolved.captureConfig)
+    safeRegister('bullmq', () => createBullMQInstrumentation(true, resolved.bullmqConfig, resolved.captureConfig))
   }
 
   if (resolved.axios) {
-    const axiosInstrumentation = createAxiosInstrumentation(true, {
-      captureRequestData: resolved.captureConfig.body,
-      captureResponseData: resolved.captureConfig.response,
-    }, resolved.captureConfig)
-    if (axiosInstrumentation) {
-      g[TEARDOWN_REGISTRY]!.push(axiosInstrumentation.teardown)
-      registry.axios = axiosInstrumentation
-      pendingAsyncSetup = axiosInstrumentation.setup().catch((err: unknown) => {
-        logger.warn('Axios instrumentation setup failed', { error: String(err) })
-      })
+    try {
+      const axiosInstrumentation = createAxiosInstrumentation(true, {
+        captureRequestData: resolved.captureConfig.body,
+        captureResponseData: resolved.captureConfig.response,
+      }, resolved.captureConfig)
+      if (axiosInstrumentation) {
+        g[TEARDOWN_REGISTRY]!.push(axiosInstrumentation.teardown)
+        registry.axios = axiosInstrumentation
+        pendingAsyncSetup = axiosInstrumentation.setup().catch((err: unknown) => {
+          logger.warn('Axios instrumentation setup failed', { error: String(err) })
+        })
+      }
+    } catch (err) {
+      logger.debug('Axios instrumentation creation skipped', { error: String(err) })
     }
   }
 
   if (resolved.pg) {
-    registry.pg = createPgInstrumentation(
+    safeRegister('pg', () => createPgInstrumentation(
       true,
       { captureQueries: resolved.pgConfig.captureQueries, captureParams: resolved.pgConfig.captureParams, requireParentSpan: false },
       resolved.captureConfig
-    )
+    ))
   }
 
   if (resolved.mysql2) {
-    registry.mysql2 = createMySQLInstrumentation(
+    safeRegister('mysql2', () => createMySQLInstrumentation(
       true,
       { captureQueries: resolved.mysql2Config.captureQueries },
       resolved.captureConfig
-    )
+    ))
   }
 
-  registry.nodemailer = createNodemailerInstrumentation(
+  safeRegister('nodemailer', () => createNodemailerInstrumentation(
     true,
     {},
     resolved.captureConfig
-  )
+  ))
 
   g[ACTIVE_REGISTRY] = registry
   const otelInstrumentations = Object.values(registry).filter(
     (inst): inst is any => Boolean(inst && typeof (inst as any).setTracerProvider === 'function')
   )
   if (otelInstrumentations.length > 0) {
-    g[UNREGISTER_FN] = registerInstrumentations({
-      instrumentations: otelInstrumentations,
-      tracerProvider: activeTracerProvider,
-    })
+    try {
+      g[UNREGISTER_FN] = registerInstrumentations({
+        instrumentations: otelInstrumentations,
+        tracerProvider: activeTracerProvider,
+      })
+    } catch (err) {
+      logger.debug('registerInstrumentations threw during auto-instrumentation', { error: String(err) })
+    }
   }
 
   if (resolved.eventEmitterPatch) {
-    patchEventEmitter()
+    try {
+      patchEventEmitter()
+    } catch (err) {
+      logger.debug('patchEventEmitter threw during auto-instrumentation', { error: String(err) })
+    }
   }
-  installHttpLifecycleGuard()
+
+  try {
+    installHttpLifecycleGuard()
+  } catch (err) {
+    logger.debug('installHttpLifecycleGuard threw during auto-instrumentation', { error: String(err) })
+  }
 
   logger.info('Auto-instrumentations registered (remote-config-driven)', {
     count: otelInstrumentations.length,
@@ -607,78 +637,112 @@ export function registerAutoInstrumentations(): void {
  * starts `createSDK()`, and imports DB clients while the one remote-config
  * request is still in flight. The early hooks use privacy-safe defaults and
  * a no-op/proxy tracer until `initTracer()` installs the real provider. Once
- * remote config arrives, `registerAutoInstrumentations()` rebuilds the same
- * hooks from the authoritative backend snapshot.
  * remote config arrives, `registerAutoInstrumentations()` upgrades the same
  * hooks in-place without unregistering or unwrapping modules.
+ *
+ * SEC-08 Guarantees:
+ * - Every instrumentation factory is individually isolated in a safe try-catch.
+ * - Missing or throwing optional dependencies never bubble up.
+ * - The entire bootstrap routine is wrapped in a fail-open boundary so that
+ *   importing `@pulse-apm/node` can never crash host application startup.
  */
 export function registerBootstrapAutoInstrumentations(): void {
   const g = getGlobalState()
   if (g[INSTRUMENTATION_GUARD]) return
 
-  g[INSTRUMENTATION_GUARD] = true
-  g[BOOTSTRAP_GUARD] = true
-  g[TEARDOWN_REGISTRY] = []
+  const logger = getLogger()
 
-  // Ensure Node.js ESM customization hooks are registered as early as possible
-  registerEsmLoaderHooks()
+  try {
+    g[INSTRUMENTATION_GUARD] = true
+    g[BOOTSTRAP_GUARD] = true
+    g[TEARDOWN_REGISTRY] = []
 
-  const captureConfig: TraceCaptureConfig = {
-    headers: false,
-    body: false,
-    response: false,
-    query: false,
-    cookies: false,
-  }
+    // Ensure Node.js ESM customization hooks are registered as early as possible
+    try {
+      registerEsmLoaderHooks()
+    } catch (err) {
+      logger.debug('ESM loader hooks registration failed during bootstrap', { error: String(err) })
+    }
 
-  const registry: Record<string, any> = {}
+    const captureConfig: TraceCaptureConfig = {
+      headers: false,
+      body: false,
+      response: false,
+      query: false,
+      cookies: false,
+    }
 
-  registry.http = createHttpInstrumentationInstance(true, true)
-  registry.express = new ExpressInstrumentation()
-  registry.fastify = new FastifyOtelInstrumentation({
-    registerOnInitialization: true,
-    instrumentHooks: true,
-  })
-  registry.undici = createUndiciInstrumentationInstance()
-  registry.graphql = createGraphQLInstrumentation(true, { enabled: true, captureResolvers: true })
-  registry.prisma = createPrismaInstrumentation(true, { enabled: true, captureQueries: true, captureParams: false })
-  registry.mongodb = createMongoDBInstrumentation(true, { enhancedDatabaseReporting: false, requireParentSpan: false }, captureConfig)
-  registry.mongoose = createMongooseInstrumentation(true, captureConfig)
-  registry.redis = createRedisInstrumentation(true, {}, captureConfig)
-  registry.ioredis = createIORedisInstrumentation(true, {}, captureConfig)
-  registry.bullmq = createBullMQInstrumentation(
-    true,
-    {
-      enabled: true,
-      emitCreateSpansForBulk: true,
-      emitCreateSpansForFlow: true,
-      requireParentSpanForPublish: false,
-    },
-    captureConfig,
-  )
-  registry.pg = createPgInstrumentation(true, { captureQueries: false, captureParams: false, requireParentSpan: false }, captureConfig)
-  registry.mysql2 = createMySQLInstrumentation(true, { captureQueries: false }, captureConfig)
-  registry.nodemailer = createNodemailerInstrumentation(true, {}, captureConfig)
+    const registry: Record<string, any> = {}
 
-  const instrumentations = Object.values(registry).filter(
-    (inst): inst is any => Boolean(inst && typeof (inst as any).setTracerProvider === 'function')
-  )
+    const safeRegister = (name: string, factory: () => any) => {
+      try {
+        const inst = factory()
+        if (inst) registry[name] = inst
+      } catch (err) {
+        logger.debug(`Bootstrap auto-instrumentation skipped for ${name}`, { error: String(err) })
+      }
+    }
 
-  if (instrumentations.length > 0) {
-    g[UNREGISTER_FN] = registerInstrumentations({
-      instrumentations: instrumentations,
+    safeRegister('http', () => createHttpInstrumentationInstance(true, true))
+    safeRegister('express', () => new ExpressInstrumentation())
+    safeRegister('fastify', () => new FastifyOtelInstrumentation({
+      registerOnInitialization: true,
+      instrumentHooks: true,
+    }))
+    safeRegister('undici', () => createUndiciInstrumentationInstance())
+    safeRegister('graphql', () => createGraphQLInstrumentation(true, { enabled: true, captureResolvers: true }))
+    safeRegister('prisma', () => createPrismaInstrumentation(true, { enabled: true, captureQueries: true, captureParams: false }))
+    safeRegister('mongodb', () => createMongoDBInstrumentation(true, { enhancedDatabaseReporting: false, requireParentSpan: false }, captureConfig))
+    safeRegister('mongoose', () => createMongooseInstrumentation(true, captureConfig))
+    safeRegister('redis', () => createRedisInstrumentation(true, {}, captureConfig))
+    safeRegister('ioredis', () => createIORedisInstrumentation(true, {}, captureConfig))
+    safeRegister('bullmq', () => createBullMQInstrumentation(
+      true,
+      {
+        enabled: true,
+        emitCreateSpansForBulk: true,
+        emitCreateSpansForFlow: true,
+        requireParentSpanForPublish: false,
+      },
+      captureConfig,
+    ))
+    safeRegister('pg', () => createPgInstrumentation(true, { captureQueries: false, captureParams: false, requireParentSpan: false }, captureConfig))
+    safeRegister('mysql2', () => createMySQLInstrumentation(true, { captureQueries: false }, captureConfig))
+    safeRegister('nodemailer', () => createNodemailerInstrumentation(true, {}, captureConfig))
+
+    const instrumentations = Object.values(registry).filter(
+      (inst): inst is any => Boolean(inst && typeof (inst as any).setTracerProvider === 'function')
+    )
+
+    if (instrumentations.length > 0) {
+      try {
+        g[UNREGISTER_FN] = registerInstrumentations({
+          instrumentations: instrumentations,
+        })
+      } catch (err) {
+        logger.debug('registerInstrumentations threw during bootstrap', { error: String(err) })
+      }
+    }
+
+    g[ACTIVE_REGISTRY] = registry
+
+    // NOTE: patchEventEmitter() is intentionally NOT called during bootstrap.
+    // Global prototype patching must be strictly governed by configuration.
+    try {
+      installHttpLifecycleGuard()
+    } catch (err) {
+      logger.debug('installHttpLifecycleGuard threw during bootstrap', { error: String(err) })
+    }
+
+    logger.debug('Bootstrap auto-instrumentation hooks registered before remote config', {
+      count: instrumentations.length,
     })
+  } catch (outerErr) {
+    // Top-level fail-open boundary: never crash application module import (SEC-08)
+    delete g[INSTRUMENTATION_GUARD]
+    delete g[BOOTSTRAP_GUARD]
+    logger.debug('Bootstrap auto-instrumentation failed open', { error: String(outerErr) })
   }
-
-  g[ACTIVE_REGISTRY] = registry
-
-  // NOTE: patchEventEmitter() is intentionally NOT called during bootstrap.
-  // Global prototype patching must be strictly governed by configuration.
-  installHttpLifecycleGuard()
-
-  getLogger().debug('Bootstrap auto-instrumentation hooks registered before remote config', {
-    count: instrumentations.length,
-  })
 }
 
 /**

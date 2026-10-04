@@ -5,6 +5,7 @@ export interface RecoveryWorkerOptions {
     readonly maxDelayMs?: number | undefined;
     readonly activateFn?: ((response: InitResponse) => Promise<void>) | undefined;
 }
+export declare function getDefaultBaseDelayMs(): number;
 export declare class BackgroundRecoveryWorker {
     private static activeInstance;
     private readonly options;

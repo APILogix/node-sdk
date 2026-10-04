@@ -37,7 +37,10 @@ export declare class TransportEventQueue {
     constructor(options: TransportEventQueueOptions);
     enqueue(event: SDKEvent): boolean;
     drain(maxEvents: number): SDKEvent[];
-    /** Requeue failed events at the front while preserving critical reserve. */
+    /**
+     * Requeue failed events at the front while preserving critical reserve.
+     * Runs in O(n + k) linear time instead of O(n * k) under queue pressure (SEC-07).
+     */
     requeueFront(events: readonly SDKEvent[]): void;
     private append;
     private prepend;

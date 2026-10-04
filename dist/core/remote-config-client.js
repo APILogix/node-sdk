@@ -140,7 +140,7 @@ export class RemoteConfigClient {
         const url = `${this.baseUrl}${CONTROL_PLANE_PATH_PREFIX}${path}`;
         try {
             const startedAt = Date.now();
-            getLogger().info('[RemoteConfigClient] Control-plane request started', {
+            getLogger().debug('[RemoteConfigClient] Control-plane request started', {
                 endpoint: `${CONTROL_PLANE_PATH_PREFIX}${path}`,
                 url,
                 method: 'POST',
@@ -161,7 +161,7 @@ export class RemoteConfigClient {
                 }))]);
             const text = await Promise.race([deadline, response.text()]);
             const latencyMs = Date.now() - startedAt;
-            getLogger().info('[RemoteConfigClient] Control-plane response received', {
+            getLogger().debug('[RemoteConfigClient] Control-plane response received', {
                 endpoint: `${CONTROL_PLANE_PATH_PREFIX}${path}`,
                 statusCode: response.status,
                 ok: response.ok,
@@ -181,7 +181,7 @@ export class RemoteConfigClient {
                 }
             }
             if (path === '/v1/init') {
-                getLogger().info('[RemoteConfigClient] Init route response served', summarizeInitRoutePayload(payload));
+                getLogger().debug('[RemoteConfigClient] Init route response served', summarizeInitRoutePayload(payload));
             }
             if (!response.ok) {
                 const retryAfter = retryAfterMs(response.headers.get('retry-after'));

@@ -1,11 +1,12 @@
 import { SDKError } from './errors.js';
 const VALID_TRANSITIONS = {
-    created: new Set(['initializing', 'stopping']),
-    initializing: new Set(['initialized', 'recovering', 'stopping']),
+    created: new Set(['initializing', 'stopping', 'disabled']),
+    initializing: new Set(['initialized', 'recovering', 'stopping', 'disabled']),
     initialized: new Set(['initialized', 'stopping']),
-    recovering: new Set(['initializing', 'initialized', 'recovering', 'stopping', 'stopped']),
+    recovering: new Set(['initializing', 'initialized', 'recovering', 'stopping', 'stopped', 'disabled']),
     stopping: new Set(['stopped']),
-    stopped: new Set(['created']),
+    stopped: new Set(['created', 'disabled']),
+    disabled: new Set(['initializing', 'stopping', 'disabled']),
 };
 export class LifecycleStateMachine {
     currentState = 'created';
@@ -17,7 +18,7 @@ export class LifecycleStateMachine {
         return allowed ? allowed.has(nextState) : false;
     }
     transition(nextState) {
-        if (this.currentState === nextState && (nextState === 'recovering' || nextState === 'initialized')) {
+        if (this.currentState === nextState && (nextState === 'recovering' || nextState === 'initialized' || nextState === 'disabled')) {
             return this.currentState;
         }
         if (!this.canTransitionTo(nextState)) {

@@ -69,6 +69,7 @@ const SUBSYSTEM_STEP_TIMEOUT_MS = 5_000
 let signalHandlersRegistered = false
 let sigTermHandler: (() => void) | null = null
 let sigIntHandler: (() => void) | null = null
+let signalShutdownInFlight = false
 
 let shuttingDown = false
 let shutdownPromise: Promise<ShutdownResult> | null = null
@@ -233,15 +234,52 @@ export function registerSignalHandlers(): void {
 
   const logger = getLogger()
 
-  const handleSignal = (signal: NodeJS.Signals) => {
+  const handleSignal = async (signal: NodeJS.Signals) => {
+    const exitCode = 128 + (signal === 'SIGINT' ? 2 : 15)
+
+    if (signalShutdownInFlight) {
+      logger.warn(`Received secondary ${signal} during active shutdown — forcing immediate exit`)
+      if (typeof process.exit === 'function') {
+        process.exit(exitCode)
+      }
+      return
+    }
+
+    signalShutdownInFlight = true
     logger.info(`Received ${signal} — initiating graceful shutdown`)
-    shutdown().catch(err => {
+
+    // Enforce a hard maximum shutdown watchdog so deployments never hang
+    const watchdogTimer = setTimeout(() => {
+      logger.error(`Shutdown watchdog timed out after ${signal} — forcing exit`)
+      resetSignalHandlers()
+      if (typeof process.exit === 'function') {
+        process.exit(exitCode)
+      }
+    }, 5000)
+    watchdogTimer.unref?.()
+
+    try {
+      await shutdown(4000)
+    } catch (err) {
       logger.error('Shutdown failed after signal', { signal, error: err })
-    })
+    } finally {
+      clearTimeout(watchdogTimer)
+      const remainingListeners = process.listenerCount(signal)
+      resetSignalHandlers()
+
+      // If the SDK was the only listener for this signal, Node won't exit by itself.
+      // We must exit with the standard 128 + signal code so container orchestrators (k8s/docker)
+      // see the clean shutdown immediately instead of hanging until SIGKILL.
+      if (remainingListeners <= 1) {
+        if (typeof process.exit === 'function') {
+          process.exit(exitCode)
+        }
+      }
+    }
   }
 
-  sigTermHandler = () => handleSignal('SIGTERM')
-  sigIntHandler = () => handleSignal('SIGINT')
+  sigTermHandler = () => { void handleSignal('SIGTERM') }
+  sigIntHandler = () => { void handleSignal('SIGINT') }
 
   // Use process.on (not once) so we control removal explicitly via reset.
   // This prevents stacking handlers across reinit cycles.
@@ -266,6 +304,7 @@ export function resetSignalHandlers(): void {
     sigIntHandler = null
   }
   signalHandlersRegistered = false
+  signalShutdownInFlight = false
 }
 
 // ─── Internal: Shutdown Orchestration ───────────────────────────────────────

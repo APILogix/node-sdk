@@ -4,6 +4,7 @@ import { type CompressionAlgorithm, compressGzip, compressBrotli } from '../util
 import { SecurityScrubber } from '../processors/security-scrubber.js'
 import type { PrivacyConfig } from '../types/config.js'
 import type { SDKEvent } from '../types/event.js'
+import { safeJsonStringify } from '../utils/safe-json.js'
 
 export interface SerializeBatchOptions {
   readonly events: readonly unknown[]
@@ -177,7 +178,7 @@ export class SerializationPool {
     const payload = route
       ? { events: safeEvents, route, timestamp: timestamp ?? Date.now() }
       : safeEvents
-    const jsonStr = JSON.stringify(payload)
+    const jsonStr = safeJsonStringify(payload)
     const buf = Buffer.from(jsonStr, 'utf8')
     const originalSize = buf.byteLength
 

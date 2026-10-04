@@ -34,7 +34,12 @@ import { startSpan, withSpan, withSpanSync, withBackgroundSpan, startBackgroundS
 import { incrementCounter, setGauge, recordHistogram, addUpDownCounter, } from './capture/captureMetric.js';
 import { startDbSpan, withDbSpan, withDbSpanSync } from './tracing/db-span.js';
 import { registerBootstrapAutoInstrumentations } from './instrumentation/auto-instrument.js';
-registerBootstrapAutoInstrumentations();
+try {
+    registerBootstrapAutoInstrumentations();
+}
+catch {
+    // Safe fail-open: bootstrap auto-instrumentation must never crash host application import (SEC-08)
+}
 // ─── Lifecycle ──────────────────────────────────────────────────────────────
 export { flush, shutdown, crashFlush } from './core/lifecycle.js';
 export { getConfig } from './core/config.js';

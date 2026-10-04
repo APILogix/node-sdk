@@ -2,6 +2,7 @@ import { Worker } from 'worker_threads';
 import { getLogger } from '../utils/logger.js';
 import { compressGzip, compressBrotli } from '../utils/compression.js';
 import { SecurityScrubber } from '../processors/security-scrubber.js';
+import { safeJsonStringify } from '../utils/safe-json.js';
 const MAX_PENDING_REQUESTS = 64;
 export class SerializationPool {
     poolSize;
@@ -147,7 +148,7 @@ export class SerializationPool {
         const payload = route
             ? { events: safeEvents, route, timestamp: timestamp ?? Date.now() }
             : safeEvents;
-        const jsonStr = JSON.stringify(payload);
+        const jsonStr = safeJsonStringify(payload);
         const buf = Buffer.from(jsonStr, 'utf8');
         const originalSize = buf.byteLength;
         if (typeof maxPayloadBytes === 'number' && maxPayloadBytes > 0 && originalSize > maxPayloadBytes) {

@@ -1,6 +1,7 @@
 import { parentPort } from 'worker_threads';
 import { gzipSync, brotliCompressSync, constants as zlibConstants } from 'zlib';
 import { SecurityScrubber } from '../processors/security-scrubber.js';
+import { safeJsonStringify } from '../utils/safe-json.js';
 let workerScrubber = null;
 let currentPrivacyConfigJson = '';
 function getOrCreateScrubber(config) {
@@ -34,7 +35,7 @@ if (parentPort) {
             const payload = route
                 ? { events: safeEvents, route, timestamp: timestamp ?? Date.now() }
                 : safeEvents;
-            const jsonStr = JSON.stringify(payload);
+            const jsonStr = safeJsonStringify(payload);
             let buffer = Buffer.from(jsonStr, 'utf8');
             const originalSize = buffer.byteLength;
             if (typeof maxPayloadBytes === 'number' && maxPayloadBytes > 0 && originalSize > maxPayloadBytes) {

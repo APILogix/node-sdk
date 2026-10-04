@@ -12,9 +12,17 @@ export interface RecoveryWorkerOptions {
   readonly activateFn?: ((response: InitResponse) => Promise<void>) | undefined
 }
 
-function getDefaultBaseDelayMs(): number {
-  if (typeof process !== 'undefined' && process.env && process.env['PULSE_TEST_RECOVERY_DELAY_MS']) {
-    return Math.max(10, Number(process.env['PULSE_TEST_RECOVERY_DELAY_MS']))
+export function getDefaultBaseDelayMs(): number {
+  if (typeof process !== 'undefined' && process.env) {
+    const isProduction =
+      process.env['NODE_ENV'] === 'production' ||
+      process.env['PULSE_ENV'] === 'production'
+    if (!isProduction && process.env['PULSE_TEST_RECOVERY_DELAY_MS']) {
+      const parsed = Number(process.env['PULSE_TEST_RECOVERY_DELAY_MS'])
+      if (Number.isFinite(parsed) && parsed > 0) {
+        return Math.max(10, Math.min(Math.round(parsed), 60_000))
+      }
+    }
   }
   return 1_000
 }

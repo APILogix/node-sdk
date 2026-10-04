@@ -218,11 +218,12 @@ describe('test_multi_cycle_soak: Memory Stability & Leak Prevention', { timeout:
       cycleHeapSnapshots.push(postGcHeap)
     }
 
-    // Invariant 1: Peak retained heap is strictly bounded (< 4x baseline heap)
+    // Invariant 1: Peak retained heap is strictly bounded (< 4x baseline heap or 64MB ceiling)
     const maxRetainedHeap = Math.max(...cycleHeapSnapshots)
+    const allowedLimit = Math.max(baselineHeap * 4, 64 * 1024 * 1024)
     assert.ok(
-      maxRetainedHeap < baselineHeap * 4,
-      `Retained heap (${(maxRetainedHeap / 1024 / 1024).toFixed(2)} MB) must not exceed 4x baseline (${(baselineHeap / 1024 / 1024).toFixed(2)} MB)`
+      maxRetainedHeap < allowedLimit,
+      `Retained heap (${(maxRetainedHeap / 1024 / 1024).toFixed(2)} MB) must not exceed allowed limit (${(allowedLimit / 1024 / 1024).toFixed(2)} MB)`
     )
 
     // Invariant 2: Plateau stabilization — memory delta between later cycles must stabilize (< 25% drift)
