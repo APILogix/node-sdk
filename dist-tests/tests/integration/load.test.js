@@ -24,7 +24,7 @@ import { gunzipSync } from 'node:zlib';
 import { init } from '../../src/core/init.js';
 import { shutdown } from '../../src/core/lifecycle.js';
 import { captureMessage } from '../../src/capture/captureMessage.js';
-import { captureError } from '../../src/capture/captureError.js';
+import { captureException } from '../../src/capture/captureException.js';
 import { captureMetric } from '../../src/capture/captureMetric.js';
 import { withSpan } from '../../src/tracing/tracer.js';
 import { TransportRouter } from '../../src/transport/transport-router.js';
@@ -188,7 +188,7 @@ describe('SDK load test', { timeout: 120_000 }, () => {
         for (let i = 0; i < TOTAL_EVENTS; i++) {
             const mod = i % 10;
             if (mod === 0) {
-                captureError(new Error(`load-err-${i}`));
+                captureException(new Error(`load-err-${i}`));
             }
             else if (mod < 5) {
                 captureMessage(`load-msg-${i}`, 'info');
@@ -242,7 +242,7 @@ describe('SDK load test', { timeout: 120_000 }, () => {
         // default to 10k for errors, 50k for traces). We pump 200k errors in
         // a tight loop; some are guaranteed to be queue-shed.
         for (let i = 0; i < 200_000; i++) {
-            captureError(new Error(`saturate-${i}`));
+            captureException(new Error(`saturate-${i}`));
         }
         const debug = TransportRouter.getInstance()?.getDebugState();
         assert.ok(debug, 'TransportRouter should still be available');

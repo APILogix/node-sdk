@@ -109,7 +109,7 @@ export class BatchManager {
 
     if (!this.firstQueuedAt) this.firstQueuedAt = Date.now()
 
-    if (this.options.queue.size() >= this.effectiveMaxBatchSize()) {
+    if (this.options.queue.size() >= this.getEffectiveMaxBatchSize()) {
       this.pump()
     } else {
       this.ensureTimer()
@@ -156,7 +156,7 @@ export class BatchManager {
     return residual
   }
 
-  stats(): BatchManagerStats {
+  getStats(): BatchManagerStats {
     return {
       route: this.options.route,
       queuedEvents: this.options.queue.size(),
@@ -171,6 +171,11 @@ export class BatchManager {
     }
   }
 
+  /** Backward-compatible alias */
+  stats(): BatchManagerStats {
+    return this.getStats()
+  }
+
   private pump(force = false): void {
     if (this.destroyed && !force) return
     if (!this.options.healthMonitor.canSend(this.options.route)) {
@@ -178,9 +183,9 @@ export class BatchManager {
       return
     }
 
-    const concurrency = this.effectiveConcurrency()
+    const concurrency = this.getEffectiveConcurrency()
     while (this.activeSends < concurrency && !this.options.queue.isEmpty()) {
-      if (!force && this.options.queue.size() < this.options.minBatchSize && !this.maxWaitElapsed()) {
+      if (!force && this.options.queue.size() < this.options.minBatchSize && !this.hasMaxWaitElapsed()) {
         this.ensureTimer()
         break
       }
@@ -203,7 +208,7 @@ export class BatchManager {
   }
 
   private nextSerializableBatch(): { events: SDKEvent[] } | null {
-    const targetSize = this.effectiveMaxBatchSize()
+    const targetSize = this.getEffectiveMaxBatchSize()
     const batch = this.options.queue.drain(targetSize)
     if (batch.length === 0) return null
     return { events: batch }
@@ -680,9 +685,17 @@ export class BatchManager {
     })
   }
 
+  private getEffectiveMaxBatchSize(): number {
+    return this.effectiveMaxBatchSize()
+  }
+
   private effectiveMaxBatchSize(): number {
     const scaled = Math.floor(this.options.maxBatchSize * this.options.healthMonitor.batchScale(this.options.route))
     return Math.max(1, scaled)
+  }
+
+  private getEffectiveConcurrency(): number {
+    return this.effectiveConcurrency()
   }
 
   private effectiveConcurrency(): number {
@@ -694,9 +707,17 @@ export class BatchManager {
     return Math.max(1, warmed)
   }
 
+  private hasMaxWaitElapsed(): boolean {
+    return this.maxWaitElapsed()
+  }
+
   private maxWaitElapsed(): boolean {
     if (!this.firstQueuedAt) return false
-    return Date.now() - this.firstQueuedAt >= this.effectiveMaxWaitMs()
+    return Date.now() - this.firstQueuedAt >= this.getEffectiveMaxWaitMs()
+  }
+
+  private getEffectiveMaxWaitMs(forceExtended = false): number {
+    return this.effectiveMaxWaitMs(forceExtended)
   }
 
   private effectiveMaxWaitMs(forceExtended = false): number {
@@ -708,7 +729,7 @@ export class BatchManager {
 
   private ensureTimer(extended = false): void {
     if (this.timer) return
-    const waitMs = this.effectiveMaxWaitMs(extended)
+    const waitMs = this.getEffectiveMaxWaitMs(extended)
     this.timer = setTimeout(() => {
       this.timer = null
       otelContext.with(suppressTracing(otelContext.active()), () => {
@@ -770,7 +791,7 @@ function logTransportConsole(direction: 'request' | 'response', details: Readonl
   if (process.env['PULSE_TRANSPORT_CONSOLE'] !== 'true') return
   const status = typeof details['statusCode'] === 'number' ? details['statusCode'] : undefined
   const count = typeof details['eventCount'] === 'number' ? details['eventCount'] : undefined
-  console.log(`[Pulse transport] ${direction}`, {
+  console.log(`[Telemetry transport] ${direction}`, {
     ...(status !== undefined ? { statusCode: status } : {}),
     ...(count !== undefined ? { eventCount: count } : {}),
   })

@@ -177,7 +177,7 @@ describe('SEC-02: Missing or Invalid API Key Never Crashes Host Application', ()
 
       // SDK capture APIs fail-open safely without throwing
       assert.doesNotThrow(() => {
-        Pulse.captureError(new Error('simulated customer error during disabled state'))
+        Pulse.captureException(new Error('simulated customer error during disabled state'))
       })
 
       assert.doesNotThrow(() => {

@@ -207,6 +207,9 @@ export class TransportEventQueue {
             critical: isCritical(event),
         });
     }
+    getSize() {
+        return this.count;
+    }
     size() {
         return this.count;
     }

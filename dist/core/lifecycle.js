@@ -161,7 +161,7 @@ export async function flush() {
  *
  * @param timeoutMs Maximum time to wait for transport drain. Default: 2000ms.
  */
-export async function crashFlush(timeoutMs = 2_000) {
+export async function emergencyFlush(timeoutMs = 2_000) {
     try {
         let timer;
         const timeoutPromise = new Promise(resolve => {
@@ -182,16 +182,14 @@ export async function crashFlush(timeoutMs = 2_000) {
             try {
                 await SerializationPool.reset();
             }
-            catch {
-                // Best-effort worker termination
-            }
+            catch { }
         })();
         await Promise.race([drainPromise, timeoutPromise]);
         if (timer)
             clearTimeout(timer);
     }
     catch {
-        // Best-effort — swallow all errors during crash flush.
+        // Best-effort — swallow all errors during emergency flush.
         // The process is about to terminate; throwing here would only
         // mask the original uncaught exception in the error output.
     }
@@ -327,6 +325,12 @@ async function runShutdown(timeoutMs) {
             remainingEvents: eventQueue.size(),
             durationMs: Date.now() - startedAt,
         });
+        if (client.getState() === 'stopping') {
+            try {
+                client.setState('stopped');
+            }
+            catch { }
+        }
     }
     const result = {
         completed: !timedOut && stepErrors.length === 0,

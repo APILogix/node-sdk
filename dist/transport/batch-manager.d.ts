@@ -66,6 +66,8 @@ export declare class BatchManager {
      * any batches that could not be quiesced within the bounded wait.
      */
     shutdown(timeoutMs?: number): Promise<SDKEvent[]>;
+    getStats(): BatchManagerStats;
+    /** Backward-compatible alias */
     stats(): BatchManagerStats;
     private pump;
     private nextSerializableBatch;
@@ -74,9 +76,13 @@ export declare class BatchManager {
     private cancelPendingRetries;
     private persistOnFailure;
     private discardOnSuccess;
+    private getEffectiveMaxBatchSize;
     private effectiveMaxBatchSize;
+    private getEffectiveConcurrency;
     private effectiveConcurrency;
+    private hasMaxWaitElapsed;
     private maxWaitElapsed;
+    private getEffectiveMaxWaitMs;
     private effectiveMaxWaitMs;
     private ensureTimer;
     private clearTimer;

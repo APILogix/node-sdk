@@ -19,7 +19,7 @@ import {
   waitForCondition,
 } from './index.js'
 import type { SDKEvent, MessageEvent, ErrorEvent } from '../../../src/types/event.js'
-import { captureError, flush } from '../../../src/index.js'
+import { captureException, flush } from '../../../src/index.js'
 
 describe('RemoteConfigMockServer & E2E Test Harness', () => {
   let server: RemoteConfigMockServer
@@ -608,7 +608,7 @@ describe('RemoteConfigMockServer & E2E Test Harness', () => {
       assert.equal(initConfig.schemaVersion, 1)
 
       // Capture an error
-      captureError(new Error('E2E test error for mock server'))
+      captureException(new Error('E2E test error for mock server'))
       await flush()
 
       // Verify mock server received the error batch

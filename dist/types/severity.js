@@ -52,12 +52,12 @@ export function severityFromString(value, fallback = Severity.Info) {
 /**
  * Returns true if `a` is more severe than or equal to `b`.
  */
-export function severityGte(a, b) {
+export function isSeverityGte(a, b) {
     return (SEVERITY_WEIGHT.get(a) ?? 0) >= (SEVERITY_WEIGHT.get(b) ?? 0);
 }
 /**
  * Returns true if the given severity meets the minimum threshold.
  */
-export function severityMeetsThreshold(severity, threshold) {
-    return severityGte(severity, threshold);
+export function doesSeverityMeetThreshold(severity, threshold) {
+    return isSeverityGte(severity, threshold);
 }

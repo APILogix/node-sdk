@@ -20,7 +20,7 @@ import { gunzipSync } from 'node:zlib';
 import { init } from '../../src/core/init.js';
 import { shutdown } from '../../src/core/lifecycle.js';
 import { captureMessage } from '../../src/capture/captureMessage.js';
-import { captureError } from '../../src/capture/captureError.js';
+import { captureException } from '../../src/capture/captureException.js';
 import { captureMetric } from '../../src/capture/captureMetric.js';
 import { startSpan } from '../../src/tracing/tracer.js';
 import { client } from '../../src/core/client.js';
@@ -168,7 +168,7 @@ describe('test_multi_cycle_soak: Memory Stability & Leak Prevention', { timeout:
             for (let i = 0; i < EVENTS_PER_CYCLE; i++) {
                 const mod = i % 4;
                 if (mod === 0) {
-                    captureError(new Error(`soak-err-cycle${cycle}-${i}`));
+                    captureException(new Error(`soak-err-cycle${cycle}-${i}`));
                 }
                 else if (mod === 1) {
                     captureMessage(`soak-msg-cycle${cycle}-${i}`, 'info');

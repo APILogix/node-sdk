@@ -226,6 +226,26 @@ export class SecurityScrubber {
         const lastPart = parts[parts.length - 1]
         if (lastPart && (this.sensitiveFields.has(lastPart) || this.sensitiveHeaders.has(lastPart))) {
           isSensitive = true
+        } else {
+          // Check compound names (camelCase, snake_case, etc.)
+          const wordTokens = rawKey
+            .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+            .toLowerCase()
+            .split(/[^a-z0-9]+/)
+            .filter(Boolean)
+
+          const nonSecretTokenIndicators = new Set(['count', 'total', 'usage', 'prompt', 'completion', 'consumed', 'balance', 'remaining'])
+          const hasCountIndicator = wordTokens.some(w => nonSecretTokenIndicators.has(w))
+
+          for (const w of wordTokens) {
+            if (this.sensitiveFields.has(w) || this.sensitiveHeaders.has(w)) {
+              if (w === 'token' && hasCountIndicator) {
+                continue
+              }
+              isSensitive = true
+              break
+            }
+          }
         }
       }
     }
@@ -279,8 +299,22 @@ export class SecurityScrubber {
           str = str.replace(/\b(sk_live_[0-9a-zA-Z]{24,}|pk_live_[0-9a-zA-Z]{24,}|rk_live_[0-9a-zA-Z]{24,})\b/g, '[Redacted]')
           str = str.replace(/\b(AKIA[0-9A-Z]{16})\b/g, '[Redacted]')
           str = str.replace(
-            /\b(api[-_]?key|api[-_]?secret|access[-_]?token|refresh[-_]?token|client[-_]?secret|password|secret|token|authorization|x-api-key|x-auth-token)=([^\s&,;"']+)/gi,
-            '$1=[Redacted]',
+            /\b(bearer[-_]token|token[-_]bearer|bearer)[-_][A-Za-z0-9_\-\.]+\b/gi,
+            '[Redacted]',
+          )
+          str = str.replace(
+            /\b(api[-_]?key|api[-_]?secret|access[-_]?token|refresh[-_]?token|client[-_]?secret|password|secret|token|authorization|x-api-key|x-auth-token)\s*([:=])\s*([^\s&,;"']+)/gi,
+            '$1$2[Redacted]',
+          )
+          str = str.replace(
+            /\b(token|secret|password|api[-_]?key)\s+([A-Za-z0-9_\-\.]{8,})/gi,
+            (match, prefix, tokenVal) => {
+              const commonWords = new Set(['expired', 'invalid', 'missing', 'revoked', 'required', 'rejected', 'failed', 'not', 'found', 'cannot', 'could', 'should', 'would', 'error', 'format', 'length', 'expected', 'provided'])
+              if (commonWords.has(tokenVal.toLowerCase()) && /^[a-z]+$/i.test(tokenVal)) {
+                return match
+              }
+              return `${prefix} [Redacted]`
+            },
           )
         }
         return str

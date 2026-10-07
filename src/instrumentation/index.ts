@@ -3,7 +3,7 @@
  */
 
 export { registerAutoInstrumentations, resetAutoInstrumentations } from './auto-instrument.js'
-export { monitorMiddleware } from './express.js'
+export { pulseMiddleware } from './express.js'
 export { createGraphQLInstrumentation } from './graphql.js'
 export { createPrismaInstrumentation, pulsePrismaExtension, instrumentPrismaClientInstance } from './prisma.js'
 export { createMongoDBInstrumentation } from './mongodb.js'

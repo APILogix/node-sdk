@@ -1,6 +1,6 @@
 {
     "name": "@pulse-apm/node",
-    "version": "8.4.5",
+    "version": "8.5.0",
     "description": "Enterprise-grade observability SDK with error tracking, tracing, metrics, and breadcrumbs",
     "main": "dist/index.js",
     "types": "dist/index.d.ts",
@@ -24,7 +24,7 @@
         "build": "npm run clean && npx tsc",
         "test": "npm run test:unit && npm run test:integration",
         "test:unit": "npx tsc -p tsconfig.test.json && node --test --test-concurrency=1 dist-tests/tests/unit/*.test.js",
-        "test:integration": "npx tsc && npx tsc -p tsconfig.test.json && node --test --test-concurrency=1 dist-tests/tests/integration/*.test.js",
+        "test:integration": "npx tsc && npx tsc -p tsconfig.test.json && node --expose-gc --test --test-concurrency=1 dist-tests/tests/integration/*.test.js",
         "test:all": "npm test",
         "test:trace": "npx tsc -p tsconfig.test.json && node --test dist-tests/tests/unit/trace-span.test.js",
         "prepublishOnly": "npm run  build",

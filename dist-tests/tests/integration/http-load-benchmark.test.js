@@ -5,7 +5,7 @@
  *
  * Measures HTTP throughput, p50/p95/p99 latency deltas, and event loop lag:
  *   1. Baseline Node/Express HTTP server without Pulse
- *   2. Same server with Pulse SDK initialized and monitorMiddleware active
+ *   2. Same server with Pulse SDK initialized and pulseMiddleware active
  *
  * Asserts:
  *   - Zero request failures across the configured CI tiers (100, 500, 1k, 5k, 10k)
@@ -21,7 +21,7 @@ import express from 'express';
 import { gunzipSync } from 'node:zlib';
 import { init } from '../../src/core/init.js';
 import { shutdown } from '../../src/core/lifecycle.js';
-import { monitorMiddleware } from '../../src/instrumentation/express.js';
+import { pulseMiddleware } from '../../src/instrumentation/express.js';
 import { TEST_REMOTE_CONFIG as BAKED_IN_REMOTE_CONFIG } from '../fixtures/remote-config.js';
 async function startMockBackend() {
     let receivedBatches = 0;
@@ -281,7 +281,7 @@ describe('test_http_load_benchmark_suite: Real HTTP Baseline vs Pulse Comparativ
         });
         const app = express();
         // Mount Pulse monitoring middleware
-        app.use(monitorMiddleware());
+        app.use(pulseMiddleware());
         app.get('/api/v1/test-workload', (_req, res) => {
             res.setHeader('content-type', 'application/json');
             res.end(JSON.stringify({ status: 'ok', time: Date.now() }));

@@ -3,7 +3,7 @@ import { PerformanceObserver } from 'node:perf_hooks';
 import { init } from '../../src/core/init.js';
 import { shutdown } from '../../src/core/lifecycle.js';
 import { startSpan } from '../../src/tracing/tracer.js';
-import { captureError } from '../../src/capture/captureError.js';
+import { captureException } from '../../src/capture/captureException.js';
 import { captureMetric, incrementCounter } from '../../src/capture/captureMetric.js';
 import { captureMessage } from '../../src/capture/captureMessage.js';
 import { TEST_REMOTE_CONFIG as BAKED_IN_REMOTE_CONFIG } from '../fixtures/remote-config.js';
@@ -121,7 +121,7 @@ export async function runMemoryGCAudit(totalOperations = 10_000) {
         }
         // 4. Errors
         if (i % 10 === 0) {
-            captureError(new Error(`Audit soak error ${i}`));
+            captureException(new Error(`Audit soak error ${i}`));
         }
         // Periodic memory sampling
         if (i % 500 === 0) {

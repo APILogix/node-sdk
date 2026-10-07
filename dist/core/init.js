@@ -83,10 +83,10 @@ export async function init(options) {
     if (validationError) {
         const logger = getLogger();
         if (validationError.code === 'INVALID_API_KEY' || validationError.code === 'SDK_API_KEY_MISSING') {
-            logger.error('[Pulse] SDK disabled: missing or invalid API key');
+            logger.error('SDK disabled: missing or invalid API key');
         }
         else {
-            logger.error('[Pulse] SDK disabled: invalid telemetry init options');
+            logger.error('SDK disabled: invalid telemetry init options');
         }
         resetAutoInstrumentations();
         eventQueue.drainAll();
@@ -194,13 +194,7 @@ export async function activateSDK(remoteClient, response, options, mode = 'cold_
         // depend on transport construction or subsystem registration. Start it
         // early so its file I/O overlaps SDK-owned CPU setup instead of extending
         // the application readiness path.
-        const apiKeyHash = createHash('sha256').update(options.apiKey).digest('hex');
-        persistentStorage.configure({ apiKeyHash });
-        const persistedEventsPromise = persistentStorage.init();
-        // This work is awaited before readiness below. Attach a rejection handler
-        // now as well so strict Node unhandled-rejection policies cannot observe a
-        // fast disk failure during the parallel setup window.
-        void persistedEventsPromise.catch(() => { });
+        const persistedEventsPromise = setupPersistentStorage(options.apiKey, config, options);
         const transportRouter = await TransportRouter.initialize(config.transport, options.apiKey, undefined, config.limits);
         if (config.killswitches.disableTransport || config.killswitches.disableSDK)
             transportRouter.disable();
@@ -438,6 +432,17 @@ export async function activateSDK(remoteClient, response, options, mode = 'cold_
                     }
                 }
             },
+            offlineQueue: ({ current }) => {
+                if (options.offlineQueue !== false && typeof options.offlineQueue !== 'object') {
+                    persistentStorage.configure({
+                        enabled: current.offlineQueue?.enabled ?? true,
+                        maxFileSizeBytes: current.offlineQueue?.maxFileSizeBytes,
+                        maxEvents: current.offlineQueue?.maxEvents,
+                        eventTtlMs: current.offlineQueue?.eventTtlMs,
+                        ioTimeoutMs: current.offlineQueue?.ioTimeoutMs,
+                    });
+                }
+            },
         }));
         // Await any asynchronous instrumentation setups (e.g. Axios ESM patching)
         await waitForPendingInstrumentations();
@@ -550,6 +555,49 @@ async function replayBufferedEvents(persisted) {
         if ((index + 1) % 100 === 0)
             await new Promise(resolve => setImmediate(resolve));
     }
+}
+function setupPersistentStorage(apiKey, config, options) {
+    const apiKeyHash = createHash('sha256').update(apiKey).digest('hex');
+    const optQueue = options.offlineQueue;
+    const remoteQueue = config.offlineQueue;
+    let enabled = remoteQueue?.enabled ?? true;
+    let directory;
+    let maxFileSizeBytes = remoteQueue?.maxFileSizeBytes;
+    let maxEvents = remoteQueue?.maxEvents;
+    let eventTtlMs = remoteQueue?.eventTtlMs;
+    let ioTimeoutMs = remoteQueue?.ioTimeoutMs;
+    if (optQueue === false) {
+        enabled = false;
+    }
+    else if (typeof optQueue === 'object' && optQueue !== null) {
+        if (optQueue.enabled !== undefined)
+            enabled = optQueue.enabled;
+        if (optQueue.directory !== undefined)
+            directory = optQueue.directory;
+        if (optQueue.maxFileSizeBytes !== undefined)
+            maxFileSizeBytes = optQueue.maxFileSizeBytes;
+        if (optQueue.maxEvents !== undefined)
+            maxEvents = optQueue.maxEvents;
+        if (optQueue.eventTtlMs !== undefined)
+            eventTtlMs = optQueue.eventTtlMs;
+        if (optQueue.ioTimeoutMs !== undefined)
+            ioTimeoutMs = optQueue.ioTimeoutMs;
+    }
+    persistentStorage.configure({
+        apiKeyHash,
+        enabled,
+        ...(directory !== undefined ? { directory } : {}),
+        ...(maxFileSizeBytes !== undefined ? { maxFileSizeBytes } : {}),
+        ...(maxEvents !== undefined ? { maxEvents } : {}),
+        ...(eventTtlMs !== undefined ? { eventTtlMs } : {}),
+        ...(ioTimeoutMs !== undefined ? { ioTimeoutMs } : {}),
+    });
+    if (!enabled) {
+        return Promise.resolve([]);
+    }
+    const persistedEventsPromise = persistentStorage.init();
+    void persistedEventsPromise.catch(() => { });
+    return persistedEventsPromise;
 }
 async function enterDormantState(_error, options) {
     // Non-destructive transition: clean up any partially constructed transport

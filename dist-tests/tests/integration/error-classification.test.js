@@ -5,8 +5,8 @@ import http from 'node:http';
 import { gunzipSync } from 'node:zlib';
 import { init } from '../../src/core/init.js';
 import { shutdown, flush } from '../../src/core/lifecycle.js';
-import { captureError } from '../../src/capture/captureError.js';
-import { monitorMiddleware, expressErrorHandler } from '../../src/instrumentation/express.js';
+import { captureException } from '../../src/capture/captureException.js';
+import { pulseMiddleware, expressErrorHandler } from '../../src/instrumentation/express.js';
 import { createContextStore, withContext } from '../../src/core/context.js';
 import { TEST_REMOTE_CONFIG as BAKED_IN_REMOTE_CONFIG } from '../fixtures/remote-config.js';
 function delay(ms) {
@@ -110,8 +110,8 @@ describe('SDK Error Classification Wire Payloads', () => {
     beforeEach(() => {
         mock.reset();
     });
-    it('1. manual captureError(err) emits unhandled=false, fatal=false, crash=false', async () => {
-        captureError(new Error('Manual handled test error'), 'error');
+    it('1. manual captureException(err) emits unhandled=false, fatal=false, crash=false', async () => {
+        captureException(new Error('Manual handled test error'), 'error');
         await flush();
         await delay(100);
         const events = getErrorEvents(mock);
@@ -127,8 +127,8 @@ describe('SDK Error Classification Wire Payloads', () => {
             crash: false,
         });
     });
-    it('2. manual fatal captureError(err, "fatal") emits unhandled=false, fatal=true, crash=false', async () => {
-        captureError(new Error('Manual fatal infrastructure error'), 'fatal');
+    it('2. manual fatal captureException(err, "fatal") emits unhandled=false, fatal=true, crash=false', async () => {
+        captureException(new Error('Manual fatal infrastructure error'), 'fatal');
         await flush();
         await delay(100);
         const events = getErrorEvents(mock);
@@ -146,7 +146,7 @@ describe('SDK Error Classification Wire Payloads', () => {
     });
     it('3. Express next(err) route error emits unhandled=false, fatal=false, crash=false', async () => {
         const app = express();
-        app.use(monitorMiddleware());
+        app.use(pulseMiddleware());
         app.get('/test-express-error', (_req, _res, next) => {
             next(new Error('Express routed calculation error'));
         });
@@ -179,7 +179,7 @@ describe('SDK Error Classification Wire Payloads', () => {
             extra: { mechanism: 'uncaughtException', handled: false },
         });
         withContext(store, () => {
-            captureError(new Error('Uncaught process exception'), 'fatal');
+            captureException(new Error('Uncaught process exception'), 'fatal');
         });
         await flush();
         await delay(100);
@@ -200,7 +200,7 @@ describe('SDK Error Classification Wire Payloads', () => {
             extra: { mechanism: 'unhandledRejection', handled: false },
         });
         withContext(store, () => {
-            captureError(new Error('Unhandled promise rejection'), 'error');
+            captureException(new Error('Unhandled promise rejection'), 'error');
         });
         await flush();
         await delay(100);

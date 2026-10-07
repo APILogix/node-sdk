@@ -65,26 +65,29 @@
 import type { Event } from '../types/event.js';
 interface PersistentStorageOptions {
     /** Directory to store persisted events. Defaults to OS temp dir. */
-    directory?: string;
+    directory?: string | undefined;
+    /** Whether persistence is enabled. When false, disk operations are completely bypassed. Default: true. */
+    enabled?: boolean | undefined;
     /** API key hash for unique file naming. */
-    apiKeyHash?: string;
+    apiKeyHash?: string | undefined;
     /** Maximum file size before rotation. Default: 10MB. */
-    maxFileSizeBytes?: number;
+    maxFileSizeBytes?: number | undefined;
     /** Maximum events to persist. Default: 10000. */
-    maxEvents?: number;
+    maxEvents?: number | undefined;
     /** Event TTL in milliseconds. Default: 24 hours. */
-    eventTtlMs?: number;
+    eventTtlMs?: number | undefined;
     /**
      * Per file-operation timeout in milliseconds. Default: 5000.
      * Protects against frozen filesystems (NFS hangs, full disks, etc.) that
      * would otherwise block the shutdown drain indefinitely.
      */
-    ioTimeoutMs?: number;
+    ioTimeoutMs?: number | undefined;
 }
 declare class PersistentStorage {
-    private directory;
+    private directoryPath;
+    private filePrefix;
     private dataFile;
-    private tempFile;
+    private enabled;
     private maxFileSizeBytes;
     private maxEvents;
     private eventTtlMs;
@@ -105,21 +108,26 @@ declare class PersistentStorage {
     private lastReplayAt;
     private writeChain;
     configure(options?: PersistentStorageOptions): void;
+    private createTempFilePath;
     init(): Promise<Event[]>;
     /**
      * Queue an event for persistence. Events are batched and flushed periodically.
      *
      * Callers can invoke this freely from any code path; it returns silently if
-     * storage was never initialized or has already been shut down.
+     * storage was never initialized, is disabled, or has already been shut down.
      */
     persist(event: Event): void;
     /**
      * Whether persistent storage has been initialized and has not been shut
-     * down. Callers (typically the transport layer) check this before
+     * down or disabled. Callers (typically the transport layer) check this before
      * persisting on send failure so they can degrade gracefully when
-     * persistence is unavailable (e.g., the SDK is being shut down).
+     * persistence is unavailable (e.g., the SDK is being shut down or serverless).
      */
     get isInitialized(): boolean;
+    /** The configured or resolved directory path where events are persisted. */
+    get directory(): string;
+    /** The path to the active events NDJSON data file. */
+    get dataFilePath(): string;
     /**
      * Persist a whole batch of events in one call.
      *
@@ -152,6 +160,13 @@ declare class PersistentStorage {
     /**
      * Replay persisted events from disk.
      * Returns events that are still valid (within TTL).
+     *
+     * Multi-process / cluster safe:
+     * 1. Inspects the directory for files belonging to this prefix.
+     * 2. Replays legacy file (pulse-events.ndjson / pulse-events-<hash>.ndjson) if present.
+     * 3. Replays files from dead processes (PIDs that are no longer alive).
+     * 4. Exclusively claims candidate files via atomic rename before reading to
+     *    prevent multiple workers from racing or duplicating replay batches.
      */
     replay(): Promise<Event[]>;
     /**
@@ -209,6 +224,7 @@ declare class PersistentStorage {
     private rewriteEntries;
     private enqueueWrite;
     private resolveDefaultDirectory;
+    private isServerlessEnvironment;
 }
 export declare const persistentStorage: PersistentStorage;
 export { PersistentStorage };

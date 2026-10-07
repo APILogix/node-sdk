@@ -18,6 +18,7 @@ export interface SerializeBatchResult {
 export declare class SerializationPool {
     private readonly poolSize;
     private workers;
+    private workerEntries;
     private readyWorkers;
     private roundRobinIndex;
     private pendingRequests;

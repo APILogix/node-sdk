@@ -50,7 +50,7 @@ describe('Worker Serialization & Structured Clone Safety', () => {
             getStatusCode: { value: () => res.statusCode, enumerable: false, configurable: true },
             getMethod: { value: () => 'GET', enumerable: false, configurable: true },
         });
-        // Property lookup works (used by captureError)
+        // Property lookup works (used by captureException)
         assert.equal(typeof extra.getStatusCode, 'function');
         assert.equal(extra.getStatusCode(), 201);
         // Not enumerated by Object.entries or spread

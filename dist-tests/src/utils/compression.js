@@ -64,3 +64,7 @@ export function contentEncoding(algorithm) {
             return undefined;
     }
 }
+/**
+ * Standard alias for contentEncoding following get* convention.
+ */
+export const getContentEncoding = contentEncoding;

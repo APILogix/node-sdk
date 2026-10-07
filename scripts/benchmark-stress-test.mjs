@@ -17,7 +17,7 @@ import v8 from 'node:v8';
 import {
   init,
   shutdown,
-  captureError,
+  captureException,
   captureMessage,
   captureMetric,
   withSpan,
@@ -180,7 +180,7 @@ async function runBenchmarkSuite() {
 
       const mod = i % 10;
       if (mod === 0) {
-        captureError(new Error(`Benchmark Exception payload ${i}`), {
+        captureException(new Error(`Benchmark Exception payload ${i}`), {
           tags: { iteration: String(i), tier: 'benchmark' },
         });
       } else if (mod < 4) {
@@ -370,7 +370,7 @@ async function runBenchmarkSuite() {
     const tSatStart = performance.now();
 
     for (let i = 0; i < SATURATE_COUNT; i++) {
-      captureError(new Error(`Saturation error ${i}`));
+      captureException(new Error(`Saturation error ${i}`));
     }
     const tSatDuration = performance.now() - tSatStart;
     const memAfterSat = process.memoryUsage();

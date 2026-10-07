@@ -1,12 +1,12 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { monitorMiddleware, expressErrorHandler, ensureExpressLayersInstrumented } from '../../src/instrumentation/express.js'
+import { pulseMiddleware, expressErrorHandler, ensureExpressLayersInstrumented } from '../../src/instrumentation/express.js'
 import { ConfigManager } from '../../src/core/config-manager.js'
 
 describe('SEC-03: Express Instrumentation Failsafe and Never Throws', () => {
   it('calls next() without throwing when ConfigManager is uninitialized', (t, done) => {
-    // ConfigManager may or may not be initialized; let's test monitorMiddleware directly
-    const middleware = monitorMiddleware()
+    // ConfigManager may or may not be initialized; let's test pulseMiddleware directly
+    const middleware = pulseMiddleware()
     const req: any = {
       method: 'GET',
       url: '/api/test',
@@ -29,7 +29,7 @@ describe('SEC-03: Express Instrumentation Failsafe and Never Throws', () => {
   })
 
   it('calls next() safely when req has throwing getters', (t, done) => {
-    const middleware = monitorMiddleware()
+    const middleware = pulseMiddleware()
     const req: any = {
       get method() { throw new Error('Exploding method getter') },
       get headers() { throw new Error('Exploding headers getter') },
@@ -50,7 +50,7 @@ describe('SEC-03: Express Instrumentation Failsafe and Never Throws', () => {
   })
 
   it('calls next() safely when req is null or undefined or empty', (t, done) => {
-    const middleware = monitorMiddleware()
+    const middleware = pulseMiddleware()
     const res: any = {
       statusCode: 200,
       once: () => {},

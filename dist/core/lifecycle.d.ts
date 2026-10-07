@@ -85,7 +85,7 @@ export declare function flush(): Promise<void>;
  *
  * @param timeoutMs Maximum time to wait for transport drain. Default: 2000ms.
  */
-export declare function crashFlush(timeoutMs?: number): Promise<void>;
+export declare function emergencyFlush(timeoutMs?: number): Promise<void>;
 /**
  * Register SIGTERM/SIGINT handlers for automatic graceful shutdown.
  * Idempotent: a second call without an intervening reset is a no-op.

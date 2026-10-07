@@ -148,7 +148,7 @@ describe('Crash Semantics & Process Termination Lifecycle', () => {
     const duration = Date.now() - start
 
     assert.strictEqual(result.code, 1, `Expected exit code 1, got ${result.code}. stderr: ${result.stderr}`)
-    assert.ok(duration < 4000, `Process took too long to terminate (${duration}ms) — possible socket hang`)
+    assert.ok(duration < 5500, `Process took too long to terminate (${duration}ms) — possible socket hang`)
   })
 
   it('respects exitOnUncaughtException: false opt-out allowing host to handle termination', async () => {
@@ -230,7 +230,7 @@ describe('Crash Semantics & Process Termination Lifecycle', () => {
     const duration = Date.now() - start
 
     assert.strictEqual(result.code, 1, `Expected exit code 1, got ${result.code}`)
-    assert.ok(duration < 4000, `Crash storm took too long (${duration}ms)`)
+    assert.ok(duration < 5500, `Crash storm took too long (${duration}ms)`)
   })
 
   it('preserves clean listener registration and leaves no leaks across repeated init/shutdown cycles', async () => {

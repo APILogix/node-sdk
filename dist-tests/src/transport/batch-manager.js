@@ -71,7 +71,7 @@ export class BatchManager {
         });
         if (!this.firstQueuedAt)
             this.firstQueuedAt = Date.now();
-        if (this.options.queue.size() >= this.effectiveMaxBatchSize()) {
+        if (this.options.queue.size() >= this.getEffectiveMaxBatchSize()) {
             this.pump();
         }
         else {
@@ -120,7 +120,7 @@ export class BatchManager {
             this.handedOffEvents.add(event);
         return residual;
     }
-    stats() {
+    getStats() {
         return {
             route: this.options.route,
             queuedEvents: this.options.queue.size(),
@@ -134,6 +134,10 @@ export class BatchManager {
             avgBatchSize: this.totalRequests > 0 ? this.totalBatchEvents / this.totalRequests : 0,
         };
     }
+    /** Backward-compatible alias */
+    stats() {
+        return this.getStats();
+    }
     pump(force = false) {
         if (this.destroyed && !force)
             return;
@@ -141,9 +145,9 @@ export class BatchManager {
             this.ensureTimer(true);
             return;
         }
-        const concurrency = this.effectiveConcurrency();
+        const concurrency = this.getEffectiveConcurrency();
         while (this.activeSends < concurrency && !this.options.queue.isEmpty()) {
-            if (!force && this.options.queue.size() < this.options.minBatchSize && !this.maxWaitElapsed()) {
+            if (!force && this.options.queue.size() < this.options.minBatchSize && !this.hasMaxWaitElapsed()) {
                 this.ensureTimer();
                 break;
             }
@@ -162,7 +166,7 @@ export class BatchManager {
         }
     }
     nextSerializableBatch() {
-        const targetSize = this.effectiveMaxBatchSize();
+        const targetSize = this.getEffectiveMaxBatchSize();
         const batch = this.options.queue.drain(targetSize);
         if (batch.length === 0)
             return null;
@@ -614,9 +618,15 @@ export class BatchManager {
             });
         });
     }
+    getEffectiveMaxBatchSize() {
+        return this.effectiveMaxBatchSize();
+    }
     effectiveMaxBatchSize() {
         const scaled = Math.floor(this.options.maxBatchSize * this.options.healthMonitor.batchScale(this.options.route));
         return Math.max(1, scaled);
+    }
+    getEffectiveConcurrency() {
+        return this.effectiveConcurrency();
     }
     effectiveConcurrency() {
         const limit = this.options.connectionManager.maxForRoute(this.options.route);
@@ -626,10 +636,16 @@ export class BatchManager {
             : Math.min(scaled, this.totalRequests + 1);
         return Math.max(1, warmed);
     }
+    hasMaxWaitElapsed() {
+        return this.maxWaitElapsed();
+    }
     maxWaitElapsed() {
         if (!this.firstQueuedAt)
             return false;
-        return Date.now() - this.firstQueuedAt >= this.effectiveMaxWaitMs();
+        return Date.now() - this.firstQueuedAt >= this.getEffectiveMaxWaitMs();
+    }
+    getEffectiveMaxWaitMs(forceExtended = false) {
+        return this.effectiveMaxWaitMs(forceExtended);
     }
     effectiveMaxWaitMs(forceExtended = false) {
         const state = this.options.healthMonitor.snapshot(this.options.route).healthState;
@@ -640,7 +656,7 @@ export class BatchManager {
     ensureTimer(extended = false) {
         if (this.timer)
             return;
-        const waitMs = this.effectiveMaxWaitMs(extended);
+        const waitMs = this.getEffectiveMaxWaitMs(extended);
         this.timer = setTimeout(() => {
             this.timer = null;
             otelContext.with(suppressTracing(otelContext.active()), () => {
@@ -703,7 +719,7 @@ function logTransportConsole(direction, details) {
         return;
     const status = typeof details['statusCode'] === 'number' ? details['statusCode'] : undefined;
     const count = typeof details['eventCount'] === 'number' ? details['eventCount'] : undefined;
-    console.log(`[Pulse transport] ${direction}`, {
+    console.log(`[Telemetry transport] ${direction}`, {
         ...(status !== undefined ? { statusCode: status } : {}),
         ...(count !== undefined ? { eventCount: count } : {}),
     });

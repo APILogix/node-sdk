@@ -96,7 +96,7 @@ export class EventLoopLagMonitor extends EventEmitter {
   /** Get current lag stats without emitting an event. */
   getStats(): EventLoopLagStats | null {
     if (!this.histogram) return null
-    return this.readHistogram(this.histogram)
+    return this.extractHistogramStats(this.histogram)
   }
 
   /** Returns true if event loop lag p99 exceeds the given threshold (ms). */
@@ -114,6 +114,10 @@ export class EventLoopLagMonitor extends EventEmitter {
 
     // Reset histogram for the next interval so stats are per-window
     this.histogram?.reset()
+  }
+
+  private extractHistogramStats(h: IntervalHistogram): EventLoopLagStats {
+    return this.readHistogram(h)
   }
 
   private readHistogram(h: IntervalHistogram): EventLoopLagStats {

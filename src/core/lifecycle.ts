@@ -190,7 +190,7 @@ export async function flush(): Promise<void> {
  *
  * @param timeoutMs Maximum time to wait for transport drain. Default: 2000ms.
  */
-export async function crashFlush(timeoutMs = 2_000): Promise<void> {
+export async function emergencyFlush(timeoutMs = 2_000): Promise<void> {
   try {
     let timer: NodeJS.Timeout | undefined
     const timeoutPromise = new Promise<void>(resolve => {
@@ -210,20 +210,19 @@ export async function crashFlush(timeoutMs = 2_000): Promise<void> {
       }
       try {
         await SerializationPool.reset()
-      } catch {
-        // Best-effort worker termination
-      }
+      } catch {}
     })()
 
     await Promise.race([drainPromise, timeoutPromise])
 
     if (timer) clearTimeout(timer)
   } catch {
-    // Best-effort — swallow all errors during crash flush.
+    // Best-effort — swallow all errors during emergency flush.
     // The process is about to terminate; throwing here would only
     // mask the original uncaught exception in the error output.
   }
 }
+
 
 /**
  * Register SIGTERM/SIGINT handlers for automatic graceful shutdown.
@@ -365,6 +364,9 @@ async function runShutdown(timeoutMs?: number): Promise<ShutdownResult> {
       remainingEvents: eventQueue.size(),
       durationMs: Date.now() - startedAt,
     })
+    if (client.getState() === 'stopping') {
+      try { client.setState('stopped') } catch {}
+    }
   }
 
   const result: ShutdownResult = {

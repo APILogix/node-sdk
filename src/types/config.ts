@@ -325,6 +325,16 @@ export interface OfflineQueueConfig {
   readonly flushDebounceMs?: number | undefined
 }
 
+export interface OfflineQueueInitOptions {
+  readonly enabled?: boolean | undefined
+  readonly directory?: string | undefined
+  readonly maxFileSizeBytes?: number | undefined
+  readonly maxEvents?: number | undefined
+  readonly eventTtlMs?: number | undefined
+  readonly ioTimeoutMs?: number | undefined
+  readonly flushDebounceMs?: number | undefined
+}
+
 export interface ProfilingConfig {
   readonly enabled: boolean
   readonly cpu: boolean
@@ -628,6 +638,11 @@ export interface SDKInitOptions {
     readonly allowRemote?: boolean | undefined
     readonly embedSourceContent?: boolean | undefined
   } | undefined
+  /**
+   * Offline queue / persistent storage configuration.
+   * Pass `false` to completely disable disk persistence (recommended for purely ephemeral/stateless serverless runtimes).
+   */
+  readonly offlineQueue?: boolean | OfflineQueueInitOptions | undefined
 }
 
 // ─── Zod Schema ─────────────────────────────────────────────────────────────
@@ -661,5 +676,21 @@ export const sdkInitOptionsSchema = z.object({
       embedSourceContent: z.boolean().optional(),
     })
     .strict()
+    .optional(),
+  offlineQueue: z
+    .union([
+      z.boolean(),
+      z
+        .object({
+          enabled: z.boolean().optional(),
+          directory: z.string().trim().min(1).optional(),
+          maxFileSizeBytes: z.number().int().min(1024).max(100 * 1024 * 1024).optional(),
+          maxEvents: z.number().int().min(1).max(100000).optional(),
+          eventTtlMs: z.number().int().min(60000).max(7 * 24 * 60 * 60 * 1000).optional(),
+          ioTimeoutMs: z.number().int().min(500).max(60000).optional(),
+          flushDebounceMs: z.number().int().min(0).max(60000).optional(),
+        })
+        .strict(),
+    ])
     .optional(),
 }).strict()

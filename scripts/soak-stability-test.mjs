@@ -19,7 +19,7 @@ import { performance } from 'node:perf_hooks';
 import {
   init,
   shutdown,
-  captureError,
+  captureException,
   captureMessage,
   captureMetric,
   startSpan,
@@ -172,7 +172,7 @@ async function runSoakTest() {
     for (let i = 0; i < EVENTS_PER_INTERVAL; i++) {
       const mod = (totalEventsInjected + i) % 4;
       if (mod === 0) {
-        captureError(new Error(`soak-err-${totalEventsInjected + i}`));
+        captureException(new Error(`soak-err-${totalEventsInjected + i}`));
       } else if (mod === 1) {
         captureMessage(`soak-msg-${totalEventsInjected + i}`, 'info');
       } else if (mod === 2) {

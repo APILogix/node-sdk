@@ -37,10 +37,10 @@ export async function saveConfigCache(apiKey, response) {
         };
         const filePath = getCacheFilePath(apiKey);
         await writeFile(filePath, JSON.stringify(payload, null, 2), 'utf8');
-        getLogger().debug('[Pulse] Saved Last-Known-Good configuration cache to disk');
+        getLogger().debug('Saved Last-Known-Good configuration cache to disk');
     }
     catch (error) {
-        getLogger().debug('[Pulse] Failed to write configuration cache to disk', { error });
+        getLogger().debug('Failed to write configuration cache to disk', { error });
     }
 }
 /**
@@ -68,11 +68,11 @@ export async function loadConfigCache(apiKey) {
             config: parsed.config,
             ...(parsed.configRevision !== undefined ? { configRevision: parsed.configRevision } : {}),
         };
-        getLogger().info('[Pulse] Loaded validated Last-Known-Good configuration from cache');
+        getLogger().info('Loaded validated Last-Known-Good configuration from cache');
         return response;
     }
     catch (error) {
-        getLogger().debug('[Pulse] Could not load configuration cache', { error });
+        getLogger().debug('Could not load configuration cache', { error });
         return null;
     }
 }

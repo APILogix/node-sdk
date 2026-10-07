@@ -21,7 +21,8 @@ export class ConfigApplier {
             || diff.privacyChanged
             || diff.limitsChanged
             || diff.instrumentationChanged
-            || diff.entitlementsChanged;
+            || diff.entitlementsChanged
+            || Boolean(diff.offlineQueueChanged);
     }
     async apply(diff, previous, current) {
         const context = { diff, previous, current };
@@ -35,9 +36,10 @@ export class ConfigApplier {
             // Only the payload limit affects BatchManager construction; route queue
             // capacity lives in transport.queue, while limits.maxQueueSize bounds
             // the separate bootstrap queue.
-            ['transport', this.handlers.transport, diff.transportChanged || transportLimitsChanged(diff)],
+            ['transport', this.handlers.transport, diff.transportChanged || haveTransportLimitsChanged(diff)],
             ['instrumentation', this.handlers.instrumentation, diff.instrumentationChanged || diff.privacyChanged],
             ['entitlements', this.handlers.entitlements, diff.entitlementsChanged],
+            ['offlineQueue', this.handlers.offlineQueue, Boolean(diff.offlineQueueChanged)],
         ];
         for (const [name, handler, changed] of work) {
             if (!changed || !handler)
@@ -52,6 +54,6 @@ export class ConfigApplier {
         }
     }
 }
-function transportLimitsChanged(diff) {
+function haveTransportLimitsChanged(diff) {
     return diff.changes.has('limits.maxPayloadSize');
 }

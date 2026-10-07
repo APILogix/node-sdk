@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { extractTraceContext, injectTraceContext, headerGetter, TRACE_HEADERS, } from '../../src/tracing/context-propagation.js';
 import { withContext, getRequestContext, createContextStore, bindContext, } from '../../src/core/context.js';
 import { toError } from '../../src/core/errors.js';
-import { captureError } from '../../src/capture/captureError.js';
+import { captureException } from '../../src/capture/captureException.js';
 import { classifyError } from '../../src/core/error-classifier.js';
 import { generateFingerprint, resetFingerprintCache } from '../../src/processors/fingerprint.js';
 import { captureBodySnapshot, resolveClientIp, matchesIgnoredPath, } from '../../src/instrumentation/request-capture-utils.js';
@@ -11,14 +11,14 @@ import { CircuitBreaker } from '../../src/transport/circuit-breaker.js';
 import { compress, contentEncoding } from '../../src/utils/compression.js';
 import { CardinalityGovernor } from '../../src/utils/cardinality-governor.js';
 import { LoadShedder } from '../../src/transport/load-shedder.js';
-import { shutdown, crashFlush, registerSignalHandlers, resetSignalHandlers } from '../../src/core/lifecycle.js';
+import { shutdown, emergencyFlush, registerSignalHandlers, resetSignalHandlers } from '../../src/core/lifecycle.js';
 import { createRedisInstrumentation } from '../../src/instrumentation/redis.js';
 import { createMongoDBInstrumentation } from '../../src/instrumentation/mongodb.js';
 import { createMySQLInstrumentation } from '../../src/instrumentation/mysql.js';
 import { createPgInstrumentation } from '../../src/instrumentation/pg.js';
 import { createGraphQLInstrumentation } from '../../src/instrumentation/graphql.js';
-import { monitorMiddleware, expressErrorHandler } from '../../src/instrumentation/express.js';
-import { fastifyPulsePlugin } from '../../src/instrumentation/fastify.js';
+import { pulseMiddleware, expressErrorHandler } from '../../src/instrumentation/express.js';
+import { pulseFastifyPlugin } from '../../src/instrumentation/fastify.js';
 import { trace, context as otelContext } from '@opentelemetry/api';
 describe('Comprehensive Edge Cases — All 10 SDK Subsystems', () => {
     // ──────────────────────────────────────────────────────────────────────────
@@ -163,8 +163,8 @@ describe('Comprehensive Edge Cases — All 10 SDK Subsystems', () => {
             const gqlEnabled = createGraphQLInstrumentation({ enabled: true, captureResolvers: true });
             assert.equal(gqlEnabled._config.ignoreResolveSpans, false);
         });
-        it('Express monitorMiddleware handles requests with undefined headers and non-Error next(err)', () => {
-            const middleware = monitorMiddleware();
+        it('Express pulseMiddleware handles requests with undefined headers and non-Error next(err)', () => {
+            const middleware = pulseMiddleware();
             const req = {
                 method: 'GET',
                 url: '/test-edge',
@@ -185,7 +185,7 @@ describe('Comprehensive Edge Cases — All 10 SDK Subsystems', () => {
             if (listeners['finish'])
                 listeners['finish']();
         });
-        it('Express monitorMiddleware captures errors passed to next(err) even as non-Error primitives', () => {
+        it('Express pulseMiddleware captures errors passed to next(err) even as non-Error primitives', () => {
             const req = {
                 method: 'POST',
                 url: '/api/error-test',
@@ -208,7 +208,7 @@ describe('Comprehensive Edge Cases — All 10 SDK Subsystems', () => {
                     registeredHooks[name] = fn;
                 },
             };
-            fastifyPulsePlugin(fakeFastify, {}, () => { });
+            pulseFastifyPlugin(fakeFastify, {}, () => { });
             assert.ok(registeredHooks['onRequest']);
             const request = {
                 method: 'GET',
@@ -274,12 +274,12 @@ describe('Comprehensive Edge Cases — All 10 SDK Subsystems', () => {
             const fp2 = generateFingerprint(err2, []);
             assert.equal(fp1, fp2, 'Errors with identical structure but different IDs/numbers should share fingerprint');
         });
-        it('captureError executes fail-safe with non-Error inputs and sets status code', () => {
+        it('captureException executes fail-safe with non-Error inputs and sets status code', () => {
             assert.doesNotThrow(() => {
-                captureError({ message: 'Boom', statusCode: 404 });
-                captureError(null);
-                captureError(undefined);
-                captureError('string exception');
+                captureException({ message: 'Boom', statusCode: 404 });
+                captureException(null);
+                captureException(undefined);
+                captureException('string exception');
             });
         });
         it('toError preserves stack property from plain error object', () => {
@@ -458,9 +458,9 @@ describe('Comprehensive Edge Cases — All 10 SDK Subsystems', () => {
     // 9 & 10. Graceful Shutdown & Drain
     // ──────────────────────────────────────────────────────────────────────────
     describe('9 & 10. Lifecycle, Shutdown, & Crash Flush', () => {
-        it('crashFlush completes without throwing even with short timeout', async () => {
+        it('emergencyFlush completes without throwing even with short timeout', async () => {
             await assert.doesNotReject(async () => {
-                await crashFlush(100);
+                await emergencyFlush(100);
             });
         });
         it('signal handlers register and deregister cleanly without stacking', () => {

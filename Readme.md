@@ -1,1022 +1,1039 @@
 # @pulse-apm/node
 
-> Enterprise-grade observability and distributed tracing SDK for Node.js applications, built on OpenTelemetry with automated database interception, truthful timing attribution, adaptive sampling, and detached background execution support.
+> Enterprise-grade observability and distributed tracing SDK for Node.js applications, built natively on OpenTelemetry with automated framework and database interception, truthful timing attribution, adaptive load shedding, resilient offline disk spooling, and detached background task tracing.
 
-[![Version](https://img.shields.io/badge/version-8.4.1-blue.svg)](package.json)
-[![Tests](https://img.shields.io/badge/tests-459%20passing%20(623%20with%20harness)-brightgreen.svg)]()
-[![Node](https://img.shields.io/badge/node-%3E%3D18.19.0-green.svg)]()
+[![Version](https://img.shields.io/badge/version-8.5.0-blue.svg)](package.json)
+[![Node](https://img.shields.io/badge/node-%3E%3D18.0.0-green.svg)]()
+[![Type](https://img.shields.io/badge/module-ESM%20native-orange.svg)]()
 [![License](https://img.shields.io/badge/license-ISC-blue.svg)](package.json)
 
 ---
 
 ## Table of Contents
 
-- [Complete Technical Documentation (docs/)](docs/README.md)
-- [Features](#features)
-- [Installation](#installation)
-- [SDK Initialization & Startup](#sdk-initialization--startup)
-  - [Passing Your API Key](#passing-your-api-key)
-  - [1. ECMAScript Modules (ESM) — Recommended](#1-ecmascript-modules-esm--recommended)
-  - [2. CommonJS (CJS)](#2-commonjs-cjs)
-- [Environment & Endpoint Configuration (.env)](#environment--endpoint-configuration-env)
-- [High-Throughput Services & Adaptive Sampling](#high-throughput-services--adaptive-sampling)
-- [Ultra-Fast Initialization Latency](#ultra-fast-initialization-latency)
-- [Framework Integration](#framework-integration)
-  - [Integration contract: where and when to call APIs](#integration-contract-where-and-when-to-call-apis)
-  - [Monitor middleware: configuration-to-capability matrix](#monitor-middleware-configuration-to-capability-matrix)
-  - [Express.js Integration](#expressjs-integration)
-    - [Express ESM Example](#express-esm-example)
-    - [Express CommonJS Example](#express-commonjs-example)
-  - [Fastify Integration](#fastify-integration)
-  - [Automatic instrumentation and load order](#automatic-instrumentation-and-load-order)
-- [Database & Cache Auto-Instrumentation](#database--cache-auto-instrumentation)
-- [Custom Function & Business Logic Tracing](#custom-function--business-logic-tracing)
-  - [Zero-Boilerplate Function Decoration (`Pulse.wrap`)](#zero-boilerplate-function-decoration-pulsewrap)
-  - [Ergonomic Function Tracing (`Pulse.trace`)](#ergonomic-function-tracing-pulsetrace)
-  - [In-Request Function Tracing (`withSpan`)](#in-request-function-tracing-withspan)
-  - [Synchronous Function Tracing (`withSpanSync`)](#synchronous-function-tracing-withspansync)
-- [Detached Background Work (`withBackgroundSpan`)](#detached-background-work-withbackgroundspan)
-- [Custom Database Spans (`withDbSpan`)](#custom-database-spans-withdbspan)
-- [Error Tracking & Context Enrichment](#error-tracking--context-enrichment)
-  - [Explicit Error Capture (`captureError`)](#explicit-error-capture-captureerror)
-  - [Breadcrumbs, User Identity & Tags](#breadcrumbs-user-identity--tags)
-- [Custom Metrics Tracking](#custom-metrics-tracking)
-- [Capture APIs beyond requests and spans](#capture-apis-beyond-requests-and-spans)
-  - [Feature availability and no-op rules](#feature-availability-and-no-op-rules)
-- [Context, identity, and correlation](#context-identity-and-correlation)
-- [Lifecycle & Hardened Graceful Shutdown](#lifecycle--hardened-graceful-shutdown)
-- [Resilient Pipeline & Telemetry Integrity](#resilient-pipeline--telemetry-integrity)
-- [API Reference](#api-reference)
-- [License](#license)
+- [1. Overview & Architecture](#1-overview--architecture)
+- [2. Requirements](#2-requirements)
+- [3. Installation](#3-installation)
+- [4. Quick Start](#4-quick-start)
+  - [Minimal Node.js Example](#minimal-nodejs-example)
+  - [Express.js Application](#expressjs-application)
+  - [Fastify Application](#fastify-application)
+- [5. Process Bootstrap & Zero-Code Preload](#5-process-bootstrap--zero-code-preload)
+- [6. Initialization (`init`)](#6-initialization-init)
+  - [Complete `init()` Options Reference](#complete-init-options-reference)
+  - [Fail-Open Initialization & Recovery Behavior](#fail-open-initialization--recovery-behavior)
+- [7. Remote Configuration Directives](#7-remote-configuration-directives)
+- [8. Automatic Instrumentation](#8-automatic-instrumentation)
+- [9. Complete API Reference by Domain](#9-complete-api-reference-by-domain)
+  - [A. Lifecycle & Operational Health](#a-lifecycle--operational-health)
+  - [B. Event & Exception Capture](#b-event--exception-capture)
+  - [C. OpenTelemetry Metrics Instruments](#c-opentelemetry-metrics-instruments)
+  - [D. Scope, Tags, User & Breadcrumbs](#d-scope-tags-user--breadcrumbs)
+  - [E. Context & Distributed Trace Propagation](#e-context--distributed-trace-propagation)
+  - [F. Tracing, Custom Spans & Database Queries](#f-tracing-custom-spans--database-queries)
+  - [G. Framework & Middleware Instrumentation](#g-framework--middleware-instrumentation)
+  - [H. Driver Instrumentation Factories & Helpers](#h-driver-instrumentation-factories--helpers)
+  - [I. Diagnostic Logging & Error Classification](#i-diagnostic-logging--error-classification)
+  - [J. Canonical `Pulse` Facade Object](#j-canonical-pulse-facade-object)
+- [10. Express.js Deep Dive](#10-expressjs-deep-dive)
+  - [Enabling Middleware Duration Profiling (`instrumentMiddleware: true`)](#enabling-middleware-duration-profiling-instrumentmiddleware-true)
+- [11. Fastify Deep Dive](#11-fastify-deep-dive)
+- [12. Database Instrumentation & Slow Query Tagging](#12-database-instrumentation--slow-query-tagging)
+- [13. Detached Background Task Tracing (`withBackgroundSpan`)](#13-detached-background-task-tracing-withbackgroundspan)
+- [14. Cron & Job Monitoring (`captureCronCheckIn`)](#14-cron--job-monitoring-capturecroncheckin)
+- [15. Reliability, Delivery Semantics & Load Shedding](#15-reliability-delivery-semantics--load-shedding)
+- [16. Privacy, PII Scrubbing & Security](#16-privacy-pii-scrubbing--security)
+- [17. Graceful Shutdown & Kubernetes Lifecycle](#17-graceful-shutdown--kubernetes-lifecycle)
+- [18. Production Best Practices](#18-production-best-practices)
+- [19. Common Integration Mistakes](#19-common-integration-mistakes)
+- [20. Troubleshooting Guide](#20-troubleshooting-guide)
+- [21. Migration Guide (Legacy to Modern Function Names)](#21-migration-guide-legacy-to-modern-function-names)
 
 ---
 
-## Features
+## 1. Overview & Architecture
 
-- **Turnkey Auto-Instrumentation**: Automatically instruments HTTP/HTTPS, Express, Fastify, PostgreSQL (`pg`), Redis (`redis`, `ioredis`), MongoDB, Mongoose ODM, MySQL2, Prisma, BullMQ, Nodemailer, Axios, Undici, GraphQL, and native `fetch`.
-- **Truthful Timing & Exclusive Durations**: Zero synthetic duration clamping with 1.0ms event-loop jitter tolerance. High-resolution monotonic interval calculation separates Node.js CPU execution time from database and network wait time, eliminating negative exclusive durations.
-- **Detached Background Traces**: First-class support for post-response asynchronous tasks (emails, webhooks, queue publish) via causal `SpanLink` without leaking HTTP trace memory.
-- **Dynamic Adaptive Sampling**: Scales non-error trace volume dynamically under system pressure (`CRITICAL`: 10%, `PRESSURED`: 50%, `ELEVATED`: 80%) to optimize ingestion costs in high-throughput services, with **priority error preservation** (fatal errors bypass adaptive sampling; fatal/crash events receive reserved capacity during rate-limit backoff).
-- **Zero-Dependency Native `.env` Discovery**: Automatically loads your host project's `.env` for endpoint and control-plane configuration without external dependencies (`PULSE_ENDPOINT`, `PULSE_API_URL`, `BACKEND_URL`, `PULSE_API_KEY`).
-- **Low-Overhead Initialization**: Optimized startup path with DNS origin normalization, HTTP keep-alive socket reuse, and lightweight configuration caching. Actual startup time depends on control-plane latency, network conditions, and enabled instrumentation.
-- **Resilient Pipeline & Orphan Recovery**: Cycle-safe bounded orphan recovery grafts unvisited child subtrees onto root traces; LRU trace deduplication stops duplicate emissions; startup index noise is suppressed.
-- **Deep Recursive PII Sanitization**: Masks credit card numbers, passwords, JWTs, JSON string attributes, URL basic authentication credentials, and `set-cookie` headers.
-- **Hardened Graceful Shutdown**: Automatic `SIGTERM`/`SIGINT` listeners drain in-flight batches across all transport routes before container termination.
-- **Multi-Route Multiplexed Transport**: Dedicated priority queues and batch managers across 10 distinct telemetry routes with automatic HTTP 429 quota exhaustion handling and self-recovery.
+`@pulse-apm/node` is engineered with an absolute **fail-open design**: telemetry operations must never degrade, block, leak memory, or crash the host application under any conditions (network outages, invalid keys, rate limits, or memory pressure).
 
----
-
-## Installation
-
-```bash
-npm install @pulse-apm/node
+```
+Host Application Code
+        │
+        ▼
+[ Auto-Instrumentation / Manual Tracing ]
+        │
+        ├── Context Propagation (W3C traceparent / AsyncLocalStorage)
+        ├── Scope Management (User identity, tags, breadcrumbs)
+        │
+        ▼
+[ Canonical Event Normalization & PII Sanitization ]
+        │  (RegEx URL redaction, header masks, JSON body scrubbing)
+        │
+        ▼
+[ Deterministic Sampling Engine ]
+        │  (Head-based FNV-1a trace sampling + route-specific overrides)
+        │
+        ▼
+[ Transport Priority Event Queue ]
+        │  ├── P0: Critical Fatal Crashes & Unhandled Exceptions
+        │  ├── P1: Handled Exceptions & HTTP 5xx Server Errors
+        │  ├── P2: Traces & HTTP Transactions
+        │  └── P3: Low-Priority Steady-State Metrics & Breadcrumbs
+        │
+        ▼
+[ Adaptive Load Shedder & Circuit Breakers ]
+        │  (Drops P3 -> P2 -> P1 based on Event-Loop Lag & Heap limits)
+        │
+        ▼
+[ Worker Thread Serialization Pool (Batches > 50KB) & Gzip Compression ]
+        │
+        ├── Network Route Senders (10 Dedicated Transport Routes)
+        │       ├── /v1/errors
+        │       ├── /v1/traces
+        │       ├── /v1/requests
+        │       ├── /v1/metrics
+        │       ├── /v1/logs
+        │       └── /v1/crons
+        │
+        └── Offline Disk Spooling Fallback (Persistent SQLite/File Queue on Outage)
 ```
 
-> **Requirements:** Node.js `>= 18.19.0` (or Node.js `>= 20.6.0` for native ESM `--import` and native `loadEnvFile` support).
+---
+
+## 2. Requirements
+
+- **Node.js**: `>= 18.0.0` (Supports Node.js 18, 20, 22+)
+- **Module System**: Dual ESM / CommonJS support
+- **TypeScript**: `>= 5.0.0` (Type definitions bundled in `dist/index.d.ts`)
 
 ---
 
-## SDK Initialization & Startup
+## 3. Installation
 
-Always initialize the SDK **as early as possible** in your application lifecycle, before importing database drivers or starting your HTTP server.
+Install the package via your preferred package manager:
 
-### Passing Your API Key
+```bash
+# npm
+npm install @pulse-apm/node
 
-When calling `init()`, you must pass your Pulse APM **`apiKey`**. You can provide it as an options object (recommended) or as a shorthand string:
+# pnpm
+pnpm add @pulse-apm/node
 
-```typescript
-import { init } from '@pulse-apm/node'
+# yarn
+yarn add @pulse-apm/node
+```
 
-// Option A: Options object (Recommended)
-await init({
-  apiKey: 'pls_live_your_api_key_here',
-})
+---
 
-// Option B: Shorthand string
-await init('pls_live_your_api_key_here')
+## 4. Quick Start
 
-// Option C: Passing from process.env
+### Minimal Node.js Example
+
+```ts
+import { init, captureException, captureMessage, flush } from '@pulse-apm/node'
+
+// Initialize the SDK
 await init({
   apiKey: process.env.PULSE_API_KEY!,
-})
-```
-
-The SDK automatically reads your `package.json` to detect `applicationName` and `applicationVersion`. Runtime telemetry policy, sampling rates, features, and entitlements are authoritatively managed via remote configuration.
-
----
-
-### 1. ECMAScript Modules (ESM) — Recommended
-
-If your project uses `"type": "module"` in `package.json`:
-
-#### Step 1: Preload the ESM Loader Hook
-To ensure static `import pg from 'pg'` and `import redis from 'redis'` are automatically intercepted before execution, launch Node with the `--import` flag:
-
-```bash
-# Development / Production command
-node --import @pulse-apm/node/register server.js
-```
-
-> **Why?** Node.js evaluates static ESM imports before executing module code. The `--import` flag registers synchronous `import-in-the-middle` hooks into the module loader, guaranteeing database and HTTP drivers are automatically wrapped without code changes.
-
-#### Step 2: Initialize in Code
-
-```typescript
-// server.js or app.ts
-import { init } from '@pulse-apm/node'
-
-// Initialize the SDK before starting your server (pass your apiKey)
-await init({
-  apiKey: process.env.PULSE_API_KEY || 'pls_live_your_api_key_here',
+  applicationName: 'billing-service',
+  environment: 'production',
 })
 
-// Import frameworks and database drivers AFTER initialization
+try {
+  captureMessage('Service initialized successfully', 'info')
+  // Your business logic
+} catch (error) {
+  // Capture exception with automatic stack parsing and trace correlation
+  captureException(error)
+} finally {
+  await flush()
+}
+```
+
+### Express.js Application
+
+In Express, mount **`pulseMiddleware`** at the top of your middleware stack and **`expressErrorHandler`** at the bottom:
+
+```ts
 import express from 'express'
-import pg from 'pg'
+import { init, pulseMiddleware, expressErrorHandler, captureException } from '@pulse-apm/node'
+
+await init({
+  apiKey: process.env.PULSE_API_KEY!,
+  applicationName: 'order-api',
+})
 
 const app = express()
-// ... continue setting up your app
-```
 
-> 📖 **Need architectural recipes for NestJS, Fastify, BullMQ, TypeScript, or Docker?**  
-> Check out the [Complete Initialization & Load-Order Guide](docs/INITIALIZATION_GUIDE.md).
-
----
-
-### 2. CommonJS (CJS)
-
-If your project uses standard CommonJS (`require`):
-
-```javascript
-// server.js
-const { init } = require('@pulse-apm/node')
-
-async function bootstrap() {
-  // 1. Initialize the SDK with apiKey
-  await init({
-    apiKey: process.env.PULSE_API_KEY || 'pls_live_your_api_key_here',
-  })
-
-  // 2. Require frameworks and database drivers AFTER initialization
-  const express = require('express')
-  const { Pool } = require('pg')
-
-  const app = express()
-  // ... continue setting up your app
-}
-
-bootstrap().catch(console.error)
-```
-
-Run with standard Node:
-```bash
-node server.js
-```
-
----
-
-## Environment & Endpoint Configuration (.env)
-
-The SDK features a **zero-dependency native `.env` loader**. It automatically inspects your application's root directory (`process.cwd()`) and loads environment variables using Node.js native `process.loadEnvFile()` (Node 20.6+) or a lightweight fallback parser.
-
-You do **not** need to install or import `dotenv` to configure your backend ingestion endpoint.
-
-### Configuring Your Ingest Endpoint in `.env`
-
-Create a `.env` file in the root of your host project:
-
-```env
-# Custom backend ingestion / control plane endpoint
-PULSE_ENDPOINT=http://127.0.0.1:3000
-```
-
-### Precedence Resolution
-
-The SDK resolves your backend ingestion endpoint using the following order of precedence:
-
-1. `PULSE_ENDPOINT` environment variable (from `.env` or system environment)
-2. `PULSE_API_URL` environment variable
-3. `PULSE_BASE_URL` environment variable
-4. `BACKEND_URL` environment variable
-5. `SDK_BASE_URL` environment variable
-6. Default production origin (`http://127.0.0.1:5000`)
-
-> **Security & Decoupling:** Backend endpoints are strictly resolved via environment variables or the SDK's built-in origin. Endpoints cannot be overridden via `init()` arguments in code, ensuring infrastructure routing remains decoupled from application business logic.
-
----
-
-## High-Throughput Services & Adaptive Sampling
-
-In services handling high throughput (>10,000 RPS), static trace sampling can result in high telemetry ingestion costs and risk event-loop lag during sudden traffic spikes.
-
-Pulse APM provides **Dynamic Adaptive Sampling** governed entirely via the **Pulse Control Plane / Remote Configuration** (`sampling.adaptive = true`).
-
-> **Enterprise Zero-Code Governance:** You do **not** need to configure or hardcode sampling flags in your application code. Your operations or SRE team enables and tunes adaptive sampling dynamically from the Pulse dashboard without code changes or pod redeployments.
-
-### How Adaptive Sampling Works Under the Hood:
-* The SDK continuously evaluates system pressure (`adaptivePressure`) by monitoring heap memory utilization and event-loop lag:
-  * **`HEALTHY`**: Retains 100% of the remotely configured baseline sample rate.
-  * **`ELEVATED`**: Dynamically throttles non-error telemetry to at most **80%** of the configured rate.
-  * **`PRESSURED`**: Dynamically throttles non-error telemetry to at most **50%** of the configured rate.
-  * **`CRITICAL`**: Dynamically throttles non-error telemetry to at most **10%** of the configured rate (`reason: 'adaptive_pressure'`).
-* **Priority Error Handling**: Fatal errors are exempt from adaptive reduction. This prevents intentional adaptive sampling from removing crash-critical telemetry, but it does not guarantee backend delivery during process termination, queue exhaustion, serialization failure, or network outage.
-
----
-
-## Low-Overhead Initialization Latency
-
-SDK startup is engineered to minimize initialization overhead. Measure startup in your deployment because control-plane latency, DNS, network connectivity, and active instrumentations affect the result:
-* **IPv6 DNS Bypass**: When communicating with local endpoints (`localhost`), Node.js `fetch` (Undici) resolves IPv6 `::1` before falling back to `127.0.0.1`, which can induce a 1–3 second OS timeout. The SDK automatically normalizes `localhost` to `127.0.0.1`, eliminating DNS lookup lag.
-* **HTTP Keep-Alive**: All control-plane handshakes reuse TCP connections with `Connection: keep-alive`.
-* **Redis Cache Alignment**: The `/v1/init` payload structure is aligned with the backend's Redis lookup caching (`getApiKeyMapping` + `getInitDelivery`), ensuring sub-millisecond responses on cache hits.
-
----
-
-## Framework Integration
-
-### Integration contract: where and when to call APIs
-
-Pulse is process-scoped. Call `init()` exactly once during process bootstrap, before the server starts accepting traffic and before driver modules are loaded when using the ESM loader. Register framework middleware/plugins once while constructing the application. Call capture and tracing APIs at the point where the business action occurs; they inherit the active request/trace context automatically.
-
-| Concern | Call | Placement | Result |
-|---|---|---|---|
-| Bootstrap | `await init(...)` | First application bootstrap step | Downloads the authoritative project configuration and starts enabled subsystems. |
-| Express requests | `app.use(monitorMiddleware(...))` | After body parsers, before routes | Creates request context, enriches the active server span, and emits one request event at `finish`/`close`. |
-| Express errors | `app.use(expressErrorHandler())` | After routes, before the final error responder | Captures `next(err)` and associates it with the request trace. |
-| Fastify requests | `fastify.register(fastifyPulsePlugin, options)` | Before routes | Creates request context and emits request/error telemetry on completion. |
-| Custom work | `withSpan(...)` | Around the operation | Adds a child span to the current trace. |
-| Post-response work | `withBackgroundSpan(...)` | At task dispatch | Creates detached work with a causal link to the originating trace. |
-| Explicit errors | `captureError(...)` | In a `catch` block when adding business context | Records the error without replacing normal error handling. |
-| Shutdown | `await shutdown(...)` | Signal handler or framework shutdown hook | Flushes and releases SDK resources. |
-
-### Monitor middleware: configuration-to-capability matrix
-
-`monitorMiddleware()` is the Express request boundary. It does not replace body parsing, authentication, routing, or your error response middleware. Register body parsers and authentication middleware before it when their values should be visible in the request context.
-
-The middleware's effective behavior is the intersection of the local call, remote `features`, remote `instrumentation`, remote `privacy`, sampling, entitlements, and kill switches:
-
-| Remote/local control | Enabled behavior | Disabled behavior |
-|---|---|---|
-| `features.requestCapture` + request entitlement | Emits request event with method, route, status, latency, request/response sizes, IDs, and trace correlation. | No automatic request event. |
-| `features.tracing` + `instrumentation.express.enabled` + tracing entitlement | Creates/uses the HTTP server span and nests supported child spans. | Request context may still exist, but no automatic HTTP trace is emitted. |
-| `privacy.capture.headers` | Attaches request/response headers after scrubbing. | Header payloads are omitted. |
-| `privacy.capture.query` | Attaches query parameters after scrubbing. | Query payload is omitted. |
-| `privacy.capture.body` | Attaches the parsed request body and body size. | Body payload is omitted; body parsing still belongs to Express. |
-| `privacy.capture.response` | Allows response payload capture where supported by the active response-capture path. | Response payload is omitted. |
-| `privacy.capture.cookies` | Allows cookie data to be considered for capture. | Cookies are omitted. |
-| `privacy.scrubbing.enabled` | Redacts configured headers/fields. | Configured redaction is not applied by that scrubber; keep capture disabled for sensitive payloads. |
-| `privacy.piiDetection.*` | Masks detected emails, phones, IPs, cards, or SSNs according to flags. | That PII detector is inactive. |
-| `sampling.routes` | Applies the longest matching URL-prefix rate; a rate of `0` silences that event type. | Global sampling rate applies. |
-| `killswitches.disableSDK`, `disableTracing`, `disableErrors`, `disableTransport` | Immediately suppresses the corresponding pipeline or subsystem. | Normal processing continues. |
-| `expressErrorHandler()` | Captures errors passed to `next(err)` and records exceptions on the active span. | Your application still handles the error, but this automatic error bridge is absent. |
-
-The middleware is fail-open: telemetry failures are contained and do not change the application's response path. It emits completion telemetry once, on either `finish` or `close`, and captures request errors from `next(err)` and response errors. Automatic request capture is not the same as structured log capture; enable/use `captureLog()` separately for application logs.
-
-### Express.js Integration
-
-To capture incoming HTTP requests, route parameters, response status codes, payload sizes, and correlate errors, mount `monitorMiddleware()` early in your middleware chain and `expressErrorHandler()` after all routes.
-
-
-#### Middleware & Router Layer Timing Instrumentation
-
-In enterprise applications, slow middleware execution (such as session database retrieval, bcrypt password hashing, JWT signature verification, or external authorization calls) often creates large unexplained gaps in trace waterfalls.
-
-Enable **middleware timing instrumentation** with intelligent duration thresholding to automatically emit child spans for slow or failing middleware layers without creating telemetry flooding from sub-millisecond parsers:
-
-```typescript
-app.use(monitorMiddleware({
-  // Automatically profile subsequent middleware layers
-  instrumentMiddleware: true,
-  // Only emit child spans for middlewares taking >= 2ms (or throwing an error)
-  minMiddlewareDurationMs: 2,
-  // Optional: skip profiling specific noisy or internal layers
-  ignoreMiddlewares: ['query', 'expressInit'],
+// 1. MUST BE FIRST MIDDLEWARE: Starts request trace, AsyncLocalStorage, and binds context
+app.use(pulseMiddleware({
+  ignorePaths: ['/health', '/metrics'],
+  instrumentMiddleware: true, // Profiles middleware durations (e.g. auth, validation)
+  minMiddlewareDurationMs: 2, // Only emit child spans for middlewares taking >= 2ms
 }))
 
-// Alternatively, instrument programmatically:
-import { instrumentExpress } from '@pulse-apm/node'
-instrumentExpress(app, { minMiddlewareDurationMs: 2 })
-```
-
-#### Express ESM Example
-
-```typescript
-import { init, monitorMiddleware, expressErrorHandler } from '@pulse-apm/node'
-import express from 'express'
-import pg from 'pg'
-
-// 1. Initialize SDK with your apiKey
-await init({ apiKey: process.env.PULSE_API_KEY! })
-
-const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL })
-const app = express()
-
-// 2. Parse bodies before monitorMiddleware
 app.use(express.json())
 
-// 3. Mount monitorMiddleware before any routes
-app.use(monitorMiddleware())
-
-// 4. Standard route handlers — database queries are automatically traced as child spans!
-app.get('/api/users/:id', async (req, res) => {
-  // PostgreSQL query is automatically intercepted and linked to this HTTP request trace:
-  const result = await pool.query('SELECT id, name, email FROM users WHERE id = $1', [req.params.id])
-  
-  if (result.rows.length === 0) {
-    return res.status(404).json({ error: 'User not found' })
-  }
-
-  res.json({ user: result.rows[0] })
+// Application routes
+app.get('/api/orders/:id', async (req, res) => {
+  res.json({ id: req.params.id, status: 'confirmed' })
 })
 
-// 5. Mount expressErrorHandler after all routes
+app.post('/api/checkout', async (req, res) => {
+  try {
+    // Process payment...
+    res.json({ success: true })
+  } catch (err) {
+    captureException(err)
+    res.status(500).json({ error: 'Checkout failed' })
+  }
+})
+
+// 2. MUST BE LAST MIDDLEWARE: Captures unhandled route errors passed to next(err)
 app.use(expressErrorHandler())
 
-app.listen(3000, () => {
-  console.log('Server running on port 3000')
-})
+app.listen(3000, () => console.log('Server running on port 3000'))
 ```
 
-#### Express CommonJS Example
+### Fastify Application
 
-```javascript
-const { init, monitorMiddleware, expressErrorHandler } = require('@pulse-apm/node')
-const express = require('express')
-const { Pool } = require('pg')
+```ts
+import Fastify from 'fastify'
+import { init, pulseFastifyPlugin } from '@pulse-apm/node'
 
-async function main() {
-  await init({ apiKey: process.env.PULSE_API_KEY })
+await init({ apiKey: process.env.PULSE_API_KEY! })
 
-  const pool = new Pool({ connectionString: process.env.DATABASE_URL })
-  const app = express()
+const fastify = Fastify()
 
-  app.use(express.json())
-  app.use(monitorMiddleware())
+// Register the Pulse Fastify plugin
+await fastify.register(pulseFastifyPlugin, {
+  ignorePaths: ['/healthz'],
+  captureHeaders: true,
+})
 
-  app.get('/api/orders/:id', async (req, res) => {
-    const { rows } = await pool.query('SELECT * FROM orders WHERE id = $1', [req.params.id])
-    res.json({ order: rows[0] })
-  })
+fastify.get('/api/users/:id', async (request, reply) => {
+  return { id: (request.params as any).id }
+})
 
-  // Error handling middleware
-  app.use(expressErrorHandler())
-
-  app.listen(3000, () => {
-    console.log('Server listening on port 3000')
-  })
-}
-
-main().catch(console.error)
+await fastify.listen({ port: 3000, host: '0.0.0.0' })
 ```
 
 ---
 
-### Fastify Integration
+## 5. Process Bootstrap & Zero-Code Preload
 
-Fastify applications use `fastifyPulsePlugin`:
+To guarantee that auto-instrumentation intercepts Node.js core modules (`http`, `https`, `fetch`) and third-party drivers (`pg`, `mysql2`, `mongodb`, `redis`) before your application requires them, use Node's native `--import` flag:
 
-```typescript
-import { init, fastifyPulsePlugin } from '@pulse-apm/node'
-import Fastify from 'fastify'
+```bash
+# Node.js >= 18.19.0 (ESM & CJS)
+node --import @pulse-apm/node/register dist/server.js
+
+# Or in your package.json scripts:
+{
+  "scripts": {
+    "start": "node --import @pulse-apm/node/register dist/server.js"
+  }
+}
+```
+
+When started with `--import @pulse-apm/node/register`, monkey-patching hooks are registered immediately at process startup. Your application code then simply calls `await init({ apiKey: ... })`.
+
+---
+
+## 6. Initialization (`init`)
+
+The `init(options)` function establishes connection with the Pulse control plane, fetches the remote configuration snapshot (`POST /v1/init`), activates enabled subsystems, and sets up process shutdown hooks.
+
+```ts
+import { init } from '@pulse-apm/node'
+
+const config = await init({
+  apiKey: process.env.PULSE_API_KEY!,
+  endpoint: 'https://ingest.pulse-apm.com',
+  applicationName: 'payment-gateway',
+  applicationVersion: '2.4.0',
+  environment: 'production',
+  debug: false,
+})
+```
+
+### Complete `init()` Options Reference
+
+The options object passed to `init()` is strictly validated using Zod. Passing unsupported keys triggers a validation error and places the SDK into dormant recovery mode.
+
+| Parameter | Type | Required | Default | Description | Constraints |
+|---|---|---|---|---|---|
+| `apiKey` | `string` | **Yes** | — | Project API authentication token. | Non-empty; printable ASCII only. |
+| `endpoint` | `string` | No | `'https://api.pulse.dev'` | Base ingestion server URL. | Must be valid HTTP/HTTPS URL. |
+| `applicationName` | `string` | No | `'node-application'` | Service name for traces and metrics. | Max 128 characters. |
+| `applicationVersion` | `string` | No | `'0.0.0'` | Release version (e.g. `'1.2.0'`). | Semantic version or Git SHA. |
+| `environment` | `string` | No | `process.env.NODE_ENV` or `'production'` | Target environment (e.g. `'production'`, `'staging'`). | Max 64 characters. |
+| `debug` | `boolean` | No | `false` | Enables verbose diagnostic console logging. | Boolean. |
+| `serverName` | `string` | No | `os.hostname()` | Host machine or container identifier. | Max 128 characters. |
+| `initTimeoutMs` | `number` | No | `3000` | Maximum wait time (ms) for `/v1/init` on cold start before continuing in background recovery. | Minimum `100`ms. |
+| `shutdownTimeoutMs`| `number` | No | `5000` | Maximum wait time (ms) allowed for graceful shutdown and buffer flushing. | Minimum `500`ms. |
+| `maxQueueSize` | `number` | No | `10000` | Maximum number of events buffered in memory before dropping low-priority telemetry. | Positive integer. |
+| `dropStrategy` | `'drop_oldest' \| 'drop_newest'` | No | `'drop_oldest'` | Queue eviction policy when maxQueueSize is reached. | Fatal errors are always protected. |
+| `logger` | `PulseLogger` | No | Internal Console Logger | Custom logger adapter implementing `debug`, `info`, `warn`, `error`. | Must implement logging interface. |
+| `logLevel` | `'debug' \| 'info' \| 'warn' \| 'error'` | No | `'info'` | Minimum severity level for SDK diagnostic output. | Enum. |
+| `plugins` | `SDKPlugin[]` | No | `[]` | Custom SDK plugin interceptors. | Valid plugin implementations. |
+| `eventProcessors` | `EventProcessor[]` | No | `[]` | Pipeline hooks to mutate or enrich events prior to transport. | Functions returning modified event or null. |
+| `breadcrumbProcessors` | `BreadcrumbProcessor[]` | No | `[]` | Hooks to filter or modify breadcrumbs before ring-buffer storage. | Functions returning modified breadcrumb or null. |
+| `logFormat` | `'json' \| 'pretty'` | No | `'json'` | Diagnostic log output format. | Enum. |
+| `network` | `NetworkOptions` | No | `{ timeoutMs: 5000, maxRetries: 3 }` | HTTP client options for control-plane requests. | Object. |
+
+### Fail-Open Initialization & Recovery Behavior
+
+If the control-plane endpoint is unreachable (network partition, DNS failure, 5xx error, or timeout), `init()`:
+1. Logs a diagnostic error (`Telemetry initialization failed; entering dormant state`).
+2. Transitions the SDK into a **dormant background recovery state**.
+3. Spawns an unref'd `BackgroundRecoveryWorker` that retries connection with exponential backoff and jitter.
+4. **Returns `undefined` without throwing.** Your host application starts up immediately without delay or blocking.
+5. As soon as the backend comes online, the SDK automatically promotes from dormant to active mode.
+
+---
+
+## 7. Remote Configuration Directives
+
+Runtime telemetry policies (sampling rates, batch sizes, buffer thresholds, feature killswitches) are **centrally governed by the remote control plane (`POST /v1/init`)**, rather than hard-coded in customer applications.
+
+Every 60 seconds, the SDK checks for remote configuration updates. When new directives arrive:
+- **`sampling`**: Hot-swaps probabilistic sampling rates per event type and per route (e.g. `/health` sampled at `0.0`, `/checkout` sampled at `1.0`).
+- **`killswitches`**: Instantly disables specific subsystems (`disableErrors`, `disableTracing`, `disableMetrics`, `disableLogs`, `disableCrons`).
+- **`limits`**: Dynamically adjusts maximum batch sizes, maximum queue depths, and memory thresholds.
+- **`privacy`**: Updates sensitive header redaction lists and regex PII rules.
+
+---
+
+## 8. Automatic Instrumentation
+
+When imported, `@pulse-apm/node` automatically intercepts standard Node.js libraries and database drivers without requiring manual code changes:
+
+| Target Library | Supported Versions | Interception Method | What Is Captured |
+|---|---|---|---|
+| **HTTP / HTTPS** | Node.js core | Monkey-patch / OTel | Client requests, response status, duration, headers. |
+| **Fetch** | Node.js core `>= 18` | Undici instrumentation | Outbound HTTP requests, timings, errors. |
+| **Express** | `>= 4.0.0` | Middleware / Layer hook | Route patterns (`/users/:id`), middleware timings, error handling. |
+| **Fastify** | `>= 4.0.0` | Plugin / Hooks | Route execution, serialization time, status codes. |
+| **PostgreSQL (`pg`)** | `>= 8.0.0` | Pool / Client prototype | SQL queries, parameterized statements, query duration, slow query tagging. |
+| **MySQL / MySQL2** | `>= 2.0.0` | Connection prototype | Queries, transactions, query durations. |
+| **MongoDB** | `>= 4.0.0` | Command listener | Commands (`find`, `update`, `insert`), database name, durations. |
+| **Mongoose** | `>= 6.0.0` | Query middleware | Schema operations, validation errors, hook durations. |
+| **Redis / ioredis** | `>= 4.0.0` | Client prototype | Redis commands (`GET`, `SET`, `HGETALL`), key prefixes, latency. |
+| **Prisma** | `>= 4.0.0` | OTel / `$extends` | Client query spans, model actions, durations. |
+| **BullMQ** | `>= 3.0.0` | Job processor wrapper | Job queues, job processing time, failures, retry counts. |
+| **Axios** | `>= 0.27.0` | Interceptor | Outbound HTTP requests, headers, response status. |
+| **GraphQL** | `>= 15.0.0` | Field resolver wrapper | Operation type (`query`/`mutation`), field execution time. |
+| **KafkaJS** | `>= 2.0.0` | Producer / Consumer hooks | Message publish/consume latency, topic names. |
+| **amqplib** | `>= 0.8.0` | Channel prototype | RabbitMQ queue publishes and consumes. |
+
+---
+
+## 9. Complete API Reference by Domain
+
+Every function below is exported directly from the package entry point:
+```ts
+import { ... } from '@pulse-apm/node'
+```
+
+---
+
+### A. Lifecycle & Operational Health
+
+#### `init(options?: SDKInitOptions): Promise<Readonly<RemoteConfigResponse> | undefined>`
+Initializes the SDK, starts auto-instrumentation, and connects to the control plane.
+- **Parameters**: `options?: SDKInitOptions` (see [Section 6](#6-initialization-init)).
+- **Returns**: `Promise<Readonly<RemoteConfigResponse> | undefined>`. Never throws.
+
+#### `shutdown(timeoutMs?: number): Promise<ShutdownResult>`
+Gracefully drains all 10 transport route queues, ends pending spans, flushes disk storage, deregisters process listeners, and stops background worker pools.
+- **Parameters**: `timeoutMs?: number` (Default: `5000`ms).
+- **Returns**: `Promise<ShutdownResult>` (`{ completed, timedOut, durationMs, remainingEvents, deadLetterCount, stepErrors }`).
+
+#### `flush(timeoutMs?: number): Promise<void>`
+Forces an immediate asynchronous drain of all pending batches across all transport routes.
+- **Parameters**: `timeoutMs?: number` (Default: `5000`ms).
+- **Returns**: `Promise<void>`.
+
+#### `emergencyFlush(timeoutMs?: number): Promise<void>`
+High-speed synchronous/fast drain intended for `uncaughtException` and `SIGSEGV` crash handlers. Drains fatal error queues without tearing down subsystems.
+- **Parameters**: `timeoutMs?: number` (Default: `2000`ms).
+- *(Formerly known as `crashFlush` in early versions.)*
+
+#### `getConfig(): Readonly<RemoteConfigResponse> | null`
+Returns the currently active, frozen remote configuration object, or `null` if the SDK is not yet initialized.
+
+#### `getHealth(): HealthSnapshot`
+Returns an instantaneous, comprehensive health snapshot across 15 SDK internal subsystems (heap utilization, memory pressure state, tenant quota exhaustion, route circuit breakers, queue size, dropped events, and persistent replay counts).
+- *(Formerly known as `getSDKHealth` in early versions.)*
+
+#### `loadEnvFileSafely(envFilePath?: string): Record<string, string>`
+Safely parses and loads `.env` variables into `process.env` without throwing errors if the file is missing, empty, or unreadable.
+
+---
+
+### B. Event & Exception Capture
+
+#### `captureException(error: unknown, severity?: ErrorSeverity | { severity?: ErrorSeverity } | SeverityLevel): void`
+Captures an `Error` or exception. Automatically parses stack traces, resolves source maps, sanitizes PII, attaches the active scope and W3C trace ID, and routes the event to the `errors` transport pipeline.
+- **Parameters**:
+  - `error`: The thrown error object, string, or arbitrary exception.
+  - `severity`: Optional severity (`'fatal'`, `'error'`, `'warning'`, `'info'`, `'debug'`). Default: `'error'`.
+- *(Formerly known as `captureError` in early versions.)*
+
+```ts
+try {
+  throw new Error('Database connection failed')
+} catch (err) {
+  captureException(err, 'fatal')
+}
+```
+
+#### `captureMessage(message: string, severity?: SeverityLevel, context?: Record<string, unknown>): void`
+Captures an informational, warning, or diagnostic text message event.
+- **Parameters**:
+  - `message: string`: Message text (automatically sanitized for secrets and PII).
+  - `severity?: SeverityLevel`: Severity level (`'debug'`, `'info'`, `'warn'`, `'error'`). Default: `'info'`.
+  - `context?: Record<string, unknown>`: Optional contextual attributes.
+
+```ts
+captureMessage('User upgraded to enterprise tier', 'info', { userId: 'usr_42' })
+```
+
+#### `captureRequest(event: RequestEvent): void`
+Manually records an HTTP request/response transaction when not using automatic framework middleware. Automatically enriches the event with active OpenTelemetry trace IDs.
+
+#### `captureEvent(event: CaptureEventInput): void`
+Low-level canonical ingestion API for dispatching custom pre-structured telemetry events directly into the pipeline.
+
+#### `captureMetric(name: string, value: number, type?: MetricType, options?: { tags?: Record<string, string>; unit?: string }): void`
+Dispatches a custom metric data point to the metric aggregation registry (`'gauge'`, `'counter'`, or `'histogram'`).
+
+#### `captureLog(level: CaptureLogLevel, message: string, ...args: unknown[]): void`
+Captures a structured log message event into the `logs` transport pipeline with arguments scrubbed for sensitive data.
+- **Parameters**:
+  - `level`: `'debug' | 'info' | 'warn' | 'error' | 'fatal'`.
+  - `message`: Log string.
+  - `...args`: Additional metadata objects (max 10 kept, sanitized).
+
+```ts
+captureLog('info', 'Payment processed', { orderId: 'ord_123', amount: 49.99 })
+```
+
+#### `captureCronCheckIn(monitorSlug: string, status: 'ok' | 'error' | 'in_progress', options?: CronCheckInOptions): void`
+Reports recurring job heartbeats and execution status (`in_progress`, `ok`, `error`) with elapsed duration.
+
+```ts
+captureCronCheckIn('billing-nightly', 'in_progress')
+try {
+  await runBilling()
+  captureCronCheckIn('billing-nightly', 'ok', { duration: 1420 })
+} catch (err) {
+  captureCronCheckIn('billing-nightly', 'error')
+}
+```
+
+#### `captureReplay(sessionId: string, segmentId: number, events: readonly unknown[]): void`
+Submits a session replay recording chunk (stubbed and disabled by default in Node.js runtime).
+
+#### `startProfile(profileId: string): Promise<boolean>`
+Starts a CPU profiling session for the given `profileId`. Returns `true` if profiling started.
+
+#### `stopProfile(profileId: string): Promise<void>`
+Stops the CPU profiling session for `profileId` and queues the profile payload for transport.
+
+---
+
+### C. OpenTelemetry Metrics Instruments
+
+All metric functions route into OpenTelemetry metric instruments and aggregate in memory with low CPU overhead.
+
+```ts
+import { incrementCounter, setGauge, recordHistogram, addUpDownCounter } from '@pulse-apm/node'
+
+// Increment a counter
+incrementCounter('http.requests.total', 1, { method: 'POST', status: '200' })
+
+// Set an instantaneous gauge
+setGauge('db.connection_pool.active', 12, { pool: 'read-replica' })
+
+// Record a latency histogram sample
+recordHistogram('api.response_time_ms', 42.5, { route: '/api/checkout' })
+
+// Adjust an up-down counter
+addUpDownCounter('queue.jobs.in_flight', 1, { queue: 'emails' })
+```
+
+---
+
+### D. Scope, Tags, User & Breadcrumbs
+
+Scope data is attached to the asynchronous execution branch via `AsyncLocalStorage` and automatically included with every captured error and transaction.
+
+#### `setUser(user: User | null): void`
+Attaches user identity (`id`, `username`, `email`, `ipAddress`) to the active scope. Pass `null` to clear user data.
+
+```ts
+setUser({
+  id: 'usr_8921',
+  email: 'alex@example.com',
+  username: 'alexm',
+})
+```
+
+#### `setTag(key: string, value: string): void` & `setTags(tags: Record<string, string>): void`
+Sets indexable string tags for filtering in dashboards.
+
+```ts
+setTag('tier', 'premium')
+setTags({ region: 'us-east-1', environment: 'production' })
+```
+
+#### `removeTag(key: string): void`
+Removes a tag from the active execution scope.
+
+#### `setExtra(key: string, value: unknown): void` & `setExtras(extras: Record<string, unknown>): void`
+Sets non-indexed metadata to assist in debugging.
+
+#### `removeExtra(key: string): void`
+Removes an extra metadata field from the active scope.
+
+#### `setContext(key: string, context: Record<string, unknown> | null): void`
+Attaches a named structured context block.
+
+```ts
+setContext('subscription', { plan: 'enterprise', seats: 50 })
+```
+
+#### `getScopeData(): ScopeData`
+Returns a read-only snapshot of all tags, extras, user information, and context blocks on the current scope.
+
+#### `clearScope(): void`
+Resets all user data, tags, extras, and context blocks from the active execution scope.
+
+#### `addBreadcrumb(input: BreadcrumbInput): void`
+Appends a breadcrumb to the active request's ring buffer (default max: 100). Breadcrumbs are attached to any error captured in the same async context.
+
+```ts
+addBreadcrumb({
+  category: 'auth',
+  message: 'Token validated successfully',
+  level: 'info',
+  data: { role: 'admin' },
+})
+```
+
+#### `withScope<T>(fn: (scope: ScopeManager) => T): T`
+Executes callback `fn` inside an isolated clone of the current scope. Modifications made within `fn` do not leak into outer scopes.
+
+```ts
+withScope((scope) => {
+  scope.setTag('isolated', 'true')
+  // Operations here only have this tag
+})
+```
+
+---
+
+### E. Context & Distributed Trace Propagation
+
+#### `getTraceId(): string | null`
+Returns the active 32-character hexadecimal W3C trace ID from `AsyncLocalStorage`, or `null` if no trace is active.
+
+#### `getSpanId(): string | null`
+Returns the active 16-character hexadecimal span ID from `AsyncLocalStorage`, or `null` if no span is active.
+
+#### `getRequestContext(): ContextStore | undefined`
+Returns the raw `ContextStore` instance attached to the current asynchronous execution branch.
+
+#### `withContext<T>(store: ContextStore, fn: () => T): T`
+Runs synchronous or asynchronous function `fn` with `store` bound to the current `AsyncLocalStorage` context.
+
+#### `createContextStore(initial?: Partial<ContextStore>): ContextStore`
+Instantiates a new `ContextStore` seed object with request ID, timestamps, and ring buffer breadcrumbs.
+
+#### `bindContext<T>(target: T, store?: ContextStore): T`
+Binds an existing function or EventEmitter to the active context store so asynchronous callbacks preserve context.
+
+#### `extractTraceContext(carrier: Record<string, string | string[] | undefined>): Context`
+Extracts W3C `traceparent` and `baggage` from incoming HTTP headers into an OpenTelemetry `Context`.
+
+#### `injectTraceContext(carrier: Record<string, string | undefined>): void`
+Injects the active W3C `traceparent` and `baggage` headers into an outgoing HTTP carrier object:
+
+```ts
+const headers: Record<string, string> = {}
+injectTraceContext(headers)
+await fetch('https://payment-service.internal/charge', { headers })
+```
+
+---
+
+### F. Tracing, Custom Spans & Database Queries
+
+#### `startSpan(name: string, options?: SpanOptions): PulseSpan`
+Starts an un-scoped OpenTelemetry span. The caller is responsible for calling `span.end()`.
+
+#### `withSpan<T>(name: string, fn: (span: PulseSpan) => Promise<T>, options?: SpanOptions): Promise<T>`
+Executes an async callback within an active span. The span ends automatically upon promise resolution or rejection, with exceptions recorded.
+
+```ts
+const result = await withSpan('calculateTax', async (span) => {
+  span.setAttribute('order.itemsCount', items.length)
+  return computeTax(items)
+})
+```
+
+#### `withSpanSync<T>(name: string, fn: (span: PulseSpan) => T, options?: SpanOptions): T`
+Synchronous version of `withSpan`. Automatically ends upon completion or throw.
+
+#### `trace<T>(name: string, fn: (span: PulseSpan) => T | Promise<T>, options?: SpanOptions): T | Promise<T>`
+Ergonomic auto-detecting tracing function that transparently handles both synchronous and asynchronous callbacks.
+
+#### `wrap<F>(name: string, fn: F, options?: SpanOptions): F`
+Wraps a target function, returning an identical function signature that automatically creates an active span around each invocation.
+
+```ts
+const tracedCalculateTax = wrap('calculateTax', calculateTax)
+```
+
+#### `startBackgroundSpan(name: string, options?: BackgroundSpanOptions): PulseSpan`
+Starts a detached background span that survives after the parent HTTP server span has closed, causally linked via OpenTelemetry `SpanLink`.
+
+#### `withBackgroundSpan<T>(name: string, fn: (span: PulseSpan) => Promise<T>, options?: BackgroundSpanOptions): Promise<T>`
+Executes an async task within a detached background span. Prevents background jobs from holding HTTP response traces open or creating memory leaks.
+
+```ts
+app.post('/api/checkout', async (req, res) => {
+  res.json({ status: 'ok' })
+
+  // Runs in background after response is sent:
+  void withBackgroundSpan('sendConfirmationEmail', async (span) => {
+    span.setAttribute('user.email', req.body.email)
+    await mailer.sendReceipt(req.body)
+  })
+})
+```
+
+#### `startDbSpan(options: DbSpanOptions): PulseSpan`
+Starts an OpenTelemetry database span with semantic attributes (`db.system`, `db.name`, `db.statement`) and slow-query threshold tracking.
+
+#### `withDbSpan<T>(options: DbSpanOptions, fn: (span: PulseSpan) => Promise<T>): Promise<T>`
+Executes an asynchronous database query within a tracked database span, automatically recording query duration, errors, and slow query tags (`db.slow_query = true`).
+
+```ts
+const users = await withDbSpan({
+  system: 'postgresql',
+  table: 'users',
+  operation: 'SELECT',
+  statement: 'SELECT id, email FROM users WHERE active = true',
+  slowQueryThresholdMs: 100, // Tagged as slow query if execution takes >= 100ms
+}, async (span) => {
+  return await db.query('SELECT id, email FROM users WHERE active = true')
+})
+```
+
+#### `withDbSpanSync<T>(options: DbSpanOptions, fn: (span: PulseSpan) => T): T`
+Synchronous version of `withDbSpan`.
+
+#### `getActiveSpan(): PulseSpan | undefined`
+Returns the currently active OpenTelemetry span, or `undefined` if none is active.
+
+#### `getActiveBackgroundSpanCount(): number`
+Returns the count of currently in-flight background spans.
+
+#### `flushTracer(): Promise<void>`
+Flushes active OpenTelemetry `NodeTracerProvider` batch span processors.
+
+#### `computeExclusiveDuration(spanIntervals: SpanInterval[], spanDurationMs: number): DurationBreakdown`
+Calculates self-time vs child execution time across a tree of concurrent and sequential span intervals.
+
+---
+
+### G. Framework & Middleware Instrumentation
+
+#### `pulseMiddleware(options?: PulseExpressOptions): RequestHandler`
+Express request monitoring middleware. Initializes `RequestContext` inside `AsyncLocalStorage`, extracts incoming W3C trace headers, enriches the active OpenTelemetry server span with route details, and emits transaction telemetry.
+*(Formerly known as `monitorMiddleware` in early versions.)*
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `ignorePaths` | `readonly (string \| RegExp)[]` | `[]` | Exact/prefix paths or regular expressions to ignore (e.g. `['/health', /^\/static\/.*/]`). |
+| `ignoreMethods` | `readonly string[]` | `[]` | Case-insensitive HTTP methods to skip (e.g. `['OPTIONS', 'HEAD']`). |
+| `maxBreadcrumbs` | `number` | `100` | Maximum number of breadcrumbs stored in request-scoped storage. |
+| `trustedProxies` | `readonly string[]` | `[]` | Trusted reverse proxy IPs used to extract real client IP from `X-Forwarded-For`. |
+| `instrumentMiddleware` | `boolean` | `false` | When `true`, automatically measures execution durations of Express middleware layers. |
+| `minMiddlewareDurationMs` | `number` | `2.0` | Minimum execution duration in ms required for a middleware layer to emit a child span. |
+| `ignoreMiddlewares` | `readonly (string \| RegExp)[]` | `['query', 'expressInit']` | Names of middleware layers to exclude from layer profiling. |
+
+#### `expressErrorHandler(): ErrorRequestHandler`
+Terminal Express error-handling middleware (`(err, req, res, next)`). Catches unhandled errors passed to `next(err)`, reports them via `captureException`, marks the active server span as `ERROR`, and passes the error to downstream custom handlers. Must be mounted after all application routes.
+
+#### `instrumentExpress(app: Express, options?): void`
+Profiles Express application middleware layers to measure execution duration without manually wrapping each layer.
+
+#### `pulseFastifyPlugin(fastify: FastifyInstance, options?: PulseFastifyOptions): Promise<void>`
+Native Fastify plugin for request tracing, AsyncLocalStorage binding, and error capture.
+*(Formerly known as `fastifyPulsePlugin` in early versions.)*
+
+---
+
+### H. Driver Instrumentation Factories & Helpers
+
+- **`registerBootstrapAutoInstrumentations()`**: Automatically executed on import. Registers fail-safe monkey-patch hooks for 15 supported drivers.
+- **`registerAutoInstrumentations(options?: AutoInstrumentOptions)`**: Programmatically registers or reconfigures auto-instrumentation drivers with custom driver options.
+- **`registerEsmLoaderHooks()`**: Registers Node.js ESM module resolution customization hooks for zero-code `--import @pulse-apm/node/register`.
+- **`createGraphQLInstrumentation(options?)`**: Creates GraphQL resolver tracing instrumentation.
+- **`createPrismaInstrumentation(options?)`**: Creates OpenTelemetry instrumentation for Prisma.
+- **`pulsePrismaExtension(options?)`**: Returns a `$extends` client extension for Prisma queries.
+- **`instrumentPrismaClientInstance(prisma, options?)`**: Direct instance instrumentation wrapper for `PrismaClient`.
+- **`createMongoDBInstrumentation(options?)`**: Creates MongoDB driver instrumentation.
+- **`createMongooseInstrumentation(options?)`**: Creates Mongoose query & schema instrumentation.
+- **`createRedisInstrumentation(options?)`**: Creates Redis (ioredis / node-redis) instrumentation.
+- **`createBullMQInstrumentation(options?)`**: Creates BullMQ queue and worker job instrumentation.
+- **`createAxiosInstrumentation(options?)`**: Creates outgoing HTTP instrumentation for Axios.
+- **`createPgInstrumentation(options?)`**: Creates PostgreSQL driver (`pg`) instrumentation.
+- **`patchPgPoolConnectOnce()`**: Patches PostgreSQL connection pool to prevent leak on connect.
+- **`createMySQLInstrumentation(options?)`**: Creates MySQL/MySQL2 driver instrumentation.
+- **`patchEventEmitter(emitter)` / `unpatchEventEmitter(emitter)`**: Binds context across Node.js event emitter listeners.
+- **`installHttpLifecycleGuard()` / `uninstallHttpLifecycleGuard()`**: Guards HTTP client sockets against race conditions in OTel hooks.
+- **`isOtelInstrumentationError(error)`**: Identifies whether an error originated inside OpenTelemetry internals.
+
+---
+
+### I. Diagnostic Logging & Error Classification
+
+#### `setLogger(logger: Logger): void`
+Replaces the internal SDK diagnostic logger with a custom logger conforming to `{ debug, info, warn, error }`.
+
+#### `setDebugMode(enabled: boolean): void`
+Enables or disables verbose diagnostic console logging.
+
+#### `setLogLevel(level: SeverityLevel): void`
+Sets the minimum diagnostic log level (`'debug'`, `'info'`, `'warn'`, `'error'`).
+
+#### `classifyError(error: unknown): ErrorClassification`
+Classifies an arbitrary error into category, severity, and root cause (`database`, `network`, `auth`, `validation`, `internal`).
+
+#### `severityFromString(level: string): Severity`
+Parses a string level into a typed `Severity` enum.
+
+#### `isSeverityGte(a: Severity, b: Severity): boolean`
+Returns `true` if severity `a` is greater than or equal to severity `b`.
+
+#### `doesSeverityMeetThreshold(level: Severity, threshold: Severity): boolean`
+Evaluates whether a given severity satisfies a configured threshold.
+
+---
+
+### J. Canonical `Pulse` Facade Object
+
+All primary SDK methods are also accessible directly via the `Pulse` facade object:
+
+```ts
+import { Pulse } from '@pulse-apm/node'
+// or: import Pulse from '@pulse-apm/node'
+
+await Pulse.init({ apiKey: process.env.PULSE_API_KEY! })
+
+app.use(Pulse.pulseMiddleware({ instrumentMiddleware: true }))
+app.use(Pulse.expressErrorHandler())
+
+Pulse.captureException(new Error('Something broke'))
+Pulse.captureMessage('Order placed', 'info')
+Pulse.captureMetric('cache.miss', 1)
+Pulse.incrementCounter('orders.total')
+Pulse.setGauge('active.connections', 8)
+Pulse.recordHistogram('render.time', 12.4)
+Pulse.addBreadcrumb({ category: 'cart', message: 'Item added' })
+Pulse.setUser({ id: 'user_1' })
+Pulse.setTag('tenant', 'acme')
+
+await Pulse.withSpan('processPayment', async (span) => { ... })
+await Pulse.withBackgroundSpan('emailReceipt', async (span) => { ... })
+await Pulse.withDbSpan({ system: 'postgresql' }, async () => { ... })
+
+const traceId = Pulse.getTraceId()
+const health = Pulse.getHealth()
+
+await Pulse.flush()
+await Pulse.shutdown()
+```
+
+---
+
+## 10. Express.js Deep Dive
+
+### Enabling Middleware Duration Profiling (`instrumentMiddleware: true`)
+
+Express applications frequently experience latency bottlenecks inside third-party middlewares (such as body parsers, JWT token verification, CORS, or custom permission filters).
+
+By passing `instrumentMiddleware: true` to `pulseMiddleware()`, Pulse profiles the execution duration of every middleware layer in your Express stack:
+
+```ts
+import express from 'express'
+import { init, pulseMiddleware, expressErrorHandler } from '@pulse-apm/node'
 
 await init({ apiKey: process.env.PULSE_API_KEY! })
 
-const fastify = Fastify({ logger: true })
+const app = express()
 
-// Register the Pulse plugin
-await fastify.register(fastifyPulsePlugin)
+app.use(pulseMiddleware({
+  // 1. Enable layer profiling:
+  instrumentMiddleware: true,
 
-fastify.get('/api/health', async (request, reply) => {
-  return { status: 'healthy' }
+  // 2. Only emit child spans for middlewares taking >= 2ms:
+  minMiddlewareDurationMs: 2,
+
+  // 3. Skip built-in or noisy middlewares:
+  ignoreMiddlewares: ['expressInit', 'query'],
+}))
+
+// Authentication layer taking > 2ms will emit a child span:
+// "express.middleware: authenticateJwt"
+app.use(async function authenticateJwt(req, res, next) {
+  await verifyToken(req.headers.authorization)
+  next()
 })
+
+app.get('/api/data', (req, res) => res.json({ ok: true }))
+
+app.use(expressErrorHandler())
+```
+
+---
+
+## 11. Fastify Deep Dive
+
+```ts
+import Fastify from 'fastify'
+import { init, pulseFastifyPlugin } from '@pulse-apm/node'
+
+await init({ apiKey: process.env.PULSE_API_KEY! })
+
+const fastify = Fastify()
+
+await fastify.register(pulseFastifyPlugin, {
+  ignorePaths: ['/health', '/metrics'],
+  ignoreMethods: ['OPTIONS'],
+  maxBreadcrumbs: 100,
+  captureHeaders: true,
+})
+
+fastify.get('/api/users', async () => ({ users: [] }))
 
 await fastify.listen({ port: 3000 })
 ```
 
-### Automatic instrumentation and load order
-
-Automatic instrumentation is controlled by the remote `instrumentation` block. For CommonJS, initialize before requiring instrumented libraries. For native ESM, preload `@pulse-apm/node/register` with `node --import` so hooks are installed before static imports. `registerAutoInstrumentations()` is available for applications that manage their own bootstrap and need explicit registration; call it after `init()` and before creating clients. Do not combine multiple bootstrap strategies unless you have verified that the library is not patched twice.
-
-Use the dedicated factories when you need explicit control or a library is created outside the normal bootstrap path:
-
-```typescript
-import {
-  createAxiosInstrumentation, createGraphQLInstrumentation,
-  createPrismaInstrumentation, createMongoDBInstrumentation,
-  createMongooseInstrumentation, createRedisInstrumentation,
-  createBullMQInstrumentation, createPgInstrumentation,
-  createMySQLInstrumentation,
-} from '@pulse-apm/node'
-
-// Create/register these using the host library's instrumentation mechanism
-// after init(), using the exported *InstrumentationOptions types.
-```
-
-Automatic instrumentation is subject to both its library flag and the top-level feature/entitlement gate. For example, enabling `instrumentation.pg` cannot produce spans when `features.tracing` or the tracing entitlement is disabled.
-
 ---
 
-## Database & Cache Auto-Instrumentation
+## 12. Database Instrumentation & Slow Query Tagging
 
-When auto-instrumentation is enabled, you **do not need to write manual spans** for database queries. The SDK automatically intercepts:
+Pulse provides semantic database tracing with automatic slow query tagging:
 
-| Technology | Supported Clients | What is Captured |
-|---|---|---|
-| **PostgreSQL** | `pg`, `pg-pool` | Sanitized SQL (`db.statement`), table, query latency, errors |
-| **Redis** | `redis` (v4+), `ioredis` (v4, v5) | Command name, sanitized key, pipelining, multi/exec blocks, credentials redacted |
-| **MongoDB** | `mongodb` (v4, v5, v6) | Collection, operation (`find`, `update`), latency, startup index command filtering |
-| **Mongoose ODM** | `mongoose` (v5, v6, v7, v8) | Model queries, `.exec()`, thenables, deferred connection buffering detection (`db.mongodb.buffering`), deduplicated against driver |
-| **MySQL** | `mysql2` | Sanitized SQL, query latency, connection pool events |
-| **Prisma** | `@prisma/client` | Query engine operations, query latency, interactive transactions via `$extends(pulsePrismaExtension())` |
-| **Message Queues** | `bullmq` (v2 - v5) | Job creation, execution latency, queue name, worker delays |
-| **Transactional Email** | `nodemailer` | Outbound dispatch latency, transport, subject, recipient domain (PII-protected) |
-| **GraphQL** | `graphql` | Query & mutation execution, resolver latency, document parsing |
-| **HTTP Clients**| `axios`, native `http`/`https`, `fetch`, `undici` | Outgoing URL, status code, latency, W3C TraceContext headers injected |
+```ts
+import { withDbSpan } from '@pulse-apm/node'
 
-In every request trace, the SDK automatically presents:
-1. **Total query count** (e.g. 4 PostgreSQL queries + 2 Redis commands).
-2. **Exact execution time of each query** (e.g. `SELECT users`: 12.4ms).
-3. **Internal Node.js execution time** (computed via `exclusiveDuration`, separating CPU execution from database wait time).
-
-### PostgreSQL Connection Pool Wait Time & Saturation Tracking
-
-In high-concurrency environments, applications often suffer from database connection pool starvation. When all pool connections are busy, incoming requests queue up waiting for an available client.
-
-The SDK automatically instruments `pg.Pool.prototype.connect()`:
-- **Intelligent Thresholding**: Immediate checkouts from idle connections (<1ms) create zero span overhead.
-- **Starvation Detection**: When checkout requires waiting ($ge 1\text{ms}$) or fails with a connection timeout, the SDK emits a `db.pool.acquire` span with pool diagnostics:
-  - `db.pool.total`: Total connections in pool.
-  - `db.pool.idle`: Idle connections available.
-  - `db.pool.waiting`: Requests currently queued waiting for a connection.
-  - `db.pool.acquire_duration_ms`: Exact milliseconds spent waiting for connection checkout.
-- **Rows Affected**: Query spans automatically record `db.rows_affected` captured directly from PostgreSQL query result objects.
-
-
----
-
-## Custom Function & Business Logic Tracing
-
-Use `withSpan` to track custom business logic, external API integrations, or computationally expensive algorithms within the current request context.
-
-### Zero-Boilerplate Function Decoration (`Pulse.wrap`)
-
-Wrap any existing synchronous or asynchronous function once without changing call sites. Every invocation will automatically execute inside an active OpenTelemetry span, propagate context across async boundaries, record errors, and set proper status:
-
-```typescript
-import { Pulse } from '@pulse-apm/node'
-
-// Decorate an asynchronous function
-export const hashPassword = Pulse.wrap('auth.hashPassword', async (password: string) => {
-  return await bcrypt.hash(password, 10)
-})
-
-// Decorate a synchronous method
-export const calculateTax = Pulse.wrap('billing.calculateTax', (amount: number, rate: number) => {
-  return amount * rate
-})
-
-// Callsites remain 100% identical and automatically produce trace spans:
-const hash = await hashPassword('super-secret')
-```
-
-### Ergonomic Function Tracing (`Pulse.trace`)
-
-Directly trace an inline block of code (async or sync) without having to decide between `withSpan` or `withSpanSync`:
-
-```typescript
-import { Pulse } from '@pulse-apm/node'
-
-const user = await Pulse.trace('user.fetchProfile', async (span) => {
-  span.setAttribute('user.id', userId)
-  return await db.users.findById(userId)
-})
-```
-
-### In-Request Function Tracing (`withSpan`)
-
-Spans created with `withSpan` automatically nest as children under the current active HTTP request.
-
-```typescript
-import { withSpan } from '@pulse-apm/node'
-
-export async function processPayment(orderId: string, amount: number) {
-  return await withSpan('payments.process', async (span) => {
-    // 1. Add searchable attributes
-    span.setAttribute('payment.order_id', orderId)
-    span.setAttribute('payment.amount', amount)
-    span.setAttribute('payment.currency', 'USD')
-
-    // 2. Perform business logic
-    const gatewayResponse = await callPaymentGateway(orderId, amount)
-
-    // 3. Set span status
-    if (gatewayResponse.success) {
-      span.setStatus('ok')
-      span.setAttribute('payment.transaction_id', gatewayResponse.txnId)
-      return gatewayResponse
-    } else {
-      span.setStatus('error', gatewayResponse.declineReason)
-      throw new Error(`Payment declined: ${gatewayResponse.declineReason}`)
-    }
-  })
-}
-```
-
-### Synchronous Function Tracing (`withSpanSync`)
-
-For non-async functions:
-
-```typescript
-import { withSpanSync } from '@pulse-apm/node'
-
-const token = withSpanSync('crypto.generateToken', (span) => {
-  span.setAttribute('crypto.algorithm', 'sha256')
-  return computeHash(secret)
+const users = await withDbSpan({
+  system: 'postgresql',
+  table: 'users',
+  operation: 'SELECT',
+  statement: 'SELECT * FROM users WHERE active = true',
+  slowQueryThresholdMs: 100, // Marked as db.slow_query = true if latency >= 100ms
+}, async (span) => {
+  return await pool.query('SELECT * FROM users WHERE active = true')
 })
 ```
 
 ---
 
-## Detached Background Work (`withBackgroundSpan`)
+## 13. Detached Background Task Tracing (`withBackgroundSpan`)
 
-When tasks execute *after* an HTTP response has completed (such as sending confirmation emails, generating PDF receipts, or publishing events to a message queue), using standard spans risks memory leaks or corrupted parent-child trees.
+In modern Node.js web services, operations such as sending confirmation emails, dispatching webhooks, or updating analytics are triggered after responding to the client.
 
-`withBackgroundSpan` creates an independent, detached trace root linked via a causal W3C `SpanLink`:
+If wrapped in ordinary OpenTelemetry child spans, one of two bugs occurs:
+1. The root HTTP trace cannot finalize until the background task completes, keeping connections open.
+2. The HTTP trace closes immediately, causing background spans to become orphan spans that are dropped.
 
-```typescript
-import { withBackgroundSpan } from '@pulse-apm/node'
+`withBackgroundSpan` solves this by starting an independent, detached root trace linked via OpenTelemetry `SpanLink`:
 
-app.post('/api/checkout', async (req, res) => {
+```ts
+app.post('/api/orders', async (req, res) => {
   const order = await createOrder(req.body)
+  res.status(201).json(order)
 
-  // Respond to the user immediately:
-  res.status(201).json({ orderId: order.id })
-
-  // Execute detached background task asynchronously:
-  withBackgroundSpan('checkout.send_email', { timeoutMs: 10000 }, async (span) => {
+  // Fires in background; does NOT keep HTTP request open:
+  void withBackgroundSpan('email.sendConfirmation', async (span) => {
     span.setAttribute('order.id', order.id)
-    await emailClient.sendReceipt(order.email, order)
+    await mailer.sendReceipt(order)
   })
 })
 ```
 
 ---
 
-## Database Observability & Slow Query Detection
+## 14. Cron & Job Monitoring (`captureCronCheckIn`)
 
-Pulse provides automated and manual database tracing with connection pool monitoring and slow query detection.
+Monitor scheduled jobs, BullMQ workers, and batch scripts:
 
-### 1. Automated PostgreSQL Pool & Query Instrumentation
+```ts
+import { captureCronCheckIn } from '@pulse-apm/node'
 
-PostgreSQL (`pg`) auto-instrumentation automatically:
-- **Tracks Pool Checkout Wait Time**: Emits `db.pool.acquire` child spans whenever connection acquisition takes $\ge 1\text{ms}$ or times out, reporting connection pool saturation metrics:
-  - `db.pool.total`: Total connections in the pool
-  - `db.pool.idle`: Idle connections available
-  - `db.pool.waiting`: Queued requests waiting for a free connection
-- **Instruments Query Rows & Duration**: Captures `db.rows_affected`, SQL statements, and statement execution latency.
+// 1. Report start of job:
+captureCronCheckIn('sync-inventory', 'in_progress')
 
-### 2. Slow Database Query Detection & Tagging
-
-Queries exceeding the slow query threshold (default: `100ms`) are automatically flagged to isolate slow database operations:
-- `db.slow_query`: `true`
-- `db.slow_query_threshold_ms`: Configured threshold in milliseconds (e.g. `100`)
-
-### 3. Custom Database Spans (`withDbSpan`, `withDbSpanSync`)
-
-For custom database drivers, ORMs, or raw connection pools, use `withDbSpan` or `withDbSpanSync`:
-
-```typescript
-import { Pulse, withDbSpan, withDbSpanSync } from '@pulse-apm/node'
-
-// Async query with custom slow query threshold
-const users = await Pulse.withDbSpan(
-  {
-    system: 'postgresql',
-    operation: 'SELECT',
-    statement: 'SELECT * FROM users WHERE active = true',
-    slowQueryThresholdMs: 50, // Flag queries slower than 50ms (default: 100ms)
-  },
-  async (span) => {
-    span.setAttribute('db.sql.table', 'users')
-    return await rawPool.query('SELECT * FROM users WHERE active = true')
-  }
-)
-
-// Synchronous query (e.g., SQLite / better-sqlite3)
-const row = Pulse.withDbSpanSync(
-  {
-    system: 'sqlite',
-    operation: 'SELECT',
-    statement: 'SELECT * FROM config WHERE key = ?',
-    slowQueryThresholdMs: 20,
-  },
-  (span) => {
-    return sqliteDb.prepare('SELECT * FROM config WHERE key = ?').get('theme')
-  }
-)
-```
-
----
-
----
-
-## Continuous Wall-Clock CPU Profiling (Remote-Config Governed)
-
-Pulse features an enterprise-grade **Continuous Wall-Clock CPU Profiler** designed to collect low-overhead code-level execution profiles across production Node.js services.
-
-### 1. Centrally Governed via Remote Config (Zero Local Boilerplate)
-
-Consistent with Pulse APM architecture, continuous profiling does **not** require hardcoded local options in `init()`. It is dynamically enabled and managed from the **Pulse APM remote control plane**:
-
-```json
-{
-  "features": {
-    "profiling": true,
-    "continuousProfiling": true
-  },
-  "profiling": {
-    "enabled": true,
-    "continuous": true,
-    "continuousIntervalMs": 60000,
-    "sampleRateHz": 99,
-    "sampleIntervalMicroseconds": 10100
-  }
-}
-```
-
-When the control plane toggles continuous profiling:
-- The SDK automatically starts the V8 wall-clock profiler without requiring an application restart.
-- Disabling the feature from the control plane immediately stops profiling and tears down inspector sessions.
-- Modifying the chunk interval or sampling frequency applies dynamically at runtime.
-
-### 2. Low-Overhead Sampling Architecture (<1% CPU)
-
-- **99Hz Sampling Rate**: Samples execution stacks every ~10,100 microseconds (99Hz) to eliminate harmonic lock with standard timer intervals while keeping CPU overhead below 1%.
-- **Chunked Periodic Transmission**: Periodically stops, flushes, and restarts chunks (default: every 60 seconds) so the backend continuously receives fresh profile trees.
-- **Trace & Span Correlation**: Active distributed traces occurring within each chunk window are automatically tagged into the profile payload (`activeTraceIds`), enabling instant jump from slow trace waterfalls to code-level flamegraphs.
-- **Process Lifecycle Safety**: Continuous interval timers are unreferenced (`timer.unref()`), ensuring background profiling never prevents graceful Node.js process termination.
-
----
-
-## Error Tracking & Context Enrichment
-
-### Explicit Error Capture (`captureError`)
-
-Catch and record exceptions with enriched diagnostics:
-
-```typescript
-import { captureError } from '@pulse-apm/node'
-
+const startTime = Date.now()
 try {
-  await chargeCard(token)
-} catch (err) {
-  captureError(err, {
-    tags: { gateway: 'stripe' },
-    extra: { attempt: 3 },
-    mechanism: 'payment_flow',
+  await syncWarehouseInventory()
+
+  // 2. Report success with duration:
+  captureCronCheckIn('sync-inventory', 'ok', {
+    duration: Date.now() - startTime,
   })
+} catch (err) {
+  // 3. Report failure:
+  captureCronCheckIn('sync-inventory', 'error')
   throw err
 }
 ```
 
-### Breadcrumbs, User Identity & Tags
+---
 
-Add diagnostic breadcrumbs that are attached to any subsequent error or trace:
+## 15. Reliability, Delivery Semantics & Load Shedding
 
-```typescript
-import { addBreadcrumb, setUser, setTag, setExtra } from '@pulse-apm/node'
+### Priority Eviction Hierarchy
 
-// In an authentication middleware or handler:
-setUser({
-  id: 'usr_10293',
-  email: 'dev@company.com',
-  tenantId: 'tenant_acme_corp',
-})
+Telemetry events are ingested into 4 discrete priority classes:
+1. **`P0_CRITICAL`**: Uncaught exceptions, process crashes, fatal errors.
+2. **`P1_ERROR`**: Handled exceptions, HTTP 5xx responses.
+3. **`P2_REQUEST`**: Normal HTTP transactions and database spans.
+4. **`P3_LOW`**: Background metrics, breadcrumbs, debug messages.
 
-// Add breadcrumbs describing steps leading up to an action:
-addBreadcrumb({
-  category: 'auth',
-  message: 'User completed 2FA challenge',
-  level: 'info',
-  data: { method: 'totp' },
-})
+Under memory or queue pressure, `AdaptivePressureMonitor` dynamically drops lower-priority events (`P3` first, then `P2`) to ensure fatal crashes and customer errors are never lost.
 
-setTag('environment.region', 'us-east-1')
-setExtra('cart_items_count', 4)
-```
+### Circuit Breakers
+
+Each of the 10 transport routes maintains an independent circuit breaker. If an ingestion route returns consecutive 5xx or network errors (threshold: 5 failures), the route opens and cools down for 30 seconds, preventing network storming.
+
+### Worker Pool Serialization & Gzip
+
+Batches larger than 50KB automatically offload JSON serialization and Gzip compression to a background `WorkerPool` thread pool, preventing event-loop lag in high-throughput services.
+
+### Offline Disk Spooling
+
+If the host application loses internet connectivity, events are persisted to a local disk queue (`~/.pulse-sdk/events`) with SQLite/file backup. Upon reconnection, replayed events are automatically transmitted without duplicate delivery.
 
 ---
 
-## Custom Metrics Tracking
+## 16. Privacy, PII Scrubbing & Security
 
-The SDK includes a high-performance OpenTelemetry metrics client:
-
-```typescript
-import { incrementCounter, recordHistogram, setGauge } from '@pulse-apm/node'
-
-// 1. Counters
-incrementCounter('orders.created', 1, {
-  payment_method: 'credit_card',
-  plan: 'enterprise',
-})
-
-// 2. Histograms (latencies, sizes)
-recordHistogram('checkout.processing_time_ms', 142.5, {
-  currency: 'USD',
-})
-
-// 3. Gauges (active connections, memory)
-setGauge('worker.active_jobs', 12)
-```
-
-### Automatic Node.js & V8 Runtime Metrics
-
-When the SDK initializes, the **Enterprise Runtime Metrics Subsystem** automatically begins low-overhead background collection (polled on an unref timer every 15 seconds) of essential Node.js and V8 engine vitals, feeding directly into the Pulse APM Runtime Dashboard:
-
-| Metric Name | Type | Description |
-| :--- | :--- | :--- |
-| `runtime.heap.used` | Gauge | V8 memory allocated to active objects (bytes). |
-| `runtime.heap.total` | Gauge | Total V8 memory allocated for the heap (bytes). |
-| `runtime.memory.rss` | Gauge | Resident Set Size — total memory occupied in RAM (bytes). |
-| `runtime.memory.external` | Gauge | Memory bound to C++ objects linked to V8 (Buffers, etc.). |
-| `runtime.handles.active` | Gauge | Number of active event loop handles (sockets, timers, servers). |
-| `runtime.eventloop.lag` | Gauge | High-precision p99 event loop delay via native `monitorEventLoopDelay` (ms). |
-| `runtime.eventloop.utilization` | Gauge | Event loop utilization ratio (0.0 to 1.0) via `performance.eventLoopUtilization`. |
-| `runtime.gc.pause` | Histogram | Garbage collection pause duration (ms) tagged with `gc_type`. |
-
-*Collection is automatic, zero-dependency, and can be dynamically toggled via remote configuration (`features.runtimeMetrics`, `features.eventLoopMonitoring`, `features.gcMonitoring`).*
-
-
-## Capture APIs beyond requests and spans
-
-All public capture functions are safe to call from application code. They pass through normalization, privacy processing, sampling, entitlement checks, queue limits, and transport. A rejected `EventReceipt` means the event was not admitted; it is not an application exception.
-
-```typescript
-import {
-  captureMessage, captureLog, captureCronCheckIn,
-  startProfile, stopProfile, captureReplay, captureEvent,
-} from '@pulse-apm/node'
-
-captureMessage('Cache warmed', 'info', { component: 'startup' })
-captureLog('info', 'Order accepted', { orderId: order.id, tenantId: tenant.id })
-
-captureCronCheckIn('nightly-reconciliation', 'in_progress')
-try {
-  await reconcile()
-  captureCronCheckIn('nightly-reconciliation', 'ok')
-} catch (error) {
-  captureCronCheckIn('nightly-reconciliation', 'error')
-  throw error
-}
-
-if (await startProfile('checkout-profile')) {
-  try { await runExpensiveOperation() } finally { await stopProfile('checkout-profile') }
-}
-
-// Session replay is a low-level segment API. Use only with approved privacy policy.
-captureReplay('session-123', 1, replayEvents)
-
-const receipt = captureEvent({ type: 'event', name: 'domain.order.completed', data: { orderId: order.id } })
-await receipt.processed
-```
-
-### Feature availability and no-op rules
-
-Remote configuration is authoritative and can change without redeploying. `features.*` controls whether a subsystem exists; `entitlements.*` controls plan access; `killswitches.*` can suppress it operationally; sampling can still reduce accepted volume. Core manual `captureError`, `captureMessage`, local scope/context, `flush`, and `shutdown` remain available even when optional families are disabled. `captureLog`, custom metrics, profiling, replay, and cron check-ins are no-ops when their entitlement or feature is unavailable.
-
-| Feature family | Main APIs / automatic paths | Required remote controls |
-|---|---|---|
-| Errors | `captureError`; uncaught exceptions, unhandled rejections, console errors | `features.errors`, `entitlements.errors`, `errors.*`, `disableErrors` |
-| Requests | `monitorMiddleware`, Fastify plugin, `captureRequest` | `features.requestCapture`, request entitlement, sampling |
-| Tracing | `startSpan`, `withSpan`, `withSpanSync`, HTTP/DB/framework spans | `features.tracing`, tracing entitlement, instrumentation flag |
-| Metrics | `captureMetric`, counters, gauges, histograms, runtime/GC/event-loop metrics | custom metrics entitlement; runtime flags for automatic metrics; `disableMetrics` |
-| Logs | `captureLog`, console capture | `features.logging`, `logs.*`, logging entitlement, `disableLogs` |
-| Profiling | `startProfile`, `stopProfile` | `features.profiling`, profiling entitlement, `profiling.*`, `disableProfiling` |
-| Replay | `captureReplay` | `features.sessionReplay`, replay entitlement, `replay.*` |
-| Crons | `captureCronCheckIn` | `features.crons`, cron entitlement, `crons.*` |
-
-## Context, identity, and correlation
-
-Set request-scoped identity after authentication and before the operation you want correlated. Use `withScope()` for isolated concurrent work; use `withContext()`/`bindContext()` when handing work to callbacks or custom async boundaries.
-
-```typescript
-import { setUser, setTag, setExtra, addBreadcrumb, withScope } from '@pulse-apm/node'
-
-setUser({ id: user.id, email: user.email, tenantId: tenant.id })
-setTag('tenant.plan', tenant.plan)
-setExtra('feature_flags', enabledFlags)
-addBreadcrumb({ category: 'checkout', message: 'Payment authorization started', level: 'info' })
-
-await withScope(async () => {
-  setTag('operation.mode', 'reconciliation')
-  await reconcile()
-})
-```
-
-For distributed services, use `injectTraceContext(carrier)` on outbound work and `extractTraceContext(carrier)` at the receiving boundary when the integration does not already inject W3C/B3 headers. The active `traceId` and `spanId` are available through `getTraceId()` and `getSpanId()`.
+Before any telemetry is buffered or transmitted, the `SecurityScrubber` applies three layers of sanitization:
+1. **Header Sanitization**: Authorization tokens, cookies, API keys, and session cookies (`authorization`, `cookie`, `set-cookie`, `x-api-key`) are redacted.
+2. **Body & Query Scrubbing**: Sensitive keys (`password`, `token`, `secret`, `credit_card`, `ssn`, `cvv`) in request bodies and JSON attributes are replaced with `[REDACTED]`.
+3. **PII Masking**: Regular expressions automatically detect and mask email addresses and IPv4/IPv6 addresses embedded in error messages or URLs.
 
 ---
 
-## Lifecycle & Hardened Graceful Shutdown
+## 17. Graceful Shutdown & Kubernetes Lifecycle
 
-In containerized environments (Kubernetes, Docker, AWS ECS), ensure pending spans, traces, and metrics are flushed before container termination.
+To ensure no in-flight telemetry is lost during rolling deployments or pod evictions, listen for `SIGTERM` and `SIGINT` signals:
 
-### Automatic Signal Handling (Default)
+```ts
+import { shutdown, emergencyFlush } from '@pulse-apm/node'
 
-By default (`handleSignals: true`), `init()` automatically registers listeners for `SIGTERM` and `SIGINT`. When your container orchestrator signals termination, the SDK:
-1. Rejects incoming non-critical telemetry to freeze buffer sizes.
-2. Flushes the trace aggregator, orphan-recovered span trees, and active span buffers.
-3. Concurrently drains in-flight batches across all transport routes (`traces`, `spans`, `requests`, `metrics`, `errors`).
-4. Unreferences remaining background timers, allowing the Node process to exit cleanly without hanging.
-
-### Manual Shutdown Control
-
-If you prefer to manage signal handlers yourself, set `handleSignals: false` and call `await shutdown()`:
-
-```typescript
-import { init, shutdown } from '@pulse-apm/node'
-
-await init({
-  apiKey: process.env.PULSE_API_KEY!,
-  handleSignals: false, // Set false when managing termination manually
-})
-
-async function onSignal() {
-  console.log('Received termination signal. Draining telemetry batches...')
-  
-  // Drains in-flight batches before exit
-  await shutdown(2000) // 2000ms deadline
-  
+// Graceful Kubernetes termination (SIGTERM)
+process.on('SIGTERM', async () => {
+  console.log('Received SIGTERM, draining telemetry...')
+  await shutdown(10000) // 10-second timeout budget
   process.exit(0)
-}
+})
 
-process.on('SIGTERM', onSignal)
-process.on('SIGINT', onSignal)
+// Uncaught fatal crash handling
+process.on('uncaughtException', async (error) => {
+  console.error('Fatal crash:', error)
+  // Fast emergency flush drains fatal errors without waiting for subsystems
+  await emergencyFlush(2000)
+  process.exit(1)
+})
 ```
 
 ---
 
-## Resilient Pipeline & Telemetry Integrity
+## 18. Production Best Practices
 
-The SDK includes several enterprise pipeline protections:
-- **Cycle-Safe Bounded Orphan Recovery**: Spans with delayed or missing intermediate parents are safely grafted onto the trace root with duration re-clamping, ensuring **zero missing database or HTTP spans in waterfalls**.
-- **Process Warning Routing**: Node runtime warnings (`[DEP0123] Warning: ...`) and driver deprecation notices in `console.error` are routed to `captureMessage(..., Severity.Warning)` instead of generating false APM error incidents, keeping HTTP 200 transactions clean.
-- **Trace Deduplication**: A 60-second sliding LRU cache drops duplicate trace payloads during network retry storms.
-- **MongoDB Startup Suppression**: Mongoose index/build commands at startup outside an active request context are suppressed, saving ingest quotas.
-- **Recursive Sensitive Data Scrubbing**: Recursively scrubs JSON strings, URLs with basic authentication credentials, query-parameter tokens, and `set-cookie` headers.
+1. **Preload the SDK via `--import`**: Always run `node --import @pulse-apm/node/register dist/server.js`.
+2. **Never Hardcode API Keys**: Load `PULSE_API_KEY` from environment variables or secrets managers.
+3. **Always Mount `expressErrorHandler`**: Place it after all routes to capture unhandled promise rejections.
+4. **Use `withBackgroundSpan` for Post-Response Work**: Never attach asynchronous tasks directly to the closed HTTP request trace.
+5. **Set Realistic Shutdown Budgets**: Set `shutdownTimeoutMs` in accordance with your container termination grace period (e.g. 5–10 seconds).
 
 ---
 
-## API Reference
+## 19. Common Integration Mistakes
 
-| Function / Export | Purpose | Common Usage |
+```
+❌ INCORRECT: Initializing SDK after importing Express or database drivers
+import express from 'express'
+import { Pool } from 'pg'
+import { init } from '@pulse-apm/node'
+await init() // Too late! Drivers are already loaded without hooks.
+
+✅ CORRECT: Initialize Pulse before importing application drivers (or use --import)
+import { init } from '@pulse-apm/node'
+await init({ apiKey: process.env.PULSE_API_KEY! })
+const { default: express } = await import('express')
+const { Pool } = await import('pg')
+
+---
+
+❌ INCORRECT: Passing remote telemetry options to init()
+await init({
+  apiKey: '...',
+  sampleRate: 0.5, // Error: unknown key! Governed by remote config.
+})
+
+✅ CORRECT: Only pass local integration options to init()
+await init({
+  apiKey: '...',
+  applicationName: 'order-service',
+  environment: 'production',
+})
+```
+
+---
+
+## 20. Troubleshooting Guide
+
+### 1. SDK Does Not Initialize
+- **Check API Key**: Verify `PULSE_API_KEY` is present and does not contain whitespace or control characters.
+- **Check Backend Connectivity**: Ensure the host can reach `PULSE_ENDPOINT` (`curl -I https://api.pulse.dev/v1/init`).
+- **Inspect Diagnostics**: Run with `PULSE_SDK_CONSOLE_DEBUG=true` to view raw connection messages.
+
+### 2. Spans Not Appearing in Dashboard
+- **Verify Remote Sampling Rate**: If the remote sampling rate is set to `0.1`, 90% of non-error traces are dropped at head sampling.
+- **Check Flush Intervals**: By default, spans flush every 5,000ms. In short-lived CLI scripts, call `await flush()` before process exit.
+- **Check Missing `span.end()`**: If using imperative `startSpan`, verify `span.end()` is invoked.
+
+### 3. High Memory Pressure
+- Inspect `getHealth().memory` and `getHealth().queueSize`.
+- If the application is under heavy load, verify that `adaptivePressure` is active and shedding low-priority (`P3`) telemetry.
+
+---
+
+## 21. Migration Guide (Legacy to Modern Function Names)
+
+If you are upgrading from earlier versions of the SDK, you must update your function imports according to this table as legacy names have been retired in favor of standard naming conventions:
+
+| Modern Canonical Function Name | Legacy Name | Subsystem / Purpose |
 |---|---|---|
-| `init(options)` | Standard process-level SDK initialization function. | `await init({ apiKey: '...' })` or `await init('...')` |
-| `monitorMiddleware(options)` | Express request & context monitoring middleware with optional layer timing. | `app.use(monitorMiddleware({ instrumentMiddleware: true }))` |
-| `instrumentExpress(app, options)` | Programmatically profile Express middleware layers. | `instrumentExpress(app, { minMiddlewareDurationMs: 2 })` |
-| `expressErrorHandler()` | Express error capture middleware. | `app.use(expressErrorHandler())` |
-| `fastifyPulsePlugin` | Fastify request monitoring plugin. | `await fastify.register(fastifyPulsePlugin)` |
-| `wrap(name, fn, options)` / `Pulse.wrap` | Wraps an async or sync function to auto-trace all invocations. | `const fn = Pulse.wrap('calc', calcFn)` |
-| `trace(name, fn, options)` / `Pulse.trace` | Traces an async or sync callback with auto-completion. | `await Pulse.trace('calc', () => ...)` |
-| `withSpan(name, fn, options)` | Executes an async function within a child span. | `await withSpan('calc', async (span) => ...)` |
-| `withSpanSync(name, fn, options)` | Executes a sync function within a child span. | `withSpanSync('parse', (span) => ...)` |
-| `withBackgroundSpan(name, options, fn)` | Detached post-response task with causal `SpanLink`. | `withBackgroundSpan('email', { timeoutMs }, fn)` |
-| `withDbSpan(system, op, fn, options)` | Manual async database query span helper with slow query detection. | `await withDbSpan('postgresql', 'SELECT', fn)` |
-| `withDbSpanSync(system, op, fn, options)` | Manual sync database query span helper with slow query detection. | `withDbSpanSync('sqlite', 'SELECT', fn)` |
-| `captureError(err, context)` | Authoritative error recording API. | `captureError(new Error('...'))` |
-| `addBreadcrumb(crumb)` | Appends a diagnostic breadcrumb to current context. | `addBreadcrumb({ message: 'step 1' })` |
-| `setUser(user)` | Associates user identity with request and errors. | `setUser({ id: '123' })` |
-| `incrementCounter(name, value, tags)` | Emits an OTel metric counter. | `incrementCounter('logins', 1)` |
-| `recordHistogram(name, value, tags)` | Emits a histogram distribution value. | `recordHistogram('size', 1024)` |
-| `flush(timeoutMs)` | Force-flushes in-flight spans and events. | `await flush(1000)` |
-| `shutdown(timeoutMs)` | Drains telemetry and cleanly releases resources. | `await shutdown(2000)` |
-
-### `init(options)` Complete Options Reference
-
-In enterprise observability architectures, **runtime telemetry policy** (baseline sampling rates, dynamic adaptive sampling rules, kill switches, PII scrubbing blacklists, transport batch sizes, rate limits) is **centrally governed by the Pulse APM remote control plane**.
-
-Options passed to `init()` strictly govern **local process-level integration and runtime lifecycle concerns**.
-
-#### Invocation Styles
-
-Pulse supports three ergonomic ways to initialize:
-
-```typescript
-import { Pulse, init } from '@pulse-apm/node'
-
-// 1. Shorthand string (Minimalist)
-await Pulse.init('pls_live_your_api_key_here')
-
-// 2. Options object (Recommended for custom infrastructure/hooks)
-await Pulse.init({
-  apiKey: process.env.PULSE_API_KEY!,
-  debug: false,
-})
-
-// 3. Zero-Code ESM (via package.json or node CLI with PULSE_API_KEY in .env)
-// node --import @pulse-apm/node/register server.js
-```
-
-#### Exhaustive Options Specification
-
-| Option | Type | Default | What You Should Do | What The SDK Does Internally |
-|---|---|---|---|---|
-| **`apiKey`** | `string` | *Required* | Pass your Pulse APM project key, or set `PULSE_API_KEY` in your `.env`. | Authenticates with the control plane via `/v1/init` to download project identity, feature flags, entitlements, and sampling rules. |
-| **`initTimeoutMs`** | `number` | `1500` | Adjust if your service boots in high-latency network environments (min: `100`, max: `30000`). | **Fail-Open Deadline:** If the backend does not respond within this window, the SDK aborts initialization and allows your host application to boot normally without telemetry. |
-| **`handleSignals`** | `boolean` | `true` | Leave `true` in production containers (Docker/Kubernetes). Set `false` only if your framework manages `SIGTERM`/`SIGINT`. | Intercepts `SIGTERM` and `SIGINT` signals to flush queued spans and batches before the container process exits. |
-| **`shutdownTimeoutMs`** | `number` | `5000` | Set according to your Kubernetes `terminationGracePeriodSeconds` (min: `1000`, max: `60000`). | Maximum time allocated for in-flight batches across all transport routes to flush during graceful shutdown. |
-| **`applicationName`** | `string` | Detected from `package.json` | Specify only if you want to override the `name` field in your `package.json`. | Emitted in trace resource attributes (`service.name`) for distributed service catalog identification. |
-| **`applicationVersion`** | `string` | Detected from `package.json` | Specify only if you want to override the `version` field in your `package.json`. | Emitted in trace resource attributes (`service.version`) for release tracking and regression detection. |
-| **`packageJsonPath`** | `string` | `process.cwd()/package.json` | Provide if your `package.json` is located in a non-standard subfolder or monorepo root. | Resolves application metadata (`name`, `version`, `dependencies`) during bootstrap. |
-| **`debug`** | `boolean` | `false` | Set `true` during local development or troubleshooting to inspect SDK internal activity. | Logs detailed telemetry lifecycle events (batch dispatch, hook attachment, network responses) to stdout. |
-| **`logLevel`** | `'debug' \| 'info' \| 'warning' \| 'error' \| 'fatal'` | `'info'` | Set minimum log level for SDK internal diagnostics. | Filters stdout diagnostic output emitted by the SDK's internal logger. |
-| **`beforeSend`** | `(event) => event \| null \| Promise<event \| null>` | `undefined` | Inspect, enrich, or redact events before dispatch. Return `null` to drop an event. | Executes synchronously or asynchronously in the event pipeline immediately before queuing for export. |
-| **`beforeBreadcrumb`** | `(crumb) => crumb \| null` | `undefined` | Filter or sanitize breadcrumbs before recording. Return `null` to drop a breadcrumb. | Executes synchronously before a breadcrumb is committed to the active context ring buffer. |
-| **`plugins`** | `SDKPlugin[]` | `[]` | Provide custom plugins implementing Pulse lifecycle extension points. | Initializes modular extensions with access to the SDK client lifecycle and event pipeline. |
-| **`eventProcessors`** | `EventProcessor[]` | `[]` | Supply pre-pipeline custom transformers. | Runs sequential transformation passes on raw events prior to pipeline validation. |
-| **`sourceMaps`** | `object` | `undefined` | Configure `{ paths: ['./dist'], allowRemote: false }` for production TypeScript/bundled apps. | Loads local `.map` files to map production minified stack frames back to original source files. |
-
-#### Practical Usage Examples for Kept Options
-
-##### 1. Production Kubernetes / Docker Deployment
-```typescript
-import { Pulse } from '@pulse-apm/node'
-
-await Pulse.init({
-  apiKey: process.env.PULSE_API_KEY!,
-  // Fail-open network deadline: if control plane is unreachable, boot app after 2s without blocking
-  initTimeoutMs: 2000,
-  // Match Kubernetes terminationGracePeriodSeconds (e.g. 5s drain ceiling)
-  shutdownTimeoutMs: 5000,
-  // Automatically drain and flush telemetry on SIGTERM/SIGINT
-  handleSignals: true,
-})
-```
-
-##### 2. Single-File Bundles & Monorepos (Explicit Service Identity)
-```typescript
-import { Pulse } from '@pulse-apm/node'
-
-await Pulse.init({
-  apiKey: process.env.PULSE_API_KEY!,
-  // Explicitly tag service catalog identity when package.json is not in working directory
-  applicationName: 'payments-checkout-service',
-  applicationVersion: '2.4.1',
-  sourceMaps: {
-    paths: ['./dist'], // Resolve minified production stack frames to original TypeScript source
-  },
-})
-```
-
-##### 3. Enterprise Compliance, Custom Redaction & Dropping Events (`beforeSend`)
-```typescript
-import { Pulse } from '@pulse-apm/node'
-
-await Pulse.init({
-  apiKey: process.env.PULSE_API_KEY!,
-  // Inspect, redact, or drop telemetry before it enters the network queue
-  beforeSend: (event) => {
-    // Drop health check / synthetic ping traces
-    if (event.type === 'request' && (event as any).route === '/healthz') {
-      return null // Returning null drops the event completely
-    }
-    // Redact proprietary internal customer tokens
-    if (event.metadata && typeof event.metadata === 'object') {
-      delete (event.metadata as any).internalAuthSecret
-    }
-    return event
-  },
-  // Filter or sanitize breadcrumbs
-  beforeBreadcrumb: (crumb) => {
-    if (crumb.category === 'internal-debug') {
-      return null // Drop noisy breadcrumb
-    }
-    return crumb
-  },
-})
-```
-
-##### 4. Local Troubleshooting & Detailed Diagnostics
-```typescript
-import { Pulse } from '@pulse-apm/node'
-
-await Pulse.init({
-  apiKey: process.env.PULSE_API_KEY!,
-  debug: true,       // Emits verbose SDK startup, hook attachments, and batch metrics to stdout
-  logLevel: 'debug', // Minimum log severity filter ('debug' | 'info' | 'warning' | 'error')
-})
-```
-
-
-#### Why are `sampleRate`, `adaptiveSampling`, and `killswitches` absent from `init()`?
-
-In enterprise microservice ecosystems (often running 50–500+ pods across multiple clusters), telemetry policy must **never be coupled to code commits, build pipelines, or container redeployments**:
-1. **Zero-Downtime Incident Response**: If a downstream database experiences an outage or an ingestion cluster faces heavy load, SRE teams can enable adaptive sampling, drop sample rates, or engage subsystem kill switches **instantly** via the Pulse APM dashboard.
-2. **Centralized Ingestion Governance**: Sampling rates and volume limits are tuned centrally to match organization ingestion quotas, eliminating configuration drift across different developer teams.
-3. **Automatic System Protection**: When `sampling.adaptive` is enabled remotely, the SDK's `adaptivePressure` engine automatically monitors host event-loop lag and heap memory, dynamically throttling non-error traces while prioritizing fatal error capture.
+| **`pulseMiddleware`** | `monitorMiddleware` | Express request monitoring middleware |
+| **`expressErrorHandler`** | *(new)* | Express terminal error-handling middleware |
+| **`pulseFastifyPlugin`** | `fastifyPulsePlugin` | Fastify request monitoring plugin |
+| **`captureException`** | `captureError` | Error & exception reporting |
+| **`emergencyFlush`** | `crashFlush` | Synchronous emergency flush on process crash |
+| **`getHealth`** | `getSDKHealth` | SDK operational diagnostics snapshot |
 
 ---
 
 ## License
 
-ISC © Pulse APM
+ISC © Pulse APM Team

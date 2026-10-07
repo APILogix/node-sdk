@@ -405,7 +405,7 @@ export class TransportRouter {
 
   private routeHealth(route: EnterpriseRoute): RouteTransportHealth {
     const definition = this.registry.get(route)
-    const stats = this.batchManagers.get(route)?.stats() ?? emptyStats(route)
+    const stats = this.batchManagers.get(route)?.stats() ?? createEmptyStats(route)
     const health = this.healthMonitor.snapshot(route)
     const priority = toQueuePriority(this.transportConfig.routes[route].priority)
     if (!priority) throw new TransportConfigurationError('Route priority is invalid', { route })
@@ -441,7 +441,7 @@ export class TransportRouter {
   }
 }
 
-function emptyStats(route: EnterpriseRoute): BatchManagerStats {
+function createEmptyStats(route: EnterpriseRoute): BatchManagerStats {
   return {
     route,
     queuedEvents: 0,

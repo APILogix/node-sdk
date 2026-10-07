@@ -1,6 +1,6 @@
 /**
  * Error capture — captures exceptions and routes them through the event pipeline.
- * Features ultra-minimal two-argument signature: captureError(error, severity?).
+ * Features canonical signature: captureException(error, severity?).
  */
 
 import { toError } from '../core/errors.js'
@@ -36,7 +36,7 @@ export type { ErrorSeverity }
  * @param error - The error to capture (Error, string, or unknown)
  * @param severity - Optional severity level ('fatal' | 'error' | 'warning' | 'info' | 'debug') or options object with severity. Defaults to 'error'.
  */
-export function captureError(
+export function captureException(
   error: unknown,
   severity?: ErrorSeverity | { severity?: ErrorSeverity } | SeverityLevel
 ): void {
@@ -168,7 +168,7 @@ export function captureError(
 
     captureEvent(event)
   } catch (err) {
-    logger.error('captureError failed', { error: err })
+    logger.error('captureException failed', { error: err })
   }
 }
 
@@ -185,3 +185,4 @@ function scrubBreadcrumb(breadcrumb: Breadcrumb, scrubber: SecurityScrubber): Br
     data: safeData,
   }
 }
+

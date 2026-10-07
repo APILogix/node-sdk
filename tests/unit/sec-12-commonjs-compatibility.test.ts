@@ -11,7 +11,7 @@ describe('SEC-12: CommonJS & ESM Interoperability', () => {
     const sdkCjs = require(packageRoot)
     assert.ok(sdkCjs, 'CommonJS require should succeed')
     assert.equal(typeof sdkCjs.init, 'function', 'Should export init')
-    assert.equal(typeof sdkCjs.captureError, 'function', 'Should export captureError')
+    assert.equal(typeof sdkCjs.captureException, 'function', 'Should export captureException')
     assert.equal(typeof sdkCjs.captureMetric, 'function', 'Should export captureMetric')
     assert.equal(typeof sdkCjs.captureRequest, 'function', 'Should export captureRequest')
     assert.equal(typeof sdkCjs.captureLog, 'function', 'Should export captureLog')
@@ -26,8 +26,8 @@ describe('SEC-12: CommonJS & ESM Interoperability', () => {
     assert.doesNotThrow(() => {
       sdkCjs.Pulse.captureMessage('test-cjs-message')
     })
-    const health = sdkCjs.Pulse.getSDKHealth()
-    assert.ok(health, 'getSDKHealth should return snapshot')
+    const health = sdkCjs.Pulse.getHealth()
+    assert.ok(health, 'getHealth should return snapshot')
     assert.equal(typeof health.initialized, 'boolean')
   })
 
@@ -36,7 +36,7 @@ describe('SEC-12: CommonJS & ESM Interoperability', () => {
     const sdkEsm = await import(`file://${indexPath.replace(/\\/g, '/')}`)
     assert.ok(sdkEsm, 'ESM import should succeed')
     assert.equal(typeof sdkEsm.init, 'function')
-    assert.equal(typeof sdkEsm.captureError, 'function')
+    assert.equal(typeof sdkEsm.captureException, 'function')
     assert.equal(typeof sdkEsm.Pulse, 'object')
   })
 })

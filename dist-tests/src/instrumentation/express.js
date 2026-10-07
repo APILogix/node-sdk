@@ -23,7 +23,7 @@
  * the instrumentation path must NEVER take down the host application.
  * Every branch that can throw is wrapped in a defensive try/catch.
  */
-import { captureError } from '../capture/captureError.js';
+import { captureException } from '../capture/captureException.js';
 import { captureRequest } from '../capture/captureRequest.js';
 import { trace, context, SpanKind, SpanStatusCode } from '@opentelemetry/api';
 import { client } from '../core/client.js';
@@ -190,7 +190,7 @@ export function ensureExpressLayersInstrumented(app, minDurationMs = 2, ignoreMi
 export function instrumentExpress(app, options) {
     ensureExpressLayersInstrumented(app, options?.minMiddlewareDurationMs ?? 2, options?.ignoreMiddlewares);
 }
-export function monitorMiddleware(options = {}) {
+export function pulseMiddleware(options = {}) {
     return function pulseExpressMiddleware(req, res, next) {
         let nextCalled = false;
         const safeNext = (err) => {
@@ -263,7 +263,7 @@ export function monitorMiddleware(options = {}) {
             // Resolve the rest of the request identity. These values are cheap so
             // we resolve them after the gate to avoid wasting work on dropped
             // requests.
-            const userId = readUserId(req);
+            const userId = extractUserId(req);
             const sessionId = headerString(headers['x-session-id']);
             const userAgent = headerString(headers['user-agent']);
             const referer = headerString(headers['referer'] ?? headers['referrer']);
@@ -275,7 +275,7 @@ export function monitorMiddleware(options = {}) {
                     getStatusCode: { value: () => res?.statusCode, enumerable: false, configurable: true, writable: true },
                     getMethod: { value: () => req?.method, enumerable: false, configurable: true, writable: true },
                     getUrl: { value: () => req?.originalUrl || req?.url, enumerable: false, configurable: true, writable: true },
-                    getRoute: { value: () => normalizedRoute(req), enumerable: false, configurable: true, writable: true },
+                    getRoute: { value: () => normalizeRoute(req), enumerable: false, configurable: true, writable: true },
                 });
             }
             catch { }
@@ -347,11 +347,11 @@ export function monitorMiddleware(options = {}) {
                             captured = true;
                             const statusCode = res?.statusCode ?? 200;
                             const latencyMs = Date.now() - startTime;
-                            const responseSize = typeof res?.getHeader === 'function' ? readContentLength(res.getHeader('content-length')) : undefined;
+                            const responseSize = typeof res?.getHeader === 'function' ? extractContentLength(res.getHeader('content-length')) : undefined;
                             const rawBody = req?.body;
                             const rawReqHeaders = req?.headers;
                             const rawReqQuery = req?.query;
-                            const route = normalizedRoute(req);
+                            const route = normalizeRoute(req);
                             const currentActiveSpan = trace.getActiveSpan() ?? activeSpan;
                             if (currentActiveSpan) {
                                 try {
@@ -454,7 +454,7 @@ export function monitorMiddleware(options = {}) {
                                         });
                                     }
                                     catch (err) {
-                                        getLogger().error('monitorMiddleware completion failed', { error: err });
+                                        getLogger().error('pulseMiddleware completion failed', { error: err });
                                     }
                                 });
                             });
@@ -471,7 +471,7 @@ export function monitorMiddleware(options = {}) {
                                                 store.extra.mechanism = 'express.res.error';
                                                 store.extra.handled = true;
                                             }
-                                            captureError(error);
+                                            captureException(error);
                                             const currentActiveSpan = trace.getActiveSpan() ?? activeSpan;
                                             if (currentActiveSpan) {
                                                 try {
@@ -482,7 +482,7 @@ export function monitorMiddleware(options = {}) {
                                             }
                                         }
                                         catch (err) {
-                                            getLogger().error('monitorMiddleware error capture failed', { error: err });
+                                            getLogger().error('pulseMiddleware error capture failed', { error: err });
                                         }
                                     });
                                 });
@@ -499,7 +499,7 @@ export function monitorMiddleware(options = {}) {
                                             store.extra.mechanism = 'express.next';
                                             store.extra.handled = true;
                                         }
-                                        captureError(error);
+                                        captureException(error);
                                         const currentActiveSpan = trace.getActiveSpan() ?? activeSpan;
                                         if (currentActiveSpan) {
                                             try {
@@ -510,7 +510,7 @@ export function monitorMiddleware(options = {}) {
                                         }
                                     }
                                     catch (captureErr) {
-                                        getLogger().error('monitorMiddleware next(err) capture failed', { error: captureErr });
+                                        getLogger().error('pulseMiddleware next(err) capture failed', { error: captureErr });
                                     }
                                 });
                             }
@@ -537,7 +537,7 @@ export function monitorMiddleware(options = {}) {
         }
         catch (unhandledErr) {
             try {
-                getLogger().error('monitorMiddleware unhandled exception', { error: unhandledErr });
+                getLogger().error('pulseMiddleware unhandled exception', { error: unhandledErr });
             }
             catch { }
             safeNext();
@@ -550,7 +550,7 @@ export function monitorMiddleware(options = {}) {
  *
  * @example
  * ```ts
- * app.use(monitorMiddleware())
+ * app.use(pulseMiddleware())
  * // ... routes ...
  * app.use(expressErrorHandler())
  * ```
@@ -567,7 +567,7 @@ export function expressErrorHandler() {
                         store.extra.handled = true;
                     }
                     const error = err instanceof Error ? err : new Error(String(err));
-                    captureError(error);
+                    captureException(error);
                     const activeSpan = trace.getActiveSpan();
                     if (activeSpan) {
                         try {
@@ -593,7 +593,7 @@ export function expressErrorHandler() {
     };
 }
 // ─── Helpers ────────────────────────────────────────────────────────────────
-function normalizedRoute(req) {
+function normalizeRoute(req) {
     try {
         const routePath = routePathToString(req?.route?.path);
         if (routePath) {
@@ -613,7 +613,7 @@ function routePathToString(path) {
         return path.source;
     return undefined;
 }
-function readUserId(req) {
+function extractUserId(req) {
     try {
         const user = req?.user;
         const value = user?.id ?? user?.userId;
@@ -623,7 +623,7 @@ function readUserId(req) {
         return undefined;
     }
 }
-function readContentLength(value) {
+function extractContentLength(value) {
     if (typeof value === 'number' && Number.isFinite(value))
         return value;
     if (typeof value === 'string') {

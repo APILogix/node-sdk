@@ -63,8 +63,8 @@
  * unprotected window) doesn't poison replay.
  */
 
-import { existsSync, unlinkSync, statSync } from 'fs'
-import { appendFile, copyFile, mkdir, readFile, rename, stat, unlink, writeFile } from 'fs/promises'
+import { existsSync, unlinkSync, statSync, readdirSync } from 'fs'
+import { appendFile, copyFile, mkdir, readFile, readdir, rename, stat, unlink, writeFile } from 'fs/promises'
 import { join, dirname } from 'path'
 import { tmpdir } from 'os'
 import { createHash } from 'crypto'
@@ -85,21 +85,23 @@ const DEFAULT_IO_TIMEOUT_MS = 5_000 // Per file-operation timeout — protects a
 
 interface PersistentStorageOptions {
   /** Directory to store persisted events. Defaults to OS temp dir. */
-  directory?: string
+  directory?: string | undefined
+  /** Whether persistence is enabled. When false, disk operations are completely bypassed. Default: true. */
+  enabled?: boolean | undefined
   /** API key hash for unique file naming. */
-  apiKeyHash?: string
+  apiKeyHash?: string | undefined
   /** Maximum file size before rotation. Default: 10MB. */
-  maxFileSizeBytes?: number
+  maxFileSizeBytes?: number | undefined
   /** Maximum events to persist. Default: 10000. */
-  maxEvents?: number
+  maxEvents?: number | undefined
   /** Event TTL in milliseconds. Default: 24 hours. */
-  eventTtlMs?: number
+  eventTtlMs?: number | undefined
   /**
    * Per file-operation timeout in milliseconds. Default: 5000.
    * Protects against frozen filesystems (NFS hangs, full disks, etc.) that
    * would otherwise block the shutdown drain indefinitely.
    */
-  ioTimeoutMs?: number
+  ioTimeoutMs?: number | undefined
 }
 
 interface PersistedEventEntry {
@@ -108,9 +110,10 @@ interface PersistedEventEntry {
 }
 
 class PersistentStorage {
-  private directory: string = ''
+  private directoryPath: string = ''
+  private filePrefix: string = 'pulse-events'
   private dataFile: string = ''
-  private tempFile: string = ''
+  private enabled: boolean = true
   private maxFileSizeBytes: number = DEFAULT_MAX_FILE_SIZE_BYTES
   private maxEvents: number = DEFAULT_MAX_EVENTS
   private eventTtlMs: number = DEFAULT_EVENT_TTL_MS
@@ -132,38 +135,60 @@ class PersistentStorage {
   private writeChain: Promise<void> = Promise.resolve()
 
   configure(options: PersistentStorageOptions = {}): void {
-    this.directory = options.directory ?? this.resolveDefaultDirectory()
+    if (options.enabled !== undefined) {
+      this.enabled = options.enabled
+    }
+    this.directoryPath = options.directory ?? this.resolveDefaultDirectory()
     this.maxFileSizeBytes = options.maxFileSizeBytes ?? DEFAULT_MAX_FILE_SIZE_BYTES
     this.maxEvents = options.maxEvents ?? DEFAULT_MAX_EVENTS
     this.eventTtlMs = options.eventTtlMs ?? DEFAULT_EVENT_TTL_MS
     this.ioTimeoutMs = options.ioTimeoutMs ?? DEFAULT_IO_TIMEOUT_MS
 
     const suffix = options.apiKeyHash ? `-${options.apiKeyHash.slice(0, 8)}` : ''
-    this.dataFile = join(this.directory, `pulse-events${suffix}.ndjson`)
-    this.tempFile = join(this.directory, `pulse-events${suffix}.ndjson.tmp`)
+    this.filePrefix = `pulse-events${suffix}`
+    this.dataFile = join(this.directoryPath, `${this.filePrefix}-${process.pid}.ndjson`)
+  }
+
+  private createTempFilePath(): string {
+    const randomSuffix = Math.random().toString(36).slice(2)
+    return join(this.directoryPath, `.${this.filePrefix}-${process.pid}-${Date.now()}-${randomSuffix}.tmp`)
   }
 
   async init(): Promise<Event[]> {
     if (this.initialized) return []
-    this.initialized = true
+    if (!this.enabled) {
+      this.initialized = false
+      return []
+    }
 
     const logger = getLogger()
 
     try {
       await this.ensureDirectory()
     } catch (error) {
-      logger.warn('Persistent storage: failed to create directory, disabling persistence', {
-        directory: this.directory,
-        error,
-      })
+      this.initialized = false
+      const code = (error as NodeJS.ErrnoException)?.code
+      if (code === 'EROFS' || code === 'EACCES' || code === 'EPERM') {
+        logger.debug('Persistent storage: filesystem is read-only or inaccessible, running in pure in-memory mode', {
+          directory: this.directoryPath,
+          code,
+        })
+      } else {
+        logger.warn('Persistent storage: failed to initialize directory, disabling persistence', {
+          directory: this.directoryPath,
+          error,
+        })
+      }
       return []
     }
+
+    this.initialized = true
 
     const replayed = await this.replay()
     this.totalReplayed = replayed.length
 
     logger.info('Persistent storage initialized', {
-      directory: this.directory,
+      directory: this.directoryPath,
       replayedEvents: replayed.length,
       maxEvents: this.maxEvents,
       ttlHours: this.eventTtlMs / (60 * 60 * 1000),
@@ -176,10 +201,10 @@ class PersistentStorage {
    * Queue an event for persistence. Events are batched and flushed periodically.
    *
    * Callers can invoke this freely from any code path; it returns silently if
-   * storage was never initialized or has already been shut down.
+   * storage was never initialized, is disabled, or has already been shut down.
    */
   persist(event: Event): void {
-    if (!this.initialized) return
+    if (!this.initialized || !this.enabled) return
 
     this.buffer.push(event)
     this.eventCount++
@@ -193,12 +218,22 @@ class PersistentStorage {
 
   /**
    * Whether persistent storage has been initialized and has not been shut
-   * down. Callers (typically the transport layer) check this before
+   * down or disabled. Callers (typically the transport layer) check this before
    * persisting on send failure so they can degrade gracefully when
-   * persistence is unavailable (e.g., the SDK is being shut down).
+   * persistence is unavailable (e.g., the SDK is being shut down or serverless).
    */
   get isInitialized(): boolean {
-    return this.initialized
+    return this.initialized && this.enabled
+  }
+
+  /** The configured or resolved directory path where events are persisted. */
+  get directory(): string {
+    return this.directoryPath
+  }
+
+  /** The path to the active events NDJSON data file. */
+  get dataFilePath(): string {
+    return this.dataFile
   }
 
   /**
@@ -210,7 +245,7 @@ class PersistentStorage {
    * durably retained for replay.
    */
   persistBatch(events: readonly Event[]): void {
-    if (!this.initialized || events.length === 0) return
+    if (!this.initialized || !this.enabled || events.length === 0) return
 
     for (const event of events) {
       this.buffer.push(event)
@@ -235,6 +270,11 @@ class PersistentStorage {
 
     if (this.buffer.length === 0) return
 
+    // Atomically snapshot and drain the buffer so concurrent flush() calls
+    // or newly arriving events do not duplicate or get overwritten.
+    const toFlush = this.buffer
+    this.buffer = []
+
     const logger = getLogger()
     const entries: string[] = []
 
@@ -242,7 +282,7 @@ class PersistentStorage {
     // large buffer serialized in one synchronous loop would block the
     // host application's event loop for the entire duration.
     let processed = 0
-    for (const event of this.buffer) {
+    for (const event of toFlush) {
       const entry: PersistedEventEntry = {
         event,
         persistedAt: epochMs(),
@@ -260,10 +300,11 @@ class PersistentStorage {
       const content = entries.join('\n') + '\n'
       await this.enqueueWrite(() => appendFile(this.dataFile, content, { encoding: 'utf8', mode: 0o600 }))
 
-      this.totalPersisted += this.buffer.length
-      this.buffer = []
+      this.totalPersisted += toFlush.length
     } catch (error) {
       this.writeErrors++
+      // Restore unflushed events to the head of the buffer so they are not lost
+      this.buffer.unshift(...toFlush)
       logger.warn('Persistent storage: write failed', {
         error,
         writeErrors: this.writeErrors,
@@ -348,50 +389,95 @@ class PersistentStorage {
   /**
    * Replay persisted events from disk.
    * Returns events that are still valid (within TTL).
+   *
+   * Multi-process / cluster safe:
+   * 1. Inspects the directory for files belonging to this prefix.
+   * 2. Replays legacy file (pulse-events.ndjson / pulse-events-<hash>.ndjson) if present.
+   * 3. Replays files from dead processes (PIDs that are no longer alive).
+   * 4. Exclusively claims candidate files via atomic rename before reading to
+   *    prevent multiple workers from racing or duplicating replay batches.
    */
   async replay(): Promise<Event[]> {
     const logger = getLogger()
+    const now = epochMs()
+    const validEvents: Event[] = []
+    let totalLines = 0
 
-    if (!existsSync(this.dataFile)) {
+    if (!existsSync(this.directoryPath)) {
       return []
     }
 
     try {
-      const content = await withIoTimeout(
-        readFile(this.dataFile, { encoding: 'utf8' }),
-        this.ioTimeoutMs,
-        'persistent-storage replay read'
-      )
-      const lines = content.split('\n').filter(line => line.trim().length > 0)
-      const now = epochMs()
-      const validEvents: Event[] = []
+      const dirEntries = await readdir(this.directoryPath).catch(() => [] as string[])
+      const prefix = this.filePrefix
 
-      for (const line of lines) {
-        try {
-          const entry: PersistedEventEntry = JSON.parse(line)
+      // Match legacy un-pid'd files or orphaned pid files for this apiKeyHash
+      const candidateFiles: string[] = []
+      for (const entry of dirEntries) {
+        if (entry.startsWith('.')) continue
 
-          if (now - entry.persistedAt > this.eventTtlMs) {
-            this.totalExpired++
-            continue
-          }
-
-          validEvents.push(entry.event)
-        } catch {
-          // Skip malformed lines
+        if (entry === `${prefix}.ndjson`) {
+          candidateFiles.push(entry)
           continue
+        }
+
+        const pidMatch = entry.match(new RegExp(`^${prefix}-(\\d+)\\.ndjson$`))
+        if (pidMatch && pidMatch[1]) {
+          const filePid = parseInt(pidMatch[1], 10)
+          if (filePid === process.pid || !isPidAlive(filePid)) {
+            candidateFiles.push(entry)
+          }
         }
       }
 
-      // Rewrite file with only valid events (cleanup expired)
-      if (this.totalExpired > 0) {
-        await this.rewriteFile(validEvents)
+      for (const fileName of candidateFiles) {
+        const fullPath = join(this.directoryPath, fileName)
+        const randomToken = Math.random().toString(36).slice(2)
+        const claimPath = join(this.directoryPath, `.${fileName}.claim-${process.pid}-${Date.now()}-${randomToken}.tmp`)
+
+        let claimed = false
+        try {
+          await rename(fullPath, claimPath)
+          claimed = true
+        } catch {
+          // Another worker claimed it or file missing/locked
+          continue
+        }
+
+        if (!claimed) continue
+
+        try {
+          const content = await withIoTimeout(
+            readFile(claimPath, { encoding: 'utf8' }),
+            this.ioTimeoutMs,
+            'persistent-storage replay read'
+          )
+          const lines = content.split('\n').filter(line => line.trim().length > 0)
+          totalLines += lines.length
+
+          for (const line of lines) {
+            try {
+              const entry: PersistedEventEntry = JSON.parse(line)
+              if (now - entry.persistedAt > this.eventTtlMs) {
+                this.totalExpired++
+                continue
+              }
+              validEvents.push(entry.event)
+            } catch {
+              // Skip malformed lines
+              continue
+            }
+          }
+        } finally {
+          await unlink(claimPath).catch(() => {})
+        }
       }
 
       this.replayCount++
       this.lastReplayAt = epochMs()
 
       logger.info('Persistent storage: replay complete', {
-        totalLines: lines.length,
+        totalLines,
         validEvents: validEvents.length,
         expiredEvents: this.totalExpired,
         replayCount: this.replayCount,
@@ -473,6 +559,14 @@ class PersistentStorage {
       if (existsSync(this.dataFile)) {
         unlinkSync(this.dataFile)
       }
+      if (existsSync(this.directoryPath)) {
+        const files = readdirSync(this.directoryPath)
+        for (const f of files) {
+          if (f.startsWith(this.filePrefix) || f.startsWith(`.${this.filePrefix}`)) {
+            try { unlinkSync(join(this.directoryPath, f)) } catch {}
+          }
+        }
+      }
     } catch {
       // ignore
     }
@@ -541,9 +635,13 @@ class PersistentStorage {
   }
 
   private async ensureDirectory(): Promise<void> {
-    if (!existsSync(this.directory)) {
-      await mkdir(this.directory, { recursive: true, mode: 0o700 })
+    if (!existsSync(this.directoryPath)) {
+      await mkdir(this.directoryPath, { recursive: true, mode: 0o700 })
     }
+    // Writability probe: verifies the directory is actually writable (not EROFS / EACCES)
+    const probeFile = join(this.directoryPath, `.pulse-probe-${process.pid}-${Date.now()}.tmp`)
+    await writeFile(probeFile, '', { encoding: 'utf8' })
+    await unlink(probeFile).catch(() => {})
   }
 
   private async checkAndRotate(): Promise<void> {
@@ -582,11 +680,6 @@ class PersistentStorage {
       await this.rewriteEntries(events.map(event => ({ event, persistedAt: epochMs() })))
     } catch (error) {
       getLogger().warn('Persistent storage: rewrite failed', { error })
-      try {
-        void unlink(this.tempFile)
-      } catch {
-        // ignore
-      }
     }
   }
 
@@ -603,8 +696,13 @@ class PersistentStorage {
         return
       }
 
-      await writeFile(this.tempFile, content, { encoding: 'utf8', mode: 0o600 })
-      await safeAtomicRename(this.tempFile, this.dataFile)
+      const tempFile = this.createTempFilePath()
+      try {
+        await writeFile(tempFile, content, { encoding: 'utf8', mode: 0o600 })
+        await safeAtomicRename(tempFile, this.dataFile)
+      } finally {
+        await unlink(tempFile).catch(() => {})
+      }
     })
   }
 
@@ -617,9 +715,15 @@ class PersistentStorage {
   }
 
   private resolveDefaultDirectory(): string {
-    const appName = 'pulse-sdk'
+    const appName = 'telemetry-sdk'
     const platform = process.platform
     const fallbackDir = join(tmpdir(), appName, 'events')
+
+    // In serverless environments (AWS Lambda, GCP Cloud Functions, Azure Functions, Vercel),
+    // /tmp is the only writable directory. HOME (/var/task, /root, /workspace) is read-only.
+    if (this.isServerlessEnvironment()) {
+      return fallbackDir
+    }
 
     if (platform === 'win32') {
       const localAppData = process.env.LOCALAPPDATA
@@ -642,10 +746,20 @@ class PersistentStorage {
     if (xdgCache) {
       return join(xdgCache, appName, 'events')
     }
-    if (home) {
+    if (home && home !== '/var/task' && home !== '/root') {
       return join(home, '.cache', appName, 'events')
     }
     return fallbackDir
+  }
+
+  private isServerlessEnvironment(): boolean {
+    return Boolean(
+      process.env.AWS_LAMBDA_FUNCTION_NAME ||
+      process.env.K_SERVICE ||
+      process.env.FUNCTIONS_WORKER_RUNTIME ||
+      process.env.VERCEL ||
+      process.env.NOW_REGION
+    )
   }
 }
 
@@ -699,6 +813,16 @@ async function safeAtomicRename(source: string, target: string): Promise<void> {
       }
       throw err
     }
+  }
+}
+
+function isPidAlive(pid: number): boolean {
+  if (pid <= 0 || !Number.isInteger(pid)) return false
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'EPERM'
   }
 }
 

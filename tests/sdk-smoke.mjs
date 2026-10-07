@@ -26,10 +26,9 @@ async function waitFor(predicate, timeoutMs = 1000) {
 
 const { captureMessage, captureRequest, init, shutdown } = await import("../dist/index.js")
 const { DEFAULT_API_BASE_URL } = await import("../dist/constants/defaults.js")
-const { BAKED_IN_REMOTE_CONFIG } = await import("../dist/constants/defaults.js")
+const { TEST_REMOTE_CONFIG: BAKED_IN_REMOTE_CONFIG } = await import("../dist-tests/tests/fixtures/remote-config.js")
 const { addBreadcrumb, createContextStore, withContext } = await import("../dist/core/context.js")
 const { postJson } = await import("../dist/transport/http.js")
-const { sendEvents, sendInitRequest } = await import("../dist/transport/sender.js")
 const { redact } = await import("../dist/utils/logger.js")
 
 function schemaConfig(config = {}) {

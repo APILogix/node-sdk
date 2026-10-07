@@ -67,7 +67,7 @@ export class BackgroundRecoveryWorker {
             return;
         this.running = true;
         const logger = getLogger();
-        logger.info('[Pulse] SDK entering background recovery mode.');
+        logger.info('SDK entering background recovery mode.');
         this.scheduleNextAttempt();
     }
     stop() {
@@ -113,7 +113,7 @@ export class BackgroundRecoveryWorker {
         }
         this.attempt++;
         const logger = getLogger();
-        logger.info(`[Pulse] SDK recovery attempt #${this.attempt}.`);
+        logger.info(`SDK recovery attempt #${this.attempt}.`);
         try {
             client.setPendingIdentity(this.options);
             const coordinator = client.singleFlightCoordinator;
@@ -141,7 +141,7 @@ export class BackgroundRecoveryWorker {
             if (this.stopped || isSDKShuttingDown() || client.getState() === 'stopping' || client.getState() === 'stopped') {
                 return;
             }
-            logger.info('[Pulse] SDK recovery succeeded. Telemetry is now fully initialized.');
+            logger.info('SDK recovery succeeded. Telemetry is now fully initialized.');
             this.stop();
         }
         catch (error) {
@@ -150,7 +150,7 @@ export class BackgroundRecoveryWorker {
             }
             const decision = classifyError(error);
             if (decision.permanent || isPermanentError(error)) {
-                logger.error('[Pulse] SDK initialization stopped: authentication/configuration error.', {
+                logger.error('SDK initialization stopped: authentication/configuration error.', {
                     reason: decision.reason,
                     error,
                 });

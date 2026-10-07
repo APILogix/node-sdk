@@ -4,7 +4,7 @@ import { gunzipSync } from 'node:zlib'
 import { init } from '../../src/core/init.js'
 import { shutdown } from '../../src/core/lifecycle.js'
 import { startSpan, withSpan } from '../../src/tracing/tracer.js'
-import { captureError } from '../../src/capture/captureError.js'
+import { captureException } from '../../src/capture/captureException.js'
 import { captureMetric, incrementCounter, setGauge, recordHistogram } from '../../src/capture/captureMetric.js'
 import { captureMessage } from '../../src/capture/captureMessage.js'
 import { addBreadcrumb, getTraceId } from '../../src/core/context.js'
@@ -187,10 +187,10 @@ export async function runMicrobenchmarks(iterations = 10_000): Promise<{
       },
     },
     {
-      name: 'captureError (with stack trace)',
+      name: 'captureException (with stack trace)',
       fn: i => {
         const error = new Error(`Audit generated error ${i}`)
-        captureError(error)
+        captureException(error)
       },
     },
   ]

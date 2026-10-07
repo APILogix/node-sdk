@@ -61,7 +61,7 @@ describe('Worker Serialization & Structured Clone Safety', () => {
       getMethod: { value: () => 'GET', enumerable: false, configurable: true },
     })
 
-    // Property lookup works (used by captureError)
+    // Property lookup works (used by captureException)
     assert.equal(typeof (extra as any).getStatusCode, 'function')
     assert.equal((extra as any).getStatusCode(), 201)
 

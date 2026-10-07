@@ -1,11 +1,11 @@
 import { startSpan, withSpan, withSpanSync } from './tracer.js';
 export function startDbSpan(options) {
-    return startSpan(dbSpanName(options), toSpanOptions(options));
+    return startSpan(getDbSpanName(options), toSpanOptions(options));
 }
 export async function withDbSpan(options, fn) {
     const thresholdMs = options.slowQueryThresholdMs ?? 100;
     const start = Date.now();
-    return withSpan(dbSpanName(options), toSpanOptions(options), async (span) => {
+    return withSpan(getDbSpanName(options), toSpanOptions(options), async (span) => {
         try {
             const result = await fn(span);
             const durationMs = Date.now() - start;
@@ -28,7 +28,7 @@ export async function withDbSpan(options, fn) {
 export function withDbSpanSync(options, fn) {
     const thresholdMs = options.slowQueryThresholdMs ?? 100;
     const start = Date.now();
-    return withSpanSync(dbSpanName(options), toSpanOptions(options), (span) => {
+    return withSpanSync(getDbSpanName(options), toSpanOptions(options), (span) => {
         try {
             const result = fn(span);
             const durationMs = Date.now() - start;
@@ -71,7 +71,7 @@ function toSpanOptions(options) {
         ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
     };
 }
-function dbSpanName(options) {
+function getDbSpanName(options) {
     if (options.name)
         return options.name;
     const target = options.table || options.collection || options.database;

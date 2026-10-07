@@ -65,6 +65,10 @@ export class RouteRegistry {
     return this.definitions[route]
   }
 
+  getRoutes(): readonly EnterpriseRoute[] {
+    return this.routes()
+  }
+
   routes(): readonly EnterpriseRoute[] {
     return ['errors', 'events', 'traces', 'spans', 'metrics', 'logs', 'profiles', 'crons', 'requests', 'replays'] as const
   }

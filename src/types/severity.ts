@@ -64,16 +64,16 @@ export function severityFromString(
 /**
  * Returns true if `a` is more severe than or equal to `b`.
  */
-export function severityGte(a: SeverityLevel, b: SeverityLevel): boolean {
+export function isSeverityGte(a: SeverityLevel, b: SeverityLevel): boolean {
   return (SEVERITY_WEIGHT.get(a) ?? 0) >= (SEVERITY_WEIGHT.get(b) ?? 0)
 }
 
 /**
  * Returns true if the given severity meets the minimum threshold.
  */
-export function severityMeetsThreshold(
+export function doesSeverityMeetThreshold(
   severity: SeverityLevel,
   threshold: SeverityLevel
 ): boolean {
-  return severityGte(severity, threshold)
+  return isSeverityGte(severity, threshold)
 }

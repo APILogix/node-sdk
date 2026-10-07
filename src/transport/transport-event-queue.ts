@@ -240,6 +240,10 @@ export class TransportEventQueue {
     })
   }
 
+  getSize(): number {
+    return this.count
+  }
+
   size(): number {
     return this.count
   }

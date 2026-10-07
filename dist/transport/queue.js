@@ -127,6 +127,12 @@ export class EventQueue {
     drainAll() {
         return this.drain(this.size());
     }
+    getSize() {
+        return (this.retryQueue.length +
+            this.tiers.critical.events.length +
+            this.tiers.high.events.length +
+            this.tiers.normal.events.length);
+    }
     size() {
         return (this.retryQueue.length +
             this.tiers.critical.events.length +

@@ -5,7 +5,7 @@ import { monitorEventLoopDelay } from 'node:perf_hooks'
 import {
   init,
   shutdown,
-  captureError,
+  captureException,
   captureMessage,
   captureEvent,
   withSpan,
@@ -59,7 +59,7 @@ describe('Pulse SDK — Final Adversarial Initialization, Recovery & Event-Loop 
 
       // Rapidly invoke all public capture APIs across multiple iterations
       for (let i = 0; i < 500; i++) {
-        captureError(new Error(`Test error ${i}`), 'error')
+        captureException(new Error(`Test error ${i}`), 'error')
         captureMessage(`Test message ${i}`, 'warning')
         captureEvent({
           type: 'custom',
@@ -136,7 +136,7 @@ describe('Pulse SDK — Final Adversarial Initialization, Recovery & Event-Loop 
 
       for (let i = 0; i < burstCount; i++) {
         if (i % 3 === 0) {
-          captureError(new Error(`Burst error ${i}`))
+          captureException(new Error(`Burst error ${i}`))
         } else if (i % 3 === 1) {
           captureMessage(`Burst message ${i}`)
         } else {
@@ -240,7 +240,7 @@ describe('Pulse SDK — Final Adversarial Initialization, Recovery & Event-Loop 
       // Ingest 20,000 events (queue default is 1,000)
       for (let i = 0; i < 20_000; i++) {
         if (i % 2 === 0) {
-          captureError(new Error(`Outage error ${i}`))
+          captureException(new Error(`Outage error ${i}`))
         } else {
           captureMessage(`Outage message ${i}`)
         }
@@ -382,7 +382,7 @@ describe('Pulse SDK — Final Adversarial Initialization, Recovery & Event-Loop 
         // Concurrently bombard customer server with HTTP requests
         const results = await Promise.all(
           Array.from({ length: 50 }, async (_, i) => {
-            captureError(new Error(`Concurrent error ${i}`))
+            captureException(new Error(`Concurrent error ${i}`))
             const res = await fetch(`${baseUrl}/api/test`)
             return res.status
           })

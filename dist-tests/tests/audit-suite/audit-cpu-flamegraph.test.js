@@ -3,7 +3,7 @@ import inspector from 'node:inspector';
 import { init } from '../../src/core/init.js';
 import { shutdown } from '../../src/core/lifecycle.js';
 import { startSpan } from '../../src/tracing/tracer.js';
-import { captureError } from '../../src/capture/captureError.js';
+import { captureException } from '../../src/capture/captureException.js';
 import { captureMetric, incrementCounter } from '../../src/capture/captureMetric.js';
 import { TEST_REMOTE_CONFIG as BAKED_IN_REMOTE_CONFIG } from '../fixtures/remote-config.js';
 async function startMockTelemetryServer() {
@@ -100,7 +100,7 @@ export async function runCpuProfiling(operations = 5_000) {
         span.end();
         incrementCounter('profile_counter', 1, { step: String(i % 5) });
         if (i % 5 === 0) {
-            captureError(new Error(`Hotspot error ${i}`));
+            captureException(new Error(`Hotspot error ${i}`));
         }
         if (i % 200 === 0) {
             await new Promise(resolve => setImmediate(resolve));

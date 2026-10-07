@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { gunzipSync } from 'node:zlib';
-import { captureCronCheckIn, captureError, captureEvent, captureLog, captureMessage, captureMetric, captureReplay, captureRequest, flushTracer, incrementCounter, init, shutdown, startProfile, startSpan, stopProfile, } from '../../src/index.js';
+import { captureCronCheckIn, captureException, captureEvent, captureLog, captureMessage, captureMetric, captureReplay, captureRequest, flushTracer, incrementCounter, init, shutdown, startProfile, startSpan, stopProfile, } from '../../src/index.js';
 import { SDK_NAME, SDK_VERSION } from '../../src/constants/version.js';
 import { TEST_REMOTE_CONFIG as BAKED_IN_REMOTE_CONFIG } from '../fixtures/remote-config.js';
 const ROUTE_PATHS = {
@@ -208,7 +208,7 @@ test('public telemetry adapters serialize authoritative application and SDK meta
     try {
         await initialize();
         initialized = true;
-        captureError(new Error('integration error'), 'error');
+        captureException(new Error('integration error'), 'error');
         captureMessage('integration message', 'info', { adapter: 'captureMessage' });
         // captureEvent has no separate custom discriminator/route. A custom event
         // therefore uses a supported wire type and carries custom data in context.

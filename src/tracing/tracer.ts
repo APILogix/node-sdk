@@ -100,7 +100,7 @@ function createNoopSpan(_name?: string): PulseSpan {
  * Automatic instrumentation is unaffected (it uses the OTel tracer
  * directly, not these developer-facing wrappers).
  */
-function customSpansAllowed(): boolean {
+function areCustomSpansAllowed(): boolean {
     return EntitlementGate.isAllowed('customSpans')
 }
 
@@ -349,10 +349,10 @@ function spanToEvent(span: ReadableSpan): Record<string, unknown> {
         // Internal marker allows shutdown force-flush to route finished spans
         // while rejecting new user-captured events. Stripped by event pipeline.
         __pulseInternal: true,
-        requestId: attrString(attrs[PULSE_CONTEXT_ATTRIBUTES.requestId]),
-        sessionId: attrString(attrs[PULSE_CONTEXT_ATTRIBUTES.sessionId]),
-        userId: attrString(attrs[PULSE_CONTEXT_ATTRIBUTES.userId]),
-        tenantId: attrString(attrs[PULSE_CONTEXT_ATTRIBUTES.tenantId]),
+        requestId: toAttrString(attrs[PULSE_CONTEXT_ATTRIBUTES.requestId]),
+        sessionId: toAttrString(attrs[PULSE_CONTEXT_ATTRIBUTES.sessionId]),
+        userId: toAttrString(attrs[PULSE_CONTEXT_ATTRIBUTES.userId]),
+        tenantId: toAttrString(attrs[PULSE_CONTEXT_ATTRIBUTES.tenantId]),
     }
 }
 
@@ -429,7 +429,7 @@ export function initTracer(config: Readonly<RemoteConfigResponse>, customResourc
             tracer = otelTrace.getTracer(SDK_NAME, SDK_VERSION)
             initialized = true
             ownsProvider = false
-            logger.info('OpenTelemetry tracer provider already registered by Pulse telemetry; reusing global provider')
+            logger.info('OpenTelemetry tracer provider already registered by APM telemetry; reusing global provider')
             return
         }
         // Build resource descriptor
@@ -563,7 +563,7 @@ function snapshotActiveSpanId(): string | undefined {
 export function startSpan(name: string, options?: SpanOptions): PulseSpan {
     const logger = getLogger()
 
-    if (!customSpansAllowed()) {
+    if (!areCustomSpansAllowed()) {
         logger.debug('startSpan called but customSpans entitlement is revoked — returning no-op span', { name })
         return createNoopSpan(name)
     }
@@ -627,7 +627,7 @@ export async function withSpan<T>(
     optionsOrFn?: SpanOptions | ((span: PulseSpan) => T | Promise<T>)
 ): Promise<T> {
     const { fn, options } = resolveWithSpanArgs(fnOrOptions, optionsOrFn)
-    if (!tracer || !customSpansAllowed()) {
+    if (!tracer || !areCustomSpansAllowed()) {
         const span = startSpan(name, options)
         try {
             const result = await fn(span)
@@ -731,7 +731,7 @@ export function withSpanSync<T>(
     optionsOrFn?: SpanOptions | ((span: PulseSpan) => T)
 ): T {
     const { fn, options } = resolveWithSpanSyncArgs(fnOrOptions, optionsOrFn)
-    if (!tracer || !customSpansAllowed()) {
+    if (!tracer || !areCustomSpansAllowed()) {
         const span = startSpan(name, options)
         try {
             const result = fn(span)
@@ -815,7 +815,7 @@ export function trace<T>(
 ): T | Promise<T> {
     const { fn, options } = resolveWithSpanArgs<T>(fnOrOptions as any, optionsOrFn as any)
 
-    if (!tracer || !customSpansAllowed()) {
+    if (!tracer || !areCustomSpansAllowed()) {
         const span = startSpan(name, options)
         try {
             const result = fn(span)
@@ -1060,7 +1060,7 @@ export async function withBackgroundSpan<T>(
     const { fn, options } = resolveWithBackgroundSpanArgs(fnOrOptions, optionsOrFn)
     const logger = getLogger()
 
-    if (!tracer || !customSpansAllowed()) {
+    if (!tracer || !areCustomSpansAllowed()) {
         const span = createNoopSpan(name)
         try {
             const result = await fn(span)
@@ -1240,7 +1240,7 @@ export async function withBackgroundSpan<T>(
 export function startBackgroundSpan(name: string, options?: BackgroundSpanOptions): PulseSpan {
     const logger = getLogger()
 
-    if (!customSpansAllowed()) {
+    if (!areCustomSpansAllowed()) {
         logger.debug('startBackgroundSpan called but customSpans entitlement is revoked — returning no-op span', { name })
         return createNoopSpan(name)
     }
@@ -1605,6 +1605,6 @@ function withRequestContextAttributes(attributes?: Attributes): Attributes {
     return enriched
 }
 
-function attrString(value: unknown): string | undefined {
+function toAttrString(value: unknown): string | undefined {
     return typeof value === 'string' && value.length > 0 ? value : undefined
 }

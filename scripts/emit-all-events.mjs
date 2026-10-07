@@ -1,6 +1,6 @@
 import {
   init,
-  captureError,
+  captureException,
   captureMessage,
   captureRequest,
   captureEvent,
@@ -32,7 +32,7 @@ console.log('[SDK Emitter] SDK initialized successfully! Active features:', Obje
 
 // 1. Error event
 console.log('[SDK Emitter] 1. Emitting Error event...');
-captureError(new Error('Simulated Cubicle Database Connection Timeout'), {
+captureException(new Error('Simulated Cubicle Database Connection Timeout'), {
   severity: 'error',
   tags: { module: 'cubicle-core', environment: 'production' },
   extra: { retryAttempt: 3, host: 'mongodb.internal' },

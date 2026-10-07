@@ -191,7 +191,7 @@ export class LoadShedder {
                 }
                 else if (priority === 'p2_request') {
                     const sampleKey = groupKey || stableFallbackKey(event);
-                    const keepGroup = keepDeterministicGroupSample(sampleKey, CRITICAL_P2_GROUP_KEEP_RATE);
+                    const keepGroup = shouldKeepDeterministicGroupSample(sampleKey, CRITICAL_P2_GROUP_KEEP_RATE);
                     shed = !keepGroup;
                 }
                 break;
@@ -269,7 +269,7 @@ export class LoadShedder {
 // ─── Singleton ──────────────────────────────────────────────────────────────
 export const loadShedder = new LoadShedder();
 // ─── Deterministic Correlation Group Hashing ────────────────────────────────
-function keepDeterministicGroupSample(groupKey, rate) {
+function shouldKeepDeterministicGroupSample(groupKey, rate) {
     if (rate >= 1)
         return true;
     if (rate <= 0)

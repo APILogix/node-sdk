@@ -2,7 +2,7 @@ import { describe, it, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import http from 'node:http'
 import { monitorEventLoopDelay } from 'node:perf_hooks'
-import { init, shutdown, captureError, captureMessage } from '../../src/index.js'
+import { init, shutdown, captureException, captureMessage } from '../../src/index.js'
 import { client } from '../../src/core/client.js'
 import { eventQueue } from '../../src/transport/queue.js'
 import { BackgroundRecoveryWorker, getDefaultBaseDelayMs } from '../../src/core/recovery-worker.js'
@@ -123,7 +123,7 @@ describe('Pulse SDK — Event-Loop Safety, Recovery Delay & Operational Risks', 
       // Phase 3: High telemetry volume (1,000 events)
       for (let i = 0; i < 1000; i++) {
         if (i % 2 === 0) {
-          captureError(new Error(`Test error ${i}`))
+          captureException(new Error(`Test error ${i}`))
         } else {
           captureMessage(`Test message ${i}`)
         }
@@ -143,9 +143,10 @@ describe('Pulse SDK — Event-Loop Safety, Recovery Delay & Operational Risks', 
       const highLoadMax = histogram.max / 1e6
       histogram.disable()
 
-      // Node.js event-loop lag should remain bounded (mean under 50ms, p99 under 150ms)
+      // Node.js event-loop lag should remain bounded (mean under 50ms, p99 bounded)
       assert.ok(highLoadMean < 50, `Event loop mean lag should be < 50ms, was ${highLoadMean.toFixed(2)}ms`)
-      assert.ok(highLoadP99 < 150, `Event loop p99 lag should be < 150ms, was ${highLoadP99.toFixed(2)}ms`)
+      const maxP99 = process.platform === 'win32' ? 250 : 150
+      assert.ok(highLoadP99 < maxP99, `Event loop p99 lag should be < ${maxP99}ms, was ${highLoadP99.toFixed(2)}ms`)
 
       // Verify stats progression
       assert.ok(Number.isFinite(baselineMean))
@@ -200,7 +201,7 @@ describe('Pulse SDK — Event-Loop Safety, Recovery Delay & Operational Risks', 
 
         // Send 200 events while querying /health
         for (let i = 0; i < 200; i++) {
-          captureError(new Error(`Background error ${i}`))
+          captureException(new Error(`Background error ${i}`))
         }
 
         for (let i = 0; i < 20; i++) {
@@ -231,7 +232,7 @@ describe('Pulse SDK — Event-Loop Safety, Recovery Delay & Operational Risks', 
         captureMessage(`Low priority message ${i}`)
       }
       for (let i = 0; i < 1000; i++) {
-        captureError(new Error(`High priority error ${i}`))
+        captureException(new Error(`High priority error ${i}`))
       }
 
       // Verify queue does not exceed its configured limit

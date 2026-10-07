@@ -1,7 +1,7 @@
 /**
  * Fastify request-capture plugin.
  *
- * Mirrors the enterprise hardening of `monitorMiddleware` for Express:
+ * Mirrors the enterprise hardening of `pulseMiddleware` for Express:
  *   - Killswitch + FeatureController gates
  *   - Tenant admission control
  *   - Centralized scrubbing via SecurityScrubber
@@ -79,5 +79,5 @@ interface PulseFastifyState {
     captureQuery: boolean;
     captureBody: boolean;
 }
-export declare function fastifyPulsePlugin(fastify: FastifyInstance, opts: PulseFastifyOptions, done: (err?: Error) => void): void;
+export declare function pulseFastifyPlugin(fastify: FastifyInstance, opts: PulseFastifyOptions, done: (err?: Error) => void): void;
 export {};

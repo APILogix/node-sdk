@@ -80,3 +80,9 @@ export function contentEncoding(algorithm: CompressionAlgorithm): string | undef
       return undefined
   }
 }
+
+/**
+ * Standard alias for contentEncoding following get* convention.
+ */
+export const getContentEncoding = contentEncoding
+

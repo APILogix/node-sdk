@@ -5,7 +5,7 @@ import http from 'node:http'
 import {
   init,
   shutdown,
-  monitorMiddleware,
+  pulseMiddleware,
   instrumentExpress,
 } from '../../src/index.js'
 import { TEST_REMOTE_CONFIG } from '../fixtures/remote-config.js'
@@ -88,7 +88,7 @@ describe('Express Middleware Layer Timing & Threshold Instrumentation', () => {
       }, 10)
     }
 
-    app.use(monitorMiddleware({
+    app.use(pulseMiddleware({
       instrumentMiddleware: true,
       minMiddlewareDurationMs: 2,
     }))
@@ -120,7 +120,7 @@ describe('Express Middleware Layer Timing & Threshold Instrumentation', () => {
       next(new Error('Invalid bearer token'))
     }
 
-    app.use(monitorMiddleware({
+    app.use(pulseMiddleware({
       instrumentMiddleware: true,
       minMiddlewareDurationMs: 1,
     }))
@@ -155,7 +155,7 @@ describe('Express Middleware Layer Timing & Threshold Instrumentation', () => {
       setTimeout(next, 5)
     }
 
-    app.use(monitorMiddleware())
+    app.use(pulseMiddleware())
     app.use(ignoredSlow)
     app.get('/api/ignored', (req, res) => res.json({ ignored: true }))
 
@@ -171,7 +171,7 @@ describe('Express Middleware Layer Timing & Threshold Instrumentation', () => {
     }
   })
 
-  it('instruments middlewares by default when monitorMiddleware is called without arguments', async () => {
+  it('instruments middlewares by default when pulseMiddleware is called without arguments', async () => {
     const app = express()
 
     function customMiddleware(req: any, res: any, next: any) {
@@ -182,7 +182,7 @@ describe('Express Middleware Layer Timing & Threshold Instrumentation', () => {
     }
 
     // Default: no options passed -> should profile middlewares >= 2ms
-    app.use(monitorMiddleware())
+    app.use(pulseMiddleware())
     app.use(customMiddleware)
     app.get('/api/default-timing', (req, res) => {
       res.json({ processed: (req as any).processedByDefault })
@@ -211,7 +211,7 @@ describe('Express Middleware Layer Timing & Threshold Instrumentation', () => {
     }
 
     // Explicit opt-out
-    app.use(monitorMiddleware({ instrumentMiddleware: false }))
+    app.use(pulseMiddleware({ instrumentMiddleware: false }))
     app.use(customMiddleware)
     app.get('/api/opt-out', (req, res) => {
       res.json({ processed: (req as any).processedWithoutTiming })

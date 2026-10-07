@@ -3,7 +3,7 @@ import { gunzipSync } from 'node:zlib';
 import { init } from '../../src/core/init.js';
 import { shutdown } from '../../src/core/lifecycle.js';
 import { startSpan } from '../../src/tracing/tracer.js';
-import { captureError } from '../../src/capture/captureError.js';
+import { captureException } from '../../src/capture/captureException.js';
 import { captureMetric, incrementCounter } from '../../src/capture/captureMetric.js';
 import { captureMessage } from '../../src/capture/captureMessage.js';
 import { TEST_REMOTE_CONFIG as BAKED_IN_REMOTE_CONFIG } from '../fixtures/remote-config.js';
@@ -136,7 +136,7 @@ export async function runIoResilienceAudit() {
     let failOpenUnder500Success = true;
     try {
         for (let i = 0; i < 200; i++) {
-            captureError(new Error(`Test 500 Error ${i}`));
+            captureException(new Error(`Test 500 Error ${i}`));
         }
         await new Promise(resolve => setTimeout(resolve, 300));
     }

@@ -80,19 +80,27 @@ class RouteHealth {
     this.state = 'DEGRADED'
   }
 
-  concurrencyScale(): number {
+  getConcurrencyScale(): number {
     if (this.state === 'HEALTHY') return 1
     if (this.state === 'DEGRADED') return 0.5
     return this.canSend() ? 0.05 : 0
   }
 
-  batchScale(): number {
+  concurrencyScale(): number {
+    return this.getConcurrencyScale()
+  }
+
+  getBatchScale(): number {
     if (this.state === 'DEGRADED') return 0.5
     if (this.state === 'UNAVAILABLE') return 0.25
     return 1
   }
 
-  snapshot(): RouteHealthSnapshot {
+  batchScale(): number {
+    return this.getBatchScale()
+  }
+
+  getSnapshot(): RouteHealthSnapshot {
     const now = Date.now()
     this.pruneFailures(now)
     return {
@@ -106,6 +114,10 @@ class RouteHealth {
       lastErrorAt: this.lastError,
       lastSuccessAt: this.lastSuccess,
     }
+  }
+
+  snapshot(): RouteHealthSnapshot {
+    return this.getSnapshot()
   }
 
   private trackLatency(latencyMs: number): void {
@@ -127,7 +139,7 @@ class RouteHealth {
     }
   }
 
-  private p99Latency(): number {
+  private getP99Latency(): number {
     if (this.latencies.length === 0) return 0
     const target = Math.max(1, Math.ceil(this.latencies.length * 0.99))
     let seen = 0
@@ -140,6 +152,9 @@ class RouteHealth {
     return 0
   }
 
+  private p99Latency(): number {
+    return this.getP99Latency()
+  }
   private pruneFailures(now: number): void {
     const cutoff = now - FAILURE_WINDOW_MS
     while (this.failures.length > 0 && (this.failures[0] ?? 0) < cutoff) {
@@ -169,15 +184,23 @@ export class HealthMonitor {
     this.routes.get(route)?.recordFailure()
   }
 
-  concurrencyScale(route: EnterpriseRoute): number {
+  getConcurrencyScale(route: EnterpriseRoute): number {
     return this.routes.get(route)?.concurrencyScale() ?? 0
   }
 
-  batchScale(route: EnterpriseRoute): number {
+  concurrencyScale(route: EnterpriseRoute): number {
+    return this.getConcurrencyScale(route)
+  }
+
+  getBatchScale(route: EnterpriseRoute): number {
     return this.routes.get(route)?.batchScale() ?? 1
   }
 
-  snapshot(route: EnterpriseRoute): RouteHealthSnapshot {
+  batchScale(route: EnterpriseRoute): number {
+    return this.getBatchScale(route)
+  }
+
+  getSnapshot(route: EnterpriseRoute): RouteHealthSnapshot {
     const health = this.routes.get(route)
     if (!health) {
       return {
@@ -194,4 +217,9 @@ export class HealthMonitor {
     }
     return health.snapshot()
   }
+
+  snapshot(route: EnterpriseRoute): RouteHealthSnapshot {
+    return this.getSnapshot(route)
+  }
 }
+

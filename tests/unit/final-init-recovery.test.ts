@@ -1,6 +1,6 @@
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { init, shutdown, captureError } from '../../src/index.js'
+import { init, shutdown, captureException } from '../../src/index.js'
 import { client } from '../../src/core/client.js'
 import { eventQueue } from '../../src/transport/queue.js'
 import { BackgroundRecoveryWorker } from '../../src/core/recovery-worker.js'
@@ -346,7 +346,7 @@ describe('Final Initialization & Background Recovery Architecture', () => {
       assert.equal(client.getState(), 'recovering')
 
       // Capture error during recovering state
-      captureError(new Error('Test error during recovering state'))
+      captureException(new Error('Test error during recovering state'))
       assert.ok(eventQueue.size() >= 1, 'Event queue must have buffered event')
 
       // Await late activation

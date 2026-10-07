@@ -4,7 +4,7 @@ import { gunzipSync } from 'node:zlib';
 import http from 'node:http';
 import { init } from '../../src/core/init.js';
 import { shutdown, flush } from '../../src/core/lifecycle.js';
-import { captureError } from '../../src/capture/captureError.js';
+import { captureException } from '../../src/capture/captureException.js';
 import { captureRequest } from '../../src/capture/captureRequest.js';
 import { quotaController } from '../../src/core/quota-controller.js';
 import { TEST_REMOTE_CONFIG as BAKED_IN_REMOTE_CONFIG } from '../fixtures/remote-config.js';
@@ -178,7 +178,7 @@ describe('Transport Resilience & Quota Recovery Integration', () => {
         });
         // 4. Server recovers to 200 OK — P0 fatal error is admitted even when exhausted and triggers ACK
         responseMode = 'ok';
-        captureError(new Error('fatal recovery error'), 'fatal');
+        captureException(new Error('fatal recovery error'), 'fatal');
         await flush();
         // Automatic recovery verified without server restart!
         assert.equal(quotaController.getState(), 'QUOTA_OK');

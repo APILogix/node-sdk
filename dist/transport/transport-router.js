@@ -359,7 +359,7 @@ export class TransportRouter {
     }
     routeHealth(route) {
         const definition = this.registry.get(route);
-        const stats = this.batchManagers.get(route)?.stats() ?? emptyStats(route);
+        const stats = this.batchManagers.get(route)?.stats() ?? createEmptyStats(route);
         const health = this.healthMonitor.snapshot(route);
         const priority = toQueuePriority(this.transportConfig.routes[route].priority);
         if (!priority)
@@ -395,7 +395,7 @@ export class TransportRouter {
         }
     }
 }
-function emptyStats(route) {
+function createEmptyStats(route) {
     return {
         route,
         queuedEvents: 0,

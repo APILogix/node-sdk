@@ -7,6 +7,7 @@ const MAX_PENDING_REQUESTS = 64;
 export class SerializationPool {
     poolSize;
     workers = [];
+    workerEntries = [];
     readyWorkers = new Set();
     roundRobinIndex = 0;
     pendingRequests = new Map();
@@ -33,10 +34,16 @@ export class SerializationPool {
     }
     addWorker(workerUrl) {
         const worker = new Worker(workerUrl);
-        worker.once('online', () => {
-            if (!this.destroyed && this.workers.includes(worker))
-                this.readyWorkers.add(worker);
+        const onlinePromise = new Promise((resolve) => {
+            worker.once('online', () => {
+                if (!this.destroyed && this.workers.includes(worker))
+                    this.readyWorkers.add(worker);
+                resolve();
+            });
+            worker.once('error', () => resolve());
+            worker.once('exit', () => resolve());
         });
+        this.workerEntries.push({ worker, onlinePromise });
         worker.on('message', (msg) => {
             const req = this.pendingRequests.get(msg.id);
             if (req) {
@@ -79,6 +86,7 @@ export class SerializationPool {
     }
     handleWorkerCrash(worker) {
         this.workers = this.workers.filter(w => w !== worker);
+        this.workerEntries = this.workerEntries.filter(e => e.worker !== worker);
         this.readyWorkers.delete(worker);
         this.roundRobinIndex = 0;
     }
@@ -181,14 +189,29 @@ export class SerializationPool {
     }
     async shutdown() {
         this.destroyed = true;
+        if (this.pendingRequests.size > 0) {
+            const deadline = Date.now() + 500;
+            while (this.pendingRequests.size > 0 && Date.now() < deadline) {
+                await new Promise(r => setTimeout(r, 10));
+            }
+        }
         for (const req of this.pendingRequests.values()) {
             clearTimeout(req.timer);
             req.reject(new Error('Pool shutting down'));
         }
         this.pendingRequests.clear();
-        await Promise.all(this.workers.map(w => w.terminate()));
+        await Promise.all(this.workerEntries.map(e => Promise.race([e.onlinePromise, new Promise(r => setTimeout(r, 500))])));
+        await Promise.all(this.workers.map(async (w) => {
+            try {
+                await w.terminate();
+            }
+            catch { }
+        }));
         this.workers = [];
+        this.workerEntries = [];
         this.readyWorkers.clear();
+        // Allow libuv to process handle close callbacks (uv_process_endgames) on Windows
+        await new Promise(r => setTimeout(r, 25));
     }
     static async reset() {
         if (SerializationPool.instance) {

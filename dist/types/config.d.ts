@@ -268,6 +268,15 @@ export interface OfflineQueueConfig {
     readonly ioTimeoutMs: number;
     readonly flushDebounceMs?: number | undefined;
 }
+export interface OfflineQueueInitOptions {
+    readonly enabled?: boolean | undefined;
+    readonly directory?: string | undefined;
+    readonly maxFileSizeBytes?: number | undefined;
+    readonly maxEvents?: number | undefined;
+    readonly eventTtlMs?: number | undefined;
+    readonly ioTimeoutMs?: number | undefined;
+    readonly flushDebounceMs?: number | undefined;
+}
 export interface ProfilingConfig {
     readonly enabled: boolean;
     readonly cpu: boolean;
@@ -483,6 +492,11 @@ export interface SDKInitOptions {
         readonly allowRemote?: boolean | undefined;
         readonly embedSourceContent?: boolean | undefined;
     } | undefined;
+    /**
+     * Offline queue / persistent storage configuration.
+     * Pass `false` to completely disable disk persistence (recommended for purely ephemeral/stateless serverless runtimes).
+     */
+    readonly offlineQueue?: boolean | OfflineQueueInitOptions | undefined;
 }
 export declare const sdkInitOptionsSchema: z.ZodObject<{
     apiKey: z.ZodString;
@@ -513,4 +527,13 @@ export declare const sdkInitOptionsSchema: z.ZodObject<{
         allowRemote: z.ZodOptional<z.ZodBoolean>;
         embedSourceContent: z.ZodOptional<z.ZodBoolean>;
     }, z.core.$strict>>;
+    offlineQueue: z.ZodOptional<z.ZodUnion<readonly [z.ZodBoolean, z.ZodObject<{
+        enabled: z.ZodOptional<z.ZodBoolean>;
+        directory: z.ZodOptional<z.ZodString>;
+        maxFileSizeBytes: z.ZodOptional<z.ZodNumber>;
+        maxEvents: z.ZodOptional<z.ZodNumber>;
+        eventTtlMs: z.ZodOptional<z.ZodNumber>;
+        ioTimeoutMs: z.ZodOptional<z.ZodNumber>;
+        flushDebounceMs: z.ZodOptional<z.ZodNumber>;
+    }, z.core.$strict>]>>;
 }, z.core.$strict>;

@@ -11,8 +11,8 @@ import { createRedisInstrumentation } from '../../src/instrumentation/redis.js';
 import { createBullMQInstrumentation } from '../../src/instrumentation/bullmq.js';
 import { createGraphQLInstrumentation } from '../../src/instrumentation/graphql.js';
 import { createAxiosInstrumentation } from '../../src/instrumentation/axios.js';
-import { monitorMiddleware } from '../../src/instrumentation/express.js';
-import { fastifyPulsePlugin } from '../../src/instrumentation/fastify.js';
+import { pulseMiddleware } from '../../src/instrumentation/express.js';
+import { pulseFastifyPlugin } from '../../src/instrumentation/fastify.js';
 import { TEST_REMOTE_CONFIG } from '../fixtures/remote-config.js';
 const originalFetch = globalThis.fetch;
 function setupMockFetch() {
@@ -324,7 +324,7 @@ describe('DB request tracing coverage across all auto-instrumentation types', ()
         assert.ok(typeof traceEvent.rootSpan.exclusiveDuration === 'number', 'rootSpan should have exclusiveDuration calculated');
         assert.ok(traceEvent.rootSpan.exclusiveDuration <= traceEvent.rootSpan.duration, 'root exclusiveDuration should be <= total duration');
     });
-    it('captures database queries initiated within Express monitorMiddleware request lifecycle', async () => {
+    it('captures database queries initiated within Express pulseMiddleware request lifecycle', async () => {
         const capturedEvents = [];
         await init({
             apiKey: 'test-key-express-db-tracing',
@@ -333,7 +333,7 @@ describe('DB request tracing coverage across all auto-instrumentation types', ()
                 return event;
             },
         });
-        const middleware = monitorMiddleware();
+        const middleware = pulseMiddleware();
         const req = {
             method: 'GET',
             url: '/api/users/profile',
@@ -439,7 +439,7 @@ describe('DB request tracing coverage across all auto-instrumentation types', ()
                 return event;
             },
         });
-        const middleware = monitorMiddleware();
+        const middleware = pulseMiddleware();
         const req = {
             method: 'GET',
             url: '/api/manual-db',
@@ -527,7 +527,7 @@ describe('DB request tracing coverage across all auto-instrumentation types', ()
                 return event;
             },
         });
-        const middleware = monitorMiddleware();
+        const middleware = pulseMiddleware();
         const req = {
             method: 'GET',
             url: '/api/context-lost',
@@ -624,7 +624,7 @@ describe('DB request tracing coverage across all auto-instrumentation types', ()
                 hooks[name].push(fn);
             },
         };
-        fastifyPulsePlugin(mockFastify, {}, () => { });
+        pulseFastifyPlugin(mockFastify, {}, () => { });
         const request = {
             method: 'GET',
             url: '/orders/101',

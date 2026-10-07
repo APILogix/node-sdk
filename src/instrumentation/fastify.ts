@@ -1,7 +1,7 @@
 /**
  * Fastify request-capture plugin.
  *
- * Mirrors the enterprise hardening of `monitorMiddleware` for Express:
+ * Mirrors the enterprise hardening of `pulseMiddleware` for Express:
  *   - Killswitch + FeatureController gates
  *   - Tenant admission control
  *   - Centralized scrubbing via SecurityScrubber
@@ -11,7 +11,7 @@
  * application continues serving traffic and the SDK logs the failure.
  */
 
-import { captureError } from '../capture/captureError.js'
+import { captureException } from '../capture/captureException.js'
 import { captureRequest } from '../capture/captureRequest.js'
 import { trace, context, SpanKind, SpanStatusCode, type Span } from '@opentelemetry/api'
 import { client } from '../core/client.js'
@@ -104,7 +104,7 @@ interface PulseFastifyState {
   captureBody: boolean
 }
 
-export function fastifyPulsePlugin(
+export function pulseFastifyPlugin(
   fastify: FastifyInstance,
   opts: PulseFastifyOptions,
   done: (err?: Error) => void,
@@ -141,7 +141,7 @@ export function fastifyPulsePlugin(
         return
       }
 
-      const userId = readUserId(request)
+      const userId = extractUserId(request)
       const sessionId = headerString(headers['x-session-id'])
       const userAgent = headerString(headers['user-agent'])
       const referer = headerString(headers['referer'] ?? headers['referrer'])
@@ -152,7 +152,7 @@ export function fastifyPulsePlugin(
         getStatusCode: { value: () => (request as any).raw?.statusCode ?? (request as any).reply?.statusCode, enumerable: false, configurable: true, writable: true },
         getMethod: { value: () => request.method, enumerable: false, configurable: true, writable: true },
         getUrl: { value: () => request.url, enumerable: false, configurable: true, writable: true },
-        getRoute: { value: () => normalizedRoute(request), enumerable: false, configurable: true, writable: true },
+        getRoute: { value: () => normalizeRoute(request), enumerable: false, configurable: true, writable: true },
       })
 
       const store = createContextStore(
@@ -232,7 +232,7 @@ export function fastifyPulsePlugin(
         runHook()
       }
     } catch (err) {
-      getLogger().error('fastifyPulsePlugin onRequest failed', { error: err })
+      getLogger().error('pulseFastifyPlugin onRequest failed', { error: err })
       hookDone()
     }
   })
@@ -264,9 +264,9 @@ export function fastifyPulsePlugin(
                   ;(state.store.extra as Record<string, unknown>).fastifyErrorCaptured = true
                 }
                 attachRequestContextToActiveSpan(state.store)
-                captureError(payload instanceof Error ? payload : new Error(String((payload as Record<string, unknown>).message)))
+                captureException(payload instanceof Error ? payload : new Error(String((payload as Record<string, unknown>).message)))
               } catch (sendErr) {
-                getLogger().error('fastifyPulsePlugin reply.send error capture failed', { error: sendErr })
+                getLogger().error('pulseFastifyPlugin reply.send error capture failed', { error: sendErr })
               }
             })
           }
@@ -312,11 +312,11 @@ export function fastifyPulsePlugin(
             ;(state.store.extra as Record<string, unknown>).fastifyErrorCaptured = true
           }
           attachRequestContextToActiveSpan(state.store)
-          captureError(err)
+          captureException(err)
         }
         captureFastifyCompletion(request, reply, state)
       } catch (err) {
-        getLogger().error('fastifyPulsePlugin completion failed', { error: err })
+        getLogger().error('pulseFastifyPlugin completion failed', { error: err })
       }
       hookDone()
     })
@@ -339,9 +339,9 @@ export function fastifyPulsePlugin(
               ;(state.store.extra as Record<string, unknown>).getStatusCode = () => errStatusCode
             }
             attachRequestContextToActiveSpan(state.store)
-            captureError(payload instanceof Error ? payload : new Error(String((payload as Record<string, unknown>).message)))
+            captureException(payload instanceof Error ? payload : new Error(String((payload as Record<string, unknown>).message)))
           } catch (err) {
-            getLogger().error('fastifyPulsePlugin preSerialization error capture failed', { error: err })
+            getLogger().error('pulseFastifyPlugin preSerialization error capture failed', { error: err })
           }
         })
       }
@@ -372,7 +372,7 @@ export function fastifyPulsePlugin(
           ;(state.store.extra as Record<string, unknown>).fastifyErrorCaptured = true
         }
         attachRequestContextToActiveSpan(state.store)
-        captureError(error)
+        captureException(error)
         const currentActiveSpan = trace.getActiveSpan() ?? state.activeSpan
         if (currentActiveSpan) {
           try {
@@ -381,7 +381,7 @@ export function fastifyPulsePlugin(
           } catch { /* fail-open */ }
         }
       } catch (err) {
-        getLogger().error('fastifyPulsePlugin error capture failed', { error: err })
+        getLogger().error('pulseFastifyPlugin error capture failed', { error: err })
       }
       if (typeof hookDone === 'function') hookDone()
     })
@@ -438,9 +438,9 @@ export function fastifyPulsePlugin(
               ;(state.store.extra as Record<string, unknown>).fastifyErrorCaptured = true
             }
             attachRequestContextToActiveSpan(state.store)
-            captureError(errToCapture)
+            captureException(errToCapture)
           } catch (err) {
-            getLogger().error('fastifyPulsePlugin onSend error capture failed', { error: err })
+            getLogger().error('pulseFastifyPlugin onSend error capture failed', { error: err })
           }
         })
       }
@@ -468,9 +468,9 @@ export function fastifyPulsePlugin(
               ;(state.store.extra as Record<string, unknown>).fastifyErrorCaptured = true
             }
             attachRequestContextToActiveSpan(state.store)
-            captureError(error)
+            captureException(error)
           } catch (err) {
-            getLogger().error('fastifyPulsePlugin errorHandler error capture failed', { error: err })
+            getLogger().error('pulseFastifyPlugin errorHandler error capture failed', { error: err })
           }
         })
       }
@@ -486,8 +486,8 @@ export function fastifyPulsePlugin(
   done()
 }
 
-;(fastifyPulsePlugin as any)[Symbol.for('skip-override')] = true
-;(fastifyPulsePlugin as any)[Symbol.for('fastify.display-name')] = 'pulse-fastify'
+;(pulseFastifyPlugin as any)[Symbol.for('skip-override')] = true
+;(pulseFastifyPlugin as any)[Symbol.for('fastify.display-name')] = 'pulse-fastify'
 
 function captureFastifyCompletion(
   request: FastifyRequest,
@@ -499,11 +499,11 @@ function captureFastifyCompletion(
 
   const statusCode = reply.statusCode ?? reply.raw?.statusCode ?? 0
   const latencyMs = Date.now() - state.startTime
-  const responseSize = readContentLength(reply.getHeader?.('content-length'))
+  const responseSize = extractContentLength(reply.getHeader?.('content-length'))
   const rawBody = request.body
   const rawHeaders = request.headers
   const rawQuery = request.query
-  const route = normalizedRoute(request)
+  const route = normalizeRoute(request)
 
   const currentActiveSpan = trace.getActiveSpan() ?? state.activeSpan
   if (currentActiveSpan) {
@@ -591,11 +591,11 @@ function captureFastifyCompletion(
   })
 }
 
-function normalizedRoute(request: FastifyRequest): string {
+function normalizeRoute(request: FastifyRequest): string {
   return request.routeOptions?.url ?? request.routerPath ?? request.url.split('?')[0] ?? '/'
 }
 
-function readUserId(request: FastifyRequest): string | undefined {
+function extractUserId(request: FastifyRequest): string | undefined {
   const value = request.user?.id ?? request.user?.userId
   return typeof value === 'string' || typeof value === 'number' ? String(value) : undefined
 }
@@ -614,7 +614,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value)
 }
 
-function readContentLength(value: number | string | string[] | undefined): number | undefined {
+function extractContentLength(value: number | string | string[] | undefined): number | undefined {
   if (typeof value === 'number' && Number.isFinite(value)) return value
   if (typeof value === 'string') {
     const parsed = Number.parseInt(value, 10)

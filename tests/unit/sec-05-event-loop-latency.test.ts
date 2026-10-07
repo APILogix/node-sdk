@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { monitorMiddleware } from '../../src/instrumentation/express.js'
+import { pulseMiddleware } from '../../src/instrumentation/express.js'
 import { SecurityScrubber } from '../../src/processors/security-scrubber.js'
 import { DEFAULT_PRIVACY } from '../../src/constants/defaults.js'
 import { EventEmitter } from 'node:events'
@@ -9,7 +9,7 @@ describe('SEC-05: Synchronous PII / Body Processing Event-Loop Safety', () => {
   it('does not block the event loop during request finish callback with a large body', async () => {
     SecurityScrubber.initialize(DEFAULT_PRIVACY)
 
-    const middleware = monitorMiddleware()
+    const middleware = pulseMiddleware()
     assert.strictEqual(typeof middleware, 'function')
 
     // Create a body with nested objects and sensitive strings

@@ -15,6 +15,7 @@ export interface ConfigApplyHandlers {
     readonly transport?: ApplyHandler | undefined;
     readonly instrumentation?: ApplyHandler | undefined;
     readonly entitlements?: ApplyHandler | undefined;
+    readonly offlineQueue?: ApplyHandler | undefined;
 }
 /**
  * Applies a complete config replacement without restarting unaffected systems.

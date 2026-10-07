@@ -18,5 +18,6 @@ export declare class RouteRegistry {
     constructor(config: TransportRemoteConfig);
     resolve(event: SDKEvent): RouteDefinition;
     get(route: EnterpriseRoute): RouteDefinition;
+    getRoutes(): readonly EnterpriseRoute[];
     routes(): readonly EnterpriseRoute[];
 }

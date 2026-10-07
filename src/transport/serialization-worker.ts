@@ -26,6 +26,11 @@ function getOrCreateScrubber(config?: PrivacyConfig): SecurityScrubber | null {
 
 if (parentPort) {
   parentPort.on('message', (message) => {
+    if (message?.type === 'close') {
+      process.exit(0)
+      return
+    }
+
     const { id, events, route, timestamp, privacyConfig, compression, maxPayloadBytes } = message
     try {
       let safeEvents = events
@@ -45,7 +50,9 @@ if (parentPort) {
       const originalSize = buffer.byteLength
 
       if (typeof maxPayloadBytes === 'number' && maxPayloadBytes > 0 && originalSize > maxPayloadBytes) {
-        parentPort!.postMessage({ id, tooLarge: true, originalSize })
+        try {
+          parentPort!.postMessage({ id, tooLarge: true, originalSize })
+        } catch {}
         return
       }
 
@@ -63,12 +70,16 @@ if (parentPort) {
       }
 
       const ab = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength)
-      parentPort!.postMessage(
-        { id, buffer: Buffer.from(ab), algorithm, originalSize, compressedSize },
-        [ab]
-      )
+      try {
+        parentPort!.postMessage(
+          { id, buffer: Buffer.from(ab), algorithm, originalSize, compressedSize },
+          [ab]
+        )
+      } catch {}
     } catch (err) {
-      parentPort!.postMessage({ id, error: err instanceof Error ? err.message : String(err) })
+      try {
+        parentPort!.postMessage({ id, error: err instanceof Error ? err.message : String(err) })
+      } catch {}
     }
   })
 }

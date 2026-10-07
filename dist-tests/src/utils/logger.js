@@ -18,11 +18,11 @@
  *   PII redaction is always applied regardless of debug mode.
  */
 import { SDKError } from '../core/errors.js';
-import { Severity, severityMeetsThreshold } from '../types/severity.js';
+import { Severity, doesSeverityMeetThreshold } from '../types/severity.js';
 import { trace as otelTrace } from '@opentelemetry/api';
 // ─── Configuration ──────────────────────────────────────────────────────────
 let debugMode = false;
-let logPrefix = 'Pulse';
+let logPrefix = 'Telemetry';
 let minimumLogLevel = Severity.Info;
 /**
  * Enable or disable debug logging globally.
@@ -39,7 +39,7 @@ export function setLogLevel(level) {
     minimumLogLevel = level;
 }
 /**
- * Set the log prefix (defaults to 'Pulse').
+ * Set the log prefix (defaults to 'Telemetry').
  */
 export function setLogPrefix(prefix) {
     logPrefix = prefix;
@@ -145,27 +145,27 @@ function stripPrefix(message) {
     if (message.startsWith(`[${logPrefix}]`)) {
         return message.slice(logPrefix.length + 2).trim();
     }
-    return message;
+    return message.replace(/^\[(Pulse|Telemetry|APM|SDK)\]\s*/i, '').trim();
 }
 // ─── Console Logger (Sentry-style) ─────────────────────────────────────────
 export const consoleLogger = {
     debug(message, context) {
-        if (!severityMeetsThreshold(Severity.Debug, minimumLogLevel))
+        if (!doesSeverityMeetThreshold(Severity.Debug, minimumLogLevel))
             return;
         writeStdout(`[${logPrefix}] DEBUG: ${stripPrefix(message)}${formatContext(context)}`);
     },
     info(message, context) {
-        if (!severityMeetsThreshold(Severity.Info, minimumLogLevel))
+        if (!doesSeverityMeetThreshold(Severity.Info, minimumLogLevel))
             return;
         writeStdout(`[${logPrefix}] INFO: ${stripPrefix(message)}${formatContext(context)}`);
     },
     warn(message, context) {
-        if (!severityMeetsThreshold(Severity.Warning, minimumLogLevel))
+        if (!doesSeverityMeetThreshold(Severity.Warning, minimumLogLevel))
             return;
         writeStderr(`[${logPrefix}] WARN: ${stripPrefix(message)}${formatContext(context)}`);
     },
     error(message, context) {
-        if (!severityMeetsThreshold(Severity.Error, minimumLogLevel))
+        if (!doesSeverityMeetThreshold(Severity.Error, minimumLogLevel))
             return;
         writeStderr(`[${logPrefix}] ERROR: ${stripPrefix(message)}${formatContext(context)}`);
     },
@@ -202,22 +202,22 @@ function getActiveTraceContext() {
  */
 export const jsonLogger = {
     debug(message, context) {
-        if (!severityMeetsThreshold(Severity.Debug, minimumLogLevel))
+        if (!doesSeverityMeetThreshold(Severity.Debug, minimumLogLevel))
             return;
         emitJsonLog('debug', message, context);
     },
     info(message, context) {
-        if (!severityMeetsThreshold(Severity.Info, minimumLogLevel))
+        if (!doesSeverityMeetThreshold(Severity.Info, minimumLogLevel))
             return;
         emitJsonLog('info', message, context);
     },
     warn(message, context) {
-        if (!severityMeetsThreshold(Severity.Warning, minimumLogLevel))
+        if (!doesSeverityMeetThreshold(Severity.Warning, minimumLogLevel))
             return;
         emitJsonLog('warn', message, context);
     },
     error(message, context) {
-        if (!severityMeetsThreshold(Severity.Error, minimumLogLevel))
+        if (!doesSeverityMeetThreshold(Severity.Error, minimumLogLevel))
             return;
         emitJsonLog('error', message, context);
     },

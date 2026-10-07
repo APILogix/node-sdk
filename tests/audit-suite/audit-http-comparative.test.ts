@@ -3,7 +3,7 @@ import { monitorEventLoopDelay } from 'node:perf_hooks'
 import express from 'express'
 import { init } from '../../src/core/init.js'
 import { shutdown } from '../../src/core/lifecycle.js'
-import { monitorMiddleware } from '../../src/instrumentation/express.js'
+import { pulseMiddleware } from '../../src/instrumentation/express.js'
 import { TEST_REMOTE_CONFIG as BAKED_IN_REMOTE_CONFIG } from '../fixtures/remote-config.js'
 
 export interface HttpComparisonResult {
@@ -276,7 +276,7 @@ export async function runHttpComparativeBenchmark(tiers = [
     })
 
     const sdkApp = express()
-    sdkApp.use(monitorMiddleware({
+    sdkApp.use(pulseMiddleware({
       ignorePaths: ['/healthz'],
     }))
 

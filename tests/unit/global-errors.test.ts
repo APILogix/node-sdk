@@ -18,7 +18,7 @@ describe('Global Errors Instrumentation & Process Warning Classification', () =>
     await shutdown()
   })
 
-  it('1. Intercepts standard error strings and errors into captureError', async () => {
+  it('1. Intercepts standard error strings and errors into captureException', async () => {
     let capturedErrorCount = 0
     let capturedMessageCount = 0
 
@@ -41,7 +41,7 @@ describe('Global Errors Instrumentation & Process Warning Classification', () =>
       await init({ apiKey: 'test-key' })
       setupGlobalErrorHandlers()
 
-      // Monkeypatch captureError / captureMessage directly or verify via wrapped function
+      // Monkeypatch captureException / captureMessage directly or verify via wrapped function
       // Here we verify that calling console.error with a normal error does not throw
       console.error(new Error('Normal application failure'))
       console.error('Database connection failed')

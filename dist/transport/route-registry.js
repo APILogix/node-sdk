@@ -47,6 +47,9 @@ export class RouteRegistry {
     get(route) {
         return this.definitions[route];
     }
+    getRoutes() {
+        return this.routes();
+    }
     routes() {
         return ['errors', 'events', 'traces', 'spans', 'metrics', 'logs', 'profiles', 'crons', 'requests', 'replays'];
     }

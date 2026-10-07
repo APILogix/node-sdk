@@ -161,6 +161,15 @@ export class EventQueue {
         return this.drain(this.size())
     }
 
+    getSize(): number {
+        return (
+            this.retryQueue.length +
+            this.tiers.critical.events.length +
+            this.tiers.high.events.length +
+            this.tiers.normal.events.length
+        )
+    }
+
     size(): number {
         return (
             this.retryQueue.length +

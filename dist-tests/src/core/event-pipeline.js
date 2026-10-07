@@ -79,6 +79,7 @@ const SOURCE_CONTEXT_TIMEOUT_MS = 250;
 const MAX_PENDING_PIPELINES = 10_000;
 const pendingPipelines = new Set();
 let pendingPipelineDrops = 0;
+let preInitDrops = 0;
 /**
  * Once set, no new event may join the pendingPipelines set — drain becomes
  * monotonic and is guaranteed to complete in finite time. New events arriving
@@ -169,10 +170,14 @@ export function enqueueEvent(rawEvent) {
     if (!client.initialized) {
         const event = ensureBaseFields(candidateEvent, eventId);
         if (!eventQueue.add(event)) {
-            logger.warn('Pre-init event rejected by queue', {
-                eventType: event.type,
-                eventId: event.eventId,
-            });
+            preInitDrops++;
+            if (preInitDrops === 1 || preInitDrops % 1000 === 0) {
+                logger.warn('Pre-init event rejected by queue', {
+                    eventType: event.type,
+                    eventId: event.eventId,
+                    totalDropped: preInitDrops,
+                });
+            }
             return rejectedReceipt(eventId, 'pre_init_queue_full');
         }
         logger.debug('Event buffered pre-init', {
@@ -240,6 +245,7 @@ export function resetEventPipeline() {
     pipelineDraining = false;
     pendingPipelines.clear();
     pendingPipelineDrops = 0;
+    preInitDrops = 0;
     traceDeduplicator.reset();
 }
 /**
@@ -259,10 +265,14 @@ export async function processEventAsync(rawEvent, assignedEventId) {
                 eventId: event.eventId,
             });
             if (!eventQueue.add(event)) {
-                logger.warn('Pre-init event rejected by queue', {
-                    eventType: event.type,
-                    eventId: event.eventId,
-                });
+                preInitDrops++;
+                if (preInitDrops === 1 || preInitDrops % 1000 === 0) {
+                    logger.warn('Pre-init event rejected by queue', {
+                        eventType: event.type,
+                        eventId: event.eventId,
+                        totalDropped: preInitDrops,
+                    });
+                }
                 return false;
             }
             return true;

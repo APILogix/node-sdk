@@ -7,14 +7,14 @@ Pulse provides native middleware for Express applications in [`src/instrumentati
 ### 1.1 Usage Example
 ```typescript
 import express from 'express';
-import { init, monitorMiddleware, expressErrorHandler } from '@pulse-apm/node';
+import { init, pulseMiddleware, expressErrorHandler } from '@pulse-apm/node';
 
 await init({ apiKey: process.env.PULSE_API_KEY! });
 
 const app = express();
 
 // 1. MUST BE FIRST MIDDLEWARE: Captures request timing and binds AsyncLocalStorage
-app.use(monitorMiddleware());
+app.use(pulseMiddleware());
 
 // Application routes
 app.get('/users/:id', async (req, res) => {
@@ -27,7 +27,7 @@ app.use(expressErrorHandler());
 app.listen(3000);
 ```
 
-### 1.2 What `monitorMiddleware` Does:
+### 1.2 What `pulseMiddleware` Does:
 1. **Context Initialization:** Creates a fresh `RequestContext` in `AsyncLocalStorage` so all downstream database queries and function traces inherit the root HTTP trace.
 2. **Route Normalization:** Extracts parameterized route templates (e.g., `GET /api/v1/orders/:id`) rather than raw URLs with dynamic IDs (`/api/v1/orders/991823`), preventing high-cardinality route explosion.
 3. **Response Listener:** Hooks into `res.on('finish')` to compute accurate transaction durations and response status codes.
@@ -41,14 +41,14 @@ For Fastify applications, Pulse provides a dedicated plugin in [`src/instrumenta
 ### Usage Example:
 ```typescript
 import Fastify from 'fastify';
-import { init, fastifyPulsePlugin } from '@pulse-apm/node';
+import { init, pulseFastifyPlugin } from '@pulse-apm/node';
 
 await init({ apiKey: process.env.PULSE_API_KEY! });
 
 const fastify = Fastify();
 
 // Register Pulse plugin
-await fastify.register(fastifyPulsePlugin, {
+await fastify.register(pulseFastifyPlugin, {
   captureBody: false,
   captureHeaders: true,
 });

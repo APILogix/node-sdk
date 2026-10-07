@@ -10,7 +10,7 @@ import {
   shutdown,
   flush,
   flushTracer,
-  monitorMiddleware,
+  pulseMiddleware,
   withBackgroundSpan,
   startBackgroundSpan,
   getActiveBackgroundSpanCount,
@@ -143,7 +143,7 @@ describe('Detached Background Trace Support & Lifecycle Isolation', { concurrenc
 
   it('coordinates detached background work outliving HTTP response without dropping spans', async () => {
     const app = express()
-    app.use(monitorMiddleware())
+    app.use(pulseMiddleware())
 
     let backgroundCompleted = false
     let httpTraceId = ''

@@ -69,14 +69,14 @@ export declare function ensureExpressLayersInstrumented(app: any, minDurationMs?
  * Programmatically instrument an Express Application to profile middleware execution.
  */
 export declare function instrumentExpress(app: any, options?: Pick<PulseExpressOptions, 'minMiddlewareDurationMs' | 'ignoreMiddlewares'>): void;
-export declare function monitorMiddleware(options?: PulseExpressOptions): (req: Request, res: Response, next: NextFunction) => void;
+export declare function pulseMiddleware(options?: PulseExpressOptions): (req: Request, res: Response, next: NextFunction) => void;
 /**
  * Express error-handling middleware. Place after all routes and before custom error responses.
  * Automatically captures any error passed to next(err) or thrown in route handlers.
  *
  * @example
  * ```ts
- * app.use(monitorMiddleware())
+ * app.use(pulseMiddleware())
  * // ... routes ...
  * app.use(expressErrorHandler())
  * ```

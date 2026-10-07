@@ -47,6 +47,7 @@ export declare class TransportEventQueue {
     private findOldestNonCritical;
     private removeAt;
     private notifyDrop;
+    getSize(): number;
     size(): number;
     isEmpty(): boolean;
     clear(): void;
