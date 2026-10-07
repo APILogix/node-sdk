@@ -4,11 +4,13 @@ import { SDKError } from './errors.js';
 import { ConfigManager } from './config-manager.js';
 import { SDK_NAME, SDK_VERSION } from '../constants/version.js';
 import { resolveApplicationPackage } from '../utils/package-metadata.js';
+import { LifecycleStateMachine } from './state.js';
+import { SingleFlight } from './single-flight.js';
 class SDKClient {
     static instance;
-    initializedValue = false;
+    stateMachine = new LifecycleStateMachine();
+    singleFlight = new SingleFlight();
     initMetadataValue = null;
-    initPromise = null;
     apiKeyValue = null;
     initIdentityValue = null;
     pendingInitIdentityValue = null;
@@ -35,7 +37,14 @@ class SDKClient {
         return SDKClient.instance;
     }
     get initialized() {
-        return this.initializedValue && ConfigManager.getCurrent()?.isLive() === true;
+        const state = this.stateMachine.getState();
+        return (state === 'initialized' || state === 'stopping') && ConfigManager.getCurrent()?.isLive() === true;
+    }
+    getState() {
+        return this.stateMachine.getState();
+    }
+    setState(nextState) {
+        this.stateMachine.transition(nextState);
     }
     get remoteConfig() {
         return ConfigManager.getCurrent()?.getConfigOrNull() ?? null;
@@ -97,24 +106,28 @@ class SDKClient {
         });
     }
     markInitialized() {
-        this.initializedValue = true;
+        this.setState('initialized');
     }
     setInitResponse(response) {
         const { config: _config, ...metadata } = response;
         this.initMetadataValue = deepFreeze(structuredClone(metadata));
     }
     clearConfig() {
-        this.initializedValue = false;
+        if (this.stateMachine.canTransitionTo('recovering')) {
+            this.setState('recovering');
+        }
         this.initMetadataValue = null;
     }
     clear() {
-        this.initializedValue = false;
+        if (this.stateMachine.getState() !== 'stopped') {
+            this.stateMachine.reset();
+        }
         this.initMetadataValue = null;
         this.apiKeyValue = null;
         this.initIdentityValue = null;
         this.pendingInitIdentityValue = null;
         this.optionsValue = null;
-        this.initPromise = null;
+        this.singleFlight.reset();
         this.pluginRegistry.length = 0;
         this.eventProcessorRegistry.length = 0;
         this.breadcrumbBuffer.clear();
@@ -134,13 +147,25 @@ class SDKClient {
         this.pendingInitIdentityValue = null;
     }
     hasSamePendingIdentity(options) {
-        return this.pendingInitIdentityValue === createInitIdentity(options);
+        if (this.pendingInitIdentityValue !== null) {
+            return this.pendingInitIdentityValue === createInitIdentity(options);
+        }
+        if (this.initIdentityValue !== null) {
+            return this.initIdentityValue === createInitIdentity(options);
+        }
+        return false;
+    }
+    get singleFlightCoordinator() {
+        return this.singleFlight;
     }
     setInitPromise(promise) {
-        this.initPromise = promise;
+        this.singleFlight.setPromise(promise);
     }
     getInitPromise() {
-        return this.initPromise;
+        return this.singleFlight.getPromise();
+    }
+    isInFlight() {
+        return this.singleFlight.isInFlight();
     }
     registerPlugin(plugin) {
         if (this.pluginRegistry.some(existing => existing.meta.name === plugin.meta.name)) {

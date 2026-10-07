@@ -211,6 +211,11 @@ function isRecord(value) {
     return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 function isOlderSnapshot(candidate, active) {
+    const candidateRevision = candidate.meta.configRevision;
+    const activeRevision = active.meta.configRevision;
+    if (typeof candidateRevision === 'number' && typeof activeRevision === 'number') {
+        return candidateRevision < activeRevision;
+    }
     const candidateTime = Date.parse(candidate.meta.generatedAt);
     const activeTime = Date.parse(active.meta.generatedAt);
     return Number.isFinite(candidateTime) && Number.isFinite(activeTime) && candidateTime < activeTime;

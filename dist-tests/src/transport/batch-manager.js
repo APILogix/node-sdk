@@ -15,6 +15,7 @@ import { quotaController } from '../core/quota-controller.js';
 import { toError } from '../core/errors.js';
 import { sdkConsoleDebug } from '../utils/console-debug.js';
 import { SerializationPool } from './serialization-pool.js';
+import { safeJsonStringify } from '../utils/safe-json.js';
 const WORKER_SERIALIZATION_THRESHOLD_BYTES = 50 * 1024; // 50KB
 const WARMUP_SUCCESS_THRESHOLD = 5;
 const MAX_BATCH_RETENTION_AGE_MS = 300_000; // 5 minutes max retention before dropping stale retries
@@ -70,7 +71,7 @@ export class BatchManager {
         });
         if (!this.firstQueuedAt)
             this.firstQueuedAt = Date.now();
-        if (this.options.queue.size() >= this.effectiveMaxBatchSize()) {
+        if (this.options.queue.size() >= this.getEffectiveMaxBatchSize()) {
             this.pump();
         }
         else {
@@ -119,7 +120,7 @@ export class BatchManager {
             this.handedOffEvents.add(event);
         return residual;
     }
-    stats() {
+    getStats() {
         return {
             route: this.options.route,
             queuedEvents: this.options.queue.size(),
@@ -133,6 +134,10 @@ export class BatchManager {
             avgBatchSize: this.totalRequests > 0 ? this.totalBatchEvents / this.totalRequests : 0,
         };
     }
+    /** Backward-compatible alias */
+    stats() {
+        return this.getStats();
+    }
     pump(force = false) {
         if (this.destroyed && !force)
             return;
@@ -140,9 +145,9 @@ export class BatchManager {
             this.ensureTimer(true);
             return;
         }
-        const concurrency = this.effectiveConcurrency();
+        const concurrency = this.getEffectiveConcurrency();
         while (this.activeSends < concurrency && !this.options.queue.isEmpty()) {
-            if (!force && this.options.queue.size() < this.options.minBatchSize && !this.maxWaitElapsed()) {
+            if (!force && this.options.queue.size() < this.options.minBatchSize && !this.hasMaxWaitElapsed()) {
                 this.ensureTimer();
                 break;
             }
@@ -161,69 +166,15 @@ export class BatchManager {
         }
     }
     nextSerializableBatch() {
-        const targetSize = this.effectiveMaxBatchSize();
-        let batch = this.options.queue.drain(targetSize);
-        while (batch.length > 0) {
-            const scrubber = SecurityScrubber.getInstance();
-            const safeBatch = scrubber ? scrubber.scrubBatch(batch) : batch.map(e => sanitizeEvent(e));
-            const payload = { events: safeBatch, route: this.options.route, timestamp: Date.now() };
-            let body;
-            let payloadBytes;
-            try {
-                body = JSON.stringify(payload);
-                payloadBytes = Buffer.byteLength(body);
-            }
-            catch {
-                this.totalDropped += batch.length;
-                this.options.onDrop?.({
-                    route: this.options.route,
-                    reason: 'serialization_failed',
-                    count: batch.length,
-                    eventType: batch[0]?.type,
-                });
-                return null;
-            }
-            if (payloadBytes <= this.options.maxPayloadBytes) {
-                getLogger().info('[TransportRouter] Batch captured', {
-                    route: this.options.route,
-                    eventCount: safeBatch.length,
-                    eventTypes: [...new Set(safeBatch.map(event => event.type))],
-                    queueSize: this.options.queue.size(),
-                    payloadBytes,
-                });
-                sdkConsoleDebug('batch captured', {
-                    route: this.options.route,
-                    eventCount: safeBatch.length,
-                    eventTypes: [...new Set(safeBatch.map(event => event.type))],
-                    payloadBytes,
-                });
-                sdkConsoleDebug('batch built', {
-                    route: this.options.route,
-                    eventCount: safeBatch.length,
-                    eventTypes: [...new Set(safeBatch.map(event => event.type))],
-                    payloadBytes,
-                });
-                return { events: safeBatch, body };
-            }
-            if (batch.length === 1) {
-                this.totalDropped++;
-                this.options.onDrop?.({
-                    route: this.options.route,
-                    reason: 'event_too_large',
-                    count: 1,
-                    eventType: batch[0]?.type,
-                });
-                return null;
-            }
-            const half = Math.max(1, Math.floor(batch.length / 2));
-            const overflow = batch.splice(half);
-            this.options.queue.requeueFront(overflow);
-        }
-        return null;
+        const targetSize = this.getEffectiveMaxBatchSize();
+        const batch = this.options.queue.drain(targetSize);
+        if (batch.length === 0)
+            return null;
+        return { events: batch };
     }
     async sendBatch(batch) {
         const startedAt = Date.now();
-        const { events, body } = batch;
+        const { events } = batch;
         const lease = await this.options.connectionManager.acquire(this.options.route);
         if (!lease) {
             this.activeBatches.delete(events);
@@ -236,25 +187,136 @@ export class BatchManager {
         }
         try {
             const isGzip = this.options.compression === 'gzip';
-            const rawBody = Buffer.from(body, 'utf8');
-            let wireBody;
-            // Delegate batches exceeding 50KB to worker threads (SerializationPool)
-            // to offload JSON stringification and compression from the event loop during sustained >50k RPS workloads.
+            const compressionAlgo = isGzip ? 'gzip' : 'none';
+            const scrubber = SecurityScrubber.getInstance();
+            const privacyConfig = scrubber?.getPrivacyConfig();
             const pool = SerializationPool.getInstance();
-            if (rawBody.byteLength >= WORKER_SERIALIZATION_THRESHOLD_BYTES && pool && isGzip) {
-                try {
-                    const payload = { events, route: this.options.route, timestamp: Date.now() };
-                    const res = await pool.serialize(payload, 'gzip');
-                    wireBody = res.buffer;
+            let wireBody;
+            let originalPayloadBytes;
+            try {
+                let serializeResult;
+                if (pool) {
+                    serializeResult = await pool.serializeBatch({
+                        events,
+                        route: this.options.route,
+                        timestamp: Date.now(),
+                        privacyConfig,
+                        compression: compressionAlgo,
+                        maxPayloadBytes: this.options.maxPayloadBytes,
+                    });
                 }
-                catch (poolErr) {
-                    getLogger().debug('[BatchManager] SerializationPool offload failed, falling back to main-thread compression', { error: poolErr });
-                    wireBody = await compressGzip(rawBody);
+                else {
+                    const safeBatch = scrubber ? scrubber.scrubBatch(events) : events.map(e => sanitizeEvent(e));
+                    const payload = { events: safeBatch, route: this.options.route, timestamp: Date.now() };
+                    const jsonStr = safeJsonStringify(payload);
+                    const rawBuf = Buffer.from(jsonStr, 'utf8');
+                    const compressed = isGzip ? await compressGzip(rawBuf) : rawBuf;
+                    serializeResult = {
+                        buffer: compressed,
+                        algorithm: compressionAlgo,
+                        originalSize: rawBuf.byteLength,
+                        compressedSize: compressed.byteLength,
+                        tooLarge: rawBuf.byteLength > this.options.maxPayloadBytes,
+                    };
                 }
+                if (serializeResult.tooLarge) {
+                    lease.release(true);
+                    this.activeBatches.delete(events);
+                    this.activeSends--;
+                    this.batched -= events.length;
+                    if (events.length === 1) {
+                        this.totalDropped++;
+                        this.options.onDrop?.({
+                            route: this.options.route,
+                            reason: 'event_too_large',
+                            count: 1,
+                            eventType: events[0]?.type,
+                        });
+                        return;
+                    }
+                    const half = Math.max(1, Math.floor(events.length / 2));
+                    const firstHalf = events.slice(0, half);
+                    const secondHalf = events.slice(half);
+                    this.options.queue.requeueFront(secondHalf);
+                    this.activeSends++;
+                    this.batched += firstHalf.length;
+                    this.activeBatches.add(firstHalf);
+                    const sendPromise = this.sendBatch({ events: firstHalf });
+                    this.activeSendPromises.add(sendPromise);
+                    void sendPromise.then(() => this.activeSendPromises.delete(sendPromise), error => {
+                        this.activeSendPromises.delete(sendPromise);
+                        getLogger().warn('[TransportRouter] Unhandled batch send failure', { route: this.options.route, error });
+                    });
+                    return;
+                }
+                wireBody = serializeResult.buffer;
+                originalPayloadBytes = serializeResult.originalSize;
             }
-            else {
-                wireBody = isGzip ? await compressGzip(rawBody) : rawBody;
+            catch (serializeErr) {
+                if (events.length > 1) {
+                    getLogger().warn('[TransportRouter] Batch serialization failed, isolating problematic events', {
+                        route: this.options.route,
+                        error: serializeErr,
+                        eventCount: events.length,
+                    });
+                    const validEvents = [];
+                    for (const ev of events) {
+                        try {
+                            const testSafe = scrubber ? scrubber.scrubBatch([ev]) : [sanitizeEvent(ev)];
+                            safeJsonStringify(testSafe[0]);
+                            validEvents.push(ev);
+                        }
+                        catch {
+                            this.totalDropped++;
+                            this.options.onDrop?.({
+                                route: this.options.route,
+                                reason: 'serialization_failed',
+                                count: 1,
+                                eventType: ev?.type,
+                            });
+                        }
+                    }
+                    lease.release(true);
+                    this.activeBatches.delete(events);
+                    this.activeSends--;
+                    this.batched -= events.length;
+                    if (validEvents.length > 0) {
+                        this.options.queue.requeueFront(validEvents);
+                    }
+                    return;
+                }
+                lease.release(true);
+                this.activeBatches.delete(events);
+                this.activeSends--;
+                this.batched -= events.length;
+                this.totalDropped += events.length;
+                this.options.onDrop?.({
+                    route: this.options.route,
+                    reason: 'serialization_failed',
+                    count: events.length,
+                    eventType: events[0]?.type,
+                });
+                return;
             }
+            getLogger().debug('[TransportRouter] Batch captured', {
+                route: this.options.route,
+                eventCount: events.length,
+                eventTypes: [...new Set(events.map(event => event.type))],
+                queueSize: this.options.queue.size(),
+                payloadBytes: originalPayloadBytes,
+            });
+            sdkConsoleDebug('batch captured', {
+                route: this.options.route,
+                eventCount: events.length,
+                eventTypes: [...new Set(events.map(event => event.type))],
+                payloadBytes: originalPayloadBytes,
+            });
+            sdkConsoleDebug('batch built', {
+                route: this.options.route,
+                eventCount: events.length,
+                eventTypes: [...new Set(events.map(event => event.type))],
+                payloadBytes: originalPayloadBytes,
+            });
             const headers = {
                 'Content-Type': this.options.definition.contentType,
                 Authorization: `Bearer ${this.options.apiKey}`,
@@ -275,7 +337,7 @@ export class BatchManager {
             try {
                 const requestBody = new ArrayBuffer(wireBody.byteLength);
                 new Uint8Array(requestBody).set(wireBody);
-                getLogger().info('[TransportRouter] Sending batch', {
+                getLogger().debug('[TransportRouter] Sending batch', {
                     route: this.options.route,
                     method: this.options.definition.method,
                     eventCount: events.length,
@@ -339,14 +401,14 @@ export class BatchManager {
                         this.retryAttempts.delete(key);
                         this.firstAttemptTimestamps.delete(key);
                     }
-                    costGovernor.recordBytesSent(Buffer.byteLength(body));
+                    costGovernor.recordBytesSent(originalPayloadBytes);
                     this.discardOnSuccess(events);
-                    getLogger().info('[TransportRouter] Batch send successful', {
+                    getLogger().debug('[TransportRouter] Batch send successful', {
                         route: this.options.route,
                         statusCode: response.status,
                         latencyMs: latency,
                         eventCount: events.length,
-                        payloadBytes: Buffer.byteLength(body),
+                        payloadBytes: originalPayloadBytes,
                         wireBytes: wireBody.byteLength,
                     });
                     sdkConsoleDebug('batch send successful', {
@@ -354,7 +416,7 @@ export class BatchManager {
                         statusCode: response.status,
                         latencyMs: latency,
                         eventCount: events.length,
-                        payloadBytes: Buffer.byteLength(body),
+                        payloadBytes: originalPayloadBytes,
                         wireBytes: wireBody.byteLength,
                     });
                     inspectTelemetryResponse(response);
@@ -556,9 +618,15 @@ export class BatchManager {
             });
         });
     }
+    getEffectiveMaxBatchSize() {
+        return this.effectiveMaxBatchSize();
+    }
     effectiveMaxBatchSize() {
         const scaled = Math.floor(this.options.maxBatchSize * this.options.healthMonitor.batchScale(this.options.route));
         return Math.max(1, scaled);
+    }
+    getEffectiveConcurrency() {
+        return this.effectiveConcurrency();
     }
     effectiveConcurrency() {
         const limit = this.options.connectionManager.maxForRoute(this.options.route);
@@ -568,10 +636,16 @@ export class BatchManager {
             : Math.min(scaled, this.totalRequests + 1);
         return Math.max(1, warmed);
     }
+    hasMaxWaitElapsed() {
+        return this.maxWaitElapsed();
+    }
     maxWaitElapsed() {
         if (!this.firstQueuedAt)
             return false;
-        return Date.now() - this.firstQueuedAt >= this.effectiveMaxWaitMs();
+        return Date.now() - this.firstQueuedAt >= this.getEffectiveMaxWaitMs();
+    }
+    getEffectiveMaxWaitMs(forceExtended = false) {
+        return this.effectiveMaxWaitMs(forceExtended);
     }
     effectiveMaxWaitMs(forceExtended = false) {
         const state = this.options.healthMonitor.snapshot(this.options.route).healthState;
@@ -582,7 +656,7 @@ export class BatchManager {
     ensureTimer(extended = false) {
         if (this.timer)
             return;
-        const waitMs = this.effectiveMaxWaitMs(extended);
+        const waitMs = this.getEffectiveMaxWaitMs(extended);
         this.timer = setTimeout(() => {
             this.timer = null;
             otelContext.with(suppressTracing(otelContext.active()), () => {
@@ -645,7 +719,7 @@ function logTransportConsole(direction, details) {
         return;
     const status = typeof details['statusCode'] === 'number' ? details['statusCode'] : undefined;
     const count = typeof details['eventCount'] === 'number' ? details['eventCount'] : undefined;
-    console.log(`[Pulse transport] ${direction}`, {
+    console.log(`[Telemetry transport] ${direction}`, {
         ...(status !== undefined ? { statusCode: status } : {}),
         ...(count !== undefined ? { eventCount: count } : {}),
     });

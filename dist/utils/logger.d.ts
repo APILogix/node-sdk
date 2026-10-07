@@ -34,7 +34,7 @@ export declare function setDebugMode(enabled: boolean): void;
  */
 export declare function setLogLevel(level: SeverityLevel): void;
 /**
- * Set the log prefix (defaults to 'Pulse').
+ * Set the log prefix (defaults to 'Telemetry').
  */
 export declare function setLogPrefix(prefix: string): void;
 export declare function redact(value: unknown, depth?: number): unknown;

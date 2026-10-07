@@ -5,7 +5,7 @@ import { gunzipSync } from 'node:zlib'
 
 import {
   captureCronCheckIn,
-  captureError,
+  captureException,
   captureEvent,
   captureLog,
   captureMessage,
@@ -262,7 +262,7 @@ test('public telemetry adapters serialize authoritative application and SDK meta
     await initialize()
     initialized = true
 
-    captureError(new Error('integration error'), 'error')
+    captureException(new Error('integration error'), 'error')
     captureMessage('integration message', 'info', { adapter: 'captureMessage' })
 
     // captureEvent has no separate custom discriminator/route. A custom event

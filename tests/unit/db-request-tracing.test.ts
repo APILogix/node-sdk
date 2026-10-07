@@ -11,8 +11,8 @@ import { createRedisInstrumentation } from '../../src/instrumentation/redis.js'
 import { createBullMQInstrumentation } from '../../src/instrumentation/bullmq.js'
 import { createGraphQLInstrumentation } from '../../src/instrumentation/graphql.js'
 import { createAxiosInstrumentation } from '../../src/instrumentation/axios.js'
-import { monitorMiddleware } from '../../src/instrumentation/express.js'
-import { fastifyPulsePlugin } from '../../src/instrumentation/fastify.js'
+import { pulseMiddleware } from '../../src/instrumentation/express.js'
+import { pulseFastifyPlugin } from '../../src/instrumentation/fastify.js'
 import { TEST_REMOTE_CONFIG } from '../fixtures/remote-config.js'
 
 type CapturedEvent = Record<string, any>
@@ -390,7 +390,7 @@ describe('DB request tracing coverage across all auto-instrumentation types', ()
         )
     })
 
-    it('captures database queries initiated within Express monitorMiddleware request lifecycle', async () => {
+    it('captures database queries initiated within Express pulseMiddleware request lifecycle', async () => {
         const capturedEvents: CapturedEvent[] = []
 
         await init({
@@ -401,7 +401,7 @@ describe('DB request tracing coverage across all auto-instrumentation types', ()
             },
         })
 
-        const middleware = monitorMiddleware()
+        const middleware = pulseMiddleware()
         const req: any = {
             method: 'GET',
             url: '/api/users/profile',
@@ -529,7 +529,7 @@ describe('DB request tracing coverage across all auto-instrumentation types', ()
             },
         })
 
-        const middleware = monitorMiddleware()
+        const middleware = pulseMiddleware()
         const req: any = {
             method: 'GET',
             url: '/api/manual-db',
@@ -633,7 +633,7 @@ describe('DB request tracing coverage across all auto-instrumentation types', ()
             },
         })
 
-        const middleware = monitorMiddleware()
+        const middleware = pulseMiddleware()
         const req: any = {
             method: 'GET',
             url: '/api/context-lost',
@@ -748,7 +748,7 @@ describe('DB request tracing coverage across all auto-instrumentation types', ()
             },
         }
 
-        fastifyPulsePlugin(mockFastify, {}, () => {})
+        pulseFastifyPlugin(mockFastify, {}, () => {})
 
         const request: any = {
             method: 'GET',

@@ -1,7 +1,7 @@
 export function sdkConsoleDebug(label, details) {
     if (process.env['PULSE_SDK_CONSOLE_DEBUG'] !== 'true' && process.env['PULSE_TRANSPORT_CONSOLE'] !== 'true')
         return;
-    console.log(`[Pulse] ${label}`, publicDebugDetails(details));
+    console.log(`[Telemetry] ${label}`, publicDebugDetails(details));
 }
 function publicDebugDetails(details) {
     const eventCount = numberValue(details['eventCount']);

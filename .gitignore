@@ -7,3 +7,5 @@ cubicle/
 .env.*.local
 *.env
 !.env.example
+.pulse/
+dist-tests/

@@ -1,7 +1,7 @@
 import { describe, it, afterEach, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { trace } from '@opentelemetry/api'
-import { init, shutdown, captureError, withSpan } from '../../src/index.js'
+import { init, shutdown, captureException, withSpan } from '../../src/index.js'
 import { client } from '../../src/core/client.js'
 import type { ErrorEvent, SDKEvent } from '../../src/types/event.js'
 import { TEST_REMOTE_CONFIG } from '../fixtures/remote-config.js'
@@ -73,14 +73,14 @@ describe('Trace/Span Error Correlation - Automated Scenarios', () => {
     globalThis.fetch = originalFetch
   })
 
-  it('1. captureError() inside withSpan() -> traceId and spanId present', async () => {
+  it('1. captureException() inside withSpan() -> traceId and spanId present', async () => {
     let expectedTraceId: string | undefined
     let expectedSpanId: string | undefined
 
     await withSpan('test-manual-span', (span) => {
       expectedTraceId = span.spanContext().traceId
       expectedSpanId = span.spanContext().spanId
-      captureError(new Error('error inside withSpan'))
+      captureException(new Error('error inside withSpan'))
     })
 
     await new Promise(r => setTimeout(r, 120))
@@ -98,13 +98,13 @@ describe('Trace/Span Error Correlation - Automated Scenarios', () => {
     assert.strictEqual(event.spanId, expectedSpanId)
   })
 
-  it('2. captureError() inside an instrumented BullMQ worker (OTel CONSUMER span) -> traceId present', async () => {
+  it('2. captureException() inside an instrumented BullMQ worker (OTel CONSUMER span) -> traceId present', async () => {
     const tracer = trace.getTracer('bullmq-mock')
     let expectedTraceId: string | undefined
 
     await tracer.startActiveSpan('bullmq.processJob', async (span) => {
       expectedTraceId = span.spanContext().traceId
-      captureError(new Error('job failed'))
+      captureException(new Error('job failed'))
       span.end()
     })
 
@@ -117,8 +117,8 @@ describe('Trace/Span Error Correlation - Automated Scenarios', () => {
     assert.strictEqual(event.traceId, expectedTraceId)
   })
 
-  it('3. captureError() during startup / outside span -> traceId absent (undefined)', async () => {
-    captureError(new Error('startup failure'))
+  it('3. captureException() during startup / outside span -> traceId absent (undefined)', async () => {
+    captureException(new Error('startup failure'))
 
     await new Promise(r => setTimeout(r, 120))
 
@@ -129,8 +129,8 @@ describe('Trace/Span Error Correlation - Automated Scenarios', () => {
     assert.strictEqual(event.spanId, undefined, 'spanId should be undefined outside any span scope')
   })
 
-  it('4. captureError() inside a cron job without a span -> traceId absent', async () => {
-    captureError(new Error('cron job failure'))
+  it('4. captureException() inside a cron job without a span -> traceId absent', async () => {
+    captureException(new Error('cron job failure'))
 
     await new Promise(r => setTimeout(r, 120))
 
@@ -140,13 +140,13 @@ describe('Trace/Span Error Correlation - Automated Scenarios', () => {
     assert.strictEqual(event.traceId, undefined, 'traceId should be undefined for cron job without span')
   })
 
-  it('5. captureError() after await within an active span -> traceId still present', async () => {
+  it('5. captureException() after await within an active span -> traceId still present', async () => {
     let expectedTraceId: string | undefined
 
     await withSpan('async-worker-span', async (span) => {
       expectedTraceId = span.spanContext().traceId
       await new Promise(res => setTimeout(res, 20))
-      captureError(new Error('error after await'))
+      captureException(new Error('error after await'))
     })
 
     await new Promise(r => setTimeout(r, 120))
@@ -158,14 +158,14 @@ describe('Trace/Span Error Correlation - Automated Scenarios', () => {
     assert.strictEqual(event.traceId, expectedTraceId)
   })
 
-  it('6. captureError() inside a setTimeout callback within a span -> test runtime preservation', async () => {
+  it('6. captureException() inside a setTimeout callback within a span -> test runtime preservation', async () => {
     let expectedTraceId: string | undefined
 
     await withSpan('timer-span', async (span) => {
       expectedTraceId = span.spanContext().traceId
       await new Promise<void>((resolve) => {
         setTimeout(() => {
-          captureError(new Error('error inside setTimeout'))
+          captureException(new Error('error inside setTimeout'))
           resolve()
         }, 20)
       })
@@ -180,13 +180,13 @@ describe('Trace/Span Error Correlation - Automated Scenarios', () => {
     assert.strictEqual(event.traceId, expectedTraceId)
   })
 
-  it('7. captureError() inside Express route context -> traceId present', async () => {
+  it('7. captureException() inside Express route context -> traceId present', async () => {
     const tracer = trace.getTracer('@opentelemetry/instrumentation-express')
     let expectedTraceId: string | undefined
 
     await tracer.startActiveSpan('GET /api/users', async (span) => {
       expectedTraceId = span.spanContext().traceId
-      captureError(new Error('express route handler error'))
+      captureException(new Error('express route handler error'))
       span.end()
     })
 

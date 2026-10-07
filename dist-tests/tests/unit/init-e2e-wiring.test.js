@@ -1,6 +1,6 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { init, Pulse, shutdown, captureError, monitorMiddleware, expressErrorHandler, withSpan, withDbSpan, withBackgroundSpan, getActiveSpan, } from '../../src/index.js';
+import { init, Pulse, shutdown, captureException, pulseMiddleware, expressErrorHandler, withSpan, withDbSpan, withBackgroundSpan, getActiveSpan, } from '../../src/index.js';
 import { client } from '../../src/core/client.js';
 import { FeatureController } from '../../src/core/feature-controller.js';
 import { TEST_REMOTE_CONFIG } from '../fixtures/remote-config.js';
@@ -70,17 +70,17 @@ describe('init() end-to-end wiring: Auto-instrumentation & Error Handlers', () =
         const unhandledCountAfter = process.listenerCount('unhandledRejection');
         assert.ok(uncaughtCountAfter >= uncaughtExceptionCountBefore, 'Global uncaughtException listener must be attached');
         assert.ok(unhandledCountAfter >= unhandledRejectionCountBefore, 'Global unhandledRejection listener must be attached');
-        // 4. Verify captureError marks the active span
+        // 4. Verify captureException marks the active span
         await withSpan('test-error-capture', async (span) => {
-            captureError(new Error('Test unhandled runtime bug'), 'error');
+            captureException(new Error('Test unhandled runtime bug'), 'error');
             // span is still open and enriched
             assert.ok(span);
         });
     });
-    it('correctly wires Express monitorMiddleware and expressErrorHandler with active spans', async () => {
+    it('correctly wires Express pulseMiddleware and expressErrorHandler with active spans', async () => {
         await init({ apiKey: 'test-wiring-api-key' });
-        const middleware = monitorMiddleware();
-        assert.equal(typeof middleware, 'function', 'monitorMiddleware must return a middleware function');
+        const middleware = pulseMiddleware();
+        assert.equal(typeof middleware, 'function', 'pulseMiddleware must return a middleware function');
         const errorHandler = expressErrorHandler();
         assert.equal(typeof errorHandler, 'function', 'expressErrorHandler must return an error handler function');
         // Simulate an Express request flow with active span correlation
@@ -136,9 +136,9 @@ describe('init() end-to-end wiring: Auto-instrumentation & Error Handlers', () =
     it('exports canonical Pulse facade object and supports string apiKey or object init', async () => {
         assert.ok(Pulse, 'Pulse object must be exported');
         assert.equal(typeof Pulse.init, 'function', 'Pulse.init must be a function');
-        assert.equal(typeof Pulse.captureError, 'function', 'Pulse.captureError must be a function');
+        assert.equal(typeof Pulse.captureException, 'function', 'Pulse.captureException must be a function');
         assert.equal(typeof Pulse.withSpan, 'function', 'Pulse.withSpan must be a function');
-        assert.equal(typeof Pulse.getSDKHealth, 'function', 'Pulse.getSDKHealth must be a function');
+        assert.equal(typeof Pulse.getHealth, 'function', 'Pulse.getHealth must be a function');
         // Test initializing via string apiKey directly
         const config = await Pulse.init('test-wiring-api-key');
         assert.ok(config, 'Pulse.init with string apiKey must succeed');

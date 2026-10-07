@@ -4,11 +4,13 @@ import type { EventMetadata } from '../types/event.js';
 import type { Breadcrumb } from '../types/breadcrumb.js';
 import type { InitResponse } from './remote-config-client.js';
 import { RingBuffer } from './ring-buffer.js';
+import { type SDKState } from './state.js';
+import { SingleFlight } from './single-flight.js';
 declare class SDKClient {
     private static instance;
-    private initializedValue;
+    private readonly stateMachine;
+    private readonly singleFlight;
     private initMetadataValue;
-    private initPromise;
     private apiKeyValue;
     private initIdentityValue;
     private pendingInitIdentityValue;
@@ -20,6 +22,8 @@ declare class SDKClient {
     private constructor();
     static getInstance(): SDKClient;
     get initialized(): boolean;
+    getState(): SDKState;
+    setState(nextState: SDKState): void;
     get remoteConfig(): Readonly<RemoteConfigResponse> | null;
     get initResponse(): Readonly<InitResponse> | null;
     get projectId(): string | null;
@@ -45,8 +49,10 @@ declare class SDKClient {
     setPendingIdentity(options: SDKInitOptions): void;
     clearPendingIdentity(): void;
     hasSamePendingIdentity(options: SDKInitOptions): boolean;
+    get singleFlightCoordinator(): SingleFlight<Readonly<RemoteConfigResponse> | undefined>;
     setInitPromise(promise: Promise<Readonly<RemoteConfigResponse> | undefined> | null): void;
     getInitPromise(): Promise<Readonly<RemoteConfigResponse> | undefined> | null;
+    isInFlight(): boolean;
     registerPlugin(plugin: SDKPlugin): void;
     registerEventProcessor(processor: EventProcessor): void;
     initBreadcrumbs(capacity: number): void;

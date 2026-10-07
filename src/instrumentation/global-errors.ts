@@ -9,12 +9,12 @@
  * (rejections don't crash the process by default in modern Node.js).
  */
 
-import { captureError } from "../capture/captureError.js"
+import { captureException } from "../capture/captureException.js"
 import { captureMessage } from "../capture/captureMessage.js"
 import { toError } from "../core/errors.js"
 import { getLogger } from "../utils/logger.js"
 import { ERROR_DEFAULTS } from "../constants/internal-defaults.js"
-import { crashFlush } from "../core/lifecycle.js"
+import { emergencyFlush } from "../core/lifecycle.js"
 import { isOtelInstrumentationError } from "./http-lifecycle-guard.js"
 import { SecurityScrubber } from "../processors/security-scrubber.js"
 import { Severity } from "../types/severity.js"
@@ -36,7 +36,6 @@ let uncaughtHandler: ((err: Error) => void) | null = null
 let rejectionHandler: ((reason: unknown) => void) | null = null
 let originalConsoleError: (typeof console.error) | null = null
 let consoleErrorWrapped = false
-let originalStackTraceLimit: number | undefined = undefined
 
 /** Error-handler mechanics are SDK internals; remote config only gates errors. */
 function getErrorsConfig(): {
@@ -69,12 +68,9 @@ export function setupGlobalErrorHandlers() {
   const errorsConfig = getErrorsConfig()
   const logger = getLogger()
 
-  // ─── Stack Trace Limit Override ──────────────────────────────────────
-  if (errorsConfig.stackTraceLimit) {
-    originalStackTraceLimit = Error.stackTraceLimit
-    Error.stackTraceLimit = errorsConfig.stackTraceLimit
-    logger.debug(`Error.stackTraceLimit set to ${errorsConfig.stackTraceLimit}`)
-  }
+  // Note: Error.stackTraceLimit is intentionally NOT mutated globally to preserve
+  // host application performance and behavior (SEC-11). Stack capture uses
+  // localized V8 prepareStackTrace or caller-scoped depth limits.
 
   // ─── Uncaught Exception Handler ─────────────────────────────────────
   if (errorsConfig.captureUncaughtExceptions !== false) {
@@ -82,7 +78,7 @@ export function setupGlobalErrorHandlers() {
       // ─── Crash Storm / Re-entrancy Guard ─────────────────────────
       if (isCrashing) {
         try {
-          process.stderr.write(`[Pulse] Secondary uncaught exception during crash flush: ${err?.stack || err?.message || err}\n`)
+          process.stderr.write(`[Telemetry] Secondary uncaught exception during crash flush: ${err?.stack || err?.message || err}\n`)
         } catch {}
         return
       }
@@ -103,11 +99,11 @@ export function setupGlobalErrorHandlers() {
           extra: { mechanism: 'uncaughtException', handled: false },
         })
         withContext(store, () => {
-          captureError(err, 'fatal')
+          captureException(err, 'fatal')
         })
       } catch (captureErr) {
         try {
-          process.stderr.write(`[Pulse] Failed to capture uncaught exception: ${captureErr}\n`)
+          process.stderr.write(`[Telemetry] Failed to capture uncaught exception: ${captureErr}\n`)
         } catch {}
       }
 
@@ -130,12 +126,12 @@ export function setupGlobalErrorHandlers() {
       const onFatalError = clientOptions?.onFatalError
       const targetExitCode = process.exitCode || 1
 
-      // Hard fallback timer — guarantees process exits even if crashFlush hangs or deadlocks
+      // Hard fallback timer — guarantees process exits even if emergencyFlush hangs or deadlocks
       let fallbackTimer: NodeJS.Timeout | undefined
       if (shouldExit) {
         fallbackTimer = setTimeout(() => {
           try {
-            process.stderr.write('[Pulse] Crash flush timeout reached — forcing process termination\n')
+            process.stderr.write('[Telemetry] Crash flush timeout reached — forcing process termination\n')
           } catch {}
           if (typeof onFatalError === 'function') {
             try { onFatalError(err) } catch {}
@@ -148,10 +144,10 @@ export function setupGlobalErrorHandlers() {
       // Execute bounded crash flush before terminating
       void (async () => {
         try {
-          await crashFlush(crashTimeoutMs)
+          await emergencyFlush(crashTimeoutMs)
         } catch (flushErr) {
           try {
-            process.stderr.write(`[Pulse] Error during crash flush: ${flushErr}\n`)
+            process.stderr.write(`[Telemetry] Error during crash flush: ${flushErr}\n`)
           } catch {}
         } finally {
           if (fallbackTimer) {
@@ -162,6 +158,8 @@ export function setupGlobalErrorHandlers() {
             try { onFatalError(err) } catch {}
           }
           if (shouldExit) {
+            // Allow libuv to process pending handle close callbacks (uv_process_endgames) on Windows
+            await new Promise(r => setTimeout(r, 30))
             process.exit(targetExitCode)
           }
         }
@@ -180,7 +178,7 @@ export function setupGlobalErrorHandlers() {
           extra: { mechanism: 'unhandledRejection', handled: false },
         })
         withContext(store, () => {
-          captureError(toError(reason), 'error')
+          captureException(toError(reason), 'error')
         })
       } catch {
         // Isolated — never crash the host
@@ -233,7 +231,7 @@ function wrapConsoleError(): void {
       originalConsoleError.apply(console, args)
     }
 
-    // Re-entry guard. If captureError below logs anything via the SDK
+    // Re-entry guard. If captureException below logs anything via the SDK
     // logger (which now writes directly to process.stderr, not
     // console.error, so this is mostly defensive), or if a plugin in the
     // pipeline calls console.error during processing, we'd recurse here.
@@ -278,7 +276,7 @@ function wrapConsoleError(): void {
         ;(store.extra as Record<string, unknown>).mechanism = 'console.error'
         ;(store.extra as Record<string, unknown>).handled = true
       }
-      captureError(error ?? new Error(message), 'error')
+      captureException(error ?? new Error(message), 'error')
     } catch {
       // Never crash the host from console.error wrapping
     } finally {
@@ -291,7 +289,7 @@ function wrapConsoleError(): void {
 
 /**
  * Re-entry guard for the console.error wrapper. Set to true while we're
- * inside `captureError` for a console.error call, prevents the SDK
+ * inside `captureException` for a console.error call, prevents the SDK
  * accidentally recursing if any code inside the capture path calls
  * console.error itself.
  */
@@ -325,12 +323,6 @@ export function resetGlobalErrorHandlers() {
     }
     originalConsoleError = null
     consoleErrorWrapped = false
-  }
-
-  // Restore stack trace limit
-  if (originalStackTraceLimit !== undefined) {
-    Error.stackTraceLimit = originalStackTraceLimit
-    originalStackTraceLimit = undefined
   }
 
   registered = false

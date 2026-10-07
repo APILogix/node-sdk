@@ -13,16 +13,16 @@
  *
  * Typical usage:
  *
- *     import { init, captureError, monitorMiddleware } from '@pulse-apm/node'
+ *     import { init, captureException, pulseMiddleware } from '@pulse-apm/node'
  *
  *     await init({ apiKey: process.env.PULSE_API_KEY! })
- *     app.use(monitorMiddleware())
+ *     app.use(pulseMiddleware())
  */
 export { init } from './core/init.js';
 export { loadEnvFileSafely } from './utils/env-loader.js';
 import { init } from './core/init.js';
-import { flush, shutdown, crashFlush } from './core/lifecycle.js';
-import { captureError } from './capture/captureError.js';
+import { flush, shutdown, emergencyFlush } from './core/lifecycle.js';
+import { captureException } from './capture/captureException.js';
 import { captureRequest } from './capture/captureRequest.js';
 import { captureMessage } from './capture/captureMessage.js';
 import { captureEvent } from './capture/captureEvent.js';
@@ -30,17 +30,27 @@ import { captureMetric } from './capture/captureMetric.js';
 import { captureLog } from './capture/captureLog.js';
 import { addBreadcrumb, getTraceId, getSpanId } from './core/context.js';
 import { setUser, setTag, setTags, setContext } from './core/scope.js';
-import { startSpan, withSpan } from './tracing/tracer.js';
-import { startDbSpan, withDbSpan } from './tracing/db-span.js';
+import { startSpan, withSpan, withSpanSync, withBackgroundSpan, startBackgroundSpan, trace, wrap, } from './tracing/tracer.js';
+import { incrementCounter, setGauge, recordHistogram, addUpDownCounter, } from './capture/captureMetric.js';
+import { startDbSpan, withDbSpan, withDbSpanSync } from './tracing/db-span.js';
+import { pulseMiddleware, expressErrorHandler } from './instrumentation/express.js';
+import { pulseFastifyPlugin } from './instrumentation/fastify.js';
+import { wrapHandler } from './serverless/index.js';
 import { registerBootstrapAutoInstrumentations } from './instrumentation/auto-instrument.js';
-registerBootstrapAutoInstrumentations();
+try {
+    registerBootstrapAutoInstrumentations();
+}
+catch {
+    // Safe fail-open: bootstrap auto-instrumentation must never crash host application import (SEC-08)
+}
 // ─── Lifecycle ──────────────────────────────────────────────────────────────
-export { flush, shutdown, crashFlush } from './core/lifecycle.js';
+export { flush, shutdown, emergencyFlush } from './core/lifecycle.js';
+export { wrapHandler } from './serverless/index.js';
 export { getConfig } from './core/config.js';
 export { SDKError } from './core/errors.js';
 export { SDK_NAME, SDK_VERSION } from './constants/version.js';
 // ─── Capture (the canonical event API) ──────────────────────────────────────
-export { captureError } from './capture/captureError.js';
+export { captureException } from './capture/captureException.js';
 export { captureRequest } from './capture/captureRequest.js';
 export { captureMessage } from './capture/captureMessage.js';
 export { captureEvent } from './capture/captureEvent.js';
@@ -54,12 +64,12 @@ export { addBreadcrumb, getRequestContext, getTraceId, getSpanId, withContext, c
 // ─── Scope management ──────────────────────────────────────────────────────
 export { setUser, setTag, setTags, removeTag, setExtra, setExtras, removeExtra, setContext, getScopeData, clearScope, withScope, } from './core/scope.js';
 // ─── Tracing (manual span APIs) ─────────────────────────────────────────────
-export { startSpan, withSpan, withSpanSync, withBackgroundSpan, startBackgroundSpan, getActiveBackgroundSpanCount, getActiveSpan, flushTracer, } from './tracing/tracer.js';
+export { startSpan, withSpan, withSpanSync, withBackgroundSpan, startBackgroundSpan, trace, wrap, getActiveBackgroundSpanCount, getActiveSpan, flushTracer, } from './tracing/tracer.js';
 export { startDbSpan, withDbSpan, withDbSpanSync } from './tracing/db-span.js';
 export { extractTraceContext, injectTraceContext } from './tracing/context-propagation.js';
 // ─── Framework instrumentation ──────────────────────────────────────────────
-export { monitorMiddleware, expressErrorHandler } from './instrumentation/express.js';
-export { fastifyPulsePlugin } from './instrumentation/fastify.js';
+export { pulseMiddleware, expressErrorHandler, instrumentExpress } from './instrumentation/express.js';
+export { pulseFastifyPlugin } from './instrumentation/fastify.js';
 export { registerAutoInstrumentations } from './instrumentation/auto-instrument.js';
 export { registerEsmLoaderHooks } from './instrumentation/esm-loader.js';
 export { createGraphQLInstrumentation } from './instrumentation/graphql.js';
@@ -69,14 +79,14 @@ export { createMongooseInstrumentation, MongooseInstrumentation } from './instru
 export { createRedisInstrumentation } from './instrumentation/redis.js';
 export { createBullMQInstrumentation } from './instrumentation/bullmq.js';
 export { createAxiosInstrumentation } from './instrumentation/axios.js';
-export { createPgInstrumentation } from './instrumentation/pg.js';
+export { createPgInstrumentation, patchPgPoolConnectOnce } from './instrumentation/pg.js';
 export { createMySQLInstrumentation } from './instrumentation/mysql.js';
 export { patchEventEmitter, unpatchEventEmitter } from './instrumentation/event-emitter-patch.js';
 export { installHttpLifecycleGuard, uninstallHttpLifecycleGuard, isOtelInstrumentationError } from './instrumentation/http-lifecycle-guard.js';
 export { computeExclusiveDuration, SpanDurationTracker, spanDurationTracker } from './tracing/span-duration.js';
 // ─── Logger control (apps wiring SDK into their own logger) ─────────────────
 export { setLogger, setDebugMode, setLogLevel } from './utils/logger.js';
-export { Severity, severityFromString } from './types/severity.js';
+export { Severity, severityFromString, isSeverityGte, doesSeverityMeetThreshold } from './types/severity.js';
 export { classifyError } from './core/error-classifier.js';
 // ─── Health snapshot ────────────────────────────────────────────────────────
 import { eventQueue } from './transport/queue.js';
@@ -102,7 +112,7 @@ function getSharedMemoryMonitor() {
  * Comprehensive SDK health snapshot for operational dashboards. Safe to call
  * at any time — returns degraded info if the SDK is not yet initialized.
  */
-export function getSDKHealth() {
+export function getHealth() {
     const memState = getSharedMemoryMonitor().getState();
     const sessionMgr = getSessionManager();
     const sessionHealth = sessionMgr.getSessionHealth();
@@ -188,13 +198,18 @@ export const Pulse = {
     init,
     flush,
     shutdown,
-    crashFlush,
-    captureError,
+    emergencyFlush,
+    wrapHandler,
+    captureException,
     captureRequest,
     captureMessage,
     captureEvent,
     captureMetric,
     captureLog,
+    incrementCounter,
+    setGauge,
+    recordHistogram,
+    addUpDownCounter,
     addBreadcrumb,
     setUser,
     setTag,
@@ -202,10 +217,19 @@ export const Pulse = {
     setContext,
     startSpan,
     withSpan,
+    withSpanSync,
+    withBackgroundSpan,
+    startBackgroundSpan,
+    trace,
+    wrap,
     startDbSpan,
     withDbSpan,
+    withDbSpanSync,
     getTraceId,
     getSpanId,
-    getSDKHealth,
+    getHealth,
+    pulseMiddleware,
+    expressErrorHandler,
+    pulseFastifyPlugin,
 };
 export default Pulse;

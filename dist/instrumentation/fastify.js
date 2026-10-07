@@ -1,7 +1,7 @@
 /**
  * Fastify request-capture plugin.
  *
- * Mirrors the enterprise hardening of `monitorMiddleware` for Express:
+ * Mirrors the enterprise hardening of `pulseMiddleware` for Express:
  *   - Killswitch + FeatureController gates
  *   - Tenant admission control
  *   - Centralized scrubbing via SecurityScrubber
@@ -10,7 +10,7 @@
  * The plugin is intentionally fail-open. If any hook throws, the host
  * application continues serving traffic and the SDK logs the failure.
  */
-import { captureError } from '../capture/captureError.js';
+import { captureException } from '../capture/captureException.js';
 import { captureRequest } from '../capture/captureRequest.js';
 import { trace, context, SpanKind, SpanStatusCode } from '@opentelemetry/api';
 import { client } from '../core/client.js';
@@ -23,7 +23,7 @@ import { generateId } from '../utils/uuid.js';
 import { extractTraceContext } from '../tracing/context-propagation.js';
 import { getTraceAggregator } from '../tracing/trace-aggregator.js';
 import { captureBodySnapshot, evaluateCaptureGate, headerString, matchesIgnoredPath, resolveClientIp, scrubHeaders, scrubQuery, } from './request-capture-utils.js';
-export function fastifyPulsePlugin(fastify, opts, done) {
+export function pulseFastifyPlugin(fastify, opts, done) {
     const options = opts ?? {};
     fastify.addHook('onRequest', (request, _reply, hookDone) => {
         try {
@@ -50,7 +50,7 @@ export function fastifyPulsePlugin(fastify, opts, done) {
                 hookDone();
                 return;
             }
-            const userId = readUserId(request);
+            const userId = extractUserId(request);
             const sessionId = headerString(headers['x-session-id']);
             const userAgent = headerString(headers['user-agent']);
             const referer = headerString(headers['referer'] ?? headers['referrer']);
@@ -60,7 +60,7 @@ export function fastifyPulsePlugin(fastify, opts, done) {
                 getStatusCode: { value: () => request.raw?.statusCode ?? request.reply?.statusCode, enumerable: false, configurable: true, writable: true },
                 getMethod: { value: () => request.method, enumerable: false, configurable: true, writable: true },
                 getUrl: { value: () => request.url, enumerable: false, configurable: true, writable: true },
-                getRoute: { value: () => normalizedRoute(request), enumerable: false, configurable: true, writable: true },
+                getRoute: { value: () => normalizeRoute(request), enumerable: false, configurable: true, writable: true },
             });
             const store = createContextStore(requestId, options.maxBreadcrumbs ?? 100, {
                 userId,
@@ -127,7 +127,7 @@ export function fastifyPulsePlugin(fastify, opts, done) {
             }
         }
         catch (err) {
-            getLogger().error('fastifyPulsePlugin onRequest failed', { error: err });
+            getLogger().error('pulseFastifyPlugin onRequest failed', { error: err });
             hookDone();
         }
     });
@@ -158,10 +158,10 @@ export function fastifyPulsePlugin(fastify, opts, done) {
                                     state.store.extra.fastifyErrorCaptured = true;
                                 }
                                 attachRequestContextToActiveSpan(state.store);
-                                captureError(payload instanceof Error ? payload : new Error(String(payload.message)));
+                                captureException(payload instanceof Error ? payload : new Error(String(payload.message)));
                             }
                             catch (sendErr) {
-                                getLogger().error('fastifyPulsePlugin reply.send error capture failed', { error: sendErr });
+                                getLogger().error('pulseFastifyPlugin reply.send error capture failed', { error: sendErr });
                             }
                         });
                     }
@@ -205,12 +205,12 @@ export function fastifyPulsePlugin(fastify, opts, done) {
                         state.store.extra.fastifyErrorCaptured = true;
                     }
                     attachRequestContextToActiveSpan(state.store);
-                    captureError(err);
+                    captureException(err);
                 }
                 captureFastifyCompletion(request, reply, state);
             }
             catch (err) {
-                getLogger().error('fastifyPulsePlugin completion failed', { error: err });
+                getLogger().error('pulseFastifyPlugin completion failed', { error: err });
             }
             hookDone();
         });
@@ -233,10 +233,10 @@ export function fastifyPulsePlugin(fastify, opts, done) {
                             state.store.extra.getStatusCode = () => errStatusCode;
                         }
                         attachRequestContextToActiveSpan(state.store);
-                        captureError(payload instanceof Error ? payload : new Error(String(payload.message)));
+                        captureException(payload instanceof Error ? payload : new Error(String(payload.message)));
                     }
                     catch (err) {
-                        getLogger().error('fastifyPulsePlugin preSerialization error capture failed', { error: err });
+                        getLogger().error('pulseFastifyPlugin preSerialization error capture failed', { error: err });
                     }
                 });
             }
@@ -266,7 +266,7 @@ export function fastifyPulsePlugin(fastify, opts, done) {
                     state.store.extra.fastifyErrorCaptured = true;
                 }
                 attachRequestContextToActiveSpan(state.store);
-                captureError(error);
+                captureException(error);
                 const currentActiveSpan = trace.getActiveSpan() ?? state.activeSpan;
                 if (currentActiveSpan) {
                     try {
@@ -277,7 +277,7 @@ export function fastifyPulsePlugin(fastify, opts, done) {
                 }
             }
             catch (err) {
-                getLogger().error('fastifyPulsePlugin error capture failed', { error: err });
+                getLogger().error('pulseFastifyPlugin error capture failed', { error: err });
             }
             if (typeof hookDone === 'function')
                 hookDone();
@@ -336,10 +336,10 @@ export function fastifyPulsePlugin(fastify, opts, done) {
                             state.store.extra.fastifyErrorCaptured = true;
                         }
                         attachRequestContextToActiveSpan(state.store);
-                        captureError(errToCapture);
+                        captureException(errToCapture);
                     }
                     catch (err) {
-                        getLogger().error('fastifyPulsePlugin onSend error capture failed', { error: err });
+                        getLogger().error('pulseFastifyPlugin onSend error capture failed', { error: err });
                     }
                 });
             }
@@ -367,10 +367,10 @@ export function fastifyPulsePlugin(fastify, opts, done) {
                             state.store.extra.fastifyErrorCaptured = true;
                         }
                         attachRequestContextToActiveSpan(state.store);
-                        captureError(error);
+                        captureException(error);
                     }
                     catch (err) {
-                        getLogger().error('fastifyPulsePlugin errorHandler error capture failed', { error: err });
+                        getLogger().error('pulseFastifyPlugin errorHandler error capture failed', { error: err });
                     }
                 });
             }
@@ -385,23 +385,26 @@ export function fastifyPulsePlugin(fastify, opts, done) {
     done();
 }
 ;
-fastifyPulsePlugin[Symbol.for('skip-override')] = true;
-fastifyPulsePlugin[Symbol.for('fastify.display-name')] = 'pulse-fastify';
+pulseFastifyPlugin[Symbol.for('skip-override')] = true;
+pulseFastifyPlugin[Symbol.for('fastify.display-name')] = 'pulse-fastify';
 function captureFastifyCompletion(request, reply, state) {
     if (state.captured)
         return;
     state.captured = true;
     const statusCode = reply.statusCode ?? reply.raw?.statusCode ?? 0;
-    const bodySnapshot = captureBodySnapshot(request.body, state.captureBody);
-    const responseSize = readContentLength(reply.getHeader?.('content-length'));
+    const latencyMs = Date.now() - state.startTime;
+    const responseSize = extractContentLength(reply.getHeader?.('content-length'));
+    const rawBody = request.body;
+    const rawHeaders = request.headers;
+    const rawQuery = request.query;
+    const route = normalizeRoute(request);
     const currentActiveSpan = trace.getActiveSpan() ?? state.activeSpan;
     if (currentActiveSpan) {
-        const route = normalizedRoute(request);
         const enrichmentAttrs = {
             'http.route': route,
             'http.status_code': statusCode,
             'pulse.request_id': state.requestId,
-            'pulse.latency_ms': Date.now() - state.startTime,
+            'pulse.latency_ms': latencyMs,
         };
         if (state.tenantId)
             enrichmentAttrs['pulse.tenant_id'] = state.tenantId;
@@ -415,8 +418,6 @@ function captureFastifyCompletion(request, reply, state) {
             enrichmentAttrs['http.user_agent'] = state.userAgent;
         if (state.referer)
             enrichmentAttrs['http.referer'] = state.referer;
-        if (bodySnapshot.bodySize !== undefined)
-            enrichmentAttrs['http.request.body.size'] = bodySnapshot.bodySize;
         if (responseSize !== undefined)
             enrichmentAttrs['http.response.body.size'] = responseSize;
         currentActiveSpan.setAttributes(enrichmentAttrs);
@@ -450,34 +451,50 @@ function captureFastifyCompletion(request, reply, state) {
             endFastifySpan();
         }
     }
-    captureRequest({
-        type: 'request',
-        requestId: state.requestId,
-        method: request.method,
-        url: normalizedRoute(request),
-        statusCode,
-        latency: Date.now() - state.startTime,
-        timestamp: Date.now(),
-        traceId: getTraceId() ?? state.store.traceId ?? state.activeSpan?.spanContext().traceId,
-        spanId: getSpanId() ?? state.store.spanId ?? state.activeSpan?.spanContext().spanId,
-        ...(state.userId ? { userId: state.userId } : {}),
-        ...(state.tenantId ? { tenantId: state.tenantId } : {}),
-        ...(state.sessionId ? { sessionId: state.sessionId } : {}),
-        ...(state.clientIp ? { clientIp: state.clientIp } : {}),
-        ...(state.userAgent ? { userAgent: state.userAgent } : {}),
-        ...(state.referer ? { referer: state.referer } : {}),
-        ...(state.captureHeaders ? { headers: scrubHeadersSafe(request.headers) } : {}),
-        ...(state.captureQuery && isRecord(request.query) ? { query: scrubQuery(request.query) } : {}),
-        ...(bodySnapshot.body ? { body: bodySnapshot.body } : {}),
-        ...(bodySnapshot.bodySize !== undefined ? { bodySize: bodySnapshot.bodySize } : {}),
-        ...(responseSize !== undefined ? { responseSize } : {}),
-        route: normalizedRoute(request),
+    // SEC-05: Defer heavy body snapshotting, PII scrubbing, and captureRequest
+    // via setImmediate so the HTTP response cycle returns instantly to the event loop.
+    setImmediate(() => {
+        try {
+            const bodySnapshot = captureBodySnapshot(rawBody, state.captureBody);
+            if (currentActiveSpan && bodySnapshot.bodySize !== undefined) {
+                try {
+                    currentActiveSpan.setAttribute('http.request.body.size', bodySnapshot.bodySize);
+                }
+                catch { }
+            }
+            captureRequest({
+                type: 'request',
+                requestId: state.requestId,
+                method: request.method,
+                url: route,
+                statusCode,
+                latency: latencyMs,
+                timestamp: Date.now(),
+                traceId: getTraceId() ?? state.store.traceId ?? state.activeSpan?.spanContext().traceId,
+                spanId: getSpanId() ?? state.store.spanId ?? state.activeSpan?.spanContext().spanId,
+                ...(state.userId ? { userId: state.userId } : {}),
+                ...(state.tenantId ? { tenantId: state.tenantId } : {}),
+                ...(state.sessionId ? { sessionId: state.sessionId } : {}),
+                ...(state.clientIp ? { clientIp: state.clientIp } : {}),
+                ...(state.userAgent ? { userAgent: state.userAgent } : {}),
+                ...(state.referer ? { referer: state.referer } : {}),
+                ...(state.captureHeaders ? { headers: scrubHeadersSafe(rawHeaders) } : {}),
+                ...(state.captureQuery && isRecord(rawQuery) ? { query: scrubQuery(rawQuery) } : {}),
+                ...(bodySnapshot.body ? { body: bodySnapshot.body } : {}),
+                ...(bodySnapshot.bodySize !== undefined ? { bodySize: bodySnapshot.bodySize } : {}),
+                ...(responseSize !== undefined ? { responseSize } : {}),
+                route,
+            });
+        }
+        catch (err) {
+            getLogger().error('captureFastifyCompletion deferred capture failed', { error: err });
+        }
     });
 }
-function normalizedRoute(request) {
+function normalizeRoute(request) {
     return request.routeOptions?.url ?? request.routerPath ?? request.url.split('?')[0] ?? '/';
 }
-function readUserId(request) {
+function extractUserId(request) {
     const value = request.user?.id ?? request.user?.userId;
     return typeof value === 'string' || typeof value === 'number' ? String(value) : undefined;
 }
@@ -495,7 +512,7 @@ function scrubHeadersSafe(headers) {
 function isRecord(value) {
     return !!value && typeof value === 'object' && !Array.isArray(value);
 }
-function readContentLength(value) {
+function extractContentLength(value) {
     if (typeof value === 'number' && Number.isFinite(value))
         return value;
     if (typeof value === 'string') {

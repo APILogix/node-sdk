@@ -85,4 +85,20 @@ export const sdkInitOptionsSchema = z.object({
     })
         .strict()
         .optional(),
+    offlineQueue: z
+        .union([
+        z.boolean(),
+        z
+            .object({
+            enabled: z.boolean().optional(),
+            directory: z.string().trim().min(1).optional(),
+            maxFileSizeBytes: z.number().int().min(1024).max(100 * 1024 * 1024).optional(),
+            maxEvents: z.number().int().min(1).max(100000).optional(),
+            eventTtlMs: z.number().int().min(60000).max(7 * 24 * 60 * 60 * 1000).optional(),
+            ioTimeoutMs: z.number().int().min(500).max(60000).optional(),
+            flushDebounceMs: z.number().int().min(0).max(60000).optional(),
+        })
+            .strict(),
+    ])
+        .optional(),
 }).strict();

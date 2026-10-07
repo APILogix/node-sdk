@@ -17,18 +17,57 @@ export interface DbSpanOptions {
     readonly startTime?: SpanOptions['startTime'] | undefined
     readonly links?: SpanOptions['links'] | undefined
     readonly timeoutMs?: number | undefined
+    readonly slowQueryThresholdMs?: number | undefined
 }
 
 export function startDbSpan(options: DbSpanOptions): PulseSpan {
-    return startSpan(dbSpanName(options), toSpanOptions(options))
+    return startSpan(getDbSpanName(options), toSpanOptions(options))
 }
 
 export async function withDbSpan<T>(options: DbSpanOptions, fn: (span: PulseSpan) => T | Promise<T>): Promise<T> {
-    return withSpan(dbSpanName(options), toSpanOptions(options), fn)
+    const thresholdMs = options.slowQueryThresholdMs ?? 100
+    const start = Date.now()
+    return withSpan(getDbSpanName(options), toSpanOptions(options), async (span) => {
+        try {
+            const result = await fn(span)
+            const durationMs = Date.now() - start
+            if (durationMs >= thresholdMs) {
+                span.setAttribute('db.slow_query', true)
+                span.setAttribute('db.slow_query_threshold_ms', thresholdMs)
+            }
+            return result
+        } catch (err) {
+            const durationMs = Date.now() - start
+            if (durationMs >= thresholdMs) {
+                span.setAttribute('db.slow_query', true)
+                span.setAttribute('db.slow_query_threshold_ms', thresholdMs)
+            }
+            throw err
+        }
+    })
 }
 
 export function withDbSpanSync<T>(options: DbSpanOptions, fn: (span: PulseSpan) => T): T {
-    return withSpanSync(dbSpanName(options), toSpanOptions(options), fn)
+    const thresholdMs = options.slowQueryThresholdMs ?? 100
+    const start = Date.now()
+    return withSpanSync(getDbSpanName(options), toSpanOptions(options), (span) => {
+        try {
+            const result = fn(span)
+            const durationMs = Date.now() - start
+            if (durationMs >= thresholdMs) {
+                span.setAttribute('db.slow_query', true)
+                span.setAttribute('db.slow_query_threshold_ms', thresholdMs)
+            }
+            return result
+        } catch (err) {
+            const durationMs = Date.now() - start
+            if (durationMs >= thresholdMs) {
+                span.setAttribute('db.slow_query', true)
+                span.setAttribute('db.slow_query_threshold_ms', thresholdMs)
+            }
+            throw err
+        }
+    })
 }
 
 function toSpanOptions(options: DbSpanOptions): SpanOptions {
@@ -53,7 +92,7 @@ function toSpanOptions(options: DbSpanOptions): SpanOptions {
     }
 }
 
-function dbSpanName(options: DbSpanOptions): string {
+function getDbSpanName(options: DbSpanOptions): string {
     if (options.name) return options.name
     const target = options.table || options.collection || options.database
     return target ? `${options.system}.${options.operation} ${target}` : `${options.system}.${options.operation}`

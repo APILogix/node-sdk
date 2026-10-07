@@ -1,7 +1,24 @@
-import type { CompressionAlgorithm } from '../utils/compression.js';
+import { type CompressionAlgorithm } from '../utils/compression.js';
+import type { PrivacyConfig } from '../types/config.js';
+export interface SerializeBatchOptions {
+    readonly events: readonly unknown[];
+    readonly route?: string | undefined;
+    readonly timestamp?: number | undefined;
+    readonly privacyConfig?: PrivacyConfig | undefined;
+    readonly compression: CompressionAlgorithm;
+    readonly maxPayloadBytes?: number | undefined;
+}
+export interface SerializeBatchResult {
+    readonly buffer: Buffer;
+    readonly algorithm: CompressionAlgorithm;
+    readonly originalSize: number;
+    readonly compressedSize: number;
+    readonly tooLarge?: boolean;
+}
 export declare class SerializationPool {
     private readonly poolSize;
     private workers;
+    private workerEntries;
     private readyWorkers;
     private roundRobinIndex;
     private pendingRequests;
@@ -21,13 +38,8 @@ export declare class SerializationPool {
         originalSize: number;
         compressedSize: number;
     }>;
-    private fallbackSerialize;
+    serializeBatch(options: SerializeBatchOptions): Promise<SerializeBatchResult>;
+    private fallbackSerializeBatch;
     shutdown(): Promise<void>;
-    /**
-     * Terminate the worker pool and clear the singleton. Awaits worker
-     * termination so a shutdown/reinit cycle never leaks worker threads —
-     * the previous fire-and-forget `void shutdown()` let workers outlive
-     * the SDK and kept the host process alive.
-     */
     static reset(): Promise<void>;
 }

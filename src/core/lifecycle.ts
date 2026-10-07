@@ -49,6 +49,7 @@ import { SecurityScrubber } from '../processors/security-scrubber.js'
 import { LoggingSubsystem } from '../subsystems/logging-subsystem.js'
 import { ProfilingSubsystem } from '../subsystems/profiling-subsystem.js'
 import { CronSubsystem } from '../subsystems/cron-subsystem.js'
+import { RuntimeMetricsSubsystem } from '../subsystems/runtime-metrics-subsystem.js'
 import { tenantGovernor } from './tenant-isolation.js'
 import { cardinalityGovernor } from '../utils/cardinality-governor.js'
 import { adaptivePressure } from '../utils/adaptive-pressure.js'
@@ -57,6 +58,7 @@ import { QuotaController } from './quota-controller.js'
 import { costGovernor } from '../utils/cost-governor.js'
 import { persistenceGovernor } from '../storage/persistence-governor.js'
 import { resetFingerprintCache } from '../processors/fingerprint.js'
+import { BackgroundRecoveryWorker } from './recovery-worker.js'
 
 // ─── Module State ───────────────────────────────────────────────────────────
 
@@ -67,6 +69,7 @@ const SUBSYSTEM_STEP_TIMEOUT_MS = 5_000
 let signalHandlersRegistered = false
 let sigTermHandler: (() => void) | null = null
 let sigIntHandler: (() => void) | null = null
+let signalShutdownInFlight = false
 
 let shuttingDown = false
 let shutdownPromise: Promise<ShutdownResult> | null = null
@@ -140,6 +143,10 @@ export async function shutdown(timeoutMs?: number): Promise<ShutdownResult> {
   }
 
   shuttingDown = true
+  BackgroundRecoveryWorker.stop()
+  if (client.getState() !== 'stopping' && client.getState() !== 'stopped') {
+    client.setState('stopping')
+  }
   const promise = runShutdown(timeoutMs)
   shutdownPromise = promise
   return promise
@@ -183,7 +190,7 @@ export async function flush(): Promise<void> {
  *
  * @param timeoutMs Maximum time to wait for transport drain. Default: 2000ms.
  */
-export async function crashFlush(timeoutMs = 2_000): Promise<void> {
+export async function emergencyFlush(timeoutMs = 2_000): Promise<void> {
   try {
     let timer: NodeJS.Timeout | undefined
     const timeoutPromise = new Promise<void>(resolve => {
@@ -203,20 +210,19 @@ export async function crashFlush(timeoutMs = 2_000): Promise<void> {
       }
       try {
         await SerializationPool.reset()
-      } catch {
-        // Best-effort worker termination
-      }
+      } catch {}
     })()
 
     await Promise.race([drainPromise, timeoutPromise])
 
     if (timer) clearTimeout(timer)
   } catch {
-    // Best-effort — swallow all errors during crash flush.
+    // Best-effort — swallow all errors during emergency flush.
     // The process is about to terminate; throwing here would only
     // mask the original uncaught exception in the error output.
   }
 }
+
 
 /**
  * Register SIGTERM/SIGINT handlers for automatic graceful shutdown.
@@ -227,15 +233,52 @@ export function registerSignalHandlers(): void {
 
   const logger = getLogger()
 
-  const handleSignal = (signal: NodeJS.Signals) => {
+  const handleSignal = async (signal: NodeJS.Signals) => {
+    const exitCode = 128 + (signal === 'SIGINT' ? 2 : 15)
+
+    if (signalShutdownInFlight) {
+      logger.warn(`Received secondary ${signal} during active shutdown — forcing immediate exit`)
+      if (typeof process.exit === 'function') {
+        process.exit(exitCode)
+      }
+      return
+    }
+
+    signalShutdownInFlight = true
     logger.info(`Received ${signal} — initiating graceful shutdown`)
-    shutdown().catch(err => {
+
+    // Enforce a hard maximum shutdown watchdog so deployments never hang
+    const watchdogTimer = setTimeout(() => {
+      logger.error(`Shutdown watchdog timed out after ${signal} — forcing exit`)
+      resetSignalHandlers()
+      if (typeof process.exit === 'function') {
+        process.exit(exitCode)
+      }
+    }, 5000)
+    watchdogTimer.unref?.()
+
+    try {
+      await shutdown(4000)
+    } catch (err) {
       logger.error('Shutdown failed after signal', { signal, error: err })
-    })
+    } finally {
+      clearTimeout(watchdogTimer)
+      const remainingListeners = process.listenerCount(signal)
+      resetSignalHandlers()
+
+      // If the SDK was the only listener for this signal, Node won't exit by itself.
+      // We must exit with the standard 128 + signal code so container orchestrators (k8s/docker)
+      // see the clean shutdown immediately instead of hanging until SIGKILL.
+      if (remainingListeners <= 1) {
+        if (typeof process.exit === 'function') {
+          process.exit(exitCode)
+        }
+      }
+    }
   }
 
-  sigTermHandler = () => handleSignal('SIGTERM')
-  sigIntHandler = () => handleSignal('SIGINT')
+  sigTermHandler = () => { void handleSignal('SIGTERM') }
+  sigIntHandler = () => { void handleSignal('SIGINT') }
 
   // Use process.on (not once) so we control removal explicitly via reset.
   // This prevents stacking handlers across reinit cycles.
@@ -260,6 +303,7 @@ export function resetSignalHandlers(): void {
     sigIntHandler = null
   }
   signalHandlersRegistered = false
+  signalShutdownInFlight = false
 }
 
 // ─── Internal: Shutdown Orchestration ───────────────────────────────────────
@@ -291,6 +335,9 @@ async function runShutdown(timeoutMs?: number): Promise<ShutdownResult> {
     } catch (err) {
       stepErrors.push({ step: 'orchestrator', error: err })
     }
+    if (client.getState() === 'stopping') {
+      try { client.setState('stopped') } catch {}
+    }
     await runUnconditionalCleanup(stepErrors)
   })()
   shutdownCompletionPromise = completion
@@ -317,6 +364,9 @@ async function runShutdown(timeoutMs?: number): Promise<ShutdownResult> {
       remainingEvents: eventQueue.size(),
       durationMs: Date.now() - startedAt,
     })
+    if (client.getState() === 'stopping') {
+      try { client.setState('stopped') } catch {}
+    }
   }
 
   const result: ShutdownResult = {
@@ -398,6 +448,7 @@ async function runOrchestratedShutdown(stepErrors: ShutdownStepError[]): Promise
     // meant graceful shutdown could lose the last batch.
     await metricsRegistry.flush()
     await withTimeout(otelMetrics.shutdown(), SUBSYSTEM_STEP_TIMEOUT_MS, 'metrics shutdown timed out')
+    RuntimeMetricsSubsystem.resetInstance()
     metricsRegistry.stop()
   }, stepErrors)
 
@@ -508,6 +559,7 @@ async function runUnconditionalCleanup(stepErrors: ShutdownStepError[]): Promise
   runSync('logging-subsystem.reset', () => LoggingSubsystem.reset(), stepErrors)
   runSync('profiling-subsystem.reset', () => ProfilingSubsystem.reset(), stepErrors)
   runSync('cron-subsystem.reset', () => CronSubsystem.reset(), stepErrors)
+  runSync('runtime-metrics-subsystem.reset', () => RuntimeMetricsSubsystem.resetInstance(), stepErrors)
   runSync('session.reset', () => resetSessionManager(), stepErrors)
   runSync('signal-handlers.reset', () => resetSignalHandlers(), stepErrors)
   runSync('auto-instrumentations.reset', () => resetAutoInstrumentations(), stepErrors)

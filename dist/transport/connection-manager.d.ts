@@ -26,6 +26,8 @@ export declare class ConnectionManager {
     private totalInUse;
     constructor(options: ConnectionManagerOptions);
     acquire(route: EnterpriseRoute): Promise<ConnectionLease | null>;
+    getStats(): ConnectionPoolStats;
     stats(): ConnectionPoolStats;
+    getMaxForRoute(route: EnterpriseRoute): number;
     maxForRoute(route: EnterpriseRoute): number;
 }

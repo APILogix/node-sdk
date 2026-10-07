@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import { gzipSync, brotliCompressSync, deflateSync } from 'node:zlib';
 import { RemoteConfigMockServer, createDefaultMockConfig, computeConfigHash, ALL_10_ROUTES, withMockServer, setupTestSdk, resetSdkState, captureProcessBaseline, assertNoProcessLeaks, assertValidBatchHeaders, assertAuthHeader, assertGzipCompressed, assertUncompressed, waitForCondition, } from './index.js';
-import { captureError, flush } from '../../../src/index.js';
+import { captureException, flush } from '../../../src/index.js';
 describe('RemoteConfigMockServer & E2E Test Harness', () => {
     let server;
     beforeEach(async () => {
@@ -471,7 +471,7 @@ describe('RemoteConfigMockServer & E2E Test Harness', () => {
             assert.ok(initConfig);
             assert.equal(initConfig.schemaVersion, 1);
             // Capture an error
-            captureError(new Error('E2E test error for mock server'));
+            captureException(new Error('E2E test error for mock server'));
             await flush();
             // Verify mock server received the error batch
             const errorRequests = await server.waitForRequests('errors', { count: 1, timeoutMs: 3_000 });

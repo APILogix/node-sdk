@@ -69,8 +69,8 @@ describe('Pulse SDK Trace/Span Consistency', () => {
         childSpan.end();
         rootSpan.end();
     });
-    it('monitorMiddleware extracts incoming W3C traceparent into server span and child spans', async () => {
-        const { monitorMiddleware } = await import('../../src/instrumentation/express.js');
+    it('pulseMiddleware extracts incoming W3C traceparent into server span and child spans', async () => {
+        const { pulseMiddleware } = await import('../../src/instrumentation/express.js');
         const { trace } = await import('@opentelemetry/api');
         await init({
             apiKey: 'test-key',
@@ -98,7 +98,7 @@ describe('Pulse SDK Trace/Span Consistency', () => {
         };
         let capturedTraceId;
         let childTraceId;
-        const middleware = monitorMiddleware();
+        const middleware = pulseMiddleware();
         await new Promise((resolve) => {
             middleware(req, res, () => {
                 const activeSpan = trace.getActiveSpan();

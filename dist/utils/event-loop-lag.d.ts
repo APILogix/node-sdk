@@ -59,5 +59,6 @@ export declare class EventLoopLagMonitor extends EventEmitter {
     /** Returns true if event loop lag p99 exceeds the given threshold (ms). */
     isLagging(thresholdMs: number): boolean;
     private emitStats;
+    private extractHistogramStats;
     private readHistogram;
 }

@@ -174,6 +174,7 @@ class ApiPayloadScrubber {
   private sanitizeValue(root: unknown, _depth: number): unknown {
     if (root === null || root === undefined) return root
     if (typeof root === 'string') return this.sanitizeString(root)
+    if (typeof root === 'bigint') return root.toString()
     if (typeof root !== 'object') return root
     const seen = new WeakSet<object>()
     return this.sanitizeObject(root, 0, seen)
@@ -183,6 +184,7 @@ class ApiPayloadScrubber {
     if (depth >= MAX_SANITIZE_DEPTH) return value
     if (value === null || value === undefined) return value
     if (typeof value === 'string') return this.sanitizeString(value)
+    if (typeof value === 'bigint') return value.toString()
     if (typeof value !== 'object') return value
 
     const obj = value as object

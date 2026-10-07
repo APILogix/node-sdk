@@ -47,6 +47,7 @@ export declare class EventQueue {
      */
     drain(batchSize: number): Event[];
     drainAll(): Event[];
+    getSize(): number;
     size(): number;
     isEmpty(): boolean;
     getDroppedCount(): number;

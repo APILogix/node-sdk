@@ -106,6 +106,12 @@ declare class MetricsRegistry {
     reset(): void;
     private canRegisterMetric;
 }
+/**
+ * Serializes metric labels into a canonical key.
+ * Fast, allocation-conscious implementation eliminating JSON.stringify,
+ * localeCompare, and intermediate arrays on hot recording paths (SEC-06).
+ */
+export declare function serializeLabels(labels: Record<string, string>): string;
 export declare const metricsRegistry: MetricsRegistry;
 export { MetricsRegistry };
 export type { AggregatedMetric as AggregatedMetricLegacy };

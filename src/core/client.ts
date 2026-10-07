@@ -9,13 +9,15 @@ import { SDKError } from './errors.js'
 import { ConfigManager } from './config-manager.js'
 import { SDK_NAME, SDK_VERSION } from '../constants/version.js'
 import { resolveApplicationPackage } from '../utils/package-metadata.js'
+import { LifecycleStateMachine, type SDKState } from './state.js'
+import { SingleFlight } from './single-flight.js'
 
 class SDKClient {
   private static instance: SDKClient
 
-  private initializedValue = false
+  private readonly stateMachine = new LifecycleStateMachine()
+  private readonly singleFlight = new SingleFlight<Readonly<RemoteConfigResponse> | undefined>()
   private initMetadataValue: Omit<InitResponse, 'config'> | null = null
-  private initPromise: Promise<Readonly<RemoteConfigResponse> | undefined> | null = null
   private apiKeyValue: string | null = null
   private initIdentityValue: string | null = null
   private pendingInitIdentityValue: string | null = null
@@ -47,7 +49,16 @@ class SDKClient {
   }
 
   get initialized(): boolean {
-    return this.initializedValue && ConfigManager.getCurrent()?.isLive() === true
+    const state = this.stateMachine.getState()
+    return (state === 'initialized' || state === 'stopping') && ConfigManager.getCurrent()?.isLive() === true
+  }
+
+  getState(): SDKState {
+    return this.stateMachine.getState()
+  }
+
+  setState(nextState: SDKState): void {
+    this.stateMachine.transition(nextState)
   }
 
   get remoteConfig(): Readonly<RemoteConfigResponse> | null {
@@ -120,7 +131,7 @@ class SDKClient {
   }
 
   markInitialized(): void {
-    this.initializedValue = true
+    this.setState('initialized')
   }
 
   setInitResponse(response: InitResponse): void {
@@ -129,18 +140,22 @@ class SDKClient {
   }
 
   clearConfig(): void {
-    this.initializedValue = false
+    if (this.stateMachine.canTransitionTo('recovering')) {
+      this.setState('recovering')
+    }
     this.initMetadataValue = null
   }
 
   clear(): void {
-    this.initializedValue = false
+    if (this.stateMachine.getState() !== 'stopped') {
+      this.stateMachine.reset()
+    }
     this.initMetadataValue = null
     this.apiKeyValue = null
     this.initIdentityValue = null
     this.pendingInitIdentityValue = null
     this.optionsValue = null
-    this.initPromise = null
+    this.singleFlight.reset()
     this.pluginRegistry.length = 0
     this.eventProcessorRegistry.length = 0
     this.breadcrumbBuffer.clear()
@@ -164,15 +179,29 @@ class SDKClient {
   }
 
   hasSamePendingIdentity(options: SDKInitOptions): boolean {
-    return this.pendingInitIdentityValue === createInitIdentity(options)
+    if (this.pendingInitIdentityValue !== null) {
+      return this.pendingInitIdentityValue === createInitIdentity(options)
+    }
+    if (this.initIdentityValue !== null) {
+      return this.initIdentityValue === createInitIdentity(options)
+    }
+    return false
+  }
+
+  get singleFlightCoordinator(): SingleFlight<Readonly<RemoteConfigResponse> | undefined> {
+    return this.singleFlight
   }
 
   setInitPromise(promise: Promise<Readonly<RemoteConfigResponse> | undefined> | null): void {
-    this.initPromise = promise
+    this.singleFlight.setPromise(promise)
   }
 
   getInitPromise(): Promise<Readonly<RemoteConfigResponse> | undefined> | null {
-    return this.initPromise
+    return this.singleFlight.getPromise()
+  }
+
+  isInFlight(): boolean {
+    return this.singleFlight.isInFlight()
   }
 
   registerPlugin(plugin: SDKPlugin): void {

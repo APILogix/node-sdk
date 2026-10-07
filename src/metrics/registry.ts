@@ -265,28 +265,39 @@ class MetricsRegistry {
 
 // ─── Utilities ──────────────────────────────────────────────────────────────
 
-const LABEL_CACHE_SIZE = 1000
-const labelCache = new Map<string, string>()
+/**
+ * Serializes metric labels into a canonical key.
+ * Fast, allocation-conscious implementation eliminating JSON.stringify,
+ * localeCompare, and intermediate arrays on hot recording paths (SEC-06).
+ */
+export function serializeLabels(labels: Record<string, string>): string {
+    if (!labels) return ''
+    const keys = Object.keys(labels)
+    const len = keys.length
+    if (len === 0) return ''
 
-function serializeLabels(labels: Record<string, string>): string {
-    const entries = Object.entries(labels)
-    if (entries.length === 0) return ''
-
-    // Fast path: if the labels were already sanitized in the same order, we
-    // can reuse the canonical string. The key is the sorted JSON of the labels.
-    const sorted = entries.sort(([a], [b]) => a.localeCompare(b))
-    const cacheKey = JSON.stringify(sorted)
-    const cached = labelCache.get(cacheKey)
-    if (cached !== undefined) return cached
-
-    const serialized = sorted.map(([k, v]) => `${k}=${v}`).join(',')
-
-    if (labelCache.size >= LABEL_CACHE_SIZE) {
-        const oldest = labelCache.keys().next().value
-        if (oldest !== undefined) labelCache.delete(oldest)
+    if (len === 1) {
+        const k0 = keys[0]!
+        return `${k0}=${labels[k0] ?? ''}`
     }
-    labelCache.set(cacheKey, serialized)
-    return serialized
+
+    if (len === 2) {
+        const k0 = keys[0]!
+        const k1 = keys[1]!
+        if (k0 < k1) {
+            return `${k0}=${labels[k0] ?? ''},${k1}=${labels[k1] ?? ''}`
+        }
+        return `${k1}=${labels[k1] ?? ''},${k0}=${labels[k0] ?? ''}`
+    }
+
+    keys.sort()
+    let result = ''
+    for (let i = 0; i < len; i++) {
+        if (i > 0) result += ','
+        const key = keys[i]!
+        result += key + '=' + (labels[key] ?? '')
+    }
+    return result
 }
 
 // ─── Singleton ──────────────────────────────────────────────────────────────

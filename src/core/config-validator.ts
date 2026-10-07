@@ -57,7 +57,7 @@ export function validateRemoteConfig(payload: unknown): ValidationResult {
   const config = payload
 
   // 1. Schema Version
-  integer(config, 'schemaVersion', errors, 1, REMOTE_CONFIG_SCHEMA_VERSION)
+  validateInteger(config, 'schemaVersion', errors, 1, REMOTE_CONFIG_SCHEMA_VERSION)
   if (typeof config['schemaVersion'] === 'number' && config['schemaVersion'] > REMOTE_CONFIG_SCHEMA_VERSION) {
     errors.push(`schemaVersion ${config['schemaVersion']} is newer than client-supported ${REMOTE_CONFIG_SCHEMA_VERSION}; package upgrade required`)
   }
@@ -197,16 +197,16 @@ export function validateOrFallback(
 // ─── Section Validators ─────────────────────────────────────────────────────
 
 function validateIdentity(value: unknown, errors: string[]): void {
-  if (!section(value, 'sdk', errors)) return
-  nonEmptyString(value, 'projectId', 'sdk.projectId', errors)
-  optionalNonEmptyString(value, 'service', 'sdk.service', errors)
-  nonEmptyString(value, 'environment', 'sdk.environment', errors)
-  nonEmptyString(value, 'release', 'sdk.release', errors)
+  if (!isConfigSection(value, 'sdk', errors)) return
+  validateNonEmptyString(value, 'projectId', 'sdk.projectId', errors)
+  validateOptionalNonEmptyString(value, 'service', 'sdk.service', errors)
+  validateNonEmptyString(value, 'environment', 'sdk.environment', errors)
+  validateNonEmptyString(value, 'release', 'sdk.release', errors)
 }
 
 function validateSampling(value: unknown, errors: string[]): void {
-  if (!section(value, 'sampling', errors)) return
-  for (const key of SAMPLING_KEYS) probability(value, key, `sampling.${key}`, errors)
+  if (!isConfigSection(value, 'sampling', errors)) return
+  for (const key of SAMPLING_KEYS) validateProbability(value, key, `sampling.${key}`, errors)
 
   const routes = value['routes']
   if (!isRecord(routes)) {
@@ -232,80 +232,80 @@ function validateSampling(value: unknown, errors: string[]): void {
 }
 
 function validateInstrumentation(value: unknown, errors: string[]): void {
-  if (!section(value, 'instrumentation', errors)) return
+  if (!isConfigSection(value, 'instrumentation', errors)) return
   for (const key of ['http', 'https', 'fetch', 'axios', 'mongodb', 'eventEmitterPatch'] as const) {
-    boolean(value, key, `instrumentation.${key}`, errors)
+    validateBoolean(value, key, `instrumentation.${key}`, errors)
   }
-  booleanOrObject(value, 'redis', ['enabled'], errors)
+  isBooleanOrObject(value, 'redis', ['enabled'], errors)
   if (isRecord(value['redis']) && value['redis']['keyPolicy'] !== undefined) {
     const kp = String(value['redis']['keyPolicy'])
     if (!['command-only', 'sanitized-key', 'full', 'hash'].includes(kp)) {
       errors.push('instrumentation.redis.keyPolicy is invalid')
     }
   }
-  booleanOrObject(value, 'express', ['enabled'], errors)
-  booleanOrObject(value, 'fastify', ['enabled', 'captureHooks', 'captureValidationErrors'], errors)
-  booleanOrObject(value, 'graphql', ['enabled', 'captureResolvers'], errors)
-  booleanOrObject(value, 'prisma', ['enabled', 'captureQueries', 'captureParams'], errors)
-  booleanOrObject(value, 'pg', ['enabled', 'captureQueries', 'captureParams'], errors)
-  booleanOrObject(value, 'mysql2', ['enabled', 'captureQueries'], errors)
-  booleanOrObject(value, 'bullmq', ['enabled'], errors, [
+  isBooleanOrObject(value, 'express', ['enabled'], errors)
+  isBooleanOrObject(value, 'fastify', ['enabled', 'captureHooks', 'captureValidationErrors'], errors)
+  isBooleanOrObject(value, 'graphql', ['enabled', 'captureResolvers'], errors)
+  isBooleanOrObject(value, 'prisma', ['enabled', 'captureQueries', 'captureParams'], errors)
+  isBooleanOrObject(value, 'pg', ['enabled', 'captureQueries', 'captureParams'], errors)
+  isBooleanOrObject(value, 'mysql2', ['enabled', 'captureQueries'], errors)
+  isBooleanOrObject(value, 'bullmq', ['enabled'], errors, [
     'emitCreateSpansForBulk', 'emitCreateSpansForFlow', 'requireParentSpanForPublish',
   ])
 }
 
 function validatePrivacy(value: unknown, errors: string[]): void {
-  if (!section(value, 'privacy', errors)) return
+  if (!isConfigSection(value, 'privacy', errors)) return
   const capture = value['capture']
-  if (section(capture, 'privacy.capture', errors)) {
+  if (isConfigSection(capture, 'privacy.capture', errors)) {
     for (const key of ['headers', 'body', 'response', 'query', 'cookies'] as const) {
-      boolean(capture, key, `privacy.capture.${key}`, errors)
+      validateBoolean(capture, key, `privacy.capture.${key}`, errors)
     }
   }
 
   const scrubbing = value['scrubbing']
-  if (section(scrubbing, 'privacy.scrubbing', errors)) {
-    boolean(scrubbing, 'enabled', 'privacy.scrubbing.enabled', errors)
-    stringArray(scrubbing, 'headers', 'privacy.scrubbing.headers', errors)
-    stringArray(scrubbing, 'fields', 'privacy.scrubbing.fields', errors)
+  if (isConfigSection(scrubbing, 'privacy.scrubbing', errors)) {
+    validateBoolean(scrubbing, 'enabled', 'privacy.scrubbing.enabled', errors)
+    validateStringArray(scrubbing, 'headers', 'privacy.scrubbing.headers', errors)
+    validateStringArray(scrubbing, 'fields', 'privacy.scrubbing.fields', errors)
   }
 
   const pii = value['piiDetection']
-  if (section(pii, 'privacy.piiDetection', errors)) {
+  if (isConfigSection(pii, 'privacy.piiDetection', errors)) {
     for (const key of ['enabled', 'maskEmails', 'maskPhones', 'maskIPs'] as const) {
-      boolean(pii, key, `privacy.piiDetection.${key}`, errors)
+      validateBoolean(pii, key, `privacy.piiDetection.${key}`, errors)
     }
-    if ('maskCreditCards' in pii) boolean(pii, 'maskCreditCards', 'privacy.piiDetection.maskCreditCards', errors)
-    if ('maskSSNs' in pii) boolean(pii, 'maskSSNs', 'privacy.piiDetection.maskSSNs', errors)
+    if ('maskCreditCards' in pii) validateBoolean(pii, 'maskCreditCards', 'privacy.piiDetection.maskCreditCards', errors)
+    if ('maskSSNs' in pii) validateBoolean(pii, 'maskSSNs', 'privacy.piiDetection.maskSSNs', errors)
   }
 }
 
 function validateLimits(value: unknown, errors: string[]): void {
-  if (!section(value, 'limits', errors)) return
-  integer(value, 'maxSpansPerTrace', errors, SAFETY_CEILINGS.minSpansPerTrace, SAFETY_CEILINGS.maxSpansPerTrace, 'limits')
-  integer(value, 'maxSpanAttributes', errors, SAFETY_CEILINGS.minSpanAttributes, SAFETY_CEILINGS.maxSpanAttributes, 'limits')
-  integer(value, 'maxAttributeLength', errors, SAFETY_CEILINGS.minAttributeLength, SAFETY_CEILINGS.maxAttributeLength, 'limits')
-  integer(value, 'maxPayloadSize', errors, SAFETY_CEILINGS.minPayloadSize, SAFETY_CEILINGS.maxPayloadSize, 'limits')
-  integer(value, 'maxQueueSize', errors, SAFETY_CEILINGS.minQueueSize, SAFETY_CEILINGS.maxQueueSize, 'limits')
-  memoryLimit(value, 'maxMemoryMb', errors)
+  if (!isConfigSection(value, 'limits', errors)) return
+  validateInteger(value, 'maxSpansPerTrace', errors, SAFETY_CEILINGS.minSpansPerTrace, SAFETY_CEILINGS.maxSpansPerTrace, 'limits')
+  validateInteger(value, 'maxSpanAttributes', errors, SAFETY_CEILINGS.minSpanAttributes, SAFETY_CEILINGS.maxSpanAttributes, 'limits')
+  validateInteger(value, 'maxAttributeLength', errors, SAFETY_CEILINGS.minAttributeLength, SAFETY_CEILINGS.maxAttributeLength, 'limits')
+  validateInteger(value, 'maxPayloadSize', errors, SAFETY_CEILINGS.minPayloadSize, SAFETY_CEILINGS.maxPayloadSize, 'limits')
+  validateInteger(value, 'maxQueueSize', errors, SAFETY_CEILINGS.minQueueSize, SAFETY_CEILINGS.maxQueueSize, 'limits')
+  validateMemoryLimit(value, 'maxMemoryMb', errors)
   if ('maxCpuOverheadPercent' in value) {
     errors.push('limits.maxCpuOverheadPercent is no longer supported because the client cannot enforce it')
   }
 
   const tenant = value['tenantGovernance']
-  if (section(tenant, 'limits.tenantGovernance', errors)) {
-    boolean(tenant, 'enabled', 'limits.tenantGovernance.enabled', errors)
-    integer(tenant, 'maxTenantsTracked', errors, SAFETY_CEILINGS.minTenantsTracked, SAFETY_CEILINGS.maxTenantsTracked, 'limits.tenantGovernance')
-    integer(tenant, 'quotaPerWindow', errors, SAFETY_CEILINGS.minQuotaPerWindow, SAFETY_CEILINGS.quotaPerWindow, 'limits.tenantGovernance')
-    integer(tenant, 'windowDurationMs', errors, SAFETY_CEILINGS.minWindowDurationMs, SAFETY_CEILINGS.windowDurationMs, 'limits.tenantGovernance')
-    integer(tenant, 'criticalReserve', errors, SAFETY_CEILINGS.minCriticalReserve, SAFETY_CEILINGS.criticalReserve, 'limits.tenantGovernance')
+  if (isConfigSection(tenant, 'limits.tenantGovernance', errors)) {
+    validateBoolean(tenant, 'enabled', 'limits.tenantGovernance.enabled', errors)
+    validateInteger(tenant, 'maxTenantsTracked', errors, SAFETY_CEILINGS.minTenantsTracked, SAFETY_CEILINGS.maxTenantsTracked, 'limits.tenantGovernance')
+    validateInteger(tenant, 'quotaPerWindow', errors, SAFETY_CEILINGS.minQuotaPerWindow, SAFETY_CEILINGS.quotaPerWindow, 'limits.tenantGovernance')
+    validateInteger(tenant, 'windowDurationMs', errors, SAFETY_CEILINGS.minWindowDurationMs, SAFETY_CEILINGS.windowDurationMs, 'limits.tenantGovernance')
+    validateInteger(tenant, 'criticalReserve', errors, SAFETY_CEILINGS.minCriticalReserve, SAFETY_CEILINGS.criticalReserve, 'limits.tenantGovernance')
   }
 
   const persistence = value['persistenceGovernance']
-  if (section(persistence, 'limits.persistenceGovernance', errors)) {
-    integer(persistence, 'maxPersistPerMinute', errors, SAFETY_CEILINGS.minPersistPerMinute, SAFETY_CEILINGS.maxPersistPerMinute, 'limits.persistenceGovernance')
-    boolean(persistence, 'adaptive', 'limits.persistenceGovernance.adaptive', errors)
-    integer(
+  if (isConfigSection(persistence, 'limits.persistenceGovernance', errors)) {
+    validateInteger(persistence, 'maxPersistPerMinute', errors, SAFETY_CEILINGS.minPersistPerMinute, SAFETY_CEILINGS.maxPersistPerMinute, 'limits.persistenceGovernance')
+    validateBoolean(persistence, 'adaptive', 'limits.persistenceGovernance.adaptive', errors)
+    validateInteger(
       persistence,
       'budgetExceededLogIntervalMs',
       errors,
@@ -317,37 +317,37 @@ function validateLimits(value: unknown, errors: string[]): void {
 }
 
 function validateTransport(value: unknown, errors: string[]): void {
-  if (!section(value, 'transport', errors)) return
+  if (!isConfigSection(value, 'transport', errors)) return
 
   const retry = value['retry']
-  if (section(retry, 'transport.retry', errors)) {
-    boolean(retry, 'enabled', 'transport.retry.enabled', errors)
-    integer(retry, 'maxRetries', errors, SAFETY_CEILINGS.minRetryMaxRetries, SAFETY_CEILINGS.retryMaxRetries, 'transport.retry')
+  if (isConfigSection(retry, 'transport.retry', errors)) {
+    validateBoolean(retry, 'enabled', 'transport.retry.enabled', errors)
+    validateInteger(retry, 'maxRetries', errors, SAFETY_CEILINGS.minRetryMaxRetries, SAFETY_CEILINGS.retryMaxRetries, 'transport.retry')
     if (!['exponential', 'linear', 'fixed'].includes(String(retry['backoff']))) {
       errors.push('transport.retry.backoff is invalid')
     }
-    integer(retry, 'baseDelayMs', errors, SAFETY_CEILINGS.minRetryBaseDelayMs, SAFETY_CEILINGS.retryBaseDelayMs, 'transport.retry')
+    validateInteger(retry, 'baseDelayMs', errors, SAFETY_CEILINGS.minRetryBaseDelayMs, SAFETY_CEILINGS.retryBaseDelayMs, 'transport.retry')
   }
 
   const queue = value['queue']
-  if (section(queue, 'transport.queue', errors)) {
+  if (isConfigSection(queue, 'transport.queue', errors)) {
     if (queue['overflowStrategy'] !== 'drop_oldest' && queue['overflowStrategy'] !== 'drop_newest') {
       errors.push('transport.queue.overflowStrategy is invalid')
     }
-    integer(queue, 'maxSize', errors, SAFETY_CEILINGS.minQueueSize, SAFETY_CEILINGS.maxQueueSize, 'transport.queue')
-    integer(queue, 'criticalReserve', errors, 0, SAFETY_CEILINGS.maxQueueSize, 'transport.queue')
+    validateInteger(queue, 'maxSize', errors, SAFETY_CEILINGS.minQueueSize, SAFETY_CEILINGS.maxQueueSize, 'transport.queue')
+    validateInteger(queue, 'criticalReserve', errors, 0, SAFETY_CEILINGS.maxQueueSize, 'transport.queue')
     if (Number.isInteger(queue['maxSize']) && Number.isInteger(queue['criticalReserve'])
       && (queue['criticalReserve'] as number) > (queue['maxSize'] as number)) {
       errors.push('transport.queue.criticalReserve cannot exceed transport.queue.maxSize')
     }
   }
 
-  boolean(value, 'keepAlive', 'transport.keepAlive', errors)
+  validateBoolean(value, 'keepAlive', 'transport.keepAlive', errors)
 
   const connections = value['connections']
-  if (section(connections, 'transport.connections', errors)) {
-    integer(connections, 'maxTotalConnections', errors, SAFETY_CEILINGS.minTotalConnections, SAFETY_CEILINGS.maxTotalConnections, 'transport.connections')
-    integer(connections, 'acquireTimeoutMs', errors, SAFETY_CEILINGS.minAcquireTimeoutMs, SAFETY_CEILINGS.acquireTimeoutMs, 'transport.connections')
+  if (isConfigSection(connections, 'transport.connections', errors)) {
+    validateInteger(connections, 'maxTotalConnections', errors, SAFETY_CEILINGS.minTotalConnections, SAFETY_CEILINGS.maxTotalConnections, 'transport.connections')
+    validateInteger(connections, 'acquireTimeoutMs', errors, SAFETY_CEILINGS.minAcquireTimeoutMs, SAFETY_CEILINGS.acquireTimeoutMs, 'transport.connections')
     if (connections['maxConnectionsPerRoute'] !== undefined) {
       const perRoute = connections['maxConnectionsPerRoute']
       if (!isRecord(perRoute)) {
@@ -378,9 +378,9 @@ function validateTransport(value: unknown, errors: string[]): void {
     if (typeof route['url'] !== 'string' || !isAllowedTransportUrl(route['url'])) {
       errors.push(`transport.routes.${name}.url is missing or not an allowed HTTP(S) URL`)
     }
-    integer(route, 'batchSize', errors, SAFETY_CEILINGS.minBatchSize, SAFETY_CEILINGS.batchSize, `transport.routes.${name}`)
-    integer(route, 'flushIntervalMs', errors, SAFETY_CEILINGS.minFlushIntervalMs, SAFETY_CEILINGS.flushIntervalMs, `transport.routes.${name}`)
-    integer(route, 'timeoutMs', errors, SAFETY_CEILINGS.minTimeoutMs, SAFETY_CEILINGS.timeoutMs, `transport.routes.${name}`)
+    validateInteger(route, 'batchSize', errors, SAFETY_CEILINGS.minBatchSize, SAFETY_CEILINGS.batchSize, `transport.routes.${name}`)
+    validateInteger(route, 'flushIntervalMs', errors, SAFETY_CEILINGS.minFlushIntervalMs, SAFETY_CEILINGS.flushIntervalMs, `transport.routes.${name}`)
+    validateInteger(route, 'timeoutMs', errors, SAFETY_CEILINGS.minTimeoutMs, SAFETY_CEILINGS.timeoutMs, `transport.routes.${name}`)
     if (route['compression'] !== 'gzip' && route['compression'] !== 'none') {
       errors.push(`transport.routes.${name}.compression is invalid`)
     }
@@ -391,92 +391,92 @@ function validateTransport(value: unknown, errors: string[]): void {
 }
 
 function validateOfflineQueue(value: unknown, errors: string[]): void {
-  if (!section(value, 'offlineQueue', errors)) return
-  boolean(value, 'enabled', 'offlineQueue.enabled', errors)
-  integer(value, 'maxFileSizeBytes', errors, SAFETY_CEILINGS.offlineQueueMinFileSizeBytes, SAFETY_CEILINGS.offlineQueueMaxFileSizeBytes, 'offlineQueue')
-  integer(value, 'maxEvents', errors, SAFETY_CEILINGS.offlineQueueMinEvents, SAFETY_CEILINGS.offlineQueueMaxEvents, 'offlineQueue')
-  integer(value, 'eventTtlMs', errors, SAFETY_CEILINGS.offlineQueueMinEventTtlMs, SAFETY_CEILINGS.offlineQueueEventTtlMs, 'offlineQueue')
-  integer(value, 'ioTimeoutMs', errors, SAFETY_CEILINGS.offlineQueueMinIoTimeoutMs, SAFETY_CEILINGS.offlineQueueIoTimeoutMs, 'offlineQueue')
+  if (!isConfigSection(value, 'offlineQueue', errors)) return
+  validateBoolean(value, 'enabled', 'offlineQueue.enabled', errors)
+  validateInteger(value, 'maxFileSizeBytes', errors, SAFETY_CEILINGS.offlineQueueMinFileSizeBytes, SAFETY_CEILINGS.offlineQueueMaxFileSizeBytes, 'offlineQueue')
+  validateInteger(value, 'maxEvents', errors, SAFETY_CEILINGS.offlineQueueMinEvents, SAFETY_CEILINGS.offlineQueueMaxEvents, 'offlineQueue')
+  validateInteger(value, 'eventTtlMs', errors, SAFETY_CEILINGS.offlineQueueMinEventTtlMs, SAFETY_CEILINGS.offlineQueueEventTtlMs, 'offlineQueue')
+  validateInteger(value, 'ioTimeoutMs', errors, SAFETY_CEILINGS.offlineQueueMinIoTimeoutMs, SAFETY_CEILINGS.offlineQueueIoTimeoutMs, 'offlineQueue')
   if (value['flushDebounceMs'] !== undefined) {
-    integer(value, 'flushDebounceMs', errors, 0, 60_000, 'offlineQueue')
+    validateInteger(value, 'flushDebounceMs', errors, 0, 60_000, 'offlineQueue')
   }
 }
 
 function validateProfiling(value: unknown, errors: string[]): void {
-  if (!section(value, 'profiling', errors)) return
-  boolean(value, 'enabled', 'profiling.enabled', errors)
-  boolean(value, 'cpu', 'profiling.cpu', errors)
-  boolean(value, 'heap', 'profiling.heap', errors)
-  probability(value, 'sampleRate', 'profiling.sampleRate', errors)
-  integer(value, 'maxDurationMs', errors, SAFETY_CEILINGS.minProfileDurationMs, SAFETY_CEILINGS.profileMaxDurationMs, 'profiling')
+  if (!isConfigSection(value, 'profiling', errors)) return
+  validateBoolean(value, 'enabled', 'profiling.enabled', errors)
+  validateBoolean(value, 'cpu', 'profiling.cpu', errors)
+  validateBoolean(value, 'heap', 'profiling.heap', errors)
+  validateProbability(value, 'sampleRate', 'profiling.sampleRate', errors)
+  validateInteger(value, 'maxDurationMs', errors, SAFETY_CEILINGS.minProfileDurationMs, SAFETY_CEILINGS.profileMaxDurationMs, 'profiling')
   if (value['sampleIntervalMicroseconds'] !== undefined) {
-    integer(value, 'sampleIntervalMicroseconds', errors, 1, 1_000_000, 'profiling')
+    validateInteger(value, 'sampleIntervalMicroseconds', errors, 1, 1_000_000, 'profiling')
   }
 }
 
 function validateReplay(value: unknown, errors: string[]): void {
-  if (!section(value, 'replay', errors)) return
-  boolean(value, 'enabled', 'replay.enabled', errors)
-  probability(value, 'sampleRate', 'replay.sampleRate', errors)
-  integer(value, 'idleTimeoutMs', errors, 1_000, 24 * 60 * 60 * 1_000, 'replay')
-  integer(value, 'maxDurationMs', errors, SAFETY_CEILINGS.minReplayDurationMs, SAFETY_CEILINGS.replayMaxDurationMs, 'replay')
+  if (!isConfigSection(value, 'replay', errors)) return
+  validateBoolean(value, 'enabled', 'replay.enabled', errors)
+  validateProbability(value, 'sampleRate', 'replay.sampleRate', errors)
+  validateInteger(value, 'idleTimeoutMs', errors, 1_000, 24 * 60 * 60 * 1_000, 'replay')
+  validateInteger(value, 'maxDurationMs', errors, SAFETY_CEILINGS.minReplayDurationMs, SAFETY_CEILINGS.replayMaxDurationMs, 'replay')
   if (value['maxBufferSize'] !== undefined) {
-    integer(value, 'maxBufferSize', errors, 1, 100_000, 'replay')
+    validateInteger(value, 'maxBufferSize', errors, 1, 100_000, 'replay')
   }
   if (value['maskAllInputs'] !== undefined) {
-    boolean(value, 'maskAllInputs', 'replay.maskAllInputs', errors)
+    validateBoolean(value, 'maskAllInputs', 'replay.maskAllInputs', errors)
   }
 }
 
 function validateErrors(value: unknown, errors: string[]): void {
-  if (!section(value, 'errors', errors)) return
-  boolean(value, 'captureUnhandledRejections', 'errors.captureUnhandledRejections', errors)
-  boolean(value, 'captureUncaughtExceptions', 'errors.captureUncaughtExceptions', errors)
-  boolean(value, 'captureConsoleErrors', 'errors.captureConsoleErrors', errors)
-  integer(value, 'stackTraceLimit', errors, SAFETY_CEILINGS.minStackTraceLimit, SAFETY_CEILINGS.stackTraceLimit, 'errors')
-  boolean(value, 'attachSourceContext', 'errors.attachSourceContext', errors)
+  if (!isConfigSection(value, 'errors', errors)) return
+  validateBoolean(value, 'captureUnhandledRejections', 'errors.captureUnhandledRejections', errors)
+  validateBoolean(value, 'captureUncaughtExceptions', 'errors.captureUncaughtExceptions', errors)
+  validateBoolean(value, 'captureConsoleErrors', 'errors.captureConsoleErrors', errors)
+  validateInteger(value, 'stackTraceLimit', errors, SAFETY_CEILINGS.minStackTraceLimit, SAFETY_CEILINGS.stackTraceLimit, 'errors')
+  validateBoolean(value, 'attachSourceContext', 'errors.attachSourceContext', errors)
   const grouping = value['grouping']
-  if (section(grouping, 'errors.grouping', errors)) {
-    boolean(grouping, 'enabled', 'errors.grouping.enabled', errors)
-    boolean(grouping, 'normalizePaths', 'errors.grouping.normalizePaths', errors)
+  if (isConfigSection(grouping, 'errors.grouping', errors)) {
+    validateBoolean(grouping, 'enabled', 'errors.grouping.enabled', errors)
+    validateBoolean(grouping, 'normalizePaths', 'errors.grouping.normalizePaths', errors)
   }
 }
 
 function validateTracing(value: unknown, errors: string[]): void {
-  if (!section(value, 'tracing', errors)) return
-  integer(value, 'maxSpansPerTrace', errors, SAFETY_CEILINGS.minSpansPerTrace, SAFETY_CEILINGS.maxSpansPerTrace, 'tracing')
-  integer(value, 'maxSpanAttributes', errors, SAFETY_CEILINGS.minSpanAttributes, SAFETY_CEILINGS.maxSpanAttributes, 'tracing')
-  integer(value, 'maxTraceDurationMs', errors, SAFETY_CEILINGS.minTraceDurationMs, SAFETY_CEILINGS.maxTraceDurationMs, 'tracing')
+  if (!isConfigSection(value, 'tracing', errors)) return
+  validateInteger(value, 'maxSpansPerTrace', errors, SAFETY_CEILINGS.minSpansPerTrace, SAFETY_CEILINGS.maxSpansPerTrace, 'tracing')
+  validateInteger(value, 'maxSpanAttributes', errors, SAFETY_CEILINGS.minSpanAttributes, SAFETY_CEILINGS.maxSpanAttributes, 'tracing')
+  validateInteger(value, 'maxTraceDurationMs', errors, SAFETY_CEILINGS.minTraceDurationMs, SAFETY_CEILINGS.maxTraceDurationMs, 'tracing')
   const propagation = value['propagation']
-  if (section(propagation, 'tracing.propagation', errors)) {
-    boolean(propagation, 'w3c', 'tracing.propagation.w3c', errors)
-    boolean(propagation, 'baggage', 'tracing.propagation.baggage', errors)
-    boolean(propagation, 'b3', 'tracing.propagation.b3', errors)
+  if (isConfigSection(propagation, 'tracing.propagation', errors)) {
+    validateBoolean(propagation, 'w3c', 'tracing.propagation.w3c', errors)
+    validateBoolean(propagation, 'baggage', 'tracing.propagation.baggage', errors)
+    validateBoolean(propagation, 'b3', 'tracing.propagation.b3', errors)
   }
 }
 
 function validateMetrics(value: unknown, errors: string[]): void {
-  if (!section(value, 'metrics', errors)) return
-  boolean(value, 'runtimeMetrics', 'metrics.runtimeMetrics', errors)
-  boolean(value, 'eventLoopMonitoring', 'metrics.eventLoopMonitoring', errors)
-  boolean(value, 'gcMonitoring', 'metrics.gcMonitoring', errors)
-  integer(value, 'pushIntervalMs', errors, 1_000, 5 * 60 * 1_000, 'metrics')
-  integer(value, 'cardinalityLimit', errors, 10, 100_000, 'metrics')
+  if (!isConfigSection(value, 'metrics', errors)) return
+  validateBoolean(value, 'runtimeMetrics', 'metrics.runtimeMetrics', errors)
+  validateBoolean(value, 'eventLoopMonitoring', 'metrics.eventLoopMonitoring', errors)
+  validateBoolean(value, 'gcMonitoring', 'metrics.gcMonitoring', errors)
+  validateInteger(value, 'pushIntervalMs', errors, 1_000, 5 * 60 * 1_000, 'metrics')
+  validateInteger(value, 'cardinalityLimit', errors, 10, 100_000, 'metrics')
 }
 
 function validateLogs(value: unknown, errors: string[]): void {
-  if (!section(value, 'logs', errors)) return
-  boolean(value, 'enabled', 'logs.enabled', errors)
-  boolean(value, 'captureConsole', 'logs.captureConsole', errors)
-  stringArray(value, 'levels', 'logs.levels', errors)
-  integer(value, 'maxLogSize', errors, SAFETY_CEILINGS.minLogSize, SAFETY_CEILINGS.maxLogSize, 'logs')
+  if (!isConfigSection(value, 'logs', errors)) return
+  validateBoolean(value, 'enabled', 'logs.enabled', errors)
+  validateBoolean(value, 'captureConsole', 'logs.captureConsole', errors)
+  validateStringArray(value, 'levels', 'logs.levels', errors)
+  validateInteger(value, 'maxLogSize', errors, SAFETY_CEILINGS.minLogSize, SAFETY_CEILINGS.maxLogSize, 'logs')
 }
 
 function validateCrons(value: unknown, errors: string[]): void {
-  if (!section(value, 'crons', errors)) return
-  boolean(value, 'enabled', 'crons.enabled', errors)
-  integer(value, 'checkInMarginMs', errors, 1_000, 60 * 60 * 1_000, 'crons')
-  integer(value, 'timeoutMs', errors, 1_000, 24 * 60 * 60 * 1_000, 'crons')
+  if (!isConfigSection(value, 'crons', errors)) return
+  validateBoolean(value, 'enabled', 'crons.enabled', errors)
+  validateInteger(value, 'checkInMarginMs', errors, 1_000, 60 * 60 * 1_000, 'crons')
+  validateInteger(value, 'timeoutMs', errors, 1_000, 24 * 60 * 60 * 1_000, 'crons')
 }
 
 function validateCrossSectionInvariants(config: Record<string, unknown>, errors: string[]): void {
@@ -493,13 +493,19 @@ function validateCrossSectionInvariants(config: Record<string, unknown>, errors:
 }
 
 function validateMeta(value: unknown, errors: string[]): void {
-  if (!section(value, 'meta', errors)) return
-  nonEmptyString(value, 'generatedAt', 'meta.generatedAt', errors)
+  if (!isConfigSection(value, 'meta', errors)) return
+  validateNonEmptyString(value, 'generatedAt', 'meta.generatedAt', errors)
   if (typeof value['generatedAt'] === 'string' && Number.isNaN(Date.parse(value['generatedAt']))) {
     errors.push('meta.generatedAt is not a valid date')
   }
-  nonEmptyString(value, 'generatedBy', 'meta.generatedBy', errors)
-  optionalNonEmptyString(value, 'configHash', 'meta.configHash', errors)
+  validateNonEmptyString(value, 'generatedBy', 'meta.generatedBy', errors)
+  validateOptionalNonEmptyString(value, 'configHash', 'meta.configHash', errors)
+  if ('configRevision' in (value as Record<string, unknown>)) {
+    const rev = (value as Record<string, unknown>)['configRevision']
+    if (rev !== undefined && rev !== null && (typeof rev !== 'number' || !Number.isInteger(rev))) {
+      errors.push('meta.configRevision must be an integer or null')
+    }
+  }
 }
 
 function validateBooleanSection(
@@ -508,11 +514,11 @@ function validateBooleanSection(
   keys: readonly string[],
   errors: string[],
 ): void {
-  if (!section(value, name, errors)) return
-  for (const key of keys) boolean(value, key, `${name}.${key}`, errors)
+  if (!isConfigSection(value, name, errors)) return
+  for (const key of keys) validateBoolean(value, key, `${name}.${key}`, errors)
 }
 
-function booleanOrObject(
+function isBooleanOrObject(
   value: Record<string, unknown>,
   key: string,
   requiredBooleanKeys: readonly string[],
@@ -525,13 +531,13 @@ function booleanOrObject(
     errors.push(`instrumentation.${key} is not a boolean or object`)
     return
   }
-  for (const nested of requiredBooleanKeys) boolean(candidate, nested, `instrumentation.${key}.${nested}`, errors)
+  for (const nested of requiredBooleanKeys) validateBoolean(candidate, nested, `instrumentation.${key}.${nested}`, errors)
   for (const nested of optionalBooleanKeys) {
-    if (candidate[nested] !== undefined) boolean(candidate, nested, `instrumentation.${key}.${nested}`, errors)
+    if (candidate[nested] !== undefined) validateBoolean(candidate, nested, `instrumentation.${key}.${nested}`, errors)
   }
 }
 
-function section(value: unknown, name: string, errors: string[]): value is Record<string, unknown> {
+function isConfigSection(value: unknown, name: string, errors: string[]): value is Record<string, unknown> {
   if (!isRecord(value)) {
     errors.push(`${name} is missing or not an object`)
     return false
@@ -539,15 +545,15 @@ function section(value: unknown, name: string, errors: string[]): value is Recor
   return true
 }
 
-function boolean(value: Record<string, unknown>, key: string, path: string, errors: string[]): void {
+function validateBoolean(value: Record<string, unknown>, key: string, path: string, errors: string[]): void {
   if (typeof value[key] !== 'boolean') errors.push(`${path} is missing or not a boolean`)
 }
 
-function probability(value: Record<string, unknown>, key: string, path: string, errors: string[]): void {
+function validateProbability(value: Record<string, unknown>, key: string, path: string, errors: string[]): void {
   if (!isProbability(value[key])) errors.push(`${path} is not a number in [0, 1]`)
 }
 
-function integer(
+function validateInteger(
   value: Record<string, unknown>,
   key: string,
   errors: string[],
@@ -562,7 +568,7 @@ function integer(
   }
 }
 
-function memoryLimit(value: Record<string, unknown>, key: string, errors: string[]): void {
+function validateMemoryLimit(value: Record<string, unknown>, key: string, errors: string[]): void {
   const candidate = value[key]
   if (candidate === 'auto') return
   if (typeof candidate !== 'number' || !Number.isFinite(candidate) || candidate < SAFETY_CEILINGS.minMemoryMb || candidate > SAFETY_CEILINGS.maxMemoryMb) {
@@ -570,17 +576,17 @@ function memoryLimit(value: Record<string, unknown>, key: string, errors: string
   }
 }
 
-function nonEmptyString(value: Record<string, unknown>, key: string, path: string, errors: string[]): void {
+function validateNonEmptyString(value: Record<string, unknown>, key: string, path: string, errors: string[]): void {
   if (typeof value[key] !== 'string' || value[key].trim().length === 0) errors.push(`${path} is missing or empty`)
 }
 
-function optionalNonEmptyString(value: Record<string, unknown>, key: string, path: string, errors: string[]): void {
+function validateOptionalNonEmptyString(value: Record<string, unknown>, key: string, path: string, errors: string[]): void {
   if (value[key] !== undefined && (typeof value[key] !== 'string' || value[key].trim().length === 0)) {
     errors.push(`${path} is empty or not a string`)
   }
 }
 
-function stringArray(value: Record<string, unknown>, key: string, path: string, errors: string[]): void {
+function validateStringArray(value: Record<string, unknown>, key: string, path: string, errors: string[]): void {
   const candidate = value[key]
   if (!Array.isArray(candidate) || candidate.some(item => typeof item !== 'string' || item.length === 0)) {
     errors.push(`${path} is missing or not an array of non-empty strings`)

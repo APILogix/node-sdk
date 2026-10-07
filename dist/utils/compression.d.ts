@@ -23,3 +23,7 @@ export declare function compress(data: Buffer | string | Uint8Array, algorithm: 
  * Returns the Content-Encoding header value for the given algorithm.
  */
 export declare function contentEncoding(algorithm: CompressionAlgorithm): string | undefined;
+/**
+ * Standard alias for contentEncoding following get* convention.
+ */
+export declare const getContentEncoding: typeof contentEncoding;

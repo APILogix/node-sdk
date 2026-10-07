@@ -64,7 +64,7 @@ export class EventLoopLagMonitor extends EventEmitter {
     getStats() {
         if (!this.histogram)
             return null;
-        return this.readHistogram(this.histogram);
+        return this.extractHistogramStats(this.histogram);
     }
     /** Returns true if event loop lag p99 exceeds the given threshold (ms). */
     isLagging(thresholdMs) {
@@ -80,6 +80,9 @@ export class EventLoopLagMonitor extends EventEmitter {
         this.emit('lag', stats);
         // Reset histogram for the next interval so stats are per-window
         this.histogram?.reset();
+    }
+    extractHistogramStats(h) {
+        return this.readHistogram(h);
     }
     readHistogram(h) {
         // IntervalHistogram reports in nanoseconds — convert to milliseconds

@@ -25,6 +25,10 @@ export class SecurityScrubber {
     // them on every event.
     sensitiveHeaders;
     sensitiveFields;
+    normalizedHeaders;
+    normalizedFields;
+    keySensitivityCache = new Map();
+    static MAX_CACHE_SIZE = 2000;
     // PII patterns
     static EMAIL_PATTERN = /(?<![a-zA-Z0-9._%+-])[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
     static PHONE_PATTERN = /(?<![a-zA-Z0-9])(\+?1?\s*[-.\s]?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4})(?![a-zA-Z0-9])/g;
@@ -62,7 +66,20 @@ export class SecurityScrubber {
         this.piiConfig = { ...config.piiDetection };
         this.sensitiveHeaders = new Set(config.scrubbing.headers.map((h) => h.toLowerCase()));
         this.sensitiveFields = new Set(config.scrubbing.fields.map((f) => f.toLowerCase()));
+        this.normalizedHeaders = new Set(config.scrubbing.headers.map((h) => h.toLowerCase().replace(/[-_]/g, '')));
+        this.normalizedFields = new Set(config.scrubbing.fields.map((f) => f.toLowerCase().replace(/[-_]/g, '')));
         this.updateHasScrubRules();
+    }
+    getPrivacyConfig() {
+        return {
+            capture: { headers: true, body: true, response: false, query: true, cookies: false },
+            scrubbing: {
+                enabled: this.scrubbingConfig.enabled,
+                headers: [...this.sensitiveHeaders],
+                fields: [...this.sensitiveFields],
+            },
+            piiDetection: { ...this.piiConfig },
+        };
     }
     updateHasScrubRules() {
         const hasPii = this.piiConfig.enabled && (this.piiConfig.maskEmails ||
@@ -166,24 +183,53 @@ export class SecurityScrubber {
     isKeySensitive(rawKey) {
         if (!this.scrubbingConfig.enabled)
             return false;
+        const cached = this.keySensitivityCache.get(rawKey);
+        if (cached !== undefined)
+            return cached;
         const key = rawKey.toLowerCase();
-        if (this.sensitiveFields.has(key) || this.sensitiveHeaders.has(key))
-            return true;
-        const normalized = key.replace(/[-_]/g, '');
-        for (const f of this.sensitiveFields) {
-            if (f.replace(/[-_]/g, '') === normalized)
-                return true;
+        let isSensitive = false;
+        if (this.sensitiveFields.has(key) || this.sensitiveHeaders.has(key)) {
+            isSensitive = true;
         }
-        for (const h of this.sensitiveHeaders) {
-            if (h.replace(/[-_]/g, '') === normalized)
-                return true;
+        else {
+            const normalized = key.replace(/[-_]/g, '');
+            if (this.normalizedFields.has(normalized) || this.normalizedHeaders.has(normalized)) {
+                isSensitive = true;
+            }
+            else {
+                const parts = key.split(/[\.:]/);
+                const lastPart = parts[parts.length - 1];
+                if (lastPart && (this.sensitiveFields.has(lastPart) || this.sensitiveHeaders.has(lastPart))) {
+                    isSensitive = true;
+                }
+                else {
+                    // Check compound names (camelCase, snake_case, etc.)
+                    const wordTokens = rawKey
+                        .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+                        .toLowerCase()
+                        .split(/[^a-z0-9]+/)
+                        .filter(Boolean);
+                    const nonSecretTokenIndicators = new Set(['count', 'total', 'usage', 'prompt', 'completion', 'consumed', 'balance', 'remaining']);
+                    const hasCountIndicator = wordTokens.some(w => nonSecretTokenIndicators.has(w));
+                    for (const w of wordTokens) {
+                        if (this.sensitiveFields.has(w) || this.sensitiveHeaders.has(w)) {
+                            if (w === 'token' && hasCountIndicator) {
+                                continue;
+                            }
+                            isSensitive = true;
+                            break;
+                        }
+                    }
+                }
+            }
         }
-        const parts = key.split(/[\.:]/);
-        const lastPart = parts[parts.length - 1];
-        if (lastPart && (this.sensitiveFields.has(lastPart) || this.sensitiveHeaders.has(lastPart))) {
-            return true;
+        if (this.keySensitivityCache.size >= SecurityScrubber.MAX_CACHE_SIZE) {
+            const oldestKey = this.keySensitivityCache.keys().next().value;
+            if (oldestKey !== undefined)
+                this.keySensitivityCache.delete(oldestKey);
         }
-        return false;
+        this.keySensitivityCache.set(rawKey, isSensitive);
+        return isSensitive;
     }
     /**
      * Scrub an arbitrary value (object, array, or string) with the active
@@ -223,7 +269,15 @@ export class SecurityScrubber {
                     str = str.replace(/eyJ[a-zA-Z0-9_-]{10,}\.eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}/g, '[Redacted]');
                     str = str.replace(/\b(sk_live_[0-9a-zA-Z]{24,}|pk_live_[0-9a-zA-Z]{24,}|rk_live_[0-9a-zA-Z]{24,})\b/g, '[Redacted]');
                     str = str.replace(/\b(AKIA[0-9A-Z]{16})\b/g, '[Redacted]');
-                    str = str.replace(/\b(api[-_]?key|api[-_]?secret|access[-_]?token|refresh[-_]?token|client[-_]?secret|password|secret|token|authorization|x-api-key|x-auth-token)=([^\s&,;"']+)/gi, '$1=[Redacted]');
+                    str = str.replace(/\b(bearer[-_]token|token[-_]bearer|bearer)[-_][A-Za-z0-9_\-\.]+\b/gi, '[Redacted]');
+                    str = str.replace(/\b(api[-_]?key|api[-_]?secret|access[-_]?token|refresh[-_]?token|client[-_]?secret|password|secret|token|authorization|x-api-key|x-auth-token)\s*([:=])\s*([^\s&,;"']+)/gi, '$1$2[Redacted]');
+                    str = str.replace(/\b(token|secret|password|api[-_]?key)\s+([A-Za-z0-9_\-\.]{8,})/gi, (match, prefix, tokenVal) => {
+                        const commonWords = new Set(['expired', 'invalid', 'missing', 'revoked', 'required', 'rejected', 'failed', 'not', 'found', 'cannot', 'could', 'should', 'would', 'error', 'format', 'length', 'expected', 'provided']);
+                        if (commonWords.has(tokenVal.toLowerCase()) && /^[a-z]+$/i.test(tokenVal)) {
+                            return match;
+                        }
+                        return `${prefix} [Redacted]`;
+                    });
                 }
                 return str;
             }
@@ -247,6 +301,8 @@ export class SecurityScrubber {
                 }
                 return result;
             }
+            if (typeof value === 'bigint')
+                return value.toString();
             return value;
         }
         catch {
@@ -262,6 +318,9 @@ export class SecurityScrubber {
         this.piiConfig = { ...newPrivacy.piiDetection };
         this.sensitiveHeaders = new Set(newPrivacy.scrubbing.headers.map((h) => h.toLowerCase()));
         this.sensitiveFields = new Set(newPrivacy.scrubbing.fields.map((f) => f.toLowerCase()));
+        this.normalizedHeaders = new Set(newPrivacy.scrubbing.headers.map((h) => h.toLowerCase().replace(/[-_]/g, '')));
+        this.normalizedFields = new Set(newPrivacy.scrubbing.fields.map((f) => f.toLowerCase().replace(/[-_]/g, '')));
+        this.keySensitivityCache.clear();
         this.updateHasScrubRules();
         getLogger().info('[SecurityScrubber] Config updated');
     }
@@ -428,6 +487,7 @@ export class SecurityScrubber {
     }
     destroy() {
         this.destroyed = true;
+        this.keySensitivityCache.clear();
         SecurityScrubber.instance = null;
     }
     static reset() {

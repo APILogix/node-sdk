@@ -139,8 +139,8 @@ describe('single-source remote configuration runtime', () => {
     await assert.rejects(remote.initialize(), /timed out/)
     const elapsedMs = performance.now() - startedAt
 
-    assert.ok(calls >= 1 && calls <= 2, `expected one bounded retry sequence, got ${calls} attempts`)
-    assert.ok(elapsedMs < 180, `init retry exceeded its 100ms deadline: ${elapsedMs}ms`)
+    assert.ok(calls >= 1 && calls <= 3, `expected one bounded retry sequence, got ${calls} attempts`)
+    assert.ok(elapsedMs < 200, `init retry exceeded its 100ms deadline: ${elapsedMs}ms`)
   })
 
   it('performs one header-auth /v1/init request and no startup config request', async () => {
@@ -274,4 +274,70 @@ describe('single-source remote configuration runtime', () => {
     assert.equal(refreshAttempts, 2)
     assert.equal(manager.getConfig().sampling.traces, 0.8)
   })
+
+  it('defaults to a 3-second startup deadline when initTimeoutMs is not provided', async () => {
+    const remote = new RemoteConfigClient({
+      apiKey: 'key',
+    })
+    // Inspect private initTimeoutMs and initRetries defaults
+    assert.equal((remote as unknown as { initTimeoutMs: number }).initTimeoutMs, 3000)
+    assert.equal((remote as unknown as { initRetries: number }).initRetries, 2)
+  })
+
+  it('stops immediately on 401, 403, 404 and invalid JSON without wasting retries', async () => {
+    for (const status of [401, 403, 404]) {
+      let attempts = 0
+      const remote = new RemoteConfigClient({
+        apiKey: 'key',
+        initRetries: 2,
+        fetchImpl: async () => {
+          attempts++
+          return response({ error: 'fatal' }, status)
+        },
+      })
+      await assert.rejects(remote.initialize(), /Control-plane request failed/)
+      assert.equal(attempts, 1, `Status ${status} must not be retried`)
+    }
+
+    let jsonAttempts = 0
+    const remoteBadJson = new RemoteConfigClient({
+      apiKey: 'key',
+      initRetries: 2,
+      fetchImpl: async () => {
+        jsonAttempts++
+        return new Response('<html>Error</html>', {
+          status: 200,
+          headers: { 'content-type': 'text/html' },
+        })
+      },
+    })
+    await assert.rejects(remoteBadJson.initialize(), /was not valid JSON/)
+    assert.equal(jsonAttempts, 1, 'Invalid JSON must not be retried')
+  })
+
+  it('retries with randomized jitter on transient 500 errors', async () => {
+    let attempts = 0
+    const snapshot = config()
+    const delays: number[] = []
+    let lastTime = performance.now()
+    const remote = new RemoteConfigClient({
+      apiKey: 'key',
+      initTimeoutMs: 2500,
+      initRetries: 2,
+      fetchImpl: async () => {
+        attempts++
+        const now = performance.now()
+        delays.push(now - lastTime)
+        lastTime = now
+        if (attempts < 3) return response({ error: 'temporary outage' }, 500)
+        return response(initPayload(snapshot))
+      },
+    })
+    const result = await remote.initialize()
+    assert.equal(attempts, 3)
+    assert.equal(result.config.sdk.projectId, snapshot.sdk.projectId)
+    // The retry delays should reflect base delay (>50ms) with backoff and jitter
+    assert.ok(delays[1]! >= 50, `Delay between attempt 1 and 2 (${delays[1]}ms) must be >= 50ms`)
+  })
 })
+

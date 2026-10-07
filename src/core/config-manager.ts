@@ -236,6 +236,11 @@ function isOlderSnapshot(
   candidate: Readonly<RemoteConfigResponse>,
   active: Readonly<RemoteConfigResponse>,
 ): boolean {
+  const candidateRevision = candidate.meta.configRevision
+  const activeRevision = active.meta.configRevision
+  if (typeof candidateRevision === 'number' && typeof activeRevision === 'number') {
+    return candidateRevision < activeRevision
+  }
   const candidateTime = Date.parse(candidate.meta.generatedAt)
   const activeTime = Date.parse(active.meta.generatedAt)
   return Number.isFinite(candidateTime) && Number.isFinite(activeTime) && candidateTime < activeTime

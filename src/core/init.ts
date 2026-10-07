@@ -4,9 +4,13 @@ import { sdkInitOptionsSchema } from '../types/config.js'
 import { client } from './client.js'
 import { SDKError } from './errors.js'
 import { loadEnvFileSafely } from '../utils/env-loader.js'
-import { waitForShutdownCompletion, registerSignalHandlers } from './lifecycle.js'
+import { waitForShutdownCompletion, registerSignalHandlers, isSDKShuttingDown } from './lifecycle.js'
 import { getLogger, setDebugMode, setLogLevel } from '../utils/logger.js'
-import { RemoteConfigClient } from './remote-config-client.js'
+import { RemoteConfigClient, type InitResponse } from './remote-config-client.js'
+import { validateApiKey } from './api-key.js'
+import { assertRemoteConfig } from './config-validator.js'
+import { classifyError, isPermanentError } from './retry-classifier.js'
+import { BackgroundRecoveryWorker } from './recovery-worker.js'
 import { ConfigManager } from './config-manager.js'
 import { ConfigApplier } from './config-applier.js'
 import { KillswitchEngine } from './killswitch-engine.js'
@@ -25,6 +29,7 @@ import { TRACING_DEFAULTS } from '../constants/internal-defaults.js'
 import { initTracer, shutdownTracer } from '../tracing/tracer.js'
 import {
   registerAutoInstrumentations,
+  registerBootstrapAutoInstrumentations,
   resetAutoInstrumentations,
   waitForPendingInstrumentations,
 } from '../instrumentation/auto-instrument.js'
@@ -34,6 +39,7 @@ import { metricsRegistry } from '../metrics/registry.js'
 import { LoggingSubsystem } from '../subsystems/logging-subsystem.js'
 import { ProfilingSubsystem } from '../subsystems/profiling-subsystem.js'
 import { CronSubsystem } from '../subsystems/cron-subsystem.js'
+import { RuntimeMetricsSubsystem } from '../subsystems/runtime-metrics-subsystem.js'
 import { getSessionManager, resetSessionManager } from '../session/session-manager.js'
 import { processEvent } from './event-pipeline.js'
 import { eventQueue } from '../transport/queue.js'
@@ -51,13 +57,13 @@ import { resolveMaxMemoryMb } from '../utils/memory-detector.js'
  * /v1/init. Failure is fail-open to the host application but does not invent
  * a runtime configuration or start telemetry with defaults.
  */
-export async function init(options: string | SDKInitOptions): Promise<Readonly<RemoteConfigResponse> | undefined> {
+export async function init(options?: string | Partial<SDKInitOptions> | Record<string, unknown>): Promise<Readonly<RemoteConfigResponse> | undefined> {
   loadEnvFileSafely()
   let normalizedOptions: SDKInitOptions
   if (typeof options === 'string') {
     normalizedOptions = { apiKey: options }
   } else if (options && typeof options === 'object') {
-    normalizedOptions = { ...options }
+    normalizedOptions = { ...options } as SDKInitOptions
   } else {
     normalizedOptions = { apiKey: '' }
   }
@@ -72,9 +78,36 @@ export async function init(options: string | SDKInitOptions): Promise<Readonly<R
 
 
   await waitForShutdownCompletion()
+
+  if (isSDKShuttingDown() || client.getState() === 'stopping') {
+    return undefined
+  }
+
+  if (client.getState() === 'stopped') {
+    client.setState('created')
+  }
+
   setDebugMode(normalizedOptions.debug ?? false)
   if (normalizedOptions.logLevel) setLogLevel(normalizedOptions.logLevel)
-  validateInitOptions(normalizedOptions)
+
+  const validationError = checkInitOptions(normalizedOptions)
+  if (validationError) {
+    const logger = getLogger()
+    if (validationError.code === 'INVALID_API_KEY' || validationError.code === 'SDK_API_KEY_MISSING') {
+      logger.error('SDK disabled: missing or invalid API key')
+    } else {
+      logger.error('SDK disabled: invalid telemetry init options')
+    }
+    resetAutoInstrumentations()
+    eventQueue.drainAll()
+    await enterDormantState(validationError, normalizedOptions)
+    if (client.getState() !== 'stopping' && client.getState() !== 'stopped') {
+      try {
+        client.setState('disabled')
+      } catch {}
+    }
+    return undefined
+  }
 
   if (client.initialized) {
     if (!client.hasSameIdentity(normalizedOptions)) {
@@ -83,12 +116,21 @@ export async function init(options: string | SDKInitOptions): Promise<Readonly<R
     return ConfigManager.getInstance().getConfig()
   }
 
+  registerBootstrapAutoInstrumentations()
+
   const existing = client.getInitPromise()
   if (existing) {
     if (!client.hasSamePendingIdentity(normalizedOptions)) {
       throw new SDKError('Telemetry initialization already in progress with different options', 'SDK_INIT_IN_PROGRESS')
     }
     return existing
+  }
+
+  if (client.getState() === 'recovering') {
+    if (!client.hasSameIdentity(normalizedOptions)) {
+      throw new SDKError('Telemetry initialization already in progress with different options', 'SDK_INIT_IN_PROGRESS')
+    }
+    BackgroundRecoveryWorker.stop()
   }
 
   client.setPendingIdentity(normalizedOptions)
@@ -104,9 +146,12 @@ export async function init(options: string | SDKInitOptions): Promise<Readonly<R
 
 async function initialize(options: SDKInitOptions): Promise<Readonly<RemoteConfigResponse> | undefined> {
   const logger = getLogger()
-  const manager = ConfigManager.getInstance()
+  if (isSDKShuttingDown() || client.getState() === 'stopping' || client.getState() === 'stopped') {
+    return undefined
+  }
   client.setOptions(options)
   client.initBreadcrumbs(100)
+  client.setState('initializing')
 
   logger.info('Telemetry initialization started', {
     endpoint: '/v1/init',
@@ -122,6 +167,35 @@ async function initialize(options: SDKInitOptions): Promise<Readonly<RemoteConfi
       initRetries: options.initRetries,
     })
     const response = await remoteClient.initialize()
+    if (isSDKShuttingDown() || client.getState() === 'stopping' || client.getState() === 'stopped') {
+      return undefined
+    }
+    return await activateSDK(remoteClient, response, options, 'cold_start')
+  } catch (error) {
+    if (isSDKShuttingDown() || client.getState() === 'stopping' || client.getState() === 'stopped') {
+      return undefined
+    }
+    logger.error('Telemetry initialization failed; entering dormant state', { error })
+    await enterDormantState(error, options)
+    return undefined
+  }
+}
+
+export async function activateSDK(
+  remoteClient: RemoteConfigClient,
+  response: InitResponse,
+  options: SDKInitOptions,
+  mode: 'cold_start' | 'recovery' | 'manual' = 'cold_start',
+): Promise<Readonly<RemoteConfigResponse> | undefined> {
+  const logger = getLogger()
+  const manager = ConfigManager.getInstance()
+
+  if (isSDKShuttingDown() || client.getState() === 'stopping' || client.getState() === 'stopped') {
+    return undefined
+  }
+
+  try {
+    assertRemoteConfig(response.config)
     const config = manager.initialize(remoteClient, response.config)
 
     client.setInitResponse(response)
@@ -147,13 +221,7 @@ async function initialize(options: SDKInitOptions): Promise<Readonly<RemoteConfi
     // depend on transport construction or subsystem registration. Start it
     // early so its file I/O overlaps SDK-owned CPU setup instead of extending
     // the application readiness path.
-    const apiKeyHash = createHash('sha256').update(options.apiKey).digest('hex')
-    persistentStorage.configure({ apiKeyHash })
-    const persistedEventsPromise = persistentStorage.init()
-    // This work is awaited before readiness below. Attach a rejection handler
-    // now as well so strict Node unhandled-rejection policies cannot observe a
-    // fast disk failure during the parallel setup window.
-    void persistedEventsPromise.catch(() => {})
+    const persistedEventsPromise = setupPersistentStorage(options.apiKey, config, options)
 
     const transportRouter = await TransportRouter.initialize(
       config.transport,
@@ -243,7 +311,11 @@ async function initialize(options: SDKInitOptions): Promise<Readonly<RemoteConfi
         resources,
       )
     }
-    const stopMetrics = async (): Promise<void> => { await otelMetrics.shutdown() }
+    RuntimeMetricsSubsystem.getInstance().configure(config)
+    const stopMetrics = async (): Promise<void> => {
+      RuntimeMetricsSubsystem.getInstance().stop()
+      await otelMetrics.shutdown()
+    }
     await featureController.register('metrics', startMetrics, stopMetrics)
     killswitchEngine.registerSubsystem('disableMetrics', {
       shutdown: stopMetrics,
@@ -352,6 +424,7 @@ async function initialize(options: SDKInitOptions): Promise<Readonly<RemoteConfi
       features: async ({ diff, current }) => {
         await featureController.handleConfigChange(diff, current)
         if (pressureFeaturesChanged(diff)) configureAdaptivePressure(current)
+        RuntimeMetricsSubsystem.getInstance().handleConfigChange(diff, current)
       },
       limits: ({ diff, current }) => {
         limitsEngine.handleConfigChange(diff, current)
@@ -421,6 +494,17 @@ async function initialize(options: SDKInitOptions): Promise<Readonly<RemoteConfi
           }
         }
       },
+      offlineQueue: ({ current }) => {
+        if (options.offlineQueue !== false && typeof options.offlineQueue !== 'object') {
+          persistentStorage.configure({
+            enabled: current.offlineQueue?.enabled ?? true,
+            maxFileSizeBytes: current.offlineQueue?.maxFileSizeBytes,
+            maxEvents: current.offlineQueue?.maxEvents,
+            eventTtlMs: current.offlineQueue?.eventTtlMs,
+            ioTimeoutMs: current.offlineQueue?.ioTimeoutMs,
+          })
+        }
+      },
     }))
 
     // Await any asynchronous instrumentation setups (e.g. Axios ESM patching)
@@ -428,6 +512,11 @@ async function initialize(options: SDKInitOptions): Promise<Readonly<RemoteConfi
 
     // Only now may capture paths leave the pre-init buffer.
     await payloadScrubberPromise
+    // Final shutdown check before marking initialized
+    if (isSDKShuttingDown() || client.getState() === 'stopping' || client.getState() === 'stopped') {
+      return undefined
+    }
+
     const persistedEvents = await persistedEventsPromise
     client.markInitialized()
     filterBufferedEvents(config)
@@ -438,6 +527,9 @@ async function initialize(options: SDKInitOptions): Promise<Readonly<RemoteConfi
     const quotaSnapshot = quotaController.getSnapshot()
 
     logger.info('Telemetry initialized from remote configuration', {
+      mode,
+      sdkVersion: client.metadata.sdkVersion,
+      projectId: config.sdk.projectId,
       activeSubsystems: featureController.getActiveSubsystems(),
       pressureState: pressureSnapshot.state,
       pressureScore: pressureSnapshot.score,
@@ -445,17 +537,37 @@ async function initialize(options: SDKInitOptions): Promise<Readonly<RemoteConfi
     })
     return manager.getConfig()
   } catch (error) {
-    logger.error('Telemetry initialization failed; host application will continue without telemetry', { error })
-    await cleanupFailedInitialization()
+    logger.error('Telemetry activation failed; entering dormant state', { error })
+    await enterDormantState(error, options)
     return undefined
   }
 }
 
-function validateInitOptions(options: SDKInitOptions): void {
+function checkInitOptions(options: SDKInitOptions): SDKError | null {
+  try {
+    validateApiKey(options.apiKey)
+  } catch (err) {
+    if (err instanceof SDKError) return err
+    return new SDKError('apiKey is required', 'INVALID_API_KEY')
+  }
+
   const result = sdkInitOptionsSchema.safeParse(options)
-  if (result.success) return
-  const issues = result.error.issues.map(issue => `${issue.path.join('.')}: ${issue.message}`)
-  throw new SDKError(`Invalid telemetry init options: ${issues.join('; ')}`, 'INVALID_INIT_OPTIONS', { issues })
+  if (!result.success) {
+    const issues = result.error.issues.map(issue => `${issue.path.join('.')}: ${issue.message}`)
+    const isApiKeyIssue = result.error.issues.some(issue => issue.path.includes('apiKey'))
+    return new SDKError(
+      `Invalid telemetry init options: ${issues.join('; ')}`,
+      isApiKeyIssue ? 'INVALID_API_KEY' : 'INVALID_INIT_OPTIONS',
+      { issues },
+    )
+  }
+
+  return null
+}
+
+function validateInitOptions(options: SDKInitOptions): void {
+  const error = checkInitOptions(options)
+  if (error) throw error
 }
 
 function getQueueUtilization(): number {
@@ -519,11 +631,57 @@ async function replayBufferedEvents(persisted: readonly unknown[]): Promise<void
   }
 }
 
-async function cleanupFailedInitialization(): Promise<void> {
+function setupPersistentStorage(
+  apiKey: string,
+  config: Readonly<RemoteConfigResponse>,
+  options: SDKInitOptions,
+): Promise<readonly unknown[]> {
+  const apiKeyHash = createHash('sha256').update(apiKey).digest('hex')
+  const optQueue = options.offlineQueue
+  const remoteQueue = config.offlineQueue
+
+  let enabled = remoteQueue?.enabled ?? true
+  let directory: string | undefined
+  let maxFileSizeBytes = remoteQueue?.maxFileSizeBytes
+  let maxEvents = remoteQueue?.maxEvents
+  let eventTtlMs = remoteQueue?.eventTtlMs
+  let ioTimeoutMs = remoteQueue?.ioTimeoutMs
+
+  if (optQueue === false) {
+    enabled = false
+  } else if (typeof optQueue === 'object' && optQueue !== null) {
+    if (optQueue.enabled !== undefined) enabled = optQueue.enabled
+    if (optQueue.directory !== undefined) directory = optQueue.directory
+    if (optQueue.maxFileSizeBytes !== undefined) maxFileSizeBytes = optQueue.maxFileSizeBytes
+    if (optQueue.maxEvents !== undefined) maxEvents = optQueue.maxEvents
+    if (optQueue.eventTtlMs !== undefined) eventTtlMs = optQueue.eventTtlMs
+    if (optQueue.ioTimeoutMs !== undefined) ioTimeoutMs = optQueue.ioTimeoutMs
+  }
+
+  persistentStorage.configure({
+    apiKeyHash,
+    enabled,
+    ...(directory !== undefined ? { directory } : {}),
+    ...(maxFileSizeBytes !== undefined ? { maxFileSizeBytes } : {}),
+    ...(maxEvents !== undefined ? { maxEvents } : {}),
+    ...(eventTtlMs !== undefined ? { eventTtlMs } : {}),
+    ...(ioTimeoutMs !== undefined ? { ioTimeoutMs } : {}),
+  })
+
+  if (!enabled) {
+    return Promise.resolve([])
+  }
+
+  const persistedEventsPromise = persistentStorage.init()
+  void persistedEventsPromise.catch(() => {})
+  return persistedEventsPromise
+}
+
+async function enterDormantState(_error?: unknown, options?: SDKInitOptions): Promise<void> {
+  // Non-destructive transition: clean up any partially constructed transport
+  // router or runtime engines from a mid-flight failure, but preserve bootstrap
+  // instrumentation, OTel provider/context, event queue, client options, and API key.
   try { await TransportRouter.reset() } catch {}
-  try { await shutdownTracer() } catch {}
-  try { resetAutoInstrumentations() } catch {}
-  try { resetGlobalErrorHandlers() } catch {}
   try { FeatureController.reset() } catch {}
   try { KillswitchEngine.reset() } catch {}
   try { EntitlementGate.reset() } catch {}
@@ -531,5 +689,30 @@ async function cleanupFailedInitialization(): Promise<void> {
   try { LimitsEngine.reset() } catch {}
   try { SecurityScrubber.reset() } catch {}
   ConfigManager.reset()
-  client.clear()
+  client.clearConfig()
+
+  if (client.getState() !== 'stopping' && client.getState() !== 'stopped') {
+    if (client.getState() !== 'recovering' && client.getState() !== 'created' && client.getState() !== 'disabled') {
+      try {
+        client.setState('recovering')
+      } catch {}
+    }
+  }
+
+  const recoveryOptions = options ?? client.options
+  const decision = classifyError(_error)
+  if (recoveryOptions && !isSDKShuttingDown() && client.getState() === 'recovering' && !decision.permanent && !isPermanentError(_error)) {
+    BackgroundRecoveryWorker.start(recoveryOptions, {
+      activateFn: async (response) => {
+        const recoveryRemoteClient = new RemoteConfigClient({
+          apiKey: recoveryOptions.apiKey,
+          initTimeoutMs: recoveryOptions.initTimeoutMs ?? 5_000,
+          initRetries: 0,
+        })
+        await activateSDK(recoveryRemoteClient, response, recoveryOptions, 'recovery')
+      },
+    })
+  }
 }
+
+export const cleanupFailedInitialization = enterDormantState

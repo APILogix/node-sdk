@@ -8,6 +8,7 @@ import { generateId } from '../utils/uuid.js';
 import { context } from '@opentelemetry/api';
 import { suppressTracing } from '@opentelemetry/core';
 import { SerializationPool } from './serialization-pool.js';
+import { safeJsonStringify } from '../utils/safe-json.js';
 export async function postJson(url, body, headers, timeoutMs, options = {}) {
     const logger = getLogger();
     const controller = new AbortController();
@@ -36,7 +37,7 @@ export async function postJson(url, body, headers, timeoutMs, options = {}) {
                 }
             }
             else {
-                const jsonString = JSON.stringify(body);
+                const jsonString = safeJsonStringify(body);
                 payload = jsonString;
                 // Apply compression if requested
                 if (options.compression && options.compression !== 'none') {

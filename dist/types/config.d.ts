@@ -268,6 +268,15 @@ export interface OfflineQueueConfig {
     readonly ioTimeoutMs: number;
     readonly flushDebounceMs?: number | undefined;
 }
+export interface OfflineQueueInitOptions {
+    readonly enabled?: boolean | undefined;
+    readonly directory?: string | undefined;
+    readonly maxFileSizeBytes?: number | undefined;
+    readonly maxEvents?: number | undefined;
+    readonly eventTtlMs?: number | undefined;
+    readonly ioTimeoutMs?: number | undefined;
+    readonly flushDebounceMs?: number | undefined;
+}
 export interface ProfilingConfig {
     readonly enabled: boolean;
     readonly cpu: boolean;
@@ -275,6 +284,9 @@ export interface ProfilingConfig {
     readonly sampleRate: number;
     readonly maxDurationMs: number;
     readonly sampleIntervalMicroseconds?: number | undefined;
+    readonly continuous?: boolean | undefined;
+    readonly continuousIntervalMs?: number | undefined;
+    readonly sampleRateHz?: number | undefined;
 }
 export interface SessionReplayConfig {
     readonly enabled: boolean;
@@ -376,6 +388,7 @@ export interface ConfigMeta {
     readonly generatedAt: string;
     readonly generatedBy: string;
     readonly configHash?: string | undefined;
+    readonly configRevision?: number | null | undefined;
 }
 /**
  * Detailed descriptor for a single leaf or structured property mutation.
@@ -442,10 +455,10 @@ export declare function isMemoryLimit(mem: unknown): mem is MemoryLimit;
  */
 export interface SDKInitOptions {
     readonly apiKey: string;
-    /** Startup request deadline in milliseconds (default: 1500). Failure leaves telemetry disabled. */
+    /** Startup request deadline in milliseconds (default: 3000). Failure leaves telemetry disabled. */
     readonly initTimeoutMs?: number | undefined;
     /**
-     * Number of retries for transient /v1/init failures (default: 1). The
+     * Number of retries for transient /v1/init failures (default: 2). The
      * complete attempt sequence remains within initTimeoutMs.
      */
     readonly initRetries?: number | undefined;
@@ -479,6 +492,11 @@ export interface SDKInitOptions {
         readonly allowRemote?: boolean | undefined;
         readonly embedSourceContent?: boolean | undefined;
     } | undefined;
+    /**
+     * Offline queue / persistent storage configuration.
+     * Pass `false` to completely disable disk persistence (recommended for purely ephemeral/stateless serverless runtimes).
+     */
+    readonly offlineQueue?: boolean | OfflineQueueInitOptions | undefined;
 }
 export declare const sdkInitOptionsSchema: z.ZodObject<{
     apiKey: z.ZodString;
@@ -509,4 +527,13 @@ export declare const sdkInitOptionsSchema: z.ZodObject<{
         allowRemote: z.ZodOptional<z.ZodBoolean>;
         embedSourceContent: z.ZodOptional<z.ZodBoolean>;
     }, z.core.$strict>>;
+    offlineQueue: z.ZodOptional<z.ZodUnion<readonly [z.ZodBoolean, z.ZodObject<{
+        enabled: z.ZodOptional<z.ZodBoolean>;
+        directory: z.ZodOptional<z.ZodString>;
+        maxFileSizeBytes: z.ZodOptional<z.ZodNumber>;
+        maxEvents: z.ZodOptional<z.ZodNumber>;
+        eventTtlMs: z.ZodOptional<z.ZodNumber>;
+        ioTimeoutMs: z.ZodOptional<z.ZodNumber>;
+        flushDebounceMs: z.ZodOptional<z.ZodNumber>;
+    }, z.core.$strict>]>>;
 }, z.core.$strict>;

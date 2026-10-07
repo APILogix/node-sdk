@@ -25,7 +25,7 @@ import { gunzipSync } from 'node:zlib'
 import { init } from '../../src/core/init.js'
 import { shutdown, type ShutdownResult } from '../../src/core/lifecycle.js'
 import { captureMessage } from '../../src/capture/captureMessage.js'
-import { captureError } from '../../src/capture/captureError.js'
+import { captureException } from '../../src/capture/captureException.js'
 import { captureMetric } from '../../src/capture/captureMetric.js'
 import { startSpan } from '../../src/tracing/tracer.js'
 import { client } from '../../src/core/client.js'
@@ -226,7 +226,7 @@ describe('Full SDK lifecycle integration', { timeout: 60_000 }, () => {
       }
 
       for (let i = 0; i < 5; i++) {
-        captureError(new Error(`cycle-${cycle}-err-${i}`))
+        captureException(new Error(`cycle-${cycle}-err-${i}`))
       }
 
       for (let i = 0; i < 10; i++) {
@@ -342,7 +342,7 @@ describe('Full SDK lifecycle integration', { timeout: 60_000 }, () => {
 
     // Capture some events.
     captureMessage('post-reinit-message', 'info')
-    captureError(new Error('post-reinit-error'))
+    captureException(new Error('post-reinit-error'))
 
     // Allow the pipeline to process these.
     await new Promise(resolve => setTimeout(resolve, 100))

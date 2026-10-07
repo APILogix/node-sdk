@@ -43,15 +43,40 @@ export interface PulseExpressOptions {
      * client can spoof them. Default: no trusted proxies (socket IP wins).
      */
     readonly trustedProxies?: readonly string[];
+    /**
+     * If true, instruments Express middleware layers to measure execution duration.
+     * Emits child spans for middlewares that exceed `minMiddlewareDurationMs` (default: 2ms)
+     * or throw an error.
+     */
+    readonly instrumentMiddleware?: boolean;
+    /**
+     * Minimum duration in milliseconds for a middleware to emit a child span.
+     * Prevents telemetry flooding from microsecond-fast middlewares.
+     * Default: 2.0 ms.
+     */
+    readonly minMiddlewareDurationMs?: number;
+    /**
+     * Middleware names to skip profiling (e.g. ['query', 'expressInit']).
+     */
+    readonly ignoreMiddlewares?: readonly (string | RegExp)[];
 }
-export declare function monitorMiddleware(options?: PulseExpressOptions): (req: Request, res: Response, next: NextFunction) => void;
+/**
+ * Patch Express Layer.prototype once to measure middleware execution durations.
+ * Only emits spans if duration >= minDurationMs or if an error is encountered.
+ */
+export declare function ensureExpressLayersInstrumented(app: any, minDurationMs?: number, ignoreMiddlewares?: readonly (string | RegExp)[]): void;
+/**
+ * Programmatically instrument an Express Application to profile middleware execution.
+ */
+export declare function instrumentExpress(app: any, options?: Pick<PulseExpressOptions, 'minMiddlewareDurationMs' | 'ignoreMiddlewares'>): void;
+export declare function pulseMiddleware(options?: PulseExpressOptions): (req: Request, res: Response, next: NextFunction) => void;
 /**
  * Express error-handling middleware. Place after all routes and before custom error responses.
  * Automatically captures any error passed to next(err) or thrown in route handlers.
  *
  * @example
  * ```ts
- * app.use(monitorMiddleware())
+ * app.use(pulseMiddleware())
  * // ... routes ...
  * app.use(expressErrorHandler())
  * ```

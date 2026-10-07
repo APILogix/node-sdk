@@ -99,6 +99,10 @@ export declare class PulseSpan implements OTelSpan {
     get traceId(): string;
     /** Parent span ID — captured at construction from active context. */
     get parentSpanId(): string | undefined;
+    /**
+     * Get the current span attributes (read-only snapshot).
+     */
+    get attributes(): Attributes;
     /** Whether this span is still recording (not ended). */
     isRecording(): boolean;
     /** Whether this span has been ended via PulseSpan.end(). */

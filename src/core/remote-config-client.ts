@@ -4,13 +4,16 @@ import { resolveApiBaseUrl } from '../constants/defaults.js'
 import type { RemoteConfigResponse } from '../types/config.js'
 import { SDKError, toError } from './errors.js'
 import { validateApiKey } from './api-key.js'
+import { hmacSha256, sha256 } from '../utils/hash.js'
 import { getLogger } from '../utils/logger.js'
+import { isRetryableError } from './retry-classifier.js'
 
 const CONTROL_PLANE_TIMEOUT_MS = 5_000
-const INIT_TIMEOUT_MS = 1_500
-const DEFAULT_INIT_RETRIES = 1
+const INIT_TIMEOUT_MS = 3_000
+const DEFAULT_INIT_RETRIES = 2
 const MAX_INIT_RETRIES = 3
-const INIT_RETRY_BASE_DELAY_MS = 50
+const INIT_RETRY_BASE_DELAY_MS = 150
+const INIT_RETRY_MAX_DELAY_MS = 1_000
 const CONTROL_PLANE_PATH_PREFIX = ''
 
 export interface InitResponse {
@@ -128,7 +131,7 @@ export class RemoteConfigClient {
         return await this.post('/v1/init', attemptTimeoutMs)
       } catch (error) {
         lastError = error
-        if (attempt === this.initRetries || !isRetryableInitError(error)) throw error
+        if (attempt === this.initRetries || !isRetryableError(error)) throw error
 
         const afterAttemptMs = this.initTimeoutMs - (Date.now() - startedAt)
         if (afterAttemptMs <= 1) break
@@ -137,9 +140,15 @@ export class RemoteConfigClient {
         // caller's deadline. Waiting longer would make the SDK miss startup
         // readiness without providing another useful attempt.
         if (retryAfterMs !== undefined && retryAfterMs >= afterAttemptMs) throw error
-        const delayMs = retryAfterMs ?? Math.min(
+        const baseExponential = Math.min(
+          INIT_RETRY_MAX_DELAY_MS,
           INIT_RETRY_BASE_DELAY_MS * (2 ** attempt),
-          Math.max(1, Math.floor(afterAttemptMs / 4)),
+        )
+        const jitterMultiplier = 0.5 + Math.random()
+        const jitteredDelay = Math.round(baseExponential * jitterMultiplier)
+        const delayMs = retryAfterMs ?? Math.min(
+          jitteredDelay,
+          Math.max(1, Math.floor(afterAttemptMs / 2)),
         )
         getLogger().warn('[RemoteConfigClient] Retrying transient init failure', {
           endpoint: '/v1/init',
@@ -174,7 +183,7 @@ export class RemoteConfigClient {
 
     try {
       const startedAt = Date.now()
-      getLogger().info('[RemoteConfigClient] Control-plane request started', {
+      getLogger().debug('[RemoteConfigClient] Control-plane request started', {
         endpoint: `${CONTROL_PLANE_PATH_PREFIX}${path}`,
         url,
         method: 'POST',
@@ -199,7 +208,7 @@ export class RemoteConfigClient {
 
       const text = await Promise.race([deadline, response.text()])
       const latencyMs = Date.now() - startedAt
-      getLogger().info('[RemoteConfigClient] Control-plane response received', {
+      getLogger().debug('[RemoteConfigClient] Control-plane response received', {
         endpoint: `${CONTROL_PLANE_PATH_PREFIX}${path}`,
         statusCode: response.status,
         ok: response.ok,
@@ -218,7 +227,7 @@ export class RemoteConfigClient {
         }
       }
       if (path === '/v1/init') {
-        getLogger().info('[RemoteConfigClient] Init route response served', summarizeInitRoutePayload(payload))
+        getLogger().debug('[RemoteConfigClient] Init route response served', summarizeInitRoutePayload(payload))
       }
       if (!response.ok) {
         const retryAfter = retryAfterMs(response.headers.get('retry-after'))
@@ -291,16 +300,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
-/** Only retry failures that an immediate repeat can plausibly recover. */
-function isRetryableInitError(error: unknown): boolean {
-  if (!(error instanceof SDKError)) return true
-  if (error.code === 'NETWORK_ERROR') return true
-  if (error.code !== 'HTTP_ERROR') return false
-
-  const status = error.context['statusCode']
-  return typeof status === 'number'
-    && (status === 408 || status === 425 || status === 429 || status >= 500)
-}
 
 function retryAfterFrom(error: unknown): number | undefined {
   if (!(error instanceof SDKError)) return undefined

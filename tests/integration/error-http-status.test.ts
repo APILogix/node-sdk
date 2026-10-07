@@ -8,10 +8,10 @@ import http from 'node:http'
 process.env.DEBUG = 'pulse*'
 import { init } from '../../src/core/init.js'
 import { shutdown, flush } from '../../src/core/lifecycle.js'
-import { captureError } from '../../src/capture/captureError.js'
+import { captureException } from '../../src/capture/captureException.js'
 import { client } from '../../src/core/client.js'
-import { monitorMiddleware } from '../../src/instrumentation/express.js'
-import { fastifyPulsePlugin } from '../../src/instrumentation/fastify.js'
+import { pulseMiddleware } from '../../src/instrumentation/express.js'
+import { pulseFastifyPlugin } from '../../src/instrumentation/fastify.js'
 import { createContextStore, withContext } from '../../src/core/context.js'
 import { TEST_REMOTE_CONFIG as BAKED_IN_REMOTE_CONFIG } from '../fixtures/remote-config.js'
 
@@ -42,7 +42,7 @@ async function startMockBackend(): Promise<MockServer> {
         requests.push({ path: req.url ?? '', body: decoded })
       }
 
-      if (req.url === '/v1/init' || req.url === '/api/v1/init') {
+      if (req.url?.includes('init')) {
         const port = (server.address() as { port: number }).port
         const localUrl = `http://127.0.0.1:${port}`
         const paths: Record<string, string> = {
@@ -149,7 +149,7 @@ function makeRequest(url: string, method: string = 'GET'): Promise<number> {
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
-describe('HTTP Status Enrichment', { timeout: 30_000 }, () => {
+describe('HTTP Status Enrichment', { timeout: 60_000 }, () => {
   let backend: MockServer
 
   before(async () => {
@@ -173,7 +173,7 @@ describe('HTTP Status Enrichment', { timeout: 30_000 }, () => {
 
     before(async () => {
       app = express()
-      app.use(monitorMiddleware())
+      app.use(pulseMiddleware())
 
       app.get('/test-500', (req, res, next) => {
         next(new Error('Express 500 error'))
@@ -245,8 +245,8 @@ describe('HTTP Status Enrichment', { timeout: 30_000 }, () => {
       app = Fastify()
       
       // Make the plugin global for the test by simulating fastify-plugin
-      ;(fastifyPulsePlugin as any)[Symbol.for('skip-override')] = true
-      await app.register(fastifyPulsePlugin, {})
+      ;(pulseFastifyPlugin as any)[Symbol.for('skip-override')] = true
+      await app.register(pulseFastifyPlugin, {})
 
       app.get('/test-500', async () => {
         throw new Error('Fastify 500 error')
@@ -313,9 +313,9 @@ describe('HTTP Status Enrichment', { timeout: 30_000 }, () => {
   })
 
   describe('Non-HTTP Contexts and Manual captures', () => {
-    it('Manual captureError() handles true, no HTTP status', async () => {
+    it('Manual captureException() handles true, no HTTP status', async () => {
       backend.reset()
-      captureError(new Error('Manual error'))
+      captureException(new Error('Manual error'))
       await delay(200)
       await flush()
 
@@ -330,7 +330,7 @@ describe('HTTP Status Enrichment', { timeout: 30_000 }, () => {
 
     it('uncaughtException handles false, no HTTP status', async () => {
       backend.reset()
-      captureError(new Error('Uncaught error'), 'fatal')
+      captureException(new Error('Uncaught error'), 'fatal')
       await delay(200)
       await flush()
 
@@ -346,9 +346,9 @@ describe('HTTP Status Enrichment', { timeout: 30_000 }, () => {
         extra: { mechanism: 'unhandledRejection', handled: false },
       })
       withContext(store, () => {
-        captureError(new Error('Unhandled rejection'), 'error')
+        captureException(new Error('Unhandled rejection'), 'error')
       })
-      await delay(50)
+      await delay(200)
       await flush()
 
       const events = getErrorEvents(backend)

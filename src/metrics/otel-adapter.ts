@@ -85,7 +85,7 @@ class OtelMetricsManager {
         this.meter = metrics.getMeter('@vikasbaplawat1/pulse-sdk', '2.0.0')
         this.initialized = true
         this.ownsProvider = false
-        logger.info('OpenTelemetry meter provider already registered by Pulse telemetry; reusing global provider')
+        logger.info('OpenTelemetry meter provider already registered by APM telemetry; reusing global provider')
         return
       }
 

@@ -7,7 +7,10 @@
  */
 import { registerEsmLoaderHooks } from './instrumentation/esm-loader.js';
 import { registerBootstrapAutoInstrumentations } from './instrumentation/auto-instrument.js';
-// Register Node.js ESM customization hooks early so static and dynamic imports
-// in the application entrypoint are intercepted by import-in-the-middle.
-registerEsmLoaderHooks();
-registerBootstrapAutoInstrumentations();
+try {
+    registerEsmLoaderHooks();
+    registerBootstrapAutoInstrumentations();
+}
+catch {
+    // Safe fail-open: preload hook must never crash process bootstrap (SEC-08)
+}

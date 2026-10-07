@@ -19,7 +19,7 @@
  */
 
 import { SDKError } from '../core/errors.js'
-import { Severity, type SeverityLevel, severityMeetsThreshold } from '../types/severity.js'
+import { Severity, type SeverityLevel, doesSeverityMeetThreshold } from '../types/severity.js'
 import { trace as otelTrace } from '@opentelemetry/api'
 
 export interface Logger {
@@ -32,8 +32,8 @@ export interface Logger {
 // ─── Configuration ──────────────────────────────────────────────────────────
 
 let debugMode = false
-let logPrefix = 'Pulse'
-let minimumLogLevel: SeverityLevel = Severity.Warning
+let logPrefix = 'Telemetry'
+let minimumLogLevel: SeverityLevel = Severity.Info
 
 /**
  * Enable or disable debug logging globally.
@@ -41,7 +41,7 @@ let minimumLogLevel: SeverityLevel = Severity.Warning
  */
 export function setDebugMode(enabled: boolean): void {
   debugMode = enabled
-  minimumLogLevel = enabled ? Severity.Debug : Severity.Warning
+  minimumLogLevel = enabled ? Severity.Debug : Severity.Info
 }
 
 /**
@@ -52,7 +52,7 @@ export function setLogLevel(level: SeverityLevel): void {
 }
 
 /**
- * Set the log prefix (defaults to 'Pulse').
+ * Set the log prefix (defaults to 'Telemetry').
  */
 export function setLogPrefix(prefix: string): void {
   logPrefix = prefix
@@ -168,27 +168,34 @@ function writeStderr(line: string): void {
   }
 }
 
+function stripPrefix(message: string): string {
+  if (message.startsWith(`[${logPrefix}]`)) {
+    return message.slice(logPrefix.length + 2).trim()
+  }
+  return message.replace(/^\[(Pulse|Telemetry|APM|SDK)\]\s*/i, '').trim()
+}
+
 // ─── Console Logger (Sentry-style) ─────────────────────────────────────────
 
 export const consoleLogger: Logger = {
   debug(message: string, context?: Record<string, unknown>): void {
-    if (!severityMeetsThreshold(Severity.Debug, minimumLogLevel)) return
-    writeStdout(`[${logPrefix}] DEBUG: ${message}${formatContext(context)}`)
+    if (!doesSeverityMeetThreshold(Severity.Debug, minimumLogLevel)) return
+    writeStdout(`[${logPrefix}] DEBUG: ${stripPrefix(message)}${formatContext(context)}`)
   },
 
   info(message: string, context?: Record<string, unknown>): void {
-    if (!severityMeetsThreshold(Severity.Info, minimumLogLevel)) return
-    writeStdout(`[${logPrefix}] INFO: ${message}${formatContext(context)}`)
+    if (!doesSeverityMeetThreshold(Severity.Info, minimumLogLevel)) return
+    writeStdout(`[${logPrefix}] INFO: ${stripPrefix(message)}${formatContext(context)}`)
   },
 
   warn(message: string, context?: Record<string, unknown>): void {
-    if (!severityMeetsThreshold(Severity.Warning, minimumLogLevel)) return
-    writeStderr(`[${logPrefix}] WARN: ${message}${formatContext(context)}`)
+    if (!doesSeverityMeetThreshold(Severity.Warning, minimumLogLevel)) return
+    writeStderr(`[${logPrefix}] WARN: ${stripPrefix(message)}${formatContext(context)}`)
   },
 
   error(message: string, context?: Record<string, unknown>): void {
-    if (!severityMeetsThreshold(Severity.Error, minimumLogLevel)) return
-    writeStderr(`[${logPrefix}] ERROR: ${message}${formatContext(context)}`)
+    if (!doesSeverityMeetThreshold(Severity.Error, minimumLogLevel)) return
+    writeStderr(`[${logPrefix}] ERROR: ${stripPrefix(message)}${formatContext(context)}`)
   },
 }
 
@@ -225,22 +232,22 @@ function getActiveTraceContext(): { traceId?: string; spanId?: string } {
  */
 export const jsonLogger: Logger = {
   debug(message: string, context?: Record<string, unknown>): void {
-    if (!severityMeetsThreshold(Severity.Debug, minimumLogLevel)) return
+    if (!doesSeverityMeetThreshold(Severity.Debug, minimumLogLevel)) return
     emitJsonLog('debug', message, context)
   },
 
   info(message: string, context?: Record<string, unknown>): void {
-    if (!severityMeetsThreshold(Severity.Info, minimumLogLevel)) return
+    if (!doesSeverityMeetThreshold(Severity.Info, minimumLogLevel)) return
     emitJsonLog('info', message, context)
   },
 
   warn(message: string, context?: Record<string, unknown>): void {
-    if (!severityMeetsThreshold(Severity.Warning, minimumLogLevel)) return
+    if (!doesSeverityMeetThreshold(Severity.Warning, minimumLogLevel)) return
     emitJsonLog('warn', message, context)
   },
 
   error(message: string, context?: Record<string, unknown>): void {
-    if (!severityMeetsThreshold(Severity.Error, minimumLogLevel)) return
+    if (!doesSeverityMeetThreshold(Severity.Error, minimumLogLevel)) return
     emitJsonLog('error', message, context)
   },
 }
@@ -256,7 +263,7 @@ function emitJsonLog(
     timestamp: new Date().toISOString(),
     level,
     logger: logPrefix,
-    message,
+    message: stripPrefix(message),
   }
 
   // Inject trace correlation if available

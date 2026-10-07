@@ -51,7 +51,6 @@ class Semaphore {
         if (settled) return
         settled = true
         clearTimeout(timer)
-        this.available--
         resolve(true)
       }
 
@@ -129,7 +128,7 @@ export class ConnectionManager {
     }
   }
 
-  stats(): ConnectionPoolStats {
+  getStats(): ConnectionPoolStats {
     return {
       maxTotalConnections: this.options.maxTotalConnections,
       totalInUse: this.totalInUse,
@@ -138,7 +137,15 @@ export class ConnectionManager {
     }
   }
 
-  maxForRoute(route: EnterpriseRoute): number {
+  stats(): ConnectionPoolStats {
+    return this.getStats()
+  }
+
+  getMaxForRoute(route: EnterpriseRoute): number {
     return this.options.maxConnectionsPerRoute[route]
+  }
+
+  maxForRoute(route: EnterpriseRoute): number {
+    return this.getMaxForRoute(route)
   }
 }

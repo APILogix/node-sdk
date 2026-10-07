@@ -47,8 +47,13 @@ export const LOGGING_DEFAULTS = Object.freeze({
 export const PROFILING_DEFAULTS = Object.freeze({
     cpu: true,
     heap: true,
-    /** Hard upper bound on a single profile's duration. */
+    /** Hard upper bound on a single profile duration. */
     maxDurationMs: 30_000,
+    /** Continuous wall-clock profiling defaults */
+    continuous: false,
+    continuousIntervalMs: 60_000,
+    continuousSampleRateHz: 99,
+    sampleIntervalMicroseconds: 10_100,
 });
 /**
  * Tracing internals. Anything that's not in the wire schema lives here.

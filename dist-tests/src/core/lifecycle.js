@@ -48,6 +48,7 @@ import { SecurityScrubber } from '../processors/security-scrubber.js';
 import { LoggingSubsystem } from '../subsystems/logging-subsystem.js';
 import { ProfilingSubsystem } from '../subsystems/profiling-subsystem.js';
 import { CronSubsystem } from '../subsystems/cron-subsystem.js';
+import { RuntimeMetricsSubsystem } from '../subsystems/runtime-metrics-subsystem.js';
 import { tenantGovernor } from './tenant-isolation.js';
 import { cardinalityGovernor } from '../utils/cardinality-governor.js';
 import { adaptivePressure } from '../utils/adaptive-pressure.js';
@@ -56,6 +57,7 @@ import { QuotaController } from './quota-controller.js';
 import { costGovernor } from '../utils/cost-governor.js';
 import { persistenceGovernor } from '../storage/persistence-governor.js';
 import { resetFingerprintCache } from '../processors/fingerprint.js';
+import { BackgroundRecoveryWorker } from './recovery-worker.js';
 // ─── Module State ───────────────────────────────────────────────────────────
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 10_000;
 const HOOK_TIMEOUT_MS = 5_000;
@@ -63,6 +65,7 @@ const SUBSYSTEM_STEP_TIMEOUT_MS = 5_000;
 let signalHandlersRegistered = false;
 let sigTermHandler = null;
 let sigIntHandler = null;
+let signalShutdownInFlight = false;
 let shuttingDown = false;
 let shutdownPromise = null;
 let shutdownCompletionPromise = null;
@@ -113,6 +116,10 @@ export async function shutdown(timeoutMs) {
         return shutdownPromise;
     }
     shuttingDown = true;
+    BackgroundRecoveryWorker.stop();
+    if (client.getState() !== 'stopping' && client.getState() !== 'stopped') {
+        client.setState('stopping');
+    }
     const promise = runShutdown(timeoutMs);
     shutdownPromise = promise;
     return promise;
@@ -154,7 +161,7 @@ export async function flush() {
  *
  * @param timeoutMs Maximum time to wait for transport drain. Default: 2000ms.
  */
-export async function crashFlush(timeoutMs = 2_000) {
+export async function emergencyFlush(timeoutMs = 2_000) {
     try {
         let timer;
         const timeoutPromise = new Promise(resolve => {
@@ -175,16 +182,14 @@ export async function crashFlush(timeoutMs = 2_000) {
             try {
                 await SerializationPool.reset();
             }
-            catch {
-                // Best-effort worker termination
-            }
+            catch { }
         })();
         await Promise.race([drainPromise, timeoutPromise]);
         if (timer)
             clearTimeout(timer);
     }
     catch {
-        // Best-effort — swallow all errors during crash flush.
+        // Best-effort — swallow all errors during emergency flush.
         // The process is about to terminate; throwing here would only
         // mask the original uncaught exception in the error output.
     }
@@ -197,14 +202,48 @@ export function registerSignalHandlers() {
     if (signalHandlersRegistered)
         return;
     const logger = getLogger();
-    const handleSignal = (signal) => {
+    const handleSignal = async (signal) => {
+        const exitCode = 128 + (signal === 'SIGINT' ? 2 : 15);
+        if (signalShutdownInFlight) {
+            logger.warn(`Received secondary ${signal} during active shutdown — forcing immediate exit`);
+            if (typeof process.exit === 'function') {
+                process.exit(exitCode);
+            }
+            return;
+        }
+        signalShutdownInFlight = true;
         logger.info(`Received ${signal} — initiating graceful shutdown`);
-        shutdown().catch(err => {
+        // Enforce a hard maximum shutdown watchdog so deployments never hang
+        const watchdogTimer = setTimeout(() => {
+            logger.error(`Shutdown watchdog timed out after ${signal} — forcing exit`);
+            resetSignalHandlers();
+            if (typeof process.exit === 'function') {
+                process.exit(exitCode);
+            }
+        }, 5000);
+        watchdogTimer.unref?.();
+        try {
+            await shutdown(4000);
+        }
+        catch (err) {
             logger.error('Shutdown failed after signal', { signal, error: err });
-        });
+        }
+        finally {
+            clearTimeout(watchdogTimer);
+            const remainingListeners = process.listenerCount(signal);
+            resetSignalHandlers();
+            // If the SDK was the only listener for this signal, Node won't exit by itself.
+            // We must exit with the standard 128 + signal code so container orchestrators (k8s/docker)
+            // see the clean shutdown immediately instead of hanging until SIGKILL.
+            if (remainingListeners <= 1) {
+                if (typeof process.exit === 'function') {
+                    process.exit(exitCode);
+                }
+            }
+        }
     };
-    sigTermHandler = () => handleSignal('SIGTERM');
-    sigIntHandler = () => handleSignal('SIGINT');
+    sigTermHandler = () => { void handleSignal('SIGTERM'); };
+    sigIntHandler = () => { void handleSignal('SIGINT'); };
     // Use process.on (not once) so we control removal explicitly via reset.
     // This prevents stacking handlers across reinit cycles.
     process.on('SIGTERM', sigTermHandler);
@@ -226,6 +265,7 @@ export function resetSignalHandlers() {
         sigIntHandler = null;
     }
     signalHandlersRegistered = false;
+    signalShutdownInFlight = false;
 }
 // ─── Internal: Shutdown Orchestration ───────────────────────────────────────
 async function runShutdown(timeoutMs) {
@@ -253,6 +293,12 @@ async function runShutdown(timeoutMs) {
         catch (err) {
             stepErrors.push({ step: 'orchestrator', error: err });
         }
+        if (client.getState() === 'stopping') {
+            try {
+                client.setState('stopped');
+            }
+            catch { }
+        }
         await runUnconditionalCleanup(stepErrors);
     })();
     shutdownCompletionPromise = completion;
@@ -279,6 +325,12 @@ async function runShutdown(timeoutMs) {
             remainingEvents: eventQueue.size(),
             durationMs: Date.now() - startedAt,
         });
+        if (client.getState() === 'stopping') {
+            try {
+                client.setState('stopped');
+            }
+            catch { }
+        }
     }
     const result = {
         completed: !timedOut && stepErrors.length === 0,
@@ -336,6 +388,7 @@ async function runOrchestratedShutdown(stepErrors) {
         // meant graceful shutdown could lose the last batch.
         await metricsRegistry.flush();
         await withTimeout(otelMetrics.shutdown(), SUBSYSTEM_STEP_TIMEOUT_MS, 'metrics shutdown timed out');
+        RuntimeMetricsSubsystem.resetInstance();
         metricsRegistry.stop();
     }, stepErrors);
     // 7. Flush transport queues — must run after pipeline drain so all
@@ -423,6 +476,7 @@ async function runUnconditionalCleanup(stepErrors) {
     runSync('logging-subsystem.reset', () => LoggingSubsystem.reset(), stepErrors);
     runSync('profiling-subsystem.reset', () => ProfilingSubsystem.reset(), stepErrors);
     runSync('cron-subsystem.reset', () => CronSubsystem.reset(), stepErrors);
+    runSync('runtime-metrics-subsystem.reset', () => RuntimeMetricsSubsystem.resetInstance(), stepErrors);
     runSync('session.reset', () => resetSessionManager(), stepErrors);
     runSync('signal-handlers.reset', () => resetSignalHandlers(), stepErrors);
     runSync('auto-instrumentations.reset', () => resetAutoInstrumentations(), stepErrors);

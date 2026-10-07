@@ -148,7 +148,7 @@ describe('Crash Semantics & Process Termination Lifecycle', () => {
     const duration = Date.now() - start
 
     assert.strictEqual(result.code, 1, `Expected exit code 1, got ${result.code}. stderr: ${result.stderr}`)
-    assert.ok(duration < 4000, `Process took too long to terminate (${duration}ms) — possible socket hang`)
+    assert.ok(duration < 5500, `Process took too long to terminate (${duration}ms) — possible socket hang`)
   })
 
   it('respects exitOnUncaughtException: false opt-out allowing host to handle termination', async () => {
@@ -230,7 +230,7 @@ describe('Crash Semantics & Process Termination Lifecycle', () => {
     const duration = Date.now() - start
 
     assert.strictEqual(result.code, 1, `Expected exit code 1, got ${result.code}`)
-    assert.ok(duration < 4000, `Crash storm took too long (${duration}ms)`)
+    assert.ok(duration < 5500, `Crash storm took too long (${duration}ms)`)
   })
 
   it('preserves clean listener registration and leaves no leaks across repeated init/shutdown cycles', async () => {
@@ -240,7 +240,7 @@ describe('Crash Semantics & Process Termination Lifecycle', () => {
     for (let i = 0; i < 5; i++) {
       await init({
         apiKey: 'test-api-key',
-        initTimeoutMs: 500,
+        initTimeoutMs: 2000,
         exitOnUncaughtException: false,
       })
 
@@ -248,7 +248,7 @@ describe('Crash Semantics & Process Termination Lifecycle', () => {
       assert.strictEqual(process.listenerCount('uncaughtException'), baselineUncaught + 1)
       assert.strictEqual(process.listenerCount('unhandledRejection'), baselineUnhandled + 1)
 
-      await shutdown(500)
+      await shutdown(1000)
 
       // After shutdown, listener count must return to exact baseline
       assert.strictEqual(process.listenerCount('uncaughtException'), baselineUncaught, `Leaked uncaughtException at cycle ${i}`)

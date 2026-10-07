@@ -18,7 +18,10 @@ export declare class HealthMonitor {
     canSend(route: EnterpriseRoute): boolean;
     recordSuccess(route: EnterpriseRoute, latencyMs: number): void;
     recordFailure(route: EnterpriseRoute): void;
+    getConcurrencyScale(route: EnterpriseRoute): number;
     concurrencyScale(route: EnterpriseRoute): number;
+    getBatchScale(route: EnterpriseRoute): number;
     batchScale(route: EnterpriseRoute): number;
+    getSnapshot(route: EnterpriseRoute): RouteHealthSnapshot;
     snapshot(route: EnterpriseRoute): RouteHealthSnapshot;
 }

@@ -274,8 +274,6 @@ export class TransportRouter {
         this.queues.clear();
         this.dropped.length = 0;
         this.dropLogCount = 0;
-        // Phase 3: detach the singleton pointer only if it still references this
-        // instance — concurrent reinit may have already swapped it out.
         if (TransportRouter.instance === this) {
             TransportRouter.instance = null;
         }
@@ -307,7 +305,7 @@ export class TransportRouter {
             if (!priority)
                 throw new TransportConfigurationError('Route priority is invalid', { route });
             const maxSize = config.queue.maxSize;
-            getLogger().info('[TransportRouter] Configured route', {
+            getLogger().debug('[TransportRouter] Configured route', {
                 route,
                 batchSize: routeRemote.batchSize,
                 flushIntervalMs: routeRemote.flushIntervalMs,
@@ -361,7 +359,7 @@ export class TransportRouter {
     }
     routeHealth(route) {
         const definition = this.registry.get(route);
-        const stats = this.batchManagers.get(route)?.stats() ?? emptyStats(route);
+        const stats = this.batchManagers.get(route)?.stats() ?? createEmptyStats(route);
         const health = this.healthMonitor.snapshot(route);
         const priority = toQueuePriority(this.transportConfig.routes[route].priority);
         if (!priority)
@@ -397,7 +395,7 @@ export class TransportRouter {
         }
     }
 }
-function emptyStats(route) {
+function createEmptyStats(route) {
     return {
         route,
         queuedEvents: 0,

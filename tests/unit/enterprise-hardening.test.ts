@@ -128,7 +128,7 @@ describe('Enterprise Hardening & Gap Verification', () => {
         const dirMode = dirStat.mode & 0o777
         assert.strictEqual(dirMode, 0o700, `Expected directory mode 0o700, got 0o${dirMode.toString(8)}`)
 
-        const dataFile = join(testDir, 'events.ndjson')
+        const dataFile = storage.dataFilePath
         const fileStat = await fs.stat(dataFile)
         const fileMode = fileStat.mode & 0o777
         assert.strictEqual(fileMode, 0o600, `Expected file mode 0o600, got 0o${fileMode.toString(8)}`)

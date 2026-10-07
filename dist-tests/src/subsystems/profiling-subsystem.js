@@ -15,6 +15,11 @@ export class ProfilingSubsystem {
     inspectorSession = null;
     inspectorAvailable = false;
     destroyed = false;
+    // Continuous wall-clock profiling state
+    continuousTimer = null;
+    continuousChunkStartTime = 0;
+    isContinuousRunning = false;
+    activeTracesInChunk = new Set();
     constructor(config, emitter, metadata) {
         this.config = resolveProfilingConfig(config);
         this.emitter = emitter;
@@ -32,8 +37,14 @@ export class ProfilingSubsystem {
         this.metadata = metadata;
     }
     async start() {
-        if (this.destroyed || !this.config.enabled || this.inspectorAvailable)
+        if (this.destroyed || !this.config.enabled)
             return;
+        if (this.inspectorAvailable) {
+            if (this.config.continuous && this.canProfile('cpu')) {
+                await this.startContinuousProfiling();
+            }
+            return;
+        }
         const logger = getLogger();
         try {
             let session = null;
@@ -72,11 +83,153 @@ export class ProfilingSubsystem {
             this.inspectorSession = session;
             this.inspectorAvailable = true;
             logger.info('[ProfilingSubsystem] Inspector session connected');
+            // If continuous wall-clock profiling is enabled by remote config, launch immediately
+            if (this.config.continuous && this.canProfile('cpu')) {
+                await this.startContinuousProfiling();
+            }
         }
         catch (error) {
             logger.warn('[ProfilingSubsystem] Failed to initialize inspector', { error });
             this.inspectorAvailable = false;
         }
+    }
+    /**
+     * Starts continuous wall-clock CPU sampling driven by remote config.
+     * Periodically flushes chunked profiles to the backend ingestion queue.
+     */
+    async startContinuousProfiling() {
+        if (this.destroyed || !this.config.enabled || !EntitlementGate.isAllowed('profiling') || !this.inspectorAvailable) {
+            return false;
+        }
+        if (this.isContinuousRunning)
+            return true;
+        const session = this.inspectorSession;
+        if (!session)
+            return false;
+        try {
+            await session.post('Profiler.enable');
+            if (this.config.sampleIntervalMicroseconds > 0) {
+                await session.post('Profiler.setSamplingInterval', { interval: this.config.sampleIntervalMicroseconds });
+            }
+            await session.post('Profiler.start');
+            this.isContinuousRunning = true;
+            this.continuousChunkStartTime = Date.now();
+            this.activeTracesInChunk.clear();
+            if (this.continuousTimer)
+                clearInterval(this.continuousTimer);
+            this.continuousTimer = setInterval(() => {
+                void this.flushContinuousChunk();
+            }, this.config.continuousIntervalMs);
+            this.continuousTimer.unref?.();
+            getLogger().info('[ProfilingSubsystem] Continuous wall-clock CPU profiling started', {
+                intervalMs: this.config.continuousIntervalMs,
+                sampleRateHz: this.config.sampleRateHz,
+            });
+            return true;
+        }
+        catch (error) {
+            getLogger().warn('[ProfilingSubsystem] Failed to start continuous CPU profiling', { error });
+            this.isContinuousRunning = false;
+            return false;
+        }
+    }
+    /**
+     * Stops the current continuous profiling chunk, emits the profile event,
+     * and immediately restarts the next chunk.
+     */
+    async flushContinuousChunk() {
+        if (!this.isContinuousRunning)
+            return;
+        const session = this.inspectorSession;
+        if (!session)
+            return;
+        try {
+            const result = await session.post('Profiler.stop');
+            const endTime = Date.now();
+            const chunkDuration = endTime - this.continuousChunkStartTime;
+            const traceIds = Array.from(this.activeTracesInChunk);
+            this.activeTracesInChunk.clear();
+            this.continuousChunkStartTime = endTime;
+            // Immediately restart profiler for the next chunk
+            try {
+                await session.post('Profiler.start');
+            }
+            catch (startErr) {
+                getLogger().debug('[ProfilingSubsystem] Failed to restart continuous profiler chunk', { error: startErr });
+            }
+            const scrubber = SecurityScrubber.getInstance();
+            const profile = scrubber ? scrubber.scrubValue(result?.profile) : result?.profile;
+            const event = {
+                type: 'profile',
+                profileType: 'cpu',
+                startTime: endTime - chunkDuration,
+                endTime,
+                duration: chunkDuration,
+                profile,
+                timestamp: endTime,
+                metadata: this.metadata,
+                isContinuous: true,
+                sampleRateHz: this.config.sampleRateHz,
+                activeTraceIds: traceIds.length > 0 ? traceIds : undefined,
+            };
+            this.emitter(event);
+        }
+        catch (error) {
+            if (isNoRecordingProfilesError(error)) {
+                getLogger().debug('[ProfilingSubsystem] Continuous chunk was already stopped', { error });
+            }
+            else {
+                getLogger().warn('[ProfilingSubsystem] Failed to flush continuous CPU profile chunk', { error });
+            }
+        }
+    }
+    /**
+     * Stops the continuous profiling loop and shuts down the V8 profiler.
+     */
+    async stopContinuousProfiling() {
+        if (this.continuousTimer) {
+            clearInterval(this.continuousTimer);
+            this.continuousTimer = null;
+        }
+        if (!this.isContinuousRunning)
+            return;
+        this.isContinuousRunning = false;
+        const session = this.inspectorSession;
+        if (session) {
+            try {
+                await session.post('Profiler.stop');
+            }
+            catch (error) {
+                if (!isNoRecordingProfilesError(error)) {
+                    getLogger().debug('[ProfilingSubsystem] Profiler.stop error during continuous teardown', { error });
+                }
+            }
+        }
+        this.activeTracesInChunk.clear();
+    }
+    /**
+     * Correlates an active traceId with the current continuous profiling chunk.
+     */
+    recordActiveTrace(traceId) {
+        if (this.isContinuousRunning && traceId) {
+            this.activeTracesInChunk.add(traceId);
+        }
+    }
+    /**
+     * Returns whether continuous wall-clock profiling is currently running.
+     */
+    isContinuousActive() {
+        return this.isContinuousRunning;
+    }
+    /**
+     * Returns current continuous profiling configuration.
+     */
+    getContinuousConfig() {
+        return {
+            continuous: this.config.continuous,
+            intervalMs: this.config.continuousIntervalMs,
+            sampleRateHz: this.config.sampleRateHz,
+        };
     }
     async startCpuProfile(traceId, spanId) {
         if (!this.canProfile('cpu'))
@@ -96,6 +249,14 @@ export class ProfilingSubsystem {
             return false;
         if (this.activeProfiles.has(key))
             return false;
+        // If continuous profiling is active, record the trace association and let continuous profiling track it
+        if (this.isContinuousRunning) {
+            this.recordActiveTrace(resolvedTraceId);
+            activeSpan?.addEvent('pulse.profile.continuous', { 'profile.type': 'cpu', 'profile.id': key });
+            activeSpan?.setAttribute('pulse.profile.active', true);
+            activeSpan?.setAttribute('pulse.profile.continuous', true);
+            return true;
+        }
         try {
             await session.post('Profiler.enable');
             await session.post('Profiler.start');
@@ -178,10 +339,32 @@ export class ProfilingSubsystem {
     }
     /** Apply a validated complete snapshot selected by ConfigManager. */
     handleConfigChange(config) {
-        if (!this.destroyed)
-            this.config = resolveProfilingConfig(config);
+        if (this.destroyed)
+            return;
+        const prevContinuous = this.config.continuous;
+        const prevInterval = this.config.continuousIntervalMs;
+        this.config = resolveProfilingConfig(config);
+        // Dynamic continuous profiling transition driven by remote config
+        if (!prevContinuous && this.config.continuous) {
+            if (this.inspectorAvailable && this.canProfile('cpu')) {
+                void this.startContinuousProfiling();
+            }
+        }
+        else if (prevContinuous && !this.config.continuous) {
+            void this.stopContinuousProfiling();
+        }
+        else if (this.isContinuousRunning && prevInterval !== this.config.continuousIntervalMs) {
+            // Re-arm timer with updated interval from remote config
+            if (this.continuousTimer)
+                clearInterval(this.continuousTimer);
+            this.continuousTimer = setInterval(() => {
+                void this.flushContinuousChunk();
+            }, this.config.continuousIntervalMs);
+            this.continuousTimer.unref?.();
+        }
     }
     async stop() {
+        await this.stopContinuousProfiling();
         for (const active of this.activeProfiles.values()) {
             if (active.timeoutHandle)
                 clearTimeout(active.timeoutHandle);
@@ -233,11 +416,19 @@ function isNoRecordingProfilesError(error) {
     return message.includes('No recording profiles found');
 }
 function resolveProfilingConfig(config) {
+    const continuous = Boolean(config.profiling?.continuous ?? config.features?.continuousProfiling ?? false);
+    const sampleRateHz = config.profiling?.sampleRateHz ?? PROFILING_DEFAULTS.continuousSampleRateHz;
+    const sampleIntervalMicroseconds = config.profiling?.sampleIntervalMicroseconds ??
+        (sampleRateHz > 0 ? Math.round(1_000_000 / sampleRateHz) : PROFILING_DEFAULTS.sampleIntervalMicroseconds);
     return {
         enabled: config.features.profiling,
         cpu: PROFILING_DEFAULTS.cpu,
         heap: PROFILING_DEFAULTS.heap,
         sampleRate: config.sampling.profiles,
-        maxDurationMs: PROFILING_DEFAULTS.maxDurationMs,
+        maxDurationMs: config.profiling?.maxDurationMs ?? PROFILING_DEFAULTS.maxDurationMs,
+        continuous,
+        continuousIntervalMs: config.profiling?.continuousIntervalMs ?? PROFILING_DEFAULTS.continuousIntervalMs,
+        sampleIntervalMicroseconds,
+        sampleRateHz,
     };
 }

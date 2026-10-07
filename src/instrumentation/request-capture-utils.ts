@@ -25,6 +25,7 @@ import { EntitlementGate } from '../core/entitlement-gate.js'
 import { SecurityScrubber } from '../processors/security-scrubber.js'
 import { sha256 } from '../utils/hash.js'
 import { getLogger } from '../utils/logger.js'
+import { safeJsonStringify } from '../utils/safe-json.js'
 
 /** Maximum number of bytes of a request body we will inspect. */
 const MAX_BODY_INSPECT_BYTES = 64 * 1024
@@ -361,7 +362,7 @@ function computeBodySize(rawBody: unknown): number | undefined {
   if (rawBody instanceof Uint8Array) return rawBody.byteLength
   if (typeof rawBody === 'object') {
     try {
-      return Buffer.byteLength(JSON.stringify(rawBody))
+      return Buffer.byteLength(safeJsonStringify(rawBody))
     } catch {
       return undefined
     }

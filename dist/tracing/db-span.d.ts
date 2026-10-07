@@ -14,6 +14,7 @@ export interface DbSpanOptions {
     readonly startTime?: SpanOptions['startTime'] | undefined;
     readonly links?: SpanOptions['links'] | undefined;
     readonly timeoutMs?: number | undefined;
+    readonly slowQueryThresholdMs?: number | undefined;
 }
 export declare function startDbSpan(options: DbSpanOptions): PulseSpan;
 export declare function withDbSpan<T>(options: DbSpanOptions, fn: (span: PulseSpan) => T | Promise<T>): Promise<T>;

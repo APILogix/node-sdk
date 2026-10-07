@@ -5,7 +5,7 @@ import express from 'express';
 import { gunzipSync } from 'node:zlib';
 import { trace, context as otelContext, SpanKind, SpanStatusCode } from '@opentelemetry/api';
 import { init } from '../../src/core/init.js';
-import { shutdown, flush, flushTracer, monitorMiddleware, withBackgroundSpan, startBackgroundSpan, getActiveBackgroundSpanCount, withSpan, withDbSpan, addBreadcrumb, getRequestContext, } from '../../src/index.js';
+import { shutdown, flush, flushTracer, pulseMiddleware, withBackgroundSpan, startBackgroundSpan, getActiveBackgroundSpanCount, withSpan, withDbSpan, addBreadcrumb, getRequestContext, } from '../../src/index.js';
 import { createContextStore, withContext } from '../../src/core/context.js';
 import { getTraceAggregator, resetTraceAggregator } from '../../src/tracing/trace-aggregator.js';
 import { drainPendingEventProcessing } from '../../src/core/event-pipeline.js';
@@ -109,7 +109,7 @@ describe('Detached Background Trace Support & Lifecycle Isolation', { concurrenc
     });
     it('coordinates detached background work outliving HTTP response without dropping spans', async () => {
         const app = express();
-        app.use(monitorMiddleware());
+        app.use(pulseMiddleware());
         let backgroundCompleted = false;
         let httpTraceId = '';
         let httpSpanId = '';

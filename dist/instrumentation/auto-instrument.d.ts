@@ -39,10 +39,14 @@ export declare function registerAutoInstrumentations(): void;
  * starts `createSDK()`, and imports DB clients while the one remote-config
  * request is still in flight. The early hooks use privacy-safe defaults and
  * a no-op/proxy tracer until `initTracer()` installs the real provider. Once
- * remote config arrives, `registerAutoInstrumentations()` rebuilds the same
- * hooks from the authoritative backend snapshot.
  * remote config arrives, `registerAutoInstrumentations()` upgrades the same
  * hooks in-place without unregistering or unwrapping modules.
+ *
+ * SEC-08 Guarantees:
+ * - Every instrumentation factory is individually isolated in a safe try-catch.
+ * - Missing or throwing optional dependencies never bubble up.
+ * - The entire bootstrap routine is wrapped in a fail-open boundary so that
+ *   importing `@pulse-apm/node` can never crash host application startup.
  */
 export declare function registerBootstrapAutoInstrumentations(): void;
 /**

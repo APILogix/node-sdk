@@ -18,8 +18,8 @@ export declare function severityFromString(value: unknown, fallback?: SeverityLe
 /**
  * Returns true if `a` is more severe than or equal to `b`.
  */
-export declare function severityGte(a: SeverityLevel, b: SeverityLevel): boolean;
+export declare function isSeverityGte(a: SeverityLevel, b: SeverityLevel): boolean;
 /**
  * Returns true if the given severity meets the minimum threshold.
  */
-export declare function severityMeetsThreshold(severity: SeverityLevel, threshold: SeverityLevel): boolean;
+export declare function doesSeverityMeetThreshold(severity: SeverityLevel, threshold: SeverityLevel): boolean;

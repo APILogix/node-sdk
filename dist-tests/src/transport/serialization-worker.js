@@ -1,34 +1,77 @@
 import { parentPort } from 'worker_threads';
 import { gzipSync, brotliCompressSync, constants as zlibConstants } from 'zlib';
+import { SecurityScrubber } from '../processors/security-scrubber.js';
+import { safeJsonStringify } from '../utils/safe-json.js';
+let workerScrubber = null;
+let currentPrivacyConfigJson = '';
+function getOrCreateScrubber(config) {
+    if (!config)
+        return workerScrubber;
+    try {
+        const configJson = JSON.stringify(config);
+        if (!workerScrubber || configJson !== currentPrivacyConfigJson) {
+            currentPrivacyConfigJson = configJson;
+            workerScrubber = SecurityScrubber.initialize(config);
+        }
+    }
+    catch {
+        if (!workerScrubber) {
+            workerScrubber = SecurityScrubber.getInstance();
+        }
+    }
+    return workerScrubber;
+}
 if (parentPort) {
     parentPort.on('message', (message) => {
-        const { id, events, compression } = message;
+        if (message?.type === 'close') {
+            process.exit(0);
+            return;
+        }
+        const { id, events, route, timestamp, privacyConfig, compression, maxPayloadBytes } = message;
         try {
-            const jsonStr = JSON.stringify(events);
-            let buffer = Buffer.from(jsonStr);
-            let algorithm = 'none';
-            let compressedSize = buffer.length;
-            const originalSize = buffer.length;
-            if (compression === 'gzip') {
-                const compressed = gzipSync(buffer, { level: 1 });
-                if (compressed.length < buffer.length) {
-                    buffer = compressed;
-                    algorithm = 'gzip';
-                    compressedSize = compressed.length;
+            let safeEvents = events;
+            if (privacyConfig && Array.isArray(events)) {
+                const scrubber = getOrCreateScrubber(privacyConfig);
+                if (scrubber) {
+                    safeEvents = scrubber.scrubBatch(events);
                 }
+            }
+            const payload = route
+                ? { events: safeEvents, route, timestamp: timestamp ?? Date.now() }
+                : safeEvents;
+            const jsonStr = safeJsonStringify(payload);
+            let buffer = Buffer.from(jsonStr, 'utf8');
+            const originalSize = buffer.byteLength;
+            if (typeof maxPayloadBytes === 'number' && maxPayloadBytes > 0 && originalSize > maxPayloadBytes) {
+                try {
+                    parentPort.postMessage({ id, tooLarge: true, originalSize });
+                }
+                catch { }
+                return;
+            }
+            let algorithm = 'none';
+            let compressedSize = originalSize;
+            if (compression === 'gzip') {
+                buffer = gzipSync(buffer, { level: 1 });
+                algorithm = 'gzip';
+                compressedSize = buffer.length;
             }
             else if (compression === 'brotli') {
-                const compressed = brotliCompressSync(buffer, { params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 1 } });
-                if (compressed.length < buffer.length) {
-                    buffer = compressed;
-                    algorithm = 'brotli';
-                    compressedSize = compressed.length;
-                }
+                buffer = brotliCompressSync(buffer, { params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 1 } });
+                algorithm = 'brotli';
+                compressedSize = buffer.length;
             }
-            parentPort.postMessage({ id, buffer, algorithm, originalSize, compressedSize });
+            const ab = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
+            try {
+                parentPort.postMessage({ id, buffer: Buffer.from(ab), algorithm, originalSize, compressedSize }, [ab]);
+            }
+            catch { }
         }
         catch (err) {
-            parentPort.postMessage({ id, error: err instanceof Error ? err.message : String(err) });
+            try {
+                parentPort.postMessage({ id, error: err instanceof Error ? err.message : String(err) });
+            }
+            catch { }
         }
     });
 }

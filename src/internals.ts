@@ -127,3 +127,5 @@ export type {
   RouteTransportHealth,
   MultiRouteTransportHealth,
 } from './types/transport.js'
+
+export { RuntimeMetricsSubsystem, RUNTIME_METRIC_NAMES } from './subsystems/runtime-metrics-subsystem.js'

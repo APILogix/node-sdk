@@ -184,6 +184,9 @@ export interface ProfileEvent {
     readonly profile: unknown;
     readonly timestamp: number;
     readonly metadata?: EventMetadata | undefined;
+    readonly isContinuous?: boolean | undefined;
+    readonly sampleRateHz?: number | undefined;
+    readonly activeTraceIds?: readonly string[] | undefined;
 }
 /** Session replay event containing recorded DOM mutations. */
 export interface ReplayEvent {

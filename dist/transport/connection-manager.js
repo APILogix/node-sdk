@@ -28,7 +28,6 @@ class Semaphore {
                     return;
                 settled = true;
                 clearTimeout(timer);
-                this.available--;
                 resolve(true);
             };
             this.waiters.push(wake);
@@ -98,7 +97,7 @@ export class ConnectionManager {
             },
         };
     }
-    stats() {
+    getStats() {
         return {
             maxTotalConnections: this.options.maxTotalConnections,
             totalInUse: this.totalInUse,
@@ -106,7 +105,13 @@ export class ConnectionManager {
             routeLimits: { ...this.options.maxConnectionsPerRoute },
         };
     }
-    maxForRoute(route) {
+    stats() {
+        return this.getStats();
+    }
+    getMaxForRoute(route) {
         return this.options.maxConnectionsPerRoute[route];
+    }
+    maxForRoute(route) {
+        return this.getMaxForRoute(route);
     }
 }
