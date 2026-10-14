@@ -300,4 +300,88 @@ describe('single-source remote configuration runtime', () => {
         // The retry delays should reflect base delay (>50ms) with backoff and jitter
         assert.ok(delays[1] >= 50, `Delay between attempt 1 and 2 (${delays[1]}ms) must be >= 50ms`);
     });
+    it('triggers a background refresh when telemetry ACK returns config_u: true', async () => {
+        let refreshCalls = 0;
+        const snapshot = config(0.2);
+        const updatedSnapshot = config(0.9, '2026-07-30T00:05:00.000Z');
+        const remote = new RemoteConfigClient({
+            apiKey: 'key',
+            fetchImpl: async (input) => {
+                if (String(input).endsWith('/v1/init'))
+                    return response(initPayload(snapshot));
+                refreshCalls++;
+                return response(updatedSnapshot);
+            },
+        });
+        const initial = await remote.initialize();
+        const manager = ConfigManager.getInstance();
+        manager.initialize(remote, initial.config);
+        // Telemetry response carrying config_u: true
+        manager.handleTelemetryResponse(202, { success: true, accepted: 10, batchId: 'b-1', config_u: true });
+        await manager.waitForRefresh();
+        assert.equal(refreshCalls, 1);
+        assert.equal(manager.getConfig().sampling.traces, 0.9);
+    });
+    it('handles server returning same: true or HTTP 304 without errors or mutation', async () => {
+        let fetchCalls = 0;
+        let capturedHeaders;
+        const snapshot = config(0.3);
+        const snapshotWithRev = {
+            ...snapshot,
+            meta: { ...snapshot.meta, configRevision: 7 },
+        };
+        const remote = new RemoteConfigClient({
+            apiKey: 'key',
+            fetchImpl: async (input, init) => {
+                if (String(input).endsWith('/v1/init'))
+                    return response(initPayload(snapshotWithRev));
+                fetchCalls++;
+                capturedHeaders = init?.headers;
+                // Return same: true
+                return response({ success: true, same: true, configRevision: 7 });
+            },
+        });
+        const initial = await remote.initialize();
+        const manager = ConfigManager.getInstance();
+        manager.initialize(remote, initial.config);
+        // Signal refresh via telemetry
+        manager.handleTelemetryResponse(202, { success: true, change: true });
+        await manager.waitForRefresh();
+        assert.equal(fetchCalls, 1);
+        // Verify client sent X-Config-Revision and X-Config-Hash / If-None-Match
+        const headers = capturedHeaders;
+        assert.equal(headers['X-Config-Revision'], '7');
+        assert.ok(headers['If-None-Match']?.startsWith('sha256:'));
+        assert.ok(headers['X-Config-Hash']?.startsWith('sha256:'));
+        // Config must remain identical and intact
+        assert.equal(manager.getConfig().sampling.traces, 0.3);
+        assert.equal(manager.getConfigRevision(), 7);
+    });
+    it('triggers refresh automatically via unref TTL timer when configured', async () => {
+        let refreshCalls = 0;
+        const snapshot = config(0.1);
+        const snapshotWithTtl = {
+            ...snapshot,
+            runtime: { configTtlSeconds: 1 }, // 1 second TTL
+            meta: { ...snapshot.meta, configRevision: 1 },
+        };
+        const updated = config(0.7, '2026-07-30T00:10:00.000Z');
+        const remote = new RemoteConfigClient({
+            apiKey: 'key',
+            fetchImpl: async (input) => {
+                if (String(input).endsWith('/v1/init'))
+                    return response(initPayload(snapshotWithTtl));
+                refreshCalls++;
+                return response(updated);
+            },
+        });
+        const initial = await remote.initialize();
+        const manager = ConfigManager.getInstance();
+        manager.initialize(remote, initial.config);
+        // Wait 1.2s for the TTL timer to fire
+        await new Promise(resolve => setTimeout(resolve, 1200));
+        await manager.waitForRefresh();
+        assert.equal(refreshCalls, 1);
+        assert.equal(manager.getConfig().sampling.traces, 0.7);
+    });
 });
