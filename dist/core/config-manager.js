@@ -91,6 +91,8 @@ export class ConfigManager {
             return;
         if (httpStatus < 200 || httpStatus >= 300)
             return;
+        if (httpStatus !== 202 && (!isRecord(payload) || payload['status'] !== 202))
+            return;
         if (!isRecord(payload))
             return;
         const hasChange = payload['change'] === true || payload['config_u'] === true;
