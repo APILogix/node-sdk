@@ -63,8 +63,9 @@
  * unprotected window) doesn't poison replay.
  */
 
-import { existsSync, unlinkSync, statSync, readdirSync } from 'fs'
+import { existsSync, unlinkSync, statSync, readdirSync, createReadStream, createWriteStream } from 'fs'
 import { appendFile, copyFile, mkdir, readFile, readdir, rename, stat, unlink, writeFile } from 'fs/promises'
+import { createInterface } from 'readline'
 import { join, dirname } from 'path'
 import { tmpdir } from 'os'
 import { createHash } from 'crypto'
@@ -133,6 +134,7 @@ class PersistentStorage {
   /** Epoch ms of the most recent replay() completion. */
   private lastReplayAt = 0
   private writeChain: Promise<void> = Promise.resolve()
+  private persistedIds = new Set<string>()
 
   configure(options: PersistentStorageOptions = {}): void {
     if (options.enabled !== undefined) {
@@ -301,6 +303,20 @@ class PersistentStorage {
       await this.enqueueWrite(() => appendFile(this.dataFile, content, { encoding: 'utf8', mode: 0o600 }))
 
       this.totalPersisted += toFlush.length
+      for (const event of toFlush) {
+        if (event.eventId) {
+          this.persistedIds.add(event.eventId)
+        }
+      }
+      if (this.persistedIds.size > this.maxEvents * 2) {
+        const excess = this.persistedIds.size - this.maxEvents * 2
+        let evicted = 0
+        for (const id of this.persistedIds.keys()) {
+          this.persistedIds.delete(id)
+          evicted++
+          if (evicted >= excess) break
+        }
+      }
     } catch (error) {
       this.writeErrors++
       // Restore unflushed events to the head of the buffer so they are not lost
@@ -349,38 +365,89 @@ class PersistentStorage {
     this.buffer = this.buffer.filter(event => !deliveredIds.has(event.eventId ?? ''))
     const removedFromBuffer = beforeBuffer - this.buffer.length
 
-    if (!existsSync(this.dataFile)) {
-      // Nothing on disk — discard count is purely the buffer trim.
+    // Fast-path: Check if any delivered event ID was actually written to persistent storage.
+    // In normal operation, batches are delivered without ever being written to disk.
+    // If no delivered event was persisted to disk, avoid expensive readFile/parse/rewrite.
+    let hasPersistedDelivered = false
+    for (const id of deliveredIds) {
+      if (this.persistedIds.has(id)) {
+        hasPersistedDelivered = true
+        break
+      }
+    }
+
+    if (!hasPersistedDelivered || !existsSync(this.dataFile)) {
+      // Nothing on disk or delivered events were not persisted — discard count is purely the buffer trim.
       this.totalDiscarded += removedFromBuffer
       return
     }
 
     try {
-      const content = await withIoTimeout(
-        readFile(this.dataFile, { encoding: 'utf8' }),
-        this.ioTimeoutMs,
-        'persistent-storage discard read'
-      )
-      const retainedEntries: PersistedEventEntry[] = []
-      let removedFromDisk = 0
+      await this.enqueueWrite(async () => {
+        if (!existsSync(this.dataFile)) return
 
-      for (const line of content.split('\n')) {
-        if (line.trim().length === 0) continue
+        const tempFile = this.createTempFilePath()
+        let retainedCount = 0
+        let removedFromDisk = 0
+
         try {
-          const entry: PersistedEventEntry = JSON.parse(line)
-          if (deliveredIds.has(entry.event.eventId ?? '')) {
-            removedFromDisk++
-          } else {
-            retainedEntries.push(entry)
-          }
-        } catch {
-          // Drop malformed lines while compacting acknowledged events.
-        }
-      }
+          const readStream = createReadStream(this.dataFile, { encoding: 'utf8', highWaterMark: 64 * 1024 })
+          const writeStream = createWriteStream(tempFile, { encoding: 'utf8', mode: 0o600 })
+          const rl = createInterface({ input: readStream, crlfDelay: Infinity })
 
-      await this.rewriteEntries(retainedEntries)
-      this.eventCount = retainedEntries.length + this.buffer.length
-      this.totalDiscarded += removedFromBuffer + removedFromDisk
+          let lineCounter = 0
+          for await (const line of rl) {
+            const trimmed = line.trim()
+            if (trimmed.length === 0) continue
+
+            // Fast regex heuristic to extract eventId without full JSON.parse
+            const match = trimmed.match(/"eventId"\s*:\s*"([^"]+)"/)
+            let eid: string | undefined = match ? match[1] : undefined
+
+            if (!eid) {
+              try {
+                const entry: PersistedEventEntry = JSON.parse(trimmed)
+                eid = entry.event?.eventId
+              } catch {
+                // Drop malformed lines while compacting acknowledged events.
+                continue
+              }
+            }
+
+            if (eid && deliveredIds.has(eid)) {
+              removedFromDisk++
+              this.persistedIds.delete(eid)
+            } else {
+              writeStream.write(trimmed + '\n')
+              retainedCount++
+            }
+
+            lineCounter++
+            if (lineCounter % 250 === 0) {
+              await new Promise<void>(resolve => setImmediate(resolve))
+            }
+          }
+
+          await new Promise<void>((resolve, reject) => {
+            writeStream.end(() => resolve())
+            writeStream.on('error', reject)
+          })
+
+          if (retainedCount === 0) {
+            await unlink(this.dataFile).catch(() => {})
+            await unlink(tempFile).catch(() => {})
+            this.persistedIds.clear()
+          } else {
+            await safeAtomicRename(tempFile, this.dataFile)
+          }
+
+          this.eventCount = retainedCount + this.buffer.length
+          this.totalDiscarded += removedFromBuffer + removedFromDisk
+        } catch (streamErr) {
+          await unlink(tempFile).catch(() => {})
+          throw streamErr
+        }
+      })
     } catch (error) {
       getLogger().warn('Persistent storage: discard failed', { error })
     }
@@ -411,24 +478,39 @@ class PersistentStorage {
       const dirEntries = await readdir(this.directoryPath).catch(() => [] as string[])
       const prefix = this.filePrefix
 
-      // Match legacy un-pid'd files or orphaned pid files for this apiKeyHash
-      const candidateFiles: string[] = []
+      // Match legacy un-pid'd files, orphaned pid files, and rotated (.bak) files for this apiKeyHash
+      interface CandidateFile {
+        name: string
+        orderTimestamp: number
+      }
+      const candidateList: CandidateFile[] = []
+      const filePattern = new RegExp(`^${prefix}(?:-(\\d+))?\\.ndjson(?:\\.(\\d+)\\.bak)?$`)
+
       for (const entry of dirEntries) {
         if (entry.startsWith('.')) continue
 
-        if (entry === `${prefix}.ndjson`) {
-          candidateFiles.push(entry)
-          continue
-        }
+        const match = entry.match(filePattern)
+        if (!match) continue
 
-        const pidMatch = entry.match(new RegExp(`^${prefix}-(\\d+)\\.ndjson$`))
-        if (pidMatch && pidMatch[1]) {
-          const filePid = parseInt(pidMatch[1], 10)
-          if (filePid === process.pid || !isPidAlive(filePid)) {
-            candidateFiles.push(entry)
+        const pidStr = match[1]
+        const bakTimestampStr = match[2]
+
+        if (pidStr !== undefined) {
+          const filePid = parseInt(pidStr, 10)
+          if (filePid !== process.pid && isPidAlive(filePid)) {
+            // Belongs to an active sibling process; do not claim
+            continue
           }
         }
+
+        // Chronological order: older rotated backups first, active (.ndjson) last
+        const orderTimestamp = bakTimestampStr !== undefined ? parseInt(bakTimestampStr, 10) : Number.MAX_SAFE_INTEGER
+        candidateList.push({ name: entry, orderTimestamp })
       }
+
+      // Sort candidate files chronologically so older rotated segments are replayed before active files
+      candidateList.sort((a, b) => a.orderTimestamp - b.orderTimestamp)
+      const candidateFiles = candidateList.map(c => c.name)
 
       for (const fileName of candidateFiles) {
         const fullPath = join(this.directoryPath, fileName)
@@ -447,17 +529,17 @@ class PersistentStorage {
         if (!claimed) continue
 
         try {
-          const content = await withIoTimeout(
-            readFile(claimPath, { encoding: 'utf8' }),
-            this.ioTimeoutMs,
-            'persistent-storage replay read'
-          )
-          const lines = content.split('\n').filter(line => line.trim().length > 0)
-          totalLines += lines.length
+          const readStream = createReadStream(claimPath, { encoding: 'utf8', highWaterMark: 64 * 1024 })
+          const rl = createInterface({ input: readStream, crlfDelay: Infinity })
+          let lineCounter = 0
 
-          for (const line of lines) {
+          for await (const line of rl) {
+            const trimmed = line.trim()
+            if (trimmed.length === 0) continue
+            totalLines++
+
             try {
-              const entry: PersistedEventEntry = JSON.parse(line)
+              const entry: PersistedEventEntry = JSON.parse(trimmed)
               if (now - entry.persistedAt > this.eventTtlMs) {
                 this.totalExpired++
                 continue
@@ -466,6 +548,11 @@ class PersistentStorage {
             } catch {
               // Skip malformed lines
               continue
+            }
+
+            lineCounter++
+            if (lineCounter % 250 === 0) {
+              await new Promise<void>(resolve => setImmediate(resolve))
             }
           }
         } finally {
@@ -554,6 +641,7 @@ class PersistentStorage {
 
     this.buffer = []
     this.eventCount = 0
+    this.persistedIds.clear()
 
     try {
       if (existsSync(this.dataFile)) {

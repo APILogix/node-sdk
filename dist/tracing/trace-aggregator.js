@@ -39,6 +39,7 @@
 import { getLogger } from '../utils/logger.js';
 import { processEvent } from '../core/event-pipeline.js';
 import { spanDurationTracker } from './span-duration.js';
+import { generateId } from '../utils/uuid.js';
 // ─── TraceAggregator ────────────────────────────────────────────────────────
 export class TraceAggregator {
     pending = new Map();
@@ -251,6 +252,11 @@ export class TraceAggregator {
                 return;
             invoked = true;
             clearTimeout(safetyTimer);
+            if (trace.childCompletionListeners) {
+                const idx = trace.childCompletionListeners.indexOf(wrappedCallback);
+                if (idx !== -1)
+                    trace.childCompletionListeners.splice(idx, 1);
+            }
             callback();
         };
         trace.childCompletionListeners.push(wrappedCallback);
@@ -519,7 +525,7 @@ export class TraceAggregator {
             const isTailPromoted = !isHeadSampled && (hasError || isSlow);
             const traceDocument = {
                 type: 'trace',
-                eventId: `trace_${traceId}`,
+                eventId: generateId(),
                 traceId,
                 rootSpan: rootAggregated,
                 spanCount: spans.length,

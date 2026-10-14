@@ -60,6 +60,7 @@ export declare class PersistenceGovernor {
     private skippedByBudget;
     private skippedSinceLastBudgetLog;
     private lastBudgetExceededLogAt;
+    private lastPruneAt;
     constructor(options?: PersistenceGovernorOptions);
     /**
      * Apply the backend-owned persistence governance policy from remote config.
@@ -94,6 +95,7 @@ export declare class PersistenceGovernor {
      * This prevents non-deterministic replay behavior.
      */
     private deterministicSample;
+    private pruneExpired;
     private isOverBudget;
     private getCurrentPersistRate;
     private recordPersist;

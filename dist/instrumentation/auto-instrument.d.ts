@@ -46,7 +46,7 @@ export declare function registerAutoInstrumentations(): void;
  * - Every instrumentation factory is individually isolated in a safe try-catch.
  * - Missing or throwing optional dependencies never bubble up.
  * - The entire bootstrap routine is wrapped in a fail-open boundary so that
- *   importing `@pulse-apm/node` can never crash host application startup.
+ *   importing `@lynktrace/node` can never crash host application startup.
  */
 export declare function registerBootstrapAutoInstrumentations(): void;
 /**

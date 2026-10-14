@@ -84,6 +84,10 @@ export declare class CostGovernor {
      */
     shouldReduceTelemetry(): boolean;
     getStats(): CostStats;
+    /**
+     * Start the background cleanup timer if not running.
+     */
+    start(): void;
     shutdown(): void;
     private getCurrentBytesPerMinute;
     private evictOldestTraces;

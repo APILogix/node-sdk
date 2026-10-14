@@ -56,6 +56,7 @@ import {
 import { TRACING_DEFAULTS } from '../constants/internal-defaults.js'
 import { PulseSpan, type SpanOptions, type SpanLink, type SpanKindName } from './span.js'
 import { getLogger } from '../utils/logger.js'
+import { generateId } from '../utils/uuid.js'
 import type { RemoteConfigResponse } from '../types/config.js'
 import { processEvent, drainPendingEventProcessing } from '../core/event-pipeline.js'
 import {
@@ -310,7 +311,7 @@ function spanToEvent(span: ReadableSpan): Record<string, unknown> {
 
     return {
         type: 'span',
-        eventId: `span_${ctx.spanId}`,
+        eventId: generateId(),
         spanId: ctx.spanId,
         traceId: ctx.traceId,
         parentSpanId,

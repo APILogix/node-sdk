@@ -17,12 +17,12 @@ export function safeJsonReplacer(_key: string, value: unknown): unknown {
  */
 export function safeJsonStringify(value: unknown, space?: string | number): string {
   try {
-    return JSON.stringify(value, safeJsonReplacer, space)
+    return space !== undefined ? JSON.stringify(value, undefined, space) : JSON.stringify(value)
   } catch (_err) {
     const seen = new WeakSet<object>()
     return JSON.stringify(
       value,
-      (key, val) => {
+      (_key, val) => {
         if (typeof val === 'bigint') {
           return val.toString()
         }

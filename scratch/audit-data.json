@@ -1,0 +1,980 @@
+{
+  "dependencies": [
+    {
+      "pkgName": "@fastify/otel",
+      "srcMatches": [
+        {
+          "file": "src/instrumentation/auto-instrument.ts",
+          "count": 1,
+          "type": "import/require"
+        }
+      ],
+      "testMatches": [],
+      "scriptMatches": [],
+      "rootConfigMatches": []
+    },
+    {
+      "pkgName": "@opentelemetry/api",
+      "srcMatches": [
+        {
+          "file": "src/capture/captureException.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "src/capture/captureRequest.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "src/core/context.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "src/core/remote-config-client.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "src/core/scope.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "src/core/worker-context.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "src/instrumentation/auto-instrument.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "src/instrumentation/axios.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "src/instrumentation/event-emitter-patch.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "src/instrumentation/express.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "src/instrumentation/fastify.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "src/instrumentation/mongodb.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "src/instrumentation/mongoose.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "src/instrumentation/nodemailer.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "src/instrumentation/pg.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "src/instrumentation/prisma.ts",
+          "count": 2,
+          "type": "import/require"
+        },
+        {
+          "file": "src/metrics/otel-adapter.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "src/subsystems/cron-subsystem.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "src/subsystems/profiling-subsystem.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "src/tracing/context-propagation.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "src/tracing/db-span.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "src/tracing/remote-config-sampler.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "src/tracing/span.ts",
+          "count": 3,
+          "type": "import/require"
+        },
+        {
+          "file": "src/tracing/tracer.ts",
+          "count": 4,
+          "type": "import/require"
+        },
+        {
+          "file": "src/transport/batch-manager.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "src/transport/http.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "src/utils/logger.ts",
+          "count": 1,
+          "type": "import/require"
+        }
+      ],
+      "testMatches": [
+        {
+          "file": "tests/integration/axios-trace-propagation.test.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "tests/integration/background-trace.test.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "tests/integration/database-drivers.test.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "tests/integration/natural-batch-processing.test.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "tests/integration/tracing-adversarial-audit.test.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "tests/unit/comprehensive-subsystems-edge-cases.test.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "tests/unit/db-autoinstrumentation-e2e.test.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "tests/unit/db-request-tracing.test.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "tests/unit/mongodb-startup-filter.test.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "tests/unit/mongoose-trace-instrumentation.test.ts",
+          "count": 2,
+          "type": "import/require"
+        },
+        {
+          "file": "tests/unit/nodemailer-instrumentation.test.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "tests/unit/prisma-instrumentation.test.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "tests/unit/sampling-architecture.test.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "tests/unit/trace-error-correlation.test.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "tests/unit/trace-span.test.ts",
+          "count": 1,
+          "type": "import/require"
+        }
+      ],
+      "scriptMatches": [],
+      "rootConfigMatches": []
+    },
+    {
+      "pkgName": "@opentelemetry/context-async-hooks",
+      "srcMatches": [
+        {
+          "file": "src/tracing/tracer.ts",
+          "count": 1,
+          "type": "import/require"
+        }
+      ],
+      "testMatches": [],
+      "scriptMatches": [],
+      "rootConfigMatches": []
+    },
+    {
+      "pkgName": "@opentelemetry/core",
+      "srcMatches": [
+        {
+          "file": "src/core/remote-config-client.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "src/metrics/otel-adapter.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "src/subsystems/cron-subsystem.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "src/tracing/context-propagation.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "src/tracing/tracer.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "src/transport/batch-manager.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "src/transport/http.ts",
+          "count": 1,
+          "type": "import/require"
+        }
+      ],
+      "testMatches": [],
+      "scriptMatches": [],
+      "rootConfigMatches": []
+    },
+    {
+      "pkgName": "@opentelemetry/instrumentation",
+      "srcMatches": [
+        {
+          "file": "src/instrumentation/auto-instrument.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "src/instrumentation/mongoose.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "src/instrumentation/nodemailer.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "src/instrumentation/prisma.ts",
+          "count": 1,
+          "type": "import/require"
+        }
+      ],
+      "testMatches": [],
+      "scriptMatches": [],
+      "rootConfigMatches": []
+    },
+    {
+      "pkgName": "@opentelemetry/instrumentation-express",
+      "srcMatches": [
+        {
+          "file": "src/instrumentation/auto-instrument.ts",
+          "count": 1,
+          "type": "import/require"
+        }
+      ],
+      "testMatches": [
+        {
+          "file": "tests/unit/trace-error-correlation.test.ts",
+          "count": 1,
+          "type": "string-reference"
+        }
+      ],
+      "scriptMatches": [],
+      "rootConfigMatches": []
+    },
+    {
+      "pkgName": "@opentelemetry/instrumentation-graphql",
+      "srcMatches": [
+        {
+          "file": "src/instrumentation/auto-instrument.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "src/instrumentation/graphql.ts",
+          "count": 2,
+          "type": "import/require"
+        }
+      ],
+      "testMatches": [],
+      "scriptMatches": [],
+      "rootConfigMatches": []
+    },
+    {
+      "pkgName": "@opentelemetry/instrumentation-http",
+      "srcMatches": [
+        {
+          "file": "src/instrumentation/auto-instrument.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "src/instrumentation/http-lifecycle-guard.ts",
+          "count": 3,
+          "type": "string-reference"
+        }
+      ],
+      "testMatches": [],
+      "scriptMatches": [],
+      "rootConfigMatches": []
+    },
+    {
+      "pkgName": "@opentelemetry/instrumentation-ioredis",
+      "srcMatches": [
+        {
+          "file": "src/instrumentation/redis.ts",
+          "count": 1,
+          "type": "import/require"
+        }
+      ],
+      "testMatches": [],
+      "scriptMatches": [],
+      "rootConfigMatches": []
+    },
+    {
+      "pkgName": "@opentelemetry/instrumentation-mongodb",
+      "srcMatches": [
+        {
+          "file": "src/instrumentation/auto-instrument.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "src/instrumentation/mongodb.ts",
+          "count": 2,
+          "type": "import/require"
+        }
+      ],
+      "testMatches": [],
+      "scriptMatches": [],
+      "rootConfigMatches": []
+    },
+    {
+      "pkgName": "@opentelemetry/instrumentation-mysql2",
+      "srcMatches": [
+        {
+          "file": "src/instrumentation/mysql.ts",
+          "count": 2,
+          "type": "import/require"
+        }
+      ],
+      "testMatches": [],
+      "scriptMatches": [],
+      "rootConfigMatches": []
+    },
+    {
+      "pkgName": "@opentelemetry/instrumentation-pg",
+      "srcMatches": [
+        {
+          "file": "src/instrumentation/pg.ts",
+          "count": 2,
+          "type": "import/require"
+        }
+      ],
+      "testMatches": [],
+      "scriptMatches": [],
+      "rootConfigMatches": []
+    },
+    {
+      "pkgName": "@opentelemetry/instrumentation-redis",
+      "srcMatches": [
+        {
+          "file": "src/instrumentation/auto-instrument.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "src/instrumentation/redis.ts",
+          "count": 2,
+          "type": "import/require"
+        }
+      ],
+      "testMatches": [],
+      "scriptMatches": [],
+      "rootConfigMatches": []
+    },
+    {
+      "pkgName": "@opentelemetry/instrumentation-undici",
+      "srcMatches": [
+        {
+          "file": "src/instrumentation/auto-instrument.ts",
+          "count": 1,
+          "type": "import/require"
+        }
+      ],
+      "testMatches": [],
+      "scriptMatches": [],
+      "rootConfigMatches": []
+    },
+    {
+      "pkgName": "@opentelemetry/resources",
+      "srcMatches": [
+        {
+          "file": "src/metrics/otel-adapter.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "src/tracing/tracer.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "src/utils/resource-detector.ts",
+          "count": 1,
+          "type": "import/require"
+        }
+      ],
+      "testMatches": [],
+      "scriptMatches": [],
+      "rootConfigMatches": []
+    },
+    {
+      "pkgName": "@opentelemetry/sdk-metrics",
+      "srcMatches": [
+        {
+          "file": "src/metrics/otel-adapter.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "src/metrics/pulse-metric-reader.ts",
+          "count": 1,
+          "type": "import/require"
+        }
+      ],
+      "testMatches": [],
+      "scriptMatches": [],
+      "rootConfigMatches": []
+    },
+    {
+      "pkgName": "@opentelemetry/sdk-trace-base",
+      "srcMatches": [
+        {
+          "file": "src/tracing/remote-config-sampler.ts",
+          "count": 2,
+          "type": "import/require"
+        },
+        {
+          "file": "src/tracing/tracer.ts",
+          "count": 1,
+          "type": "import/require"
+        }
+      ],
+      "testMatches": [
+        {
+          "file": "tests/unit/db-autoinstrumentation-e2e.test.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "tests/unit/mongodb-startup-filter.test.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "tests/unit/mongoose-trace-instrumentation.test.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "tests/unit/nodemailer-instrumentation.test.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "tests/unit/prisma-instrumentation.test.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "tests/unit/sampling-architecture.test.ts",
+          "count": 1,
+          "type": "import/require"
+        }
+      ],
+      "scriptMatches": [],
+      "rootConfigMatches": []
+    },
+    {
+      "pkgName": "@opentelemetry/sdk-trace-node",
+      "srcMatches": [
+        {
+          "file": "src/tracing/tracer.ts",
+          "count": 1,
+          "type": "import/require"
+        }
+      ],
+      "testMatches": [
+        {
+          "file": "tests/unit/db-autoinstrumentation-e2e.test.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "tests/unit/mongodb-startup-filter.test.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "tests/unit/mongoose-trace-instrumentation.test.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "tests/unit/nodemailer-instrumentation.test.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "tests/unit/prisma-instrumentation.test.ts",
+          "count": 1,
+          "type": "import/require"
+        }
+      ],
+      "scriptMatches": [],
+      "rootConfigMatches": []
+    },
+    {
+      "pkgName": "@opentelemetry/semantic-conventions",
+      "srcMatches": [
+        {
+          "file": "src/metrics/otel-adapter.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "src/tracing/tracer.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "src/utils/resource-detector.ts",
+          "count": 1,
+          "type": "import/require"
+        }
+      ],
+      "testMatches": [],
+      "scriptMatches": [],
+      "rootConfigMatches": []
+    },
+    {
+      "pkgName": "@prisma/instrumentation",
+      "srcMatches": [
+        {
+          "file": "src/instrumentation/auto-instrument.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "src/instrumentation/prisma.ts",
+          "count": 1,
+          "type": "import/require"
+        }
+      ],
+      "testMatches": [],
+      "scriptMatches": [],
+      "rootConfigMatches": []
+    },
+    {
+      "pkgName": "opentelemetry-instrumentation-bullmq",
+      "srcMatches": [
+        {
+          "file": "src/instrumentation/auto-instrument.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "src/instrumentation/bullmq.ts",
+          "count": 1,
+          "type": "import/require"
+        }
+      ],
+      "testMatches": [],
+      "scriptMatches": [],
+      "rootConfigMatches": []
+    },
+    {
+      "pkgName": "source-map-js",
+      "srcMatches": [
+        {
+          "file": "src/processors/source-map-resolver.ts",
+          "count": 1,
+          "type": "import/require"
+        }
+      ],
+      "testMatches": [],
+      "scriptMatches": [],
+      "rootConfigMatches": []
+    },
+    {
+      "pkgName": "zod",
+      "srcMatches": [
+        {
+          "file": "src/types/config.ts",
+          "count": 1,
+          "type": "import/require"
+        }
+      ],
+      "testMatches": [],
+      "scriptMatches": [],
+      "rootConfigMatches": []
+    }
+  ],
+  "devDependencies": [
+    {
+      "pkgName": "@types/express",
+      "srcMatches": [],
+      "testMatches": [],
+      "scriptMatches": [],
+      "rootConfigMatches": []
+    },
+    {
+      "pkgName": "@types/node",
+      "srcMatches": [],
+      "testMatches": [],
+      "scriptMatches": [],
+      "rootConfigMatches": []
+    },
+    {
+      "pkgName": "@types/pg",
+      "srcMatches": [],
+      "testMatches": [],
+      "scriptMatches": [],
+      "rootConfigMatches": []
+    },
+    {
+      "pkgName": "@typescript-eslint/parser",
+      "srcMatches": [],
+      "testMatches": [],
+      "scriptMatches": [],
+      "rootConfigMatches": []
+    },
+    {
+      "pkgName": "axios",
+      "srcMatches": [
+        {
+          "file": "src/core/config-validator.ts",
+          "count": 1,
+          "type": "string-reference"
+        },
+        {
+          "file": "src/instrumentation/axios.ts",
+          "count": 2,
+          "type": "import/require"
+        }
+      ],
+      "testMatches": [
+        {
+          "file": "tests/integration/axios-trace-propagation.test.ts",
+          "count": 1,
+          "type": "import/require"
+        }
+      ],
+      "scriptMatches": [],
+      "rootConfigMatches": []
+    },
+    {
+      "pkgName": "express",
+      "srcMatches": [
+        {
+          "file": "src/core/config-validator.ts",
+          "count": 1,
+          "type": "string-reference"
+        },
+        {
+          "file": "src/instrumentation/auto-instrument.ts",
+          "count": 2,
+          "type": "string-reference"
+        },
+        {
+          "file": "src/instrumentation/express.ts",
+          "count": 1,
+          "type": "import/require"
+        }
+      ],
+      "testMatches": [
+        {
+          "file": "tests/audit-suite/audit-http-comparative.test.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "tests/integration/background-trace.test.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "tests/integration/error-classification.test.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "tests/integration/error-http-status.test.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "tests/integration/http-load-benchmark.test.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "tests/integration/tracing-adversarial-audit.test.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "tests/unit/express-middleware-timing.test.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "tests/unit/worker-serialization-clone.test.ts",
+          "count": 1,
+          "type": "string-reference"
+        }
+      ],
+      "scriptMatches": [],
+      "rootConfigMatches": []
+    },
+    {
+      "pkgName": "fast-check",
+      "srcMatches": [],
+      "testMatches": [
+        {
+          "file": "tests/adversarial-differ.mjs",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "tests/unit/security-scrubber.test.ts",
+          "count": 1,
+          "type": "import/require"
+        }
+      ],
+      "scriptMatches": [],
+      "rootConfigMatches": []
+    },
+    {
+      "pkgName": "fastify",
+      "srcMatches": [
+        {
+          "file": "src/core/config-validator.ts",
+          "count": 1,
+          "type": "string-reference"
+        },
+        {
+          "file": "src/instrumentation/auto-instrument.ts",
+          "count": 2,
+          "type": "string-reference"
+        },
+        {
+          "file": "src/instrumentation/fastify.ts",
+          "count": 1,
+          "type": "string-reference"
+        }
+      ],
+      "testMatches": [
+        {
+          "file": "tests/integration/error-http-status.test.ts",
+          "count": 1,
+          "type": "import/require"
+        }
+      ],
+      "scriptMatches": [],
+      "rootConfigMatches": []
+    },
+    {
+      "pkgName": "ioredis",
+      "srcMatches": [
+        {
+          "file": "src/instrumentation/auto-instrument.ts",
+          "count": 3,
+          "type": "string-reference"
+        }
+      ],
+      "testMatches": [
+        {
+          "file": "tests/integration/database-drivers.test.ts",
+          "count": 2,
+          "type": "import/require"
+        },
+        {
+          "file": "tests/integration/esm-instrumentation.test.ts",
+          "count": 1,
+          "type": "import/require"
+        }
+      ],
+      "scriptMatches": [],
+      "rootConfigMatches": []
+    },
+    {
+      "pkgName": "nodemon",
+      "srcMatches": [],
+      "testMatches": [],
+      "scriptMatches": [],
+      "rootConfigMatches": []
+    },
+    {
+      "pkgName": "pg",
+      "srcMatches": [
+        {
+          "file": "src/core/config-validator.ts",
+          "count": 1,
+          "type": "string-reference"
+        },
+        {
+          "file": "src/instrumentation/auto-instrument.ts",
+          "count": 3,
+          "type": "string-reference"
+        },
+        {
+          "file": "src/instrumentation/pg.ts",
+          "count": 1,
+          "type": "string-reference"
+        }
+      ],
+      "testMatches": [
+        {
+          "file": "tests/integration/database-drivers.test.ts",
+          "count": 2,
+          "type": "import/require"
+        },
+        {
+          "file": "tests/integration/esm-instrumentation.test.ts",
+          "count": 1,
+          "type": "import/require"
+        },
+        {
+          "file": "tests/unit/db-request-tracing.test.ts",
+          "count": 1,
+          "type": "string-reference"
+        },
+        {
+          "file": "tests/unit/pg-pool-timing.test.ts",
+          "count": 1,
+          "type": "import/require"
+        }
+      ],
+      "scriptMatches": [],
+      "rootConfigMatches": []
+    },
+    {
+      "pkgName": "prettier",
+      "srcMatches": [],
+      "testMatches": [],
+      "scriptMatches": [],
+      "rootConfigMatches": []
+    },
+    {
+      "pkgName": "redis",
+      "srcMatches": [
+        {
+          "file": "src/core/config-validator.ts",
+          "count": 4,
+          "type": "string-reference"
+        },
+        {
+          "file": "src/instrumentation/auto-instrument.ts",
+          "count": 2,
+          "type": "string-reference"
+        },
+        {
+          "file": "src/instrumentation/redis.ts",
+          "count": 1,
+          "type": "string-reference"
+        },
+        {
+          "file": "src/tracing/db-span.ts",
+          "count": 1,
+          "type": "string-reference"
+        }
+      ],
+      "testMatches": [
+        {
+          "file": "tests/integration/database-drivers.test.ts",
+          "count": 2,
+          "type": "import/require"
+        },
+        {
+          "file": "tests/integration/esm-instrumentation.test.ts",
+          "count": 3,
+          "type": "string-reference"
+        },
+        {
+          "file": "tests/unit/db-request-tracing.test.ts",
+          "count": 9,
+          "type": "string-reference"
+        },
+        {
+          "file": "tests/unit/slow-query-tagging.test.ts",
+          "count": 1,
+          "type": "string-reference"
+        }
+      ],
+      "scriptMatches": [],
+      "rootConfigMatches": []
+    },
+    {
+      "pkgName": "typescript",
+      "srcMatches": [],
+      "testMatches": [],
+      "scriptMatches": [],
+      "rootConfigMatches": []
+    }
+  ]
+}

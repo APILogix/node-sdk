@@ -66,6 +66,11 @@ export declare class CardinalityGovernor {
     getStats(): CardinalityStats;
     reset(): void;
     /**
+     * Start the periodic eviction timer if not currently running.
+     * Safe to call multiple times.
+     */
+    start(): void;
+    /**
      * Stop the eviction timer. Call during SDK shutdown to prevent
      * the timer from holding the process alive.
      */

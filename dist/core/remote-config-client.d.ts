@@ -35,8 +35,8 @@ export declare class RemoteConfigClient {
     constructor(options: RemoteConfigClientOptions);
     /** Perform the one and only startup request. */
     initialize(): Promise<InitResponse>;
-    /** Download a complete replacement snapshot after a telemetry change signal. */
-    fetchLatest(): Promise<unknown>;
+    /** Download a complete replacement snapshot after a telemetry change signal or TTL expiry. */
+    fetchLatest(currentRevision?: number | null, currentHash?: string | null): Promise<unknown>;
     /**
      * Retries only transient startup failures. The configured init timeout is a
      * deadline for the entire sequence, not a timeout per attempt, so enabling

@@ -56,7 +56,7 @@ export class CostGovernor {
     // Span tracking per trace: Map<traceId, spanCount>
     private readonly traceSpanCounts = new Map<string, number>()
     private readonly traceTimestamps = new Map<string, number>()
-    private readonly maxTrackedTraces = 10_000
+    private readonly maxTrackedTraces = 2_000
 
     // Bytes tracking — sliding window (60s)
     private readonly byteWindows: Array<{ timestamp: number; bytes: number }> = []
@@ -225,6 +225,16 @@ export class CostGovernor {
     }
 
 
+    /**
+     * Start the background cleanup timer if not running.
+     */
+    start(): void {
+        if (!this.cleanupTimer) {
+            this.cleanupTimer = setInterval(() => this.cleanup(), 30_000)
+            this.cleanupTimer.unref()
+        }
+    }
+
     shutdown(): void {
         if (this.cleanupTimer) {
             clearInterval(this.cleanupTimer)
@@ -238,9 +248,14 @@ export class CostGovernor {
         const now = epochMs()
         const cutoff = now - this.windowDurationMs
 
-        // Clean expired entries
-        while (this.byteWindows.length > 0 && (this.byteWindows[0]?.timestamp ?? 0) < cutoff) {
-            this.byteWindows.shift()
+        // Clean expired entries in a single splice operation
+        let validStart = 0
+        const len = this.byteWindows.length
+        while (validStart < len && (this.byteWindows[validStart]?.timestamp ?? 0) < cutoff) {
+            validStart++
+        }
+        if (validStart > 0) {
+            this.byteWindows.splice(0, validStart)
         }
 
         let total = 0
@@ -251,15 +266,14 @@ export class CostGovernor {
     }
 
     private evictOldestTraces(): void {
-        // Remove oldest 10% of tracked traces
-        const toRemove = Math.floor(this.maxTrackedTraces * 0.1)
-        const sorted = [...this.traceTimestamps.entries()]
-            .sort((a, b) => a[1] - b[1])
-            .slice(0, toRemove)
-
-        for (const [traceId] of sorted) {
+        // Map iteration order is insertion order (chronological) — evict oldest entries without array allocations or sorting
+        const toRemove = Math.max(1, Math.floor(this.maxTrackedTraces * 0.1))
+        let count = 0
+        for (const traceId of this.traceTimestamps.keys()) {
             this.traceSpanCounts.delete(traceId)
             this.traceTimestamps.delete(traceId)
+            count++
+            if (count >= toRemove) break
         }
     }
 
@@ -277,8 +291,13 @@ export class CostGovernor {
 
         // Clean old byte windows
         const cutoff = now - this.windowDurationMs
-        while (this.byteWindows.length > 0 && (this.byteWindows[0]?.timestamp ?? 0) < cutoff) {
-            this.byteWindows.shift()
+        let validStart = 0
+        const len = this.byteWindows.length
+        while (validStart < len && (this.byteWindows[validStart]?.timestamp ?? 0) < cutoff) {
+            validStart++
+        }
+        if (validStart > 0) {
+            this.byteWindows.splice(0, validStart)
         }
     }
 }

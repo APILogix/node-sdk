@@ -87,7 +87,7 @@ export class TransportRouter {
             }
             TransportRouter.instance = null;
         }
-        SerializationPool.initialize(2);
+        SerializationPool.initialize(1);
         const router = new TransportRouter(config, apiKey, fetchImpl ?? fetch, limitsConfig);
         router.sendBatch(residual);
         TransportRouter.instance = router;

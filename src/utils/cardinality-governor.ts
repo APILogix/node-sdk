@@ -253,6 +253,17 @@ export class CardinalityGovernor {
     }
 
     /**
+     * Start the periodic eviction timer if not currently running.
+     * Safe to call multiple times.
+     */
+    start(): void {
+        if (!this.evictionTimer) {
+            this.evictionTimer = setInterval(() => this.evictStaleSeries(), CardinalityGovernor.EVICTION_INTERVAL_MS)
+            this.evictionTimer.unref()
+        }
+    }
+
+    /**
      * Stop the eviction timer. Call during SDK shutdown to prevent
      * the timer from holding the process alive.
      */

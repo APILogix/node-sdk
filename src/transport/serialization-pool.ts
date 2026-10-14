@@ -44,10 +44,37 @@ export class SerializationPool {
   private nextId = 0
   private started = false
 
-  constructor(private readonly poolSize = 2) {}
+  constructor(private readonly poolSize = 1) {}
+
+  public static readonly WORKER_OFFLOAD_THRESHOLD_BYTES = 50 * 1024 // 50KB
+
+  private static isLargeBatch(events: readonly unknown[]): boolean {
+    // Dynamic byte-based threshold: Offload to worker thread ONLY if estimated
+    // payload size meets or exceeds 50KB, regardless of whether remote config
+    // configured batchSize to 20, 100, or 1000.
+    let estimatedBytes = 0
+    for (let i = 0; i < events.length; i++) {
+      const ev = events[i] as any
+      if (!ev) continue
+      if (typeof ev === 'string') {
+        estimatedBytes += ev.length
+      } else if (typeof ev === 'object') {
+        if (typeof ev.message === 'string') estimatedBytes += ev.message.length
+        if (typeof ev.data === 'string') estimatedBytes += ev.data.length
+        if (typeof ev.stack === 'string') estimatedBytes += ev.stack.length
+        if (typeof ev.body === 'string') estimatedBytes += ev.body.length
+        if (typeof ev.payload === 'string') estimatedBytes += ev.payload.length
+        estimatedBytes += 200 // Base telemetry envelope overhead (timestamp, eventId, route, metadata)
+      }
+      if (estimatedBytes >= SerializationPool.WORKER_OFFLOAD_THRESHOLD_BYTES) {
+        return true
+      }
+    }
+    return false
+  }
 
   private startWorkers(): void {
-    if (this.started || this.destroyed) return
+    if (this.started || this.destroyed || this.poolSize <= 0) return
     this.started = true
     try {
       const workerUrl = new URL('./serialization-worker.js', import.meta.url)
@@ -116,7 +143,7 @@ export class SerializationPool {
     this.roundRobinIndex = 0
   }
 
-  static initialize(poolSize = 2) {
+  static initialize(poolSize = 1) {
     if (!SerializationPool.instance) {
       SerializationPool.instance = new SerializationPool(poolSize)
     }
@@ -143,9 +170,30 @@ export class SerializationPool {
   }
 
   async serializeBatch(options: SerializeBatchOptions): Promise<SerializeBatchResult> {
-    this.startWorkers()
+    if (this.destroyed) {
+      return this.fallbackSerializeBatch(options)
+    }
+
+    const isLarge = SerializationPool.isLargeBatch(options.events)
+
+    // Lazy initialization: Spawn worker threads ONLY when payload exceeds the offload
+    // threshold (e.g. >= 50KB or large batches).
+    // Small batches process in < 0.1ms on the main thread via libuv without inter-thread
+    // structured cloning overhead, avoiding 70MB-90MB of baseline RSS.
+    if (isLarge && !this.started && this.poolSize > 0) {
+      this.startWorkers()
+    }
+
+    // If workers were just launched, give them up to 150ms to become ready before falling back
+    if (isLarge && this.readyWorkers.size === 0 && this.workerEntries.length > 0) {
+      await Promise.race([
+        Promise.all(this.workerEntries.map(e => e.onlinePromise)),
+        new Promise(r => setTimeout(r, 150)),
+      ])
+    }
+
     const ready = [...this.readyWorkers]
-    if (ready.length === 0 || this.destroyed || this.pendingRequests.size >= MAX_PENDING_REQUESTS) {
+    if (ready.length === 0 || !isLarge || this.destroyed || this.pendingRequests.size >= MAX_PENDING_REQUESTS) {
       return this.fallbackSerializeBatch(options)
     }
 
@@ -226,6 +274,7 @@ export class SerializationPool {
 
   async shutdown(): Promise<void> {
     this.destroyed = true
+    this.started = false
 
     if (this.pendingRequests.size > 0) {
       const deadline = Date.now() + 500

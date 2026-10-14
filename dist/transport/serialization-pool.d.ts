@@ -27,6 +27,8 @@ export declare class SerializationPool {
     private nextId;
     private started;
     constructor(poolSize?: number);
+    static readonly WORKER_OFFLOAD_THRESHOLD_BYTES: number;
+    private static isLargeBatch;
     private startWorkers;
     private addWorker;
     private handleWorkerCrash;

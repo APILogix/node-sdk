@@ -89,8 +89,26 @@ class FileCache {
 /** Singleton file cache. */
 const fileCache = new FileCache(MAX_CACHED_FILES)
 
-/** Set of files that failed to load — avoid retrying. */
+/** Maximum number of failed file paths to remember. */
+const MAX_FAILED_FILES = 500
+
+/** Set of files that failed to load — avoid retrying. Bounded LRU-style eviction. */
 const failedFiles = new Set<string>()
+
+/** Inflight file read promises to deduplicate concurrent file reads. */
+const inflightLoads = new Map<string, Promise<readonly string[] | null>>()
+
+function markFailedFile(filename: string): void {
+  if (failedFiles.has(filename)) {
+    failedFiles.delete(filename)
+  } else if (failedFiles.size >= MAX_FAILED_FILES) {
+    const oldest = failedFiles.keys().next().value
+    if (oldest !== undefined) {
+      failedFiles.delete(oldest)
+    }
+  }
+  failedFiles.add(filename)
+}
 
 // ─── Public API ─────────────────────────────────────────────────────────────
 
@@ -195,6 +213,7 @@ function scrubLines(lines: readonly string[]): readonly string[] {
 export function resetSourceContextCache(): void {
   fileCache.clear()
   failedFiles.clear()
+  inflightLoads.clear()
 }
 
 // ─── Internal ───────────────────────────────────────────────────────────────
@@ -226,6 +245,21 @@ async function getFileLines(filename: string): Promise<readonly string[] | null>
   const cached = fileCache.get(filename)
   if (cached) return cached
 
+  // Deduplicate inflight file reads to avoid exhausting libuv threadpool during error bursts
+  const inflight = inflightLoads.get(filename)
+  if (inflight) return inflight
+
+  const loadPromise = doReadFileLines(filename)
+  inflightLoads.set(filename, loadPromise)
+
+  try {
+    return await loadPromise
+  } finally {
+    inflightLoads.delete(filename)
+  }
+}
+
+async function doReadFileLines(filename: string): Promise<readonly string[] | null> {
   // Read file with timeout
   try {
     const content = await withTimeout(
@@ -234,7 +268,7 @@ async function getFileLines(filename: string): Promise<readonly string[] | null>
     )
 
     if (content === null) {
-      failedFiles.add(filename)
+      markFailedFile(filename)
       return null
     }
 
@@ -248,7 +282,7 @@ async function getFileLines(filename: string): Promise<readonly string[] | null>
     fileCache.set(filename, frozenLines)
     return frozenLines
   } catch {
-    failedFiles.add(filename)
+    markFailedFile(filename)
     return null
   }
 }

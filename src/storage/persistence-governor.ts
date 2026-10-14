@@ -83,6 +83,7 @@ export class PersistenceGovernor {
   private skippedByBudget = 0
   private skippedSinceLastBudgetLog = 0
   private lastBudgetExceededLogAt = 0
+  private lastPruneAt = 0
 
   constructor(options: PersistenceGovernorOptions = {}) {
     this.maxPersistPerMinute = options.maxPersistPerMinute ?? DEFAULT_MAX_PERSIST_PER_MINUTE
@@ -205,6 +206,7 @@ export class PersistenceGovernor {
     this.skippedByBudget = 0
     this.skippedSinceLastBudgetLog = 0
     this.lastBudgetExceededLogAt = 0
+    this.lastPruneAt = 0
     this.persistWindows.length = 0
   }
 
@@ -257,24 +259,42 @@ export class PersistenceGovernor {
     return (Math.abs(hash) % 100) < (rate * 100)
   }
 
+  private pruneExpired(now: number, force = false): void {
+    if (!force && now - this.lastPruneAt < 100 && this.persistWindows.length < 1000) {
+      return
+    }
+    this.lastPruneAt = now
+
+    const cutoff = now - this.windowDurationMs
+    let validStart = 0
+    const len = this.persistWindows.length
+    while (validStart < len && (this.persistWindows[validStart]?.timestamp ?? 0) < cutoff) {
+      validStart++
+    }
+
+    if (validStart > 0) {
+      this.persistWindows.splice(0, validStart)
+    }
+  }
+
   private isOverBudget(): boolean {
     return this.getCurrentPersistRate() >= this.maxPersistPerMinute
   }
 
   private getCurrentPersistRate(): number {
     const now = epochMs()
-    const cutoff = now - this.windowDurationMs
-
-    // Clean expired entries
-    while (this.persistWindows.length > 0 && (this.persistWindows[0]?.timestamp ?? 0) < cutoff) {
-      this.persistWindows.shift()
-    }
-
+    this.pruneExpired(now, true)
     return this.persistWindows.length
   }
 
   private recordPersist(): void {
-    this.persistWindows.push({ timestamp: epochMs() })
+    const now = epochMs()
+    this.pruneExpired(now)
+    // Only track timestamps up to 2x budget to prevent unbounded memory growth during error storms
+    const maxTracked = Math.max(1000, this.maxPersistPerMinute * 2)
+    if (this.persistWindows.length < maxTracked) {
+      this.persistWindows.push({ timestamp: now })
+    }
     this.totalPersisted++
   }
 }

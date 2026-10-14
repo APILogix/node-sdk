@@ -14,18 +14,29 @@
 - [1. Overview & Architecture](#1-overview--architecture)
 - [2. Requirements](#2-requirements)
 - [3. Installation](#3-installation)
-- [4. Quick Start](#4-quick-start)
+- [4. Quick Start by Environment](#4-quick-start-by-environment)
   - [Minimal Node.js Example](#minimal-nodejs-example)
   - [Express.js Application](#expressjs-application)
   - [Fastify Application](#fastify-application)
+  - [Serverless & AWS Lambda (`wrapHandler`)](#serverless--aws-lambda-wraphandler)
+  - [NestJS Application](#nestjs-application)
+  - [Background Workers & Job Queues (BullMQ / CLI)](#background-workers--job-queues-bullmq--cli)
 - [5. Process Bootstrap & Zero-Code Preload](#5-process-bootstrap--zero-code-preload)
 - [6. Initialization (`init`)](#6-initialization-init)
   - [Complete `init()` Options Reference](#complete-init-options-reference)
   - [Fail-Open Initialization & Recovery Behavior](#fail-open-initialization--recovery-behavior)
-- [7. Remote Configuration Directives](#7-remote-configuration-directives)
-- [8. Automatic Instrumentation](#8-automatic-instrumentation)
-- [9. Complete API Reference by Domain](#9-complete-api-reference-by-domain)
-  - [A. Lifecycle & Operational Health](#a-lifecycle--operational-health)
+- [7. Feature Control & Toggles: What to Use and How to Turn Off Features](#7-feature-control--toggles-what-to-use-and-how-to-turn-off-features)
+  - [Disabling Subsystems via Remote Config or Local Flags](#disabling-subsystems-via-remote-config-or-local-flags)
+  - [Disabling Disk Storage / Offline Queue (Serverless & Read-Only Disks)](#disabling-disk-storage--offline-queue-serverless--read-only-disks)
+  - [Disabling Specific Auto-Instrumentations](#disabling-specific-auto-instrumentations)
+  - [Emergency Operational Killswitches](#emergency-operational-killswitches)
+  - [Sampling Controls & Per-Route Overrides](#sampling-controls--per-route-overrides)
+  - [Cost Governor, Rate Limits & Metric Cardinality Caps](#cost-governor-rate-limits--metric-cardinality-caps)
+  - [Privacy & PII Scrubbing Toggles](#privacy--pii-scrubbing-toggles)
+- [8. Remote Configuration Directives](#8-remote-configuration-directives)
+- [9. Automatic Instrumentation](#9-automatic-instrumentation)
+- [10. Complete API Reference by Domain](#10-complete-api-reference-by-domain)
+  - [A. Lifecycle, Serverless & Operational Health](#a-lifecycle-serverless--operational-health)
   - [B. Event & Exception Capture](#b-event--exception-capture)
   - [C. OpenTelemetry Metrics Instruments](#c-opentelemetry-metrics-instruments)
   - [D. Scope, Tags, User & Breadcrumbs](#d-scope-tags-user--breadcrumbs)
@@ -35,9 +46,13 @@
   - [H. Driver Instrumentation Factories & Helpers](#h-driver-instrumentation-factories--helpers)
   - [I. Diagnostic Logging & Error Classification](#i-diagnostic-logging--error-classification)
   - [J. Canonical `Pulse` Facade Object](#j-canonical-pulse-facade-object)
-- [10. Express.js Deep Dive](#10-expressjs-deep-dive)
-  - [Enabling Middleware Duration Profiling (`instrumentMiddleware: true`)](#enabling-middleware-duration-profiling-instrumentmiddleware-true)
-- [11. Fastify Deep Dive](#11-fastify-deep-dive)
+- [11. Server & Runtime Deployment Guides](#11-server--runtime-deployment-guides)
+  - [Express.js Deep Dive](#expressjs-deep-dive)
+  - [Fastify Deep Dive](#fastify-deep-dive)
+  - [Serverless & Cloud Functions Deep Dive (AWS Lambda, Vercel, GCP)](#serverless--cloud-functions-deep-dive-aws-lambda-vercel-gcp)
+  - [NestJS Deep Dive](#nestjs-deep-dive)
+  - [Native Node.js HTTP / HTTPS](#native-nodejs-http--https)
+  - [Background Job Processors & Queues](#background-job-processors--queues)
 - [12. Database Instrumentation & Slow Query Tagging](#12-database-instrumentation--slow-query-tagging)
 - [13. Detached Background Task Tracing (`withBackgroundSpan`)](#13-detached-background-task-tracing-withbackgroundspan)
 - [14. Cron & Job Monitoring (`captureCronCheckIn`)](#14-cron--job-monitoring-capturecroncheckin)
@@ -214,7 +229,104 @@ fastify.get('/api/users/:id', async (request, reply) => {
   return { id: (request.params as any).id }
 })
 
-await fastify.listen({ port: 3000, host: '0.0.0.0' })
+```
+
+### Serverless & AWS Lambda (`wrapHandler`)
+
+In serverless runtimes (AWS Lambda, Vercel, Google Cloud Functions), background timers freeze immediately when the handler returns. Use **`wrapHandler`** to set `callbackWaitsForEmptyEventLoop = false` and guarantee synchronous in-memory HTTP flushing of all traces and errors before the container freezes:
+
+```ts
+import { init, wrapHandler } from '@pulse-apm/node'
+
+// Initialize once during Lambda cold start (outside the handler)
+await init({
+  apiKey: process.env.PULSE_API_KEY!,
+  applicationName: 'order-processor-fn',
+  // Disable disk storage since serverless runtimes are stateless or have read-only filesystems:
+  offlineQueue: false,
+})
+
+// Wrap your handler function:
+export const handler = wrapHandler(async (event: any, context: any) => {
+  const orderId = event.pathParameters?.id
+  return {
+    statusCode: 200,
+    body: JSON.stringify({ message: `Order ${orderId} processed` }),
+  }
+}, {
+  flushTimeoutMs: 1500, // Maximum ms to wait for HTTP flush before lambda responds
+  captureErrors: true,  // Automatically captures unhandled exceptions with captureException
+})
+```
+
+### NestJS Application
+
+In NestJS, initialize Pulse in `main.ts` before creating the Nest application, mount `pulseMiddleware`, and bind a global exception filter:
+
+```ts
+import { NestFactory } from '@nestjs/core'
+import { AppModule } from './app.module'
+import { init, pulseMiddleware, expressErrorHandler, captureException } from '@pulse-apm/node'
+import { ExceptionFilter, Catch, ArgumentsHost, HttpException, HttpStatus } from '@nestjs/common'
+
+await init({
+  apiKey: process.env.PULSE_API_KEY!,
+  applicationName: 'nest-backend',
+})
+
+// Global Exception Filter for unhandled NestJS exceptions
+@Catch()
+export class PulseExceptionFilter implements ExceptionFilter {
+  catch(exception: unknown, host: ArgumentsHost) {
+    const ctx = host.switchToHttp()
+    const response = ctx.getResponse()
+    const status = exception instanceof HttpException ? exception.getStatus() : HttpStatus.INTERNAL_SERVER_ERROR
+
+    if (status >= 500) {
+      captureException(exception)
+    }
+
+    response.status(status).json({
+      statusCode: status,
+      timestamp: new Date().toISOString(),
+    })
+  }
+}
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule)
+  app.use(pulseMiddleware({ instrumentMiddleware: true }))
+  app.useGlobalFilters(new PulseExceptionFilter())
+  await app.listen(3000)
+}
+bootstrap()
+```
+
+### Background Workers & Job Queues (BullMQ / CLI)
+
+For queues, cron jobs, or batch CLI scripts, use `withBackgroundSpan` and call `await flush()` before process exit:
+
+```ts
+import { init, withBackgroundSpan, captureException, flush } from '@pulse-apm/node'
+import { Worker } from 'bullmq'
+
+await init({
+  apiKey: process.env.PULSE_API_KEY!,
+  applicationName: 'email-worker',
+})
+
+const worker = new Worker('emails', async (job) => {
+  return await withBackgroundSpan(`processJob:${job.name}`, async (span) => {
+    span.setAttribute('job.id', job.id!)
+    span.setAttribute('job.name', job.name)
+    try {
+      await sendEmail(job.data)
+    } catch (err) {
+      captureException(err)
+      throw err
+    }
+  })
+})
 ```
 
 ---
@@ -248,38 +360,63 @@ import { init } from '@pulse-apm/node'
 
 const config = await init({
   apiKey: process.env.PULSE_API_KEY!,
-  endpoint: 'https://ingest.pulse-apm.com',
   applicationName: 'payment-gateway',
   applicationVersion: '2.4.0',
-  environment: 'production',
   debug: false,
 })
 ```
 
+> [!NOTE]
+> **Remote vs. Local Configuration Boundary**:
+> - **Ingestion Endpoint**: Configured via the `PULSE_ENDPOINT` or `SDK_BASE_URL` environment variables (default: `https://api.pulse.dev`).
+> - **Environment**: Authoritatively assigned by the control plane based on your API key (defaults to `'production'` during initial bootstrap).
+> - **In-Memory Queue Ceilings & Eviction**: Controlled centrally by Remote Configuration (`config.limits.maxQueueSize`, `config.transport.queue.maxSize`, `config.transport.queue.overflowStrategy: 'drop_oldest' | 'drop_newest'`) to prevent memory exhaustion on client hosts.
+> - **Disk Queue Size**: Configured locally via the `offlineQueue` option (see below).
+
 ### Complete `init()` Options Reference
 
-The options object passed to `init()` is strictly validated using Zod. Passing unsupported keys triggers a validation error and places the SDK into dormant recovery mode.
+The options object passed to `init()` is strictly validated using Zod (`sdkInitOptionsSchema.strict()`). Passing unrecognized keys triggers an `INVALID_INIT_OPTIONS` validation error and places the SDK into dormant recovery mode.
 
 | Parameter | Type | Required | Default | Description | Constraints |
 |---|---|---|---|---|---|
-| `apiKey` | `string` | **Yes** | — | Project API authentication token. | Non-empty; printable ASCII only. |
-| `endpoint` | `string` | No | `'https://api.pulse.dev'` | Base ingestion server URL. | Must be valid HTTP/HTTPS URL. |
-| `applicationName` | `string` | No | `'node-application'` | Service name for traces and metrics. | Max 128 characters. |
-| `applicationVersion` | `string` | No | `'0.0.0'` | Release version (e.g. `'1.2.0'`). | Semantic version or Git SHA. |
-| `environment` | `string` | No | `process.env.NODE_ENV` or `'production'` | Target environment (e.g. `'production'`, `'staging'`). | Max 64 characters. |
+| `apiKey` | `string` | **Yes** | — | Project API authentication token. | Non-empty printable string. |
+| `applicationName` | `string` | No | Auto from `package.json` | Name of your service or application. | Trimmed string. |
+| `applicationVersion` | `string` | No | Auto from `package.json` | Release version of your application. | Trimmed string. |
+| `packageJsonPath` | `string` | No | `undefined` (cwd traversal) | Explicit filesystem path to `package.json` for custom layouts or monorepos. | Trimmed path string. |
 | `debug` | `boolean` | No | `false` | Enables verbose diagnostic console logging. | Boolean. |
-| `serverName` | `string` | No | `os.hostname()` | Host machine or container identifier. | Max 128 characters. |
-| `initTimeoutMs` | `number` | No | `3000` | Maximum wait time (ms) for `/v1/init` on cold start before continuing in background recovery. | Minimum `100`ms. |
-| `shutdownTimeoutMs`| `number` | No | `5000` | Maximum wait time (ms) allowed for graceful shutdown and buffer flushing. | Minimum `500`ms. |
-| `maxQueueSize` | `number` | No | `10000` | Maximum number of events buffered in memory before dropping low-priority telemetry. | Positive integer. |
-| `dropStrategy` | `'drop_oldest' \| 'drop_newest'` | No | `'drop_oldest'` | Queue eviction policy when maxQueueSize is reached. | Fatal errors are always protected. |
-| `logger` | `PulseLogger` | No | Internal Console Logger | Custom logger adapter implementing `debug`, `info`, `warn`, `error`. | Must implement logging interface. |
-| `logLevel` | `'debug' \| 'info' \| 'warn' \| 'error'` | No | `'info'` | Minimum severity level for SDK diagnostic output. | Enum. |
+| `logLevel` | `'debug' \| 'info' \| 'warning' \| 'error' \| 'fatal'` | No | `'info'` | Minimum severity level for SDK diagnostic output. | Enum. |
+| `initTimeoutMs` | `number` | No | `3000` | Maximum wait time (ms) for `/v1/init` on cold start before entering dormant recovery. | Integer `100` – `30000`ms. |
+| `initRetries` | `number` | No | `2` | Number of retries for transient `/v1/init` failures within `initTimeoutMs`. | Integer `0` – `3`. |
+| `shutdownTimeoutMs`| `number` | No | `10000` | Maximum wait time (ms) allowed for graceful shutdown and buffer flushing. | Integer `1000` – `60000`ms. |
+| `crashTimeoutMs` | `number` | No | `2000` | Maximum wait time (ms) for emergency telemetry drain on fatal unhandled crashes. | Integer `100` – `30000`ms. |
+| `handleSignals` | `boolean` | No | `true` | Automatically registers `SIGTERM` and `SIGINT` process listeners. Set `false` in serverless/Lambda. | Boolean. |
+| `exitOnUncaughtException` | `boolean` | No | `true` | Whether to terminate the process after an `uncaughtException` once flush completes. Set `false` in test runners. | Boolean. |
+| `onFatalError` | `(error: Error) => void` | No | — | Optional callback invoked immediately prior to process termination on fatal exceptions. | Function. |
+| `offlineQueue` | `boolean \| OfflineQueueInitOptions` | No | `true` | Controls disk persistence fallback. Pass `false` to disable disk storage completely (recommended for serverless/Lambda). | Boolean or Options Object (see below). |
+| `beforeSend` | `(event) => event \| null` | No | — | Pre-transport inspection hook. Return `null` to drop the event, or return a modified event object. | Synchronous or async function. |
+| `beforeBreadcrumb` | `(crumb, hint?) => crumb \| null` | No | — | Ring-buffer hook to filter or mutate breadcrumbs before storage. Return `null` to drop. | Synchronous function. |
 | `plugins` | `SDKPlugin[]` | No | `[]` | Custom SDK plugin interceptors. | Valid plugin implementations. |
 | `eventProcessors` | `EventProcessor[]` | No | `[]` | Pipeline hooks to mutate or enrich events prior to transport. | Functions returning modified event or null. |
-| `breadcrumbProcessors` | `BreadcrumbProcessor[]` | No | `[]` | Hooks to filter or modify breadcrumbs before ring-buffer storage. | Functions returning modified breadcrumb or null. |
-| `logFormat` | `'json' \| 'pretty'` | No | `'json'` | Diagnostic log output format. | Enum. |
-| `network` | `NetworkOptions` | No | `{ timeoutMs: 5000, maxRetries: 3 }` | HTTP client options for control-plane requests. | Object. |
+| `sourceMaps` | `SourceMapOptions` | No | Auto-detected | Local/remote source-map resolution for error stack traces. | `{ paths?: string[], allowRemote?: boolean, embedSourceContent?: boolean }`. |
+
+#### `offlineQueue` Configuration (Disk Queue Size & Limits)
+
+When configuring the persistent offline queue in `init()`, you can customize disk queue size, capacity, and retention:
+
+```ts
+await init({
+  apiKey: process.env.PULSE_API_KEY!,
+  offlineQueue: {
+    enabled: true,
+    directory: '.pulse-spool',          // Local directory for spool files (default: ~/.pulse-sdk/events or /tmp on serverless)
+    maxEvents: 10000,                   // Disk queue capacity (1 - 100,000 events)
+    maxFileSizeBytes: 10 * 1024 * 1024, // 10MB maximum spool file size (1KB - 100MB)
+    eventTtlMs: 24 * 60 * 60 * 1000,    // Event time-to-live before expiration (1 min - 7 days)
+    ioTimeoutMs: 5000,                  // Timeout protection against slow/frozen disk I/O (500ms - 60s)
+    flushDebounceMs: 1000,              // Debounce delay before background flush to disk (0 - 60s)
+  },
+})
+```
 
 ### Fail-Open Initialization & Recovery Behavior
 
@@ -292,7 +429,158 @@ If the control-plane endpoint is unreachable (network partition, DNS failure, 5x
 
 ---
 
-## 7. Remote Configuration Directives
+## 7. Feature Control & Toggles: What to Use and How to Turn Off Features
+
+Every capability in `@pulse-apm/node` is modular and can be dynamically enabled, tuned, or completely silenced. This section outlines how to disable or customize each feature.
+
+### Disabling Subsystems via Remote Config or Local Flags
+
+Top-level subsystems can be turned off either in the remote control plane snapshot or via remote policy updates. When disabled, the SDK will not instantiate the subsystem, allocate buffers, or consume CPU/memory for those events:
+
+```json
+{
+  "features": {
+    "tracing": true,          // Distributed tracing & span generation
+    "requestCapture": true,   // Automatic incoming HTTP request transaction capture
+    "errors": true,           // Automatic and manual error / exception tracking
+    "metrics": true,          // Runtime and custom metrics collection
+    "logging": false,         // Structured log forwarding (turn off if using Datadog/CloudWatch)
+    "profiling": false,       // Continuous CPU/heap profiling (turn off to eliminate profiling overhead)
+    "crons": true,            // Cron job heartbeat monitoring
+    "sessionReplay": false,   // Session replay recording (disabled by default in Node.js)
+    "runtimeMetrics": true,   // Node.js process metrics (heap, event-loop lag, GC)
+    "eventLoopMonitoring": true, // Event-loop lag histogram sampling
+    "gcMonitoring": true      // Garbage collection pause monitoring
+  }
+}
+```
+
+### Disabling Disk Storage / Offline Queue (Serverless & Read-Only Disks)
+
+By default, the SDK spools undelivered events to local disk during network outages or restarts. In stateless serverless runtimes (AWS Lambda, Vercel), container sandboxes, or read-only filesystems (`EROFS`), disk writes are unnecessary or forbidden.
+
+You can turn off disk persistence completely in `init()`:
+
+```ts
+await init({
+  apiKey: process.env.PULSE_API_KEY!,
+  offlineQueue: false, // Disables disk spooling completely; runs in 100% in-memory mode
+})
+```
+
+Or configure fine-grained disk parameters:
+```ts
+await init({
+  apiKey: process.env.PULSE_API_KEY!,
+  offlineQueue: {
+    enabled: true,
+    directory: '/tmp/custom-events', // Custom directory (defaults to /tmp on serverless)
+    maxEvents: 5000,                 // Maximum events queued on disk
+    maxFileSizeBytes: 5 * 1024 * 1024, // 5MB max file size before rotation
+    ioTimeoutMs: 3000,               // 3-second timeout protection against frozen disks
+  },
+})
+```
+
+> [!NOTE]
+> **Automatic Read-Only Fallback**: If you deploy on a read-only filesystem without passing `offlineQueue: false`, the SDK automatically detects `EROFS` / `EACCES` during initialization, logs a debug message, and gracefully degrades to **pure in-memory mode** without throwing errors or crashing.
+
+### Disabling Specific Auto-Instrumentations
+
+If your application already uses custom instrumentation or you want to avoid overhead on specific libraries, you can disable individual auto-instrumentation drivers via remote config:
+
+```json
+{
+  "instrumentation": {
+    "http": true,        // Core Node.js HTTP/HTTPS client/server
+    "fetch": true,       // Native global fetch / Undici
+    "axios": false,      // Disable Axios interceptor (avoids duplicate client spans)
+    "express": true,     // Express route and middleware hooks
+    "fastify": false,    // Disable Fastify plugin
+    "pg": true,          // PostgreSQL (pg) driver
+    "mysql2": false,     // Disable MySQL2 hooks
+    "mongodb": true,     // MongoDB driver command listeners
+    "redis": true,       // Redis / ioredis commands
+    "prisma": true,      // Prisma ORM queries
+    "bullmq": true,      // BullMQ queue job tracing
+    "graphql": false     // Disable GraphQL field resolver tracing
+  }
+}
+```
+
+### Emergency Operational Killswitches
+
+For immediate incident mitigation without redeploying application code, the control plane can activate remote killswitches to instantly silence the SDK:
+
+| Killswitch | Effect |
+|---|---|
+| `disableSDK: true` | Completely disables all SDK operations. All APIs become zero-overhead no-ops. |
+| `disableTracing: true` | Halts all span generation and distributed context injection. |
+| `disableMetrics: true` | Stops all metric collection and aggregations. |
+| `disableErrors: true` | Ignores all handled and unhandled exception capture. |
+| `disableLogs: true` | Drops all structured log telemetry. |
+| `disableTransport: true` | Freezes all outbound HTTP requests while keeping in-memory APIs safe. |
+
+### Sampling Controls & Per-Route Overrides
+
+Control telemetry volume and network bandwidth using probabilistic head sampling and route-level overrides:
+
+```json
+{
+  "sampling": {
+    "traces": 0.1,    // Sample 10% of standard healthy traces
+    "requests": 0.1,  // Sample 10% of HTTP request transactions
+    "errors": 1.0,    // 100% of errors are always captured
+    "metrics": 1.0,   // Metrics are pre-aggregated in memory, 100% transmitted
+    "routes": {
+      "/health": { "traces": 0.0, "requests": 0.0 },       // Completely silence health checks
+      "/metrics": { "traces": 0.0, "requests": 0.0 },      // Completely silence prometheus scrapes
+      "/api/checkout": { "traces": 1.0, "requests": 1.0 }  // Always capture 100% of checkout traffic
+    }
+  }
+}
+```
+
+> [!TIP]
+> **Automatic Tail Retention**: Even when `traces` sampling is set to `0.1` (10%), the SDK automatically retains and transmits any trace that experiences an unhandled error or exceeds the slow-trace threshold (tail sampling).
+
+### Cost Governor, Rate Limits & Metric Cardinality Caps
+
+Protect against metric cardinality explosion and runaway billing:
+* **Metric Cardinality Limit**: By default, metric instruments cap distinct attribute combinations at 2,000 unique series. High-cardinality values beyond the limit are collapsed into `[other]` to protect memory.
+* **Tenant Governance**: In multi-tenant applications sending `x-tenant-id`, the SDK automatically bounds event ingestion per tenant (`quotaPerWindow: 1000` events per 60s window) with a reserved quota for critical fatal errors.
+
+### Privacy & PII Scrubbing Toggles
+
+Control what request data is captured or redacted:
+
+```json
+{
+  "privacy": {
+    "capture": {
+      "headers": true,     // Attach sanitized request headers
+      "body": false,       // Turn off body capture to eliminate payload parsing overhead
+      "query": true,       // Attach URL query parameters
+      "response": false,   // Disable response payload capture
+      "cookies": false     // Drop cookie headers
+    },
+    "scrubbing": {
+      "enabled": true,
+      "headers": ["authorization", "cookie", "set-cookie", "x-api-key"],
+      "fields": ["password", "token", "secret", "credit_card", "ssn", "cvv"]
+    },
+    "piiDetection": {
+      "enabled": true,
+      "maskEmails": true,  // Automatically masks user@domain.com
+      "maskIPs": true      // Automatically masks IPv4 and IPv6 addresses
+    }
+  }
+}
+```
+
+---
+
+## 8. Remote Configuration Directives
 
 Runtime telemetry policies (sampling rates, batch sizes, buffer thresholds, feature killswitches) are **centrally governed by the remote control plane (`POST /v1/init`)**, rather than hard-coded in customer applications.
 
@@ -304,7 +592,7 @@ Every 60 seconds, the SDK checks for remote configuration updates. When new dire
 
 ---
 
-## 8. Automatic Instrumentation
+## 9. Automatic Instrumentation
 
 When imported, `@pulse-apm/node` automatically intercepts standard Node.js libraries and database drivers without requiring manual code changes:
 
@@ -328,7 +616,7 @@ When imported, `@pulse-apm/node` automatically intercepts standard Node.js libra
 
 ---
 
-## 9. Complete API Reference by Domain
+## 10. Complete API Reference by Domain
 
 Every function below is exported directly from the package entry point:
 ```ts
@@ -337,12 +625,30 @@ import { ... } from '@pulse-apm/node'
 
 ---
 
-### A. Lifecycle & Operational Health
+### A. Lifecycle, Serverless & Operational Health
 
 #### `init(options?: SDKInitOptions): Promise<Readonly<RemoteConfigResponse> | undefined>`
 Initializes the SDK, starts auto-instrumentation, and connects to the control plane.
 - **Parameters**: `options?: SDKInitOptions` (see [Section 6](#6-initialization-init)).
 - **Returns**: `Promise<Readonly<RemoteConfigResponse> | undefined>`. Never throws.
+
+#### `wrapHandler(handler: ServerlessHandler, options?: ServerlessHandlerOptions): ServerlessHandler`
+Wraps an AWS Lambda, Vercel, or Cloud Functions handler. Automatically configures `callbackWaitsForEmptyEventLoop = false`, captures unhandled errors, and flushes all pending in-memory telemetry over HTTP before the execution environment freezes.
+- **Parameters**:
+  - `handler`: `(event, context, callback?) => Promise<TResult> | TResult`
+  - `options?: ServerlessHandlerOptions`:
+    - `flushTimeoutMs?: number` (Default: `1500`ms)
+    - `captureErrors?: boolean` (Default: `true`)
+    - `callbackWaitsForEmptyEventLoop?: boolean` (Default: `true`)
+- **Returns**: Wrapped serverless handler function.
+
+```ts
+import { wrapHandler } from '@pulse-apm/node'
+
+export const handler = wrapHandler(async (event, context) => {
+  return { statusCode: 200, body: 'Success' }
+})
+```
 
 #### `shutdown(timeoutMs?: number): Promise<ShutdownResult>`
 Gracefully drains all 10 transport route queues, ends pending spans, flushes disk storage, deregisters process listeners, and stops background worker pools.
@@ -761,54 +1067,64 @@ await Pulse.shutdown()
 
 ---
 
-## 10. Express.js Deep Dive
+---
 
-### Enabling Middleware Duration Profiling (`instrumentMiddleware: true`)
+## 11. Server & Runtime Deployment Guides
 
-Express applications frequently experience latency bottlenecks inside third-party middlewares (such as body parsers, JWT token verification, CORS, or custom permission filters).
+`@pulse-apm/node` is engineered to run seamlessly across all major Node.js deployment targets. Below are complete production guides for each runtime.
 
-By passing `instrumentMiddleware: true` to `pulseMiddleware()`, Pulse profiles the execution duration of every middleware layer in your Express stack:
+### Express.js Deep Dive
+
+Mount `pulseMiddleware` at the top of your middleware chain and `expressErrorHandler` at the very end of your route declarations:
 
 ```ts
 import express from 'express'
 import { init, pulseMiddleware, expressErrorHandler } from '@pulse-apm/node'
 
-await init({ apiKey: process.env.PULSE_API_KEY! })
+await init({
+  apiKey: process.env.PULSE_API_KEY!,
+  applicationName: 'express-api',
+})
 
 const app = express()
 
+// 1. Mount pulseMiddleware at the very top:
 app.use(pulseMiddleware({
-  // 1. Enable layer profiling:
+  // Filter out health checks and internal endpoints
+  ignorePaths: ['/health', '/metrics', /^\/assets\/.*/],
+  // Ignore preflight options
+  ignoreMethods: ['OPTIONS', 'HEAD'],
+  // Enable layer profiling to detect slow middleware
   instrumentMiddleware: true,
-
-  // 2. Only emit child spans for middlewares taking >= 2ms:
-  minMiddlewareDurationMs: 2,
-
-  // 3. Skip built-in or noisy middlewares:
-  ignoreMiddlewares: ['expressInit', 'query'],
+  minMiddlewareDurationMs: 2.0,
+  // Trusted proxy IPs for X-Forwarded-For resolution
+  trustedProxies: ['127.0.0.1', '10.0.0.1'],
 }))
 
-// Authentication layer taking > 2ms will emit a child span:
-// "express.middleware: authenticateJwt"
-app.use(async function authenticateJwt(req, res, next) {
-  await verifyToken(req.headers.authorization)
-  next()
+app.use(express.json())
+
+app.get('/api/users/:id', async (req, res) => {
+  res.json({ id: req.params.id })
 })
 
-app.get('/api/data', (req, res) => res.json({ ok: true }))
-
+// 2. Terminal error handler mounted after all routes:
 app.use(expressErrorHandler())
+
+app.listen(3000)
 ```
 
----
+### Fastify Deep Dive
 
-## 11. Fastify Deep Dive
+Fastify uses asynchronous hooks for lifecycle tracing. Register `pulseFastifyPlugin`:
 
 ```ts
 import Fastify from 'fastify'
 import { init, pulseFastifyPlugin } from '@pulse-apm/node'
 
-await init({ apiKey: process.env.PULSE_API_KEY! })
+await init({
+  apiKey: process.env.PULSE_API_KEY!,
+  applicationName: 'fastify-api',
+})
 
 const fastify = Fastify()
 
@@ -821,7 +1137,204 @@ await fastify.register(pulseFastifyPlugin, {
 
 fastify.get('/api/users', async () => ({ users: [] }))
 
-await fastify.listen({ port: 3000 })
+await fastify.listen({ port: 3000, host: '0.0.0.0' })
+```
+
+### Serverless & Cloud Functions Deep Dive (AWS Lambda, Vercel, GCP)
+
+Serverless execution environments present unique challenges that standard APM SDKs fail to handle:
+1. **Hypervisor CPU Freeze**: As soon as a serverless function returns a response, the cloud hypervisor instantly freezes CPU execution. Background flush timers (`setInterval`) will never execute until a future request (or will be terminated if the container is recycled).
+2. **Read-Only Filesystems**: Cloud runtimes typically mount root directories (`/var/task`, `/root`) as read-only (`EROFS`).
+
+#### How `@pulse-apm/node` solves Serverless:
+* **`wrapHandler`**: Automatically sets `context.callbackWaitsForEmptyEventLoop = false` so background handles do not hang the Lambda runtime.
+* **Synchronous In-Memory Flush**: Upon handler return or unhandled error, `wrapHandler` synchronously flushes all captured traces, metrics, and errors over HTTP before the container freezes.
+* **Read-Only / Diskless Fallback**: The SDK automatically detects serverless environments (`AWS_LAMBDA_FUNCTION_NAME`, `VERCEL`, `K_SERVICE`, etc.) and redirects fallback paths to `os.tmpdir()` (`/tmp`). If disk access is completely blocked (`EROFS`/`EACCES`), the SDK degrades gracefully to **pure in-memory mode** without throwing errors or crashing.
+
+#### Production AWS Lambda Example:
+
+```ts
+import { init, wrapHandler, captureException } from '@pulse-apm/node'
+
+// Initialize during container cold start:
+await init({
+  apiKey: process.env.PULSE_API_KEY!,
+  applicationName: 'payment-webhook-lambda',
+  // Disable disk storage since serverless is stateless:
+  offlineQueue: false,
+  // Disable SIGTERM/SIGINT listeners:
+  handleSignals: false,
+})
+
+export const handler = wrapHandler(async (event: any, context: any) => {
+  const body = JSON.parse(event.body || '{}')
+  
+  if (!body.paymentId) {
+    const err = new Error('Missing paymentId')
+    captureException(err)
+    return { statusCode: 400, body: JSON.stringify({ error: err.message }) }
+  }
+
+  return {
+    statusCode: 200,
+    body: JSON.stringify({ status: 'success', paymentId: body.paymentId }),
+  }
+}, {
+  flushTimeoutMs: 1500, // Maximum ms to wait for telemetry HTTP transmission
+  captureErrors: true,  // Automatically capture and report uncaught exceptions
+})
+```
+
+#### Vercel Serverless / Next.js API Route Example:
+
+```ts
+// pages/api/checkout.ts or app/api/checkout/route.ts
+import { init, wrapHandler } from '@pulse-apm/node'
+
+await init({
+  apiKey: process.env.PULSE_API_KEY!,
+  applicationName: 'nextjs-web',
+  offlineQueue: false,
+})
+
+export default wrapHandler(async (req: any, res: any) => {
+  res.status(200).json({ ok: true })
+})
+```
+
+### NestJS Deep Dive
+
+NestJS applications can use `pulseMiddleware` for incoming request tracing, combined with an `@Catch()` Exception Filter for application-level error tracking:
+
+```ts
+import { NestFactory } from '@nestjs/core'
+import { AppModule } from './app.module'
+import { init, pulseMiddleware, captureException } from '@pulse-apm/node'
+import {
+  ExceptionFilter,
+  Catch,
+  ArgumentsHost,
+  HttpException,
+  HttpStatus,
+  Injectable,
+  NestMiddleware,
+} from '@nestjs/common'
+import { Request, Response, NextFunction } from 'express'
+
+await init({
+  apiKey: process.env.PULSE_API_KEY!,
+  applicationName: 'nest-service',
+})
+
+// 1. NestJS Global Exception Filter
+@Catch()
+export class PulseExceptionsFilter implements ExceptionFilter {
+  catch(exception: unknown, host: ArgumentsHost) {
+    const ctx = host.switchToHttp()
+    const response = ctx.getResponse<Response>()
+    const status =
+      exception instanceof HttpException
+        ? exception.getStatus()
+        : HttpStatus.INTERNAL_SERVER_ERROR
+
+    // Capture 5xx server errors to Pulse
+    if (status >= 500) {
+      captureException(exception)
+    }
+
+    response.status(status).json({
+      statusCode: status,
+      timestamp: new Date().toISOString(),
+    })
+  }
+}
+
+// 2. NestJS Middleware Wrapper
+@Injectable()
+export class PulseHttpMiddleware implements NestMiddleware {
+  private readonly handler = pulseMiddleware({ instrumentMiddleware: true })
+  use(req: Request, res: Response, next: NextFunction) {
+    this.handler(req, res, next)
+  }
+}
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule)
+  app.use(pulseMiddleware({ instrumentMiddleware: true }))
+  app.useGlobalFilters(new PulseExceptionsFilter())
+  await app.listen(3000)
+}
+bootstrap()
+```
+
+### Native Node.js HTTP / HTTPS
+
+For applications using Node's standard `http` or `https` modules without a web framework:
+
+```ts
+import http from 'node:http'
+import { init, captureRequest, captureException, flush } from '@pulse-apm/node'
+
+await init({
+  apiKey: process.env.PULSE_API_KEY!,
+  applicationName: 'raw-http-server',
+})
+
+const server = http.createServer(async (req, res) => {
+  const startTime = Date.now()
+  try {
+    if (req.url === '/api/ping') {
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ pong: true }))
+    } else {
+      res.writeHead(404)
+      res.end('Not Found')
+    }
+  } catch (err) {
+    captureException(err)
+    res.writeHead(500)
+    res.end('Server Error')
+  } finally {
+    // Record request transaction
+    captureRequest({
+      type: 'request',
+      method: req.method || 'GET',
+      url: req.url || '/',
+      statusCode: res.statusCode,
+      latency: Date.now() - startTime,
+      timestamp: startTime,
+    })
+  }
+})
+
+server.listen(3000)
+```
+
+### Background Job Processors & Queues
+
+When processing jobs in BullMQ, Agenda, or batch worker processes, wrap job execution in `withBackgroundSpan`:
+
+```ts
+import { init, withBackgroundSpan, captureException } from '@pulse-apm/node'
+import { Worker } from 'bullmq'
+
+await init({
+  apiKey: process.env.PULSE_API_KEY!,
+  applicationName: 'queue-worker',
+})
+
+const worker = new Worker('pdf-generation', async (job) => {
+  return await withBackgroundSpan(`job:${job.name}`, async (span) => {
+    span.setAttribute('bullmq.job.id', job.id!)
+    span.setAttribute('bullmq.queue', job.queueName)
+    try {
+      return await generateInvoicePdf(job.data)
+    } catch (err) {
+      captureException(err)
+      throw err
+    }
+  })
+})
 ```
 
 ---

@@ -8,9 +8,7 @@
  *    Runs in the main thread with zero IPC overhead.
  * 2. Asynchronous thread-based hooks via module.register()
  *    (Node >= 18.19.0, >= 20.6.0) as fallback.
- * 3. Preload hook via
-ode --import @pulse-apm/node/register.
- * 3. Preload hook via node --import @pulse-apm/node/register.
+ * 3. Preload hook via node --import @lynktrace/node/register.
  *
  * Guarantees:
  * - Idempotent registration via global Symbol guard.

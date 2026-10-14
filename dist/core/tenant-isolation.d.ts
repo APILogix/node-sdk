@@ -33,6 +33,10 @@ export declare class TenantGovernor {
     admit(tenantId: string | undefined, critical?: boolean): boolean;
     getStats(): TenantStats;
     reset(): void;
+    /**
+     * Start the background cleanup timer if not running.
+     */
+    start(): void;
     shutdown(): void;
     private getOrCreateWindow;
     private touch;

@@ -99,9 +99,18 @@ export class RemoteConfigClient {
     return normalized
   }
 
-  /** Download a complete replacement snapshot after a telemetry change signal. */
-  async fetchLatest(): Promise<unknown> {
-    const payload = await this.post('/v1/sdk-config')
+  /** Download a complete replacement snapshot after a telemetry change signal or TTL expiry. */
+  async fetchLatest(currentRevision?: number | null, currentHash?: string | null): Promise<unknown> {
+    const extraHeaders: Record<string, string> = {}
+    if (currentHash) {
+      extraHeaders['If-None-Match'] = currentHash
+      extraHeaders['X-Config-Hash'] = currentHash
+    }
+    if (typeof currentRevision === 'number' && Number.isFinite(currentRevision)) {
+      extraHeaders['X-Config-Revision'] = String(currentRevision)
+    }
+    const payload = await this.post('/v1/sdk-config', undefined, extraHeaders)
+    if (isRecord(payload) && payload['same'] === true) return payload
     // Accept either a direct config document or a small { config } envelope.
     // No partial/patch form is supported.
     if (isRecord(payload) && 'config' in payload) return payload['config']
@@ -168,7 +177,11 @@ export class RemoteConfigClient {
     })
   }
 
-  private async post(path: '/v1/init' | '/v1/sdk-config', timeoutOverrideMs?: number): Promise<unknown> {
+  private async post(
+    path: '/v1/init' | '/v1/sdk-config',
+    timeoutOverrideMs?: number,
+    extraHeaders?: Record<string, string>,
+  ): Promise<unknown> {
     const controller = new AbortController()
     const timeoutMs = timeoutOverrideMs ?? (path === '/v1/init' ? this.initTimeoutMs : this.timeoutMs)
     let timer: ReturnType<typeof setTimeout>
@@ -199,12 +212,17 @@ export class RemoteConfigClient {
             'Connection': 'keep-alive',
             'x-pulse-internal': '1',
             'X-API-Key': this.apiKey,
+            ...(extraHeaders ?? {}),
           },
           body: JSON.stringify({}),
           signal: controller.signal,
           redirect: 'manual',
         }),
       )])
+
+      if (response.status === 304) {
+        return { same: true }
+      }
 
       const text = await Promise.race([deadline, response.text()])
       const latencyMs = Date.now() - startedAt

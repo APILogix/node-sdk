@@ -24,6 +24,7 @@ import { W3CTraceContextPropagator, CompositePropagator, W3CBaggagePropagator, s
 import { TRACING_DEFAULTS } from '../constants/internal-defaults.js';
 import { PulseSpan } from './span.js';
 import { getLogger } from '../utils/logger.js';
+import { generateId } from '../utils/uuid.js';
 import { processEvent, drainPendingEventProcessing } from '../core/event-pipeline.js';
 import { getRequestContext, PULSE_CONTEXT_ATTRIBUTES, createContextStore, withContext, } from '../core/context.js';
 import { costGovernor } from '../utils/cost-governor.js';
@@ -237,7 +238,7 @@ function spanToEvent(span) {
     const durationBreakdown = computeExclusiveDuration(startTimeMs, endTimeMs, childIntervals, span.name);
     return {
         type: 'span',
-        eventId: `span_${ctx.spanId}`,
+        eventId: generateId(),
         spanId: ctx.spanId,
         traceId: ctx.traceId,
         parentSpanId,

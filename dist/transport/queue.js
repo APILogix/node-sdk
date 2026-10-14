@@ -14,6 +14,7 @@
  *   - Dead letter tracking
  *   - Drop handler callbacks
  */
+import { persistentStorage } from '../storage/persistent-storage.js';
 export class EventQueue {
     tiers;
     retryQueue = [];
@@ -192,8 +193,13 @@ export class EventQueue {
         const maxRetry = Math.floor(this.maxSize * 0.5);
         if (this.retryQueue.length > maxRetry) {
             const spilled = this.retryQueue.length - maxRetry;
-            this.retryQueue.splice(maxRetry, spilled);
-            this.notifyDrop('retry_spilled_to_disk', spilled);
+            const spilledEvents = this.retryQueue.splice(maxRetry, spilled);
+            if (persistentStorage.isInitialized) {
+                persistentStorage.persistBatch(spilledEvents);
+            }
+            else {
+                this.notifyDrop('retry_spilled_to_disk', spilled);
+            }
         }
     }
     /** Mark the queue as shutting down — rejects new events. */

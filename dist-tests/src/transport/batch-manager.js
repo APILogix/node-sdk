@@ -10,12 +10,13 @@ import { persistentStorage } from '../storage/persistent-storage.js';
 import { persistenceGovernor } from '../storage/persistence-governor.js';
 import { costGovernor } from '../utils/cost-governor.js';
 import { compressGzip } from '../utils/compression.js';
-import { inspectTelemetryResponse } from '../core/config-manager.js';
+import { ConfigManager, inspectTelemetryResponse } from '../core/config-manager.js';
 import { quotaController } from '../core/quota-controller.js';
 import { toError } from '../core/errors.js';
 import { sdkConsoleDebug } from '../utils/console-debug.js';
 import { SerializationPool } from './serialization-pool.js';
 import { safeJsonStringify } from '../utils/safe-json.js';
+import { generateId } from '../utils/uuid.js';
 const WORKER_SERIALIZATION_THRESHOLD_BYTES = 50 * 1024; // 50KB
 const WARMUP_SUCCESS_THRESHOLD = 5;
 const MAX_BATCH_RETENTION_AGE_MS = 300_000; // 5 minutes max retention before dropping stale retries
@@ -113,6 +114,8 @@ export class BatchManager {
             controller.abort();
         const completed = await settleWithin([...this.activeSendPromises], Math.max(1, timeoutMs));
         this.cancelPendingRetries();
+        this.retryAttempts.clear();
+        this.firstAttemptTimestamps.clear();
         if (completed)
             return [];
         const residual = [...this.activeBatches].flatMap(events => [...events]);
@@ -317,6 +320,9 @@ export class BatchManager {
                 eventTypes: [...new Set(events.map(event => event.type))],
                 payloadBytes: originalPayloadBytes,
             });
+            const configMgr = ConfigManager.getCurrent();
+            const activeRev = configMgr?.getConfigRevision();
+            const activeHash = configMgr?.getConfigHash();
             const headers = {
                 'Content-Type': this.options.definition.contentType,
                 Authorization: `Bearer ${this.options.apiKey}`,
@@ -324,6 +330,8 @@ export class BatchManager {
                 'x-pulse-internal': '1',
                 Connection: this.options.keepAlive ? 'keep-alive' : 'close',
                 ...(isGzip ? { 'Content-Encoding': 'gzip' } : {}),
+                ...(typeof activeRev === 'number' ? { 'X-Config-Revision': String(activeRev) } : {}),
+                ...(activeHash ? { 'X-Config-Hash': activeHash } : {}),
             };
             const controller = new AbortController();
             this.activeAbortControllers.add(controller);
@@ -335,8 +343,8 @@ export class BatchManager {
             }, this.options.socketTimeoutMs);
             timeout.unref?.();
             try {
-                const requestBody = new ArrayBuffer(wireBody.byteLength);
-                new Uint8Array(requestBody).set(wireBody);
+                // Zero-copy Uint8Array view over existing wireBody buffer for fetch BodyInit compatibility
+                const requestBody = new Uint8Array(wireBody.buffer, wireBody.byteOffset, wireBody.byteLength);
                 getLogger().debug('[TransportRouter] Sending batch', {
                     route: this.options.route,
                     method: this.options.definition.method,
@@ -514,18 +522,40 @@ export class BatchManager {
             this.options.queue.requeueFront(retained);
             for (const event of events) {
                 const key = event.eventId ?? '';
-                this.retryAttempts.delete(key);
-                this.firstAttemptTimestamps.delete(key);
+                if (key) {
+                    this.retryAttempts.delete(key);
+                    this.firstAttemptTimestamps.delete(key);
+                }
             }
             return;
         }
         if (!this.options.retry.enabled || this.options.retry.maxRetries <= 0)
             return;
         const now = Date.now();
+        if (this.firstAttemptTimestamps.size > 1000) {
+            for (const [k, timestamp] of this.firstAttemptTimestamps.entries()) {
+                if (now - timestamp > MAX_BATCH_RETENTION_AGE_MS) {
+                    this.firstAttemptTimestamps.delete(k);
+                    this.retryAttempts.delete(k);
+                }
+            }
+        }
+        const MAX_TRACKED_RETRIES = 5000;
+        if (this.firstAttemptTimestamps.size > MAX_TRACKED_RETRIES) {
+            const excess = this.firstAttemptTimestamps.size - MAX_TRACKED_RETRIES;
+            let evicted = 0;
+            for (const k of this.firstAttemptTimestamps.keys()) {
+                this.firstAttemptTimestamps.delete(k);
+                this.retryAttempts.delete(k);
+                evicted++;
+                if (evicted >= excess)
+                    break;
+            }
+        }
         const retryable = [];
         let highestAttempt = 0;
         for (const event of events) {
-            const key = event.eventId ?? '';
+            const key = event.eventId || (event.eventId = generateId());
             const firstAttempt = this.firstAttemptTimestamps.get(key) ?? now;
             if (!this.firstAttemptTimestamps.has(key)) {
                 this.firstAttemptTimestamps.set(key, now);

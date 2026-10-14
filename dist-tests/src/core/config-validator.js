@@ -65,6 +65,8 @@ export function validateRemoteConfig(payload) {
         validateLogs(config['logs'], errors);
     if (config['crons'] !== undefined)
         validateCrons(config['crons'], errors);
+    if (config['runtime'] !== undefined)
+        validateRuntime(config['runtime'], errors);
     // 4. Cross-Section Invariants
     validateCrossSectionInvariants(config, errors);
     return { valid: errors.length === 0, errors };
@@ -449,6 +451,22 @@ function validateMeta(value, errors) {
         const rev = value['configRevision'];
         if (rev !== undefined && rev !== null && (typeof rev !== 'number' || !Number.isInteger(rev))) {
             errors.push('meta.configRevision must be an integer or null');
+        }
+    }
+}
+function validateRuntime(value, errors) {
+    if (!isConfigSection(value, 'runtime', errors))
+        return;
+    const runtime = value;
+    if (runtime['configTtlSeconds'] !== undefined) {
+        const ttl = runtime['configTtlSeconds'];
+        if (typeof ttl !== 'number' || !Number.isFinite(ttl) || ttl < 0) {
+            errors.push('runtime.configTtlSeconds must be a non-negative finite number');
+        }
+    }
+    if (runtime['staleWhileRevalidate'] !== undefined) {
+        if (typeof runtime['staleWhileRevalidate'] !== 'boolean') {
+            errors.push('runtime.staleWhileRevalidate must be a boolean');
         }
     }
 }

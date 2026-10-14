@@ -15,11 +15,11 @@ export function safeJsonReplacer(_key, value) {
  */
 export function safeJsonStringify(value, space) {
     try {
-        return JSON.stringify(value, safeJsonReplacer, space);
+        return space !== undefined ? JSON.stringify(value, undefined, space) : JSON.stringify(value);
     }
     catch (_err) {
         const seen = new WeakSet();
-        return JSON.stringify(value, (key, val) => {
+        return JSON.stringify(value, (_key, val) => {
             if (typeof val === 'bigint') {
                 return val.toString();
             }

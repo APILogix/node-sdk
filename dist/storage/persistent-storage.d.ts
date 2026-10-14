@@ -107,6 +107,7 @@ declare class PersistentStorage {
     /** Epoch ms of the most recent replay() completion. */
     private lastReplayAt;
     private writeChain;
+    private persistedIds;
     configure(options?: PersistentStorageOptions): void;
     private createTempFilePath;
     init(): Promise<Event[]>;

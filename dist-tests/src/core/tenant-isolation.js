@@ -96,6 +96,15 @@ export class TenantGovernor {
         this.windows.clear();
         this.totalThrottled = 0;
     }
+    /**
+     * Start the background cleanup timer if not running.
+     */
+    start() {
+        if (!this.cleanupTimer) {
+            this.cleanupTimer = setInterval(() => this.cleanup(), 30_000);
+            this.cleanupTimer.unref();
+        }
+    }
     shutdown() {
         if (this.cleanupTimer) {
             clearInterval(this.cleanupTimer);

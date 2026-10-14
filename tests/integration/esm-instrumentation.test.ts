@@ -354,7 +354,10 @@ main().catch(err => {
       }
       assert.equal(exitCode, 0, `Child process must exit with code 0. Stderr: ${stderr}`)
 
-      // Verify traces and database spans were captured by backend
+      // Wait for backend to finish ingesting flushed traces from child process
+      for (let i = 0; i < 20 && capturedEvents.filter(e => e.type === 'trace').length === 0; i++) {
+        await new Promise(r => setTimeout(r, 25))
+      }
       const traces = capturedEvents.filter(e => e.type === 'trace')
       assert.ok(traces.length >= 1, `Expected traces from child process, found ${traces.length}`)
 

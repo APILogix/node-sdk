@@ -123,6 +123,16 @@ export class TenantGovernor {
         this.totalThrottled = 0
     }
 
+    /**
+     * Start the background cleanup timer if not running.
+     */
+    start(): void {
+        if (!this.cleanupTimer) {
+            this.cleanupTimer = setInterval(() => this.cleanup(), 30_000)
+            this.cleanupTimer.unref()
+        }
+    }
+
     shutdown(): void {
         if (this.cleanupTimer) {
             clearInterval(this.cleanupTimer)

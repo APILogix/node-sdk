@@ -35,10 +35,10 @@ const FALLBACK_LIMIT_MB = 256;
 const UTILIZATION_FACTOR = 0.5;
 
 /**
- * Threshold above which a cgroup value is treated as "unlimited" (8 GB in bytes).
- * Values at or above this are not useful container limits; detection falls through.
+ * Threshold above which a cgroup value is treated as "unlimited" (1 TiB in bytes).
+ * Kernel sentinels (> 1 TiB) indicate unconstrained host memory; detection falls through.
  */
-const CGROUP_UNLIMITED_THRESHOLD = 8589934592;
+const CGROUP_UNLIMITED_THRESHOLD = 1099511627776;
 
 /**
  * Sentinel value used by cgroup v1 to indicate no limit.

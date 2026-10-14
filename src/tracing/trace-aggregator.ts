@@ -41,6 +41,7 @@ import { getLogger } from '../utils/logger.js'
 import { processEvent } from '../core/event-pipeline.js'
 import type { EventMetadata } from '../types/event.js'
 import { spanDurationTracker } from './span-duration.js'
+import { generateId } from '../utils/uuid.js'
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -372,6 +373,10 @@ export class TraceAggregator {
       if (invoked) return
       invoked = true
       clearTimeout(safetyTimer)
+      if (trace.childCompletionListeners) {
+        const idx = trace.childCompletionListeners.indexOf(wrappedCallback)
+        if (idx !== -1) trace.childCompletionListeners.splice(idx, 1)
+      }
       callback()
     }
 
@@ -672,7 +677,7 @@ export class TraceAggregator {
 
       const traceDocument: TraceDocument = {
         type: 'trace',
-        eventId: `trace_${traceId}`,
+        eventId: generateId(),
         traceId,
         rootSpan: rootAggregated,
         spanCount: spans.length,

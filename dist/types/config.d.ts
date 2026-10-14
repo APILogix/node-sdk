@@ -21,6 +21,8 @@ export interface NormalizedRemoteConfig {
     readonly meta: ConfigMeta;
     /** Billing and API entitlements resolved by the backend. */
     readonly entitlements: EntitlementsConfig;
+    /** Runtime lifecycle configuration (TTL refetch and stale-while-revalidate). */
+    readonly runtime?: RuntimeConfig | undefined;
     readonly offlineQueue?: OfflineQueueConfig | undefined;
     readonly profiling?: ProfilingConfig | undefined;
     readonly replay?: SessionReplayConfig | undefined;
@@ -389,6 +391,10 @@ export interface ConfigMeta {
     readonly generatedBy: string;
     readonly configHash?: string | undefined;
     readonly configRevision?: number | null | undefined;
+}
+export interface RuntimeConfig {
+    readonly configTtlSeconds?: number | undefined;
+    readonly staleWhileRevalidate?: boolean | undefined;
 }
 /**
  * Detailed descriptor for a single leaf or structured property mutation.

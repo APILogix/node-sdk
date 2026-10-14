@@ -16,9 +16,11 @@ export declare class ConfigManager {
     private static instance;
     private currentConfig;
     private currentHash;
+    private currentRevision;
     private remoteClient;
     private applier;
     private refreshPromise;
+    private ttlTimer;
     private destroyed;
     private state;
     private constructor();
@@ -30,13 +32,15 @@ export declare class ConfigManager {
     setApplier(applier: ConfigApplier): void;
     getConfig(): Readonly<RemoteConfigResponse>;
     getConfigOrNull(): Readonly<RemoteConfigResponse> | null;
+    getConfigRevision(): number | null;
+    getConfigHash(): string | null;
     getState(): ConfigState;
     isLive(): boolean;
     isDestroyed(): boolean;
     isRefreshInFlight(): boolean;
     /**
-     * Inspect a parsed telemetry acknowledgement. Only a 202/change:true signal
-     * is actionable. Additional signals are intentionally ignored while the
+     * Inspect a parsed telemetry acknowledgement. Both change:true and config_u:true signals
+     * are actionable. Additional signals are intentionally ignored while the
      * single refresh is in flight.
      */
     handleTelemetryResponse(httpStatus: number, payload: unknown): void;
@@ -44,6 +48,7 @@ export declare class ConfigManager {
     waitForRefresh(): Promise<void>;
     destroy(): void;
     static reset(): void;
+    private scheduleTtlTimer;
     private refreshOnce;
 }
 /** Inspect a fetch Response without delaying telemetry acknowledgement work. */

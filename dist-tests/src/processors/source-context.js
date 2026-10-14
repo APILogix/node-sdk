@@ -72,8 +72,24 @@ class FileCache {
 }
 /** Singleton file cache. */
 const fileCache = new FileCache(MAX_CACHED_FILES);
-/** Set of files that failed to load — avoid retrying. */
+/** Maximum number of failed file paths to remember. */
+const MAX_FAILED_FILES = 500;
+/** Set of files that failed to load — avoid retrying. Bounded LRU-style eviction. */
 const failedFiles = new Set();
+/** Inflight file read promises to deduplicate concurrent file reads. */
+const inflightLoads = new Map();
+function markFailedFile(filename) {
+    if (failedFiles.has(filename)) {
+        failedFiles.delete(filename);
+    }
+    else if (failedFiles.size >= MAX_FAILED_FILES) {
+        const oldest = failedFiles.keys().next().value;
+        if (oldest !== undefined) {
+            failedFiles.delete(oldest);
+        }
+    }
+    failedFiles.add(filename);
+}
 // ─── Public API ─────────────────────────────────────────────────────────────
 /**
  * Attach source context to stack frames.
@@ -166,6 +182,7 @@ function scrubLines(lines) {
 export function resetSourceContextCache() {
     fileCache.clear();
     failedFiles.clear();
+    inflightLoads.clear();
 }
 // ─── Internal ───────────────────────────────────────────────────────────────
 /**
@@ -194,11 +211,25 @@ async function getFileLines(filename) {
     const cached = fileCache.get(filename);
     if (cached)
         return cached;
+    // Deduplicate inflight file reads to avoid exhausting libuv threadpool during error bursts
+    const inflight = inflightLoads.get(filename);
+    if (inflight)
+        return inflight;
+    const loadPromise = doReadFileLines(filename);
+    inflightLoads.set(filename, loadPromise);
+    try {
+        return await loadPromise;
+    }
+    finally {
+        inflightLoads.delete(filename);
+    }
+}
+async function doReadFileLines(filename) {
     // Read file with timeout
     try {
         const content = await withTimeout(readFile(filename, 'utf-8'), FILE_READ_TIMEOUT_MS);
         if (content === null) {
-            failedFiles.add(filename);
+            markFailedFile(filename);
             return null;
         }
         // Split into lines and cap at MAX_LINES_PER_FILE
@@ -211,7 +242,7 @@ async function getFileLines(filename) {
         return frozenLines;
     }
     catch {
-        failedFiles.add(filename);
+        markFailedFile(filename);
         return null;
     }
 }

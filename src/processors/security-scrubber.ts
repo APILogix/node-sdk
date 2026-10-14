@@ -277,7 +277,8 @@ export class SecurityScrubber {
           this.scrubbingConfig.enabled &&
           str.length >= 2 &&
           str.length <= 64 * 1024 &&
-          ((str.startsWith('{') && str.endsWith('}')) || (str.startsWith('[') && str.endsWith(']')))
+          ((str.startsWith('{') && str.endsWith('}') && str.includes(':')) ||
+           (str.startsWith('[') && str.endsWith(']') && (str.includes(',') || str.includes('"') || /\d/.test(str))))
         ) {
           try {
             const parsed = JSON.parse(str)
@@ -293,29 +294,42 @@ export class SecurityScrubber {
           str = this.scrubPiiInString(str)
         }
         if (this.scrubbingConfig.enabled) {
-          str = str.replace(/Bearer\s+[A-Za-z0-9_\-\.]+/gi, 'Bearer [Redacted]')
-          str = str.replace(/Basic\s+[A-Za-z0-9+/=]{10,}/gi, 'Basic [Redacted]')
-          str = str.replace(/eyJ[a-zA-Z0-9_-]{10,}\.eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}/g, '[Redacted]')
-          str = str.replace(/\b(sk_live_[0-9a-zA-Z]{24,}|pk_live_[0-9a-zA-Z]{24,}|rk_live_[0-9a-zA-Z]{24,})\b/g, '[Redacted]')
-          str = str.replace(/\b(AKIA[0-9A-Z]{16})\b/g, '[Redacted]')
-          str = str.replace(
-            /\b(bearer[-_]token|token[-_]bearer|bearer)[-_][A-Za-z0-9_\-\.]+\b/gi,
-            '[Redacted]',
-          )
-          str = str.replace(
-            /\b(api[-_]?key|api[-_]?secret|access[-_]?token|refresh[-_]?token|client[-_]?secret|password|secret|token|authorization|x-api-key|x-auth-token)\s*([:=])\s*([^\s&,;"']+)/gi,
-            '$1$2[Redacted]',
-          )
-          str = str.replace(
-            /\b(token|secret|password|api[-_]?key)\s+([A-Za-z0-9_\-\.]{8,})/gi,
-            (match, prefix, tokenVal) => {
-              const commonWords = new Set(['expired', 'invalid', 'missing', 'revoked', 'required', 'rejected', 'failed', 'not', 'found', 'cannot', 'could', 'should', 'would', 'error', 'format', 'length', 'expected', 'provided'])
-              if (commonWords.has(tokenVal.toLowerCase()) && /^[a-z]+$/i.test(tokenVal)) {
-                return match
-              }
-              return `${prefix} [Redacted]`
-            },
-          )
+          const lowerStr = str.toLowerCase()
+          if (lowerStr.includes('bearer')) {
+            str = str.replace(/Bearer\s+[A-Za-z0-9_\-\.]+/gi, 'Bearer [Redacted]')
+            str = str.replace(
+              /\b(bearer[-_]token|token[-_]bearer|bearer)[-_][A-Za-z0-9_\-\.]+\b/gi,
+              '[Redacted]',
+            )
+          }
+          if (lowerStr.includes('basic')) {
+            str = str.replace(/Basic\s+[A-Za-z0-9+/=]{10,}/gi, 'Basic [Redacted]')
+          }
+          if (str.includes('eyJ')) {
+            str = str.replace(/eyJ[a-zA-Z0-9_-]{10,}\.eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}/g, '[Redacted]')
+          }
+          if (str.includes('_live_')) {
+            str = str.replace(/\b(sk_live_[0-9a-zA-Z]{24,}|pk_live_[0-9a-zA-Z]{24,}|rk_live_[0-9a-zA-Z]{24,})\b/g, '[Redacted]')
+          }
+          if (str.includes('AKIA')) {
+            str = str.replace(/\b(AKIA[0-9A-Z]{16})\b/g, '[Redacted]')
+          }
+          if (/(?:api[-_]?key|secret|password|token|auth)/i.test(str)) {
+            str = str.replace(
+              /\b(api[-_]?key|api[-_]?secret|access[-_]?token|refresh[-_]?token|client[-_]?secret|password|secret|token|authorization|x-api-key|x-auth-token)\s*([:=])\s*([^\s&,;"']+)/gi,
+              '$1$2[Redacted]',
+            )
+            str = str.replace(
+              /\b(token|secret|password|api[-_]?key)\s+([A-Za-z0-9_\-\.]{8,})/gi,
+              (match, prefix, tokenVal) => {
+                const commonWords = new Set(['expired', 'invalid', 'missing', 'revoked', 'required', 'rejected', 'failed', 'not', 'found', 'cannot', 'could', 'should', 'would', 'error', 'format', 'length', 'expected', 'provided'])
+                if (commonWords.has(tokenVal.toLowerCase()) && /^[a-z]+$/i.test(tokenVal)) {
+                  return match
+                }
+                return `${prefix} [Redacted]`
+              },
+            )
+          }
         }
         return str
       }
@@ -490,42 +504,51 @@ export class SecurityScrubber {
   private scrubPiiInString(str: string): string {
     let result = str
 
-    // Credit Card Primary Account Number (PAN) scrubbing with Luhn validation
-    if (this.piiConfig.maskCreditCards !== false) {
-      result = result.replace(SecurityScrubber.CREDIT_CARD_PATTERN, (match) => {
-        const raw = match.replace(/[-\s]/g, '')
-        if (raw.length >= 13 && raw.length <= 19 && SecurityScrubber.isValidLuhn(raw)) {
-          return REDACTED
-        }
-        return match
-      })
+    const hasDigits = /\d/.test(result)
+    if (hasDigits) {
+      // Credit Card Primary Account Number (PAN) scrubbing with Luhn validation
+      if (this.piiConfig.maskCreditCards !== false) {
+        result = result.replace(SecurityScrubber.CREDIT_CARD_PATTERN, (match) => {
+          const raw = match.replace(/[-\s]/g, '')
+          if (raw.length >= 13 && raw.length <= 19 && SecurityScrubber.isValidLuhn(raw)) {
+            return REDACTED
+          }
+          return match
+        })
+      }
+
+      // US Social Security Number (SSN) scrubbing
+      if (this.piiConfig.maskSSNs !== false) {
+        result = result.replace(SecurityScrubber.SSN_PATTERN, REDACTED)
+      }
+
+      if (this.piiConfig.maskPhones) {
+        result = result.replace(SecurityScrubber.PHONE_PATTERN, '[phone]')
+      }
     }
 
-    // US Social Security Number (SSN) scrubbing
-    if (this.piiConfig.maskSSNs !== false) {
-      result = result.replace(SecurityScrubber.SSN_PATTERN, REDACTED)
-    }
-
-    if (this.piiConfig.maskEmails) {
+    if (this.piiConfig.maskEmails && result.includes('@')) {
       result = result.replace(SecurityScrubber.EMAIL_PATTERN, '[email]')
     }
-    if (this.piiConfig.maskPhones) {
-      result = result.replace(SecurityScrubber.PHONE_PATTERN, '[phone]')
-    }
+
     if (this.piiConfig.maskIPs) {
-      result = result.replace(SecurityScrubber.BRACKETED_IPV6_PATTERN, (candidate, address: string) =>
-        isIP(address) === 6 ? '[ip]' : candidate,
-      )
-      result = result.replace(SecurityScrubber.IPV6_CANDIDATE_PATTERN, (candidate: string) => {
-        const address = candidate.includes('%') ? candidate.slice(0, candidate.indexOf('%')) : candidate
-        // Colon-delimited times and MAC addresses are not treated as IPs,
-        // even where a permissive parser might consider them abbreviated IPv6.
-        if (/^\d{1,2}:\d{2}:\d{2}$/.test(address) || /^(?:[0-9a-f]{2}:){5}[0-9a-f]{2}$/i.test(address)) {
-          return candidate
-        }
-        return isIP(address) === 6 ? '[ip]' : candidate
-      })
-      result = result.replace(SecurityScrubber.IPV4_PATTERN, '[ip]')
+      if (result.includes(':')) {
+        result = result.replace(SecurityScrubber.BRACKETED_IPV6_PATTERN, (candidate, address: string) =>
+          isIP(address) === 6 ? '[ip]' : candidate,
+        )
+        result = result.replace(SecurityScrubber.IPV6_CANDIDATE_PATTERN, (candidate: string) => {
+          const address = candidate.includes('%') ? candidate.slice(0, candidate.indexOf('%')) : candidate
+          // Colon-delimited times and MAC addresses are not treated as IPs,
+          // even where a permissive parser might consider them abbreviated IPv6.
+          if (/^\d{1,2}:\d{2}:\d{2}$/.test(address) || /^(?:[0-9a-f]{2}:){5}[0-9a-f]{2}$/i.test(address)) {
+            return candidate
+          }
+          return isIP(address) === 6 ? '[ip]' : candidate
+        })
+      }
+      if (result.includes('.')) {
+        result = result.replace(SecurityScrubber.IPV4_PATTERN, '[ip]')
+      }
     }
 
     return result

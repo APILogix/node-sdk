@@ -65,6 +65,10 @@ declare class SourceMapResolver {
      * Clear the source map cache.
      */
     clearCache(): void;
+    /**
+     * Reset all state — for testing and SDK lifecycle shutdown.
+     */
+    reset(): void;
     private resolveFrame;
     private findSourceMapUrl;
     private loadSourceMap;

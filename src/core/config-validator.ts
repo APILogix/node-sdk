@@ -83,6 +83,7 @@ export function validateRemoteConfig(payload: unknown): ValidationResult {
   if (config['metrics'] !== undefined) validateMetrics(config['metrics'], errors)
   if (config['logs'] !== undefined) validateLogs(config['logs'], errors)
   if (config['crons'] !== undefined) validateCrons(config['crons'], errors)
+  if (config['runtime'] !== undefined) validateRuntime(config['runtime'], errors)
 
   // 4. Cross-Section Invariants
   validateCrossSectionInvariants(config, errors)
@@ -504,6 +505,22 @@ function validateMeta(value: unknown, errors: string[]): void {
     const rev = (value as Record<string, unknown>)['configRevision']
     if (rev !== undefined && rev !== null && (typeof rev !== 'number' || !Number.isInteger(rev))) {
       errors.push('meta.configRevision must be an integer or null')
+    }
+  }
+}
+
+function validateRuntime(value: unknown, errors: string[]): void {
+  if (!isConfigSection(value, 'runtime', errors)) return
+  const runtime = value as Record<string, unknown>
+  if (runtime['configTtlSeconds'] !== undefined) {
+    const ttl = runtime['configTtlSeconds']
+    if (typeof ttl !== 'number' || !Number.isFinite(ttl) || ttl < 0) {
+      errors.push('runtime.configTtlSeconds must be a non-negative finite number')
+    }
+  }
+  if (runtime['staleWhileRevalidate'] !== undefined) {
+    if (typeof runtime['staleWhileRevalidate'] !== 'boolean') {
+      errors.push('runtime.staleWhileRevalidate must be a boolean')
     }
   }
 }

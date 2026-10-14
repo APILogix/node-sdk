@@ -1,0 +1,106 @@
+{
+  "results": {
+    "baseline": {
+      "heapUsedMb": 18.49,
+      "heapTotalMb": 38.63,
+      "rssMb": 84.59,
+      "externalMb": 4.52
+    },
+    "scenarioA": {
+      "peakHeapMb": 90.09,
+      "peakRssMb": 236.21,
+      "heapDeltaMb": 71.60000000000001,
+      "rssDeltaMb": 151.62,
+      "retainedHeapMb": 13.41,
+      "lagP99Ms": 150.470655,
+      "lagMaxMs": 683.147263
+    },
+    "scenarioB": {
+      "peakHeapMb": 46.07,
+      "peakRssMb": 251.02,
+      "heapDeltaMb": 14.25,
+      "rssDeltaMb": 1.8400000000000034,
+      "retainedHeapMb": 0.28999999999999915,
+      "offlineDiskBytes": 0,
+      "lagP99Ms": 16.580607,
+      "lagMaxMs": 18.956287
+    },
+    "scenarioC": {
+      "peakHeapMb": 82.19,
+      "peakRssMb": 273.6,
+      "heapDeltaMb": 50.08,
+      "rssDeltaMb": 24.450000000000017,
+      "lagP99Ms": 66.650111,
+      "lagMaxMs": 81.199103
+    },
+    "scenarioD": {
+      "postReplayHeapMb": 65.47,
+      "postDiscardHeapMb": 73.15,
+      "lagP99Ms": 22.249471,
+      "lagMaxMs": 39.124991
+    },
+    "scenarioE": {
+      "durationMs": 1110,
+      "heapDeltaMb": 9.129999999999995,
+      "lagP99Ms": 19.529727,
+      "lagMaxMs": 26.345471
+    }
+  },
+  "tableData": [
+    {
+      "Environment": "512 MB Container (Serverless / Micro)",
+      "Total RAM": "512 MB",
+      "1% Budget": "5.12 MB",
+      "Heap % of Host": "13.98%",
+      "Heap Status": "FAIL (EXCEEDS)",
+      "RSS % of Host": "29.61%",
+      "RSS Status": "FAIL (EXCEEDS)"
+    },
+    {
+      "Environment": "1 GB Container (Standard Cloud Run / Pod)",
+      "Total RAM": "1024 MB",
+      "1% Budget": "10.24 MB",
+      "Heap % of Host": "6.99%",
+      "Heap Status": "FAIL (EXCEEDS)",
+      "RSS % of Host": "14.81%",
+      "RSS Status": "FAIL (EXCEEDS)"
+    },
+    {
+      "Environment": "2 GB VM (Medium Backend Service)",
+      "Total RAM": "2048 MB",
+      "1% Budget": "20.48 MB",
+      "Heap % of Host": "3.50%",
+      "Heap Status": "FAIL (EXCEEDS)",
+      "RSS % of Host": "7.40%",
+      "RSS Status": "FAIL (EXCEEDS)"
+    },
+    {
+      "Environment": "4 GB VM (Large Production Node)",
+      "Total RAM": "4096 MB",
+      "1% Budget": "40.96 MB",
+      "Heap % of Host": "1.75%",
+      "Heap Status": "FAIL (EXCEEDS)",
+      "RSS % of Host": "3.70%",
+      "RSS Status": "FAIL (EXCEEDS)"
+    },
+    {
+      "Environment": "8 GB Bare Metal / Cloud Server",
+      "Total RAM": "8192 MB",
+      "1% Budget": "81.92 MB",
+      "Heap % of Host": "0.87%",
+      "Heap Status": "PASS",
+      "RSS % of Host": "1.85%",
+      "RSS Status": "FAIL (EXCEEDS)"
+    },
+    {
+      "Environment": "16 GB Enterprise Host",
+      "Total RAM": "16384 MB",
+      "1% Budget": "163.84 MB",
+      "Heap % of Host": "0.44%",
+      "Heap Status": "PASS",
+      "RSS % of Host": "0.93%",
+      "RSS Status": "PASS"
+    }
+  ],
+  "timestamp": "2026-10-13T16:43:28.719Z"
+}

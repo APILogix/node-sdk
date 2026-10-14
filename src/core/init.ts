@@ -25,6 +25,7 @@ import { tenantGovernor } from './tenant-isolation.js'
 import { adaptivePressure } from '../utils/adaptive-pressure.js'
 import { quotaController } from './quota-controller.js'
 import { costGovernor } from '../utils/cost-governor.js'
+import { cardinalityGovernor } from '../utils/cardinality-governor.js'
 import { TRACING_DEFAULTS } from '../constants/internal-defaults.js'
 import { initTracer, shutdownTracer } from '../tracing/tracer.js'
 import {
@@ -214,8 +215,9 @@ export async function activateSDK(
     const securityScrubber = SecurityScrubber.initialize(config.privacy)
     const entitlementGate = EntitlementGate.initialize(config.entitlements)
     tenantGovernor.configure(config.limits.tenantGovernance)
+    tenantGovernor.start()
     persistenceGovernor.configure(config.limits.persistenceGovernance)
-    SerializationPool.initialize(2)
+    SerializationPool.initialize(1)
 
     // Disk replay is required before initialization completes, but it does not
     // depend on transport construction or subsystem registration. Start it
@@ -248,6 +250,8 @@ export async function activateSDK(
       maxSpansPerTrace: config.limits.maxSpansPerTrace,
       maxTraceDurationMs: TRACING_DEFAULTS.maxTraceDurationMs,
     })
+    costGovernor.start()
+    cardinalityGovernor.start()
     eventQueue.configure(config.limits.maxQueueSize)
 
     if (options.plugins?.length) await initializePlugins(options.plugins, config, client.metadata)

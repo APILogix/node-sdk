@@ -20,7 +20,6 @@
  * - Async-safe symbolication (no event-loop blocking)
  */
 import { readFile as fsReadFile } from 'fs/promises';
-import { existsSync } from 'fs';
 import { resolve, dirname, join, relative, isAbsolute, sep } from 'path';
 import { SourceMapConsumer } from 'source-map-js';
 import { getLogger } from '../utils/logger.js';
@@ -82,6 +81,21 @@ class SourceMapResolver {
     clearCache() {
         this.cache.clear();
         this.loadingPromises.clear();
+    }
+    /**
+     * Reset all state — for testing and SDK lifecycle shutdown.
+     */
+    reset() {
+        this.clearCache();
+        this.sourceMapPaths = [];
+        this.allowRemoteSourceMaps = false;
+        this.maxCacheSize = DEFAULT_MAX_CACHE_SIZE;
+        this.cacheTtlMs = DEFAULT_CACHE_TTL_MS;
+        this.embedSourceContent = false;
+        this.initialized = false;
+        this.hits = 0;
+        this.misses = 0;
+        this.errors = 0;
     }
     // ─── Internal ─────────────────────────────────────────────────────────
     async resolveFrame(frame) {
@@ -223,16 +237,24 @@ class SourceMapResolver {
                     clearTimeout(timeoutId);
                 }
             }
-            else if (this.isPathWithinAppRoot(sourceMapUrl) && existsSync(sourceMapUrl)) {
-                rawJson = await fsReadFile(sourceMapUrl, { encoding: 'utf8' });
+            else if (this.isPathWithinAppRoot(sourceMapUrl)) {
+                try {
+                    rawJson = await fsReadFile(sourceMapUrl, { encoding: 'utf8' });
+                }
+                catch {
+                    // File not found or unreadable, fall through to additional search paths
+                }
             }
-            else {
+            if (!rawJson && !sourceMapUrl.startsWith('http://') && !sourceMapUrl.startsWith('https://')) {
                 // Search additional source map paths
                 for (const searchPath of this.sourceMapPaths) {
                     const fullPath = join(searchPath, sourceMapUrl.replace(/^.*[\\/]/, ''));
-                    if (existsSync(fullPath)) {
+                    try {
                         rawJson = await fsReadFile(fullPath, { encoding: 'utf8' });
                         break;
+                    }
+                    catch {
+                        // Not in this search path, try next
                     }
                 }
             }

@@ -47,6 +47,7 @@ import { getLogger } from '../utils/logger.js';
 import { generateId } from '../utils/uuid.js';
 import { epochMs } from '../utils/time.js';
 import { errorDeduplicator, traceDeduplicator } from '../processors/deduplicator.js';
+import { attachSourceContext } from '../processors/source-context.js';
 import { applyScopeToEvent } from './scope.js';
 import { loadShedder } from '../transport/load-shedder.js';
 import { isSDKShuttingDown } from './lifecycle.js';
@@ -345,7 +346,6 @@ export async function processEventAsync(rawEvent, assignedEventId) {
         if (event.type === 'error' && 'stack' in event && Array.isArray(event.stack)) {
             try {
                 if (ERROR_DEFAULTS.attachSourceContext) {
-                    const { attachSourceContext } = await import('../processors/source-context.js');
                     const enrichedFrames = await withTimeout(attachSourceContext(event.stack), SOURCE_CONTEXT_TIMEOUT_MS, 'attachSourceContext timed out');
                     event = { ...event, stack: enrichedFrames };
                 }

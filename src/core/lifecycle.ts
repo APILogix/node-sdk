@@ -33,7 +33,11 @@ import { teardownPlugins } from '../plugins/index.js'
 import { shutdownTracer, flushTracer } from '../tracing/tracer.js'
 import { resetSessionManager } from '../session/session-manager.js'
 import { resetGlobalErrorHandlers, isProcessCrashing } from '../instrumentation/global-errors.js'
-import { errorDeduplicator } from '../processors/deduplicator.js'
+import { errorDeduplicator, traceDeduplicator } from '../processors/deduplicator.js'
+import { sourceMapResolver } from '../processors/source-map-resolver.js'
+import { spanDurationTracker } from '../tracing/span-duration.js'
+import { resetSourceContextCache } from '../processors/source-context.js'
+import { clearScope } from './scope.js'
 import { persistentStorage } from '../storage/persistent-storage.js'
 import { metricsRegistry } from '../metrics/registry.js'
 import { otelMetrics } from '../metrics/otel-adapter.js'
@@ -566,16 +570,21 @@ async function runUnconditionalCleanup(stepErrors: ShutdownStepError[]): Promise
   // tenantGovernor is a module-level singleton (see tenant-isolation.ts).
   // Without an explicit reset here, a long-running process that re-inits
   // the SDK accumulates per-tenant rate-limit state across init cycles.
-  runSync('tenant-governor.reset', () => tenantGovernor.reset(), stepErrors)
+  runSync('tenant-governor.shutdown', () => { tenantGovernor.shutdown(); tenantGovernor.reset() }, stepErrors)
   runSync('cardinality-governor.shutdown', () => { cardinalityGovernor.shutdown(); cardinalityGovernor.reset() }, stepErrors)
   // adaptivePressure is started in init.ts (after metricsRegistry.start()).
   // Stop its timers/observers so a reinit cycle doesn't stack pollers.
   runSync('adaptive-pressure.stop', () => adaptivePressure.stop(), stepErrors)
 
   runSync('quota-controller.reset', () => QuotaController.reset(), stepErrors)
-  runSync('cost-governor.reset', () => costGovernor.reset(), stepErrors)
+  runSync('cost-governor.shutdown', () => { costGovernor.shutdown(); costGovernor.reset() }, stepErrors)
   runSync('persistence-governor.reset', () => persistenceGovernor.reset(), stepErrors)
   runSync('fingerprint-cache.reset', () => resetFingerprintCache(), stepErrors)
+  runSync('trace-deduplicator.reset', () => traceDeduplicator.reset(), stepErrors)
+  runSync('source-map-resolver.reset', () => sourceMapResolver.reset(), stepErrors)
+  runSync('span-duration.reset', () => spanDurationTracker.reset(), stepErrors)
+  runSync('source-context.reset', () => resetSourceContextCache(), stepErrors)
+  runSync('scope.clear', () => clearScope(), stepErrors)
   // Terminate serialization worker threads — awaited so they can't outlive
   // the SDK and hold the host process open across shutdown/reinit cycles.
   await runStep('serialization-pool.reset', async () => {

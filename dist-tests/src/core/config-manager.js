@@ -17,9 +17,11 @@ export class ConfigManager {
     static instance = null;
     currentConfig = null;
     currentHash = null;
+    currentRevision = null;
     remoteClient = null;
     applier = null;
     refreshPromise = null;
+    ttlTimer = null;
     destroyed = false;
     state = ConfigState.Pending;
     constructor() { }
@@ -42,7 +44,9 @@ export class ConfigManager {
         this.remoteClient = remoteClient;
         this.currentConfig = prepared.config;
         this.currentHash = prepared.hash;
+        this.currentRevision = prepared.config.meta.configRevision ?? null;
         this.state = ConfigState.Live;
+        this.scheduleTtlTimer();
         return prepared.config;
     }
     setApplier(applier) {
@@ -59,6 +63,12 @@ export class ConfigManager {
     getConfigOrNull() {
         return this.currentConfig;
     }
+    getConfigRevision() {
+        return this.currentRevision ?? this.currentConfig?.meta.configRevision ?? null;
+    }
+    getConfigHash() {
+        return this.currentHash;
+    }
     getState() {
         return this.state;
     }
@@ -72,8 +82,8 @@ export class ConfigManager {
         return this.refreshPromise !== null;
     }
     /**
-     * Inspect a parsed telemetry acknowledgement. Only a 202/change:true signal
-     * is actionable. Additional signals are intentionally ignored while the
+     * Inspect a parsed telemetry acknowledgement. Both change:true and config_u:true signals
+     * are actionable. Additional signals are intentionally ignored while the
      * single refresh is in flight.
      */
     handleTelemetryResponse(httpStatus, payload) {
@@ -81,9 +91,10 @@ export class ConfigManager {
             return;
         if (httpStatus < 200 || httpStatus >= 300)
             return;
-        if (!isRecord(payload) || payload['change'] !== true)
+        if (!isRecord(payload))
             return;
-        if (httpStatus !== 202 && payload['status'] !== 202)
+        const hasChange = payload['change'] === true || payload['config_u'] === true;
+        if (!hasChange)
             return;
         if (this.refreshPromise)
             return;
@@ -102,10 +113,15 @@ export class ConfigManager {
         if (this.destroyed)
             return;
         this.destroyed = true;
+        if (this.ttlTimer) {
+            clearTimeout(this.ttlTimer);
+            this.ttlTimer = null;
+        }
         this.applier = null;
         this.remoteClient = null;
         this.currentConfig = null;
         this.currentHash = null;
+        this.currentRevision = null;
         this.state = ConfigState.Pending;
         if (ConfigManager.instance === this)
             ConfigManager.instance = null;
@@ -114,25 +130,57 @@ export class ConfigManager {
         ConfigManager.instance?.destroy();
         ConfigManager.instance = null;
     }
+    scheduleTtlTimer() {
+        if (this.ttlTimer) {
+            clearTimeout(this.ttlTimer);
+            this.ttlTimer = null;
+        }
+        if (this.destroyed || !this.currentConfig || !this.remoteClient)
+            return;
+        const ttlSeconds = this.currentConfig.runtime?.configTtlSeconds ?? 300;
+        if (typeof ttlSeconds !== 'number' || ttlSeconds <= 0)
+            return;
+        const delayMs = Math.max(1000, ttlSeconds * 1000);
+        this.ttlTimer = setTimeout(() => {
+            if (this.destroyed || this.refreshPromise)
+                return;
+            const operation = this.refreshOnce();
+            this.refreshPromise = operation;
+            void operation.finally(() => {
+                if (this.refreshPromise === operation)
+                    this.refreshPromise = null;
+            }).catch(() => undefined);
+        }, delayMs);
+        this.ttlTimer.unref?.();
+    }
     async refreshOnce() {
         const client = this.remoteClient;
         const previous = this.currentConfig;
         if (!client || !previous || this.destroyed)
             return;
         try {
-            const payload = await client.fetchLatest();
+            const payload = await client.fetchLatest(this.currentRevision, this.currentHash);
             if (this.destroyed)
                 return;
+            // Fast-path: Server confirmed configuration is unchanged.
+            // Zero allocations, zero JSON parsing of large doc, zero diffing, zero restarts.
+            if (isRecord(payload) && payload['same'] === true) {
+                getLogger().debug('[ConfigManager] Refresh returned unchanged config (same: true)');
+                this.scheduleTtlTimer();
+                return;
+            }
             const prepared = prepareConfig(payload);
             if (isOlderSnapshot(prepared.config, previous)) {
                 getLogger().warn('[ConfigManager] Ignoring older remote configuration', {
                     activeGeneratedAt: previous.meta.generatedAt,
                     receivedGeneratedAt: prepared.config.meta.generatedAt,
                 });
+                this.scheduleTtlTimer();
                 return;
             }
             if (prepared.hash === this.currentHash) {
                 getLogger().debug('[ConfigManager] Refresh returned unchanged config');
+                this.scheduleTtlTimer();
                 return;
             }
             const applier = this.applier;
@@ -142,22 +190,27 @@ export class ConfigManager {
                 // but no subsystem is touched.
                 this.currentConfig = prepared.config;
                 this.currentHash = prepared.hash;
+                this.currentRevision = prepared.config.meta.configRevision ?? null;
+                this.scheduleTtlTimer();
                 return;
             }
             // Atomic commit point. Readers observe either the complete previous
             // snapshot or the complete new snapshot, never a partial mutation.
             this.currentConfig = prepared.config;
             this.currentHash = prepared.hash;
+            this.currentRevision = prepared.config.meta.configRevision ?? null;
             if (applier && diff)
                 await applier.apply(diff, previous, prepared.config);
             getLogger().info('[ConfigManager] Remote configuration replaced', {
                 configHash: prepared.config.meta.configHash,
+                configRevision: this.currentRevision,
             });
+            this.scheduleTtlTimer();
         }
         catch (error) {
-            // Preserve the last valid snapshot. There is deliberately no timer or
-            // retry; another fetch is allowed only after a future change:true ACK.
+            // Preserve the last valid snapshot. Reschedule TTL timer for next attempt.
             getLogger().warn('[ConfigManager] Refresh failed; retaining last valid configuration', { error });
+            this.scheduleTtlTimer();
         }
     }
 }

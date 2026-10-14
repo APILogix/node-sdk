@@ -6,6 +6,6 @@
  * every release; `package.json` should be kept in sync.
  */
 /** SDK package name used in telemetry, tracers, and exporters. */
-export declare const SDK_NAME = "@pulse-apm/node";
+export declare const SDK_NAME = "@lynktrace/node";
 /** SDK semantic version — corresponds to increments in `package.json`. */
-export declare const SDK_VERSION = "8.5.0";
+export declare const SDK_VERSION = "0.1.0-beta.1";

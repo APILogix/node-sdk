@@ -13,7 +13,7 @@
  *
  * Typical usage:
  *
- *     import { init, captureException, pulseMiddleware } from '@pulse-apm/node'
+ *     import { init, captureException, pulseMiddleware } from '@lynktrace/node'
  *
  *     await init({ apiKey: process.env.PULSE_API_KEY! })
  *     app.use(pulseMiddleware())
@@ -174,7 +174,7 @@ export declare function getHealth(): {
 };
 /**
  * Canonical Pulse SDK facade namespace.
- * Enables both `import { Pulse } from '@pulse-apm/node'` and `import Pulse from '@pulse-apm/node'`.
+ * Enables both `import { Pulse } from '@lynktrace/node'` and `import Pulse from '@lynktrace/node'`.
  */
 export declare const Pulse: {
     init: typeof init;

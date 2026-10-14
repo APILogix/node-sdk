@@ -32,6 +32,9 @@ export interface NormalizedRemoteConfig {
   /** Billing and API entitlements resolved by the backend. */
   readonly entitlements: EntitlementsConfig
 
+  /** Runtime lifecycle configuration (TTL refetch and stale-while-revalidate). */
+  readonly runtime?: RuntimeConfig | undefined
+
   // Subsystem-specific configurations
   readonly offlineQueue?: OfflineQueueConfig | undefined
   readonly profiling?: ProfilingConfig | undefined
@@ -476,6 +479,13 @@ export interface ConfigMeta {
   readonly generatedBy: string
   readonly configHash?: string | undefined
   readonly configRevision?: number | null | undefined
+}
+
+// ─── Runtime Config ─────────────────────────────────────────────────────────
+
+export interface RuntimeConfig {
+  readonly configTtlSeconds?: number | undefined
+  readonly staleWhileRevalidate?: boolean | undefined
 }
 
 // ─── Config Diff ────────────────────────────────────────────────────────────
