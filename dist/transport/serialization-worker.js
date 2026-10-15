@@ -1,6 +1,7 @@
 import { parentPort } from 'worker_threads';
 import { gzipSync, brotliCompressSync, constants as zlibConstants } from 'zlib';
 import { SecurityScrubber } from '../processors/security-scrubber.js';
+import { sanitizeEvent } from '../processors/sanitizer.js';
 import { safeJsonStringify } from '../utils/safe-json.js';
 let workerScrubber = null;
 let currentPrivacyConfigJson = '';
@@ -30,18 +31,20 @@ if (parentPort) {
         const { id, events, route, timestamp, privacyConfig, compression, maxPayloadBytes } = message;
         try {
             let safeEvents = events;
-            if (privacyConfig && Array.isArray(events)) {
+            if (Array.isArray(events)) {
                 const scrubber = getOrCreateScrubber(privacyConfig);
                 if (scrubber) {
                     safeEvents = scrubber.scrubBatch(events);
+                }
+                else {
+                    safeEvents = events.map(e => sanitizeEvent(e));
                 }
             }
             const payload = route
                 ? { events: safeEvents, route, timestamp: timestamp ?? Date.now() }
                 : safeEvents;
             const jsonStr = safeJsonStringify(payload);
-            let buffer = Buffer.from(jsonStr, 'utf8');
-            const originalSize = buffer.byteLength;
+            const originalSize = Buffer.byteLength(jsonStr, 'utf8');
             if (typeof maxPayloadBytes === 'number' && maxPayloadBytes > 0 && originalSize > maxPayloadBytes) {
                 try {
                     parentPort.postMessage({ id, tooLarge: true, originalSize });
@@ -49,6 +52,7 @@ if (parentPort) {
                 catch { }
                 return;
             }
+            let buffer = Buffer.from(jsonStr, 'utf8');
             let algorithm = 'none';
             let compressedSize = originalSize;
             if (compression === 'gzip') {

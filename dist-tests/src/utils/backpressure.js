@@ -93,7 +93,9 @@ export class MemoryPressureMonitor extends EventEmitter {
                 level = 'elevated';
             }
         }
-        return {
+        const previousLevel = this.lastLevel;
+        this.lastLevel = level;
+        const state = {
             level,
             heapUsedMb,
             heapTotalMb,
@@ -102,6 +104,10 @@ export class MemoryPressureMonitor extends EventEmitter {
             effectiveLimitMb,
             effectiveUtilization,
         };
+        if (level !== previousLevel && this.listenerCount('pressure') > 0) {
+            this.emit('pressure', state);
+        }
+        return state;
     }
     /** Returns true if the system is under elevated or critical memory pressure. */
     isUnderPressure() {
@@ -130,11 +136,7 @@ export class MemoryPressureMonitor extends EventEmitter {
         this.maxMemoryMb = maxMemoryMb;
     }
     check() {
-        const state = this.getState();
-        if (state.level !== this.lastLevel) {
-            this.lastLevel = state.level;
-            this.emit('pressure', state);
-        }
+        this.getState();
     }
 }
 /**

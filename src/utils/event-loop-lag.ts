@@ -120,11 +120,20 @@ export class EventLoopLagMonitor extends EventEmitter {
     return this.readHistogram(h)
   }
 
+  private lastStats: EventLoopLagStats | null = null
+
   private readHistogram(h: IntervalHistogram): EventLoopLagStats {
-    // IntervalHistogram reports in nanoseconds — convert to milliseconds
-    const nsToMs = (ns: number): number => Math.round((ns / 1_000_000) * 100) / 100
-    return {
-      min: nsToMs(h.min),
+    const nsToMs = (ns: number): number => {
+      if (!Number.isFinite(ns) || ns < 0 || ns > 3_600_000_000_000) return 0
+      return Math.round((ns / 1_000_000) * 100) / 100
+    }
+    const minRaw = h.min
+    // When count === 0, perf_hooks reports min as 9223372036854776000 (2^63 - 1) and mean as NaN
+    if (!Number.isFinite(h.mean) || minRaw > h.max || h.mean < 0) {
+      return this.lastStats ?? { min: 0, max: 0, mean: 0, p50: 0, p95: 0, p99: 0, stddev: 0 }
+    }
+    const stats: EventLoopLagStats = {
+      min: nsToMs(minRaw),
       max: nsToMs(h.max),
       mean: nsToMs(h.mean),
       p50: nsToMs(h.percentile(50)),
@@ -132,5 +141,7 @@ export class EventLoopLagMonitor extends EventEmitter {
       p99: nsToMs(h.percentile(99)),
       stddev: nsToMs(h.stddev),
     }
+    this.lastStats = stats
+    return stats
   }
 }

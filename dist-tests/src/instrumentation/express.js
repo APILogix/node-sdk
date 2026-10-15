@@ -142,20 +142,7 @@ export function ensureExpressLayersInstrumented(app, minDurationMs = 2, ignoreMi
                         // Fail-open
                     }
                 };
-                const onFinish = () => recordTiming();
-                if (res && typeof res.once === 'function') {
-                    try {
-                        res.once('finish', onFinish);
-                    }
-                    catch { }
-                }
                 const wrappedNext = (err) => {
-                    try {
-                        if (res && typeof res.removeListener === 'function') {
-                            res.removeListener('finish', onFinish);
-                        }
-                    }
-                    catch { }
                     recordTiming(err);
                     return next(err);
                 };
@@ -163,12 +150,6 @@ export function ensureExpressLayersInstrumented(app, minDurationMs = 2, ignoreMi
                     return originalHandle.call(this, req, res, wrappedNext);
                 }
                 catch (syncErr) {
-                    try {
-                        if (res && typeof res.removeListener === 'function') {
-                            res.removeListener('finish', onFinish);
-                        }
-                    }
-                    catch { }
                     recordTiming(syncErr);
                     throw syncErr;
                 }
@@ -352,6 +333,18 @@ export function pulseMiddleware(options = {}) {
                             const rawReqHeaders = req?.headers;
                             const rawReqQuery = req?.query;
                             const route = normalizeRoute(req);
+                            const method = req?.method ?? 'GET';
+                            const url = req?.originalUrl || req?.url || '/';
+                            // Release closures over req and res so V8 can GC IncomingMessage/ServerResponse immediately
+                            try {
+                                Object.defineProperties(extra, {
+                                    getStatusCode: { value: () => statusCode, enumerable: false, configurable: true, writable: true },
+                                    getMethod: { value: () => method, enumerable: false, configurable: true, writable: true },
+                                    getUrl: { value: () => url, enumerable: false, configurable: true, writable: true },
+                                    getRoute: { value: () => route, enumerable: false, configurable: true, writable: true },
+                                });
+                            }
+                            catch { }
                             const currentActiveSpan = trace.getActiveSpan() ?? activeSpan;
                             if (currentActiveSpan) {
                                 try {
@@ -379,6 +372,9 @@ export function pulseMiddleware(options = {}) {
                                         enrichmentAttrs['http.referer'] = referer;
                                     if (responseSize !== undefined)
                                         enrichmentAttrs['http.response.body.size'] = responseSize;
+                                    const reqContentLength = extractContentLength(headers['content-length']);
+                                    if (reqContentLength !== undefined)
+                                        enrichmentAttrs['http.request.body.size'] = reqContentLength;
                                     currentActiveSpan.setAttributes(enrichmentAttrs);
                                     if (res && res.statusCode >= 500) {
                                         currentActiveSpan.setStatus({ code: SpanStatusCode.ERROR });
@@ -444,8 +440,7 @@ export function pulseMiddleware(options = {}) {
                                             ...(clientIp ? { clientIp } : {}),
                                             ...(userAgent ? { userAgent } : {}),
                                             ...(referer ? { referer } : {}),
-                                            ...(captureHeaders ? { headers: scrubHeadersSafe(rawReqHeaders) } : {}),
-                                            ...(captureHeaders ? { headers: scrubHeadersSafe(headers) } : {}),
+                                            ...(captureHeaders ? { headers: scrubHeadersSafe(rawReqHeaders ?? headers) } : {}),
                                             ...(captureQuery && isRecord(rawReqQuery) ? { query: scrubQuery(rawReqQuery) } : {}),
                                             ...(bodySnapshot.body ? { body: bodySnapshot.body } : {}),
                                             ...(bodySnapshot.bodySize !== undefined ? { bodySize: bodySnapshot.bodySize } : {}),

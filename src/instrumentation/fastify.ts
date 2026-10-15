@@ -237,42 +237,11 @@ export function pulseFastifyPlugin(
     }
   })
 
-  fastify.addHook('preHandler', (request, reply, hookDone) => {
+  fastify.addHook('preHandler', (request, _reply, hookDone) => {
     const state = request.pulse
     if (!state) {
       hookDone()
       return
-    }
-
-    const rawReply = reply as unknown as { send?: (...args: unknown[]) => unknown; statusCode?: number; raw?: { statusCode?: number } }
-    if (typeof rawReply.send === 'function') {
-      const originalSend = rawReply.send
-      rawReply.send = function (this: unknown, payload?: unknown) {
-        if (state && !(state.store.extra as Record<string, unknown> | undefined)?.['fastifyErrorCaptured']) {
-          const errStatusCode = (payload as unknown as { statusCode?: number })?.statusCode
-            ?? (rawReply.statusCode && rawReply.statusCode !== 200 ? rawReply.statusCode : undefined)
-            ?? (rawReply.raw?.statusCode && rawReply.raw.statusCode !== 200 ? rawReply.raw.statusCode : undefined)
-            ?? 500
-          if (payload instanceof Error || (payload && typeof payload === 'object' && (payload as Record<string, unknown>).message && errStatusCode >= 400)) {
-            withContext(state.store, () => {
-              try {
-                if (state.store.extra) {
-                  ;(state.store.extra as Record<string, unknown>).mechanism = 'fastify.onError'
-                  ;(state.store.extra as Record<string, unknown>).handled = true
-                  ;(state.store.extra as Record<string, unknown>).statusCode = errStatusCode
-                  ;(state.store.extra as Record<string, unknown>).getStatusCode = () => errStatusCode
-                  ;(state.store.extra as Record<string, unknown>).fastifyErrorCaptured = true
-                }
-                attachRequestContextToActiveSpan(state.store)
-                captureException(payload instanceof Error ? payload : new Error(String((payload as Record<string, unknown>).message)))
-              } catch (sendErr) {
-                getLogger().error('pulseFastifyPlugin reply.send error capture failed', { error: sendErr })
-              }
-            })
-          }
-        }
-        return originalSend.apply(this, arguments as unknown as [unknown])
-      }
     }
 
     const runInScope = () => {
@@ -299,8 +268,8 @@ export function pulseFastifyPlugin(
     withContext(state.store, () => {
       try {
         const statusCode = reply.statusCode ?? reply.raw?.statusCode ?? 0
-        if (statusCode >= 400 && !(state.store.extra as Record<string, unknown> | undefined)?.['fastifyErrorCaptured']) {
-          const defaultMsg = statusCode === 422 ? 'Fastify 422 error' : statusCode === 401 ? 'Fastify 401 error' : `Fastify HTTP ${statusCode} error`
+        if (statusCode >= 500 && !(state.store.extra as Record<string, unknown> | undefined)?.['fastifyErrorCaptured']) {
+          const defaultMsg = `Fastify HTTP ${statusCode} error`
           const err = (reply as unknown as { raw?: { _error?: Error } })?.raw?._error
             ?? (request as unknown as { raw?: { _error?: Error } })?.raw?._error
             ?? new Error(defaultMsg)
@@ -337,6 +306,7 @@ export function pulseFastifyPlugin(
               ;(state.store.extra as Record<string, unknown>).handled = true
               ;(state.store.extra as Record<string, unknown>).statusCode = errStatusCode
               ;(state.store.extra as Record<string, unknown>).getStatusCode = () => errStatusCode
+              ;(state.store.extra as Record<string, unknown>).fastifyErrorCaptured = true
             }
             attachRequestContextToActiveSpan(state.store)
             captureException(payload instanceof Error ? payload : new Error(String((payload as Record<string, unknown>).message)))
@@ -389,13 +359,22 @@ export function pulseFastifyPlugin(
 
   fastify.addHook('onSend', (request, reply, payload, hookDone) => {
     const state = request.pulse
+    const statusCode = reply.statusCode ?? reply.raw?.statusCode ?? 200
+
+    // BUG-18: Fast-path for non-error responses (< 400).
+    // Avoid expensive Buffer stringification and JSON.parse on every 200 OK.
+    if (statusCode < 400 && !(payload instanceof Error)) {
+      hookDone(null, payload)
+      return
+    }
+
     if (state && !(state.store.extra as Record<string, unknown> | undefined)?.['fastifyErrorCaptured']) {
       let errToCapture: Error | null = null
-      let statusCode = reply.statusCode ?? reply.raw?.statusCode ?? 200
+      let effectiveStatusCode = statusCode
 
       if (payload instanceof Error) {
         errToCapture = payload
-        statusCode = (payload as unknown as { statusCode?: number }).statusCode ?? statusCode
+        effectiveStatusCode = (payload as unknown as { statusCode?: number }).statusCode ?? effectiveStatusCode
       } else {
         let payloadStr = ''
         if (typeof payload === 'string') {
@@ -405,9 +384,9 @@ export function pulseFastifyPlugin(
         } else if (payload && typeof payload === 'object') {
           const obj = payload as Record<string, unknown>
           if (typeof obj['statusCode'] === 'number') {
-            statusCode = obj['statusCode'] as number
+            effectiveStatusCode = obj['statusCode'] as number
           }
-          if (typeof obj['message'] === 'string' && statusCode >= 400) {
+          if (typeof obj['message'] === 'string' && effectiveStatusCode >= 400) {
             errToCapture = new Error(String(obj['message']))
           }
         }
@@ -417,9 +396,9 @@ export function pulseFastifyPlugin(
             const parsed = JSON.parse(payloadStr) as Record<string, unknown>
             if (parsed && typeof parsed === 'object') {
               if (typeof parsed['statusCode'] === 'number') {
-                statusCode = parsed['statusCode'] as number
+                effectiveStatusCode = parsed['statusCode'] as number
               }
-              if (typeof parsed['message'] === 'string' && statusCode >= 400) {
+              if (typeof parsed['message'] === 'string' && effectiveStatusCode >= 400) {
                 errToCapture = new Error(parsed['message'] as string)
               }
             }
@@ -427,14 +406,14 @@ export function pulseFastifyPlugin(
         }
       }
 
-      if (errToCapture && statusCode >= 400) {
+      if (errToCapture && effectiveStatusCode >= 400) {
         withContext(state.store, () => {
           try {
             if (state.store.extra) {
               ;(state.store.extra as Record<string, unknown>).mechanism = 'fastify.onError'
               ;(state.store.extra as Record<string, unknown>).handled = true
-              ;(state.store.extra as Record<string, unknown>).statusCode = statusCode
-              ;(state.store.extra as Record<string, unknown>).getStatusCode = () => statusCode
+              ;(state.store.extra as Record<string, unknown>).statusCode = effectiveStatusCode
+              ;(state.store.extra as Record<string, unknown>).getStatusCode = () => effectiveStatusCode
               ;(state.store.extra as Record<string, unknown>).fastifyErrorCaptured = true
             }
             attachRequestContextToActiveSpan(state.store)
@@ -447,41 +426,6 @@ export function pulseFastifyPlugin(
     }
     hookDone(null, payload)
   })
-
-  if (typeof (fastify as unknown as { setErrorHandler?: unknown }).setErrorHandler === 'function') {
-    const defaultErrorHandler = (fastify as unknown as { errorHandler?: (err: Error, req: FastifyRequest, rep: FastifyReply) => unknown }).errorHandler
-    ;(fastify as unknown as { setErrorHandler: (fn: (this: unknown, error: Error, request: FastifyRequest, reply: FastifyReply) => unknown) => void }).setErrorHandler(function (this: unknown, error: Error, request: FastifyRequest, reply: FastifyReply) {
-      const state = request.pulse
-      if (state) {
-        const errStatusCode = (error as unknown as { statusCode?: number; status?: number })?.statusCode
-          ?? (error as unknown as { statusCode?: number; status?: number })?.status
-          ?? (reply.statusCode && reply.statusCode !== 200 ? reply.statusCode : undefined)
-          ?? (reply.raw?.statusCode && reply.raw.statusCode !== 200 ? reply.raw.statusCode : undefined)
-          ?? 500
-        withContext(state.store, () => {
-          try {
-            if (state.store.extra) {
-              ;(state.store.extra as Record<string, unknown>).mechanism = 'fastify.onError'
-              ;(state.store.extra as Record<string, unknown>).handled = true
-              ;(state.store.extra as Record<string, unknown>).statusCode = errStatusCode
-              ;(state.store.extra as Record<string, unknown>).getStatusCode = () => errStatusCode
-              ;(state.store.extra as Record<string, unknown>).fastifyErrorCaptured = true
-            }
-            attachRequestContextToActiveSpan(state.store)
-            captureException(error)
-          } catch (err) {
-            getLogger().error('pulseFastifyPlugin errorHandler error capture failed', { error: err })
-          }
-        })
-      }
-      if (typeof defaultErrorHandler === 'function') {
-        return defaultErrorHandler.call(this, error, request, reply)
-      }
-      if (typeof (reply as unknown as { send?: unknown }).send === 'function') {
-        (reply as unknown as { send: (payload: unknown) => unknown }).send(error)
-      }
-    })
-  }
 
   done()
 }
@@ -504,6 +448,17 @@ function captureFastifyCompletion(
   const rawHeaders = request.headers
   const rawQuery = request.query
   const route = normalizeRoute(request)
+  const method = request.method
+
+  // Release request/reply closure references from context extra (BUG-11)
+  if (state.store.extra) {
+    const extra = state.store.extra as Record<string, unknown>
+    extra.statusCode = statusCode
+    extra.getStatusCode = () => statusCode
+    extra.getMethod = () => method
+    extra.getUrl = () => request.url
+    extra.getRoute = () => route
+  }
 
   const currentActiveSpan = trace.getActiveSpan() ?? state.activeSpan
   if (currentActiveSpan) {
@@ -554,40 +509,42 @@ function captureFastifyCompletion(
   // SEC-05: Defer heavy body snapshotting, PII scrubbing, and captureRequest
   // via setImmediate so the HTTP response cycle returns instantly to the event loop.
   setImmediate(() => {
-    try {
-      const bodySnapshot = captureBodySnapshot(rawBody, state.captureBody)
-      if (currentActiveSpan && bodySnapshot.bodySize !== undefined) {
-        try {
-          currentActiveSpan.setAttribute('http.request.body.size', bodySnapshot.bodySize)
-        } catch {}
-      }
+    withContext(state.store, () => {
+      try {
+        const bodySnapshot = captureBodySnapshot(rawBody, state.captureBody)
+        if (currentActiveSpan && bodySnapshot.bodySize !== undefined) {
+          try {
+            currentActiveSpan.setAttribute('http.request.body.size', bodySnapshot.bodySize)
+          } catch {}
+        }
 
-      captureRequest({
-        type: 'request',
-        requestId: state.requestId,
-        method: request.method,
-        url: route,
-        statusCode,
-        latency: latencyMs,
-        timestamp: Date.now(),
-        traceId: getTraceId() ?? state.store.traceId ?? state.activeSpan?.spanContext().traceId,
-        spanId: getSpanId() ?? state.store.spanId ?? state.activeSpan?.spanContext().spanId,
-        ...(state.userId ? { userId: state.userId } : {}),
-        ...(state.tenantId ? { tenantId: state.tenantId } : {}),
-        ...(state.sessionId ? { sessionId: state.sessionId } : {}),
-        ...(state.clientIp ? { clientIp: state.clientIp } : {}),
-        ...(state.userAgent ? { userAgent: state.userAgent } : {}),
-        ...(state.referer ? { referer: state.referer } : {}),
-        ...(state.captureHeaders ? { headers: scrubHeadersSafe(rawHeaders) } : {}),
-        ...(state.captureQuery && isRecord(rawQuery) ? { query: scrubQuery(rawQuery) } : {}),
-        ...(bodySnapshot.body ? { body: bodySnapshot.body } : {}),
-        ...(bodySnapshot.bodySize !== undefined ? { bodySize: bodySnapshot.bodySize } : {}),
-        ...(responseSize !== undefined ? { responseSize } : {}),
-        route,
-      })
-    } catch (err) {
-      getLogger().error('captureFastifyCompletion deferred capture failed', { error: err })
-    }
+        captureRequest({
+          type: 'request',
+          requestId: state.requestId,
+          method,
+          url: route,
+          statusCode,
+          latency: latencyMs,
+          timestamp: Date.now(),
+          traceId: getTraceId() ?? state.store.traceId ?? state.activeSpan?.spanContext().traceId,
+          spanId: getSpanId() ?? state.store.spanId ?? state.activeSpan?.spanContext().spanId,
+          ...(state.userId ? { userId: state.userId } : {}),
+          ...(state.tenantId ? { tenantId: state.tenantId } : {}),
+          ...(state.sessionId ? { sessionId: state.sessionId } : {}),
+          ...(state.clientIp ? { clientIp: state.clientIp } : {}),
+          ...(state.userAgent ? { userAgent: state.userAgent } : {}),
+          ...(state.referer ? { referer: state.referer } : {}),
+          ...(state.captureHeaders ? { headers: scrubHeadersSafe(rawHeaders) } : {}),
+          ...(state.captureQuery && isRecord(rawQuery) ? { query: scrubQuery(rawQuery) } : {}),
+          ...(bodySnapshot.body ? { body: bodySnapshot.body } : {}),
+          ...(bodySnapshot.bodySize !== undefined ? { bodySize: bodySnapshot.bodySize } : {}),
+          ...(responseSize !== undefined ? { responseSize } : {}),
+          route,
+        })
+      } catch (err) {
+        getLogger().error('captureFastifyCompletion deferred capture failed', { error: err })
+      }
+    })
   })
 }
 

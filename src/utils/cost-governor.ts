@@ -58,9 +58,10 @@ export class CostGovernor {
     private readonly traceTimestamps = new Map<string, number>()
     private readonly maxTrackedTraces = 2_000
 
-    // Bytes tracking — sliding window (60s)
-    private readonly byteWindows: Array<{ timestamp: number; bytes: number }> = []
-    private readonly windowDurationMs = 60_000
+    // Bytes tracking — sliding window (60s) via fixed circular bucket ring (1 slot per second)
+    private readonly bucketBytes = new Float64Array(60)
+    private readonly bucketSec = new Int32Array(60)
+    private runningWindowBytes = 0
 
     // Stats
     private totalBytesSent = 0
@@ -76,9 +77,6 @@ export class CostGovernor {
         this.bytesBudgetPerMinute = options.bytesBudgetPerMinute ?? 10 * 1024 * 1024 // 10MB
         this.enableAdaptiveReduction = options.enableAdaptiveReduction ?? true
         this.maxTraceDurationMs = options.maxTraceDurationMs ?? 300_000 // 5 minutes
-
-        this.cleanupTimer = setInterval(() => this.cleanup(), 30_000)
-        this.cleanupTimer.unref()
     }
 
     /**
@@ -104,7 +102,9 @@ export class CostGovernor {
     reset(): void {
         this.traceSpanCounts.clear()
         this.traceTimestamps.clear()
-        this.byteWindows.length = 0
+        this.bucketBytes.fill(0)
+        this.bucketSec.fill(0)
+        this.runningWindowBytes = 0
         this.totalBytesSent = 0
         this.totalSpansBlocked = 0
         this.totalBudgetExceeded = 0
@@ -165,18 +165,19 @@ export class CostGovernor {
      * Record bytes sent for budget tracking.
      */
     recordBytesSent(bytes: number): void {
-        const now = epochMs()
-        this.byteWindows.push({ timestamp: now, bytes })
+        const nowSec = Math.floor(epochMs() / 1000)
+        this.advanceBuckets(nowSec)
+        const idx = nowSec % 60
+        this.bucketBytes[idx] = (this.bucketBytes[idx] ?? 0) + bytes
+        this.runningWindowBytes += bytes
         this.totalBytesSent += bytes
 
-        // Check budget
-        const currentRate = this.getCurrentBytesPerMinute()
-        if (currentRate > this.bytesBudgetPerMinute) {
+        if (this.runningWindowBytes > this.bytesBudgetPerMinute) {
             this.totalBudgetExceeded++
             if (this.totalBudgetExceeded % 10 === 1) {
                 getLogger().warn('Telemetry bytes budget exceeded', {
                     utilization: this.bytesBudgetPerMinute > 0
-                        ? Math.round((currentRate / this.bytesBudgetPerMinute) * 100) / 100
+                        ? Math.round((this.runningWindowBytes / this.bytesBudgetPerMinute) * 100) / 100
                         : 0,
                 })
             }
@@ -244,25 +245,28 @@ export class CostGovernor {
 
     // ─── Internal ───────────────────────────────────────────────────────────
 
+    private advanceBuckets(nowSec: number): void {
+        let sum = 0
+        const cutoffSec = nowSec - 60
+        for (let i = 0; i < 60; i++) {
+            if ((this.bucketSec[i] ?? 0) <= cutoffSec) {
+                this.bucketBytes[i] = 0
+                this.bucketSec[i] = 0
+            } else {
+                sum += this.bucketBytes[i] ?? 0
+            }
+        }
+        const idx = nowSec % 60
+        if (this.bucketSec[idx] !== nowSec) {
+            this.bucketSec[idx] = nowSec
+            this.bucketBytes[idx] = 0
+        }
+        this.runningWindowBytes = sum
+    }
+
     private getCurrentBytesPerMinute(): number {
-        const now = epochMs()
-        const cutoff = now - this.windowDurationMs
-
-        // Clean expired entries in a single splice operation
-        let validStart = 0
-        const len = this.byteWindows.length
-        while (validStart < len && (this.byteWindows[validStart]?.timestamp ?? 0) < cutoff) {
-            validStart++
-        }
-        if (validStart > 0) {
-            this.byteWindows.splice(0, validStart)
-        }
-
-        let total = 0
-        for (const entry of this.byteWindows) {
-            total += entry.bytes
-        }
-        return total
+        this.advanceBuckets(Math.floor(epochMs() / 1000))
+        return this.runningWindowBytes
     }
 
     private evictOldestTraces(): void {
@@ -290,15 +294,7 @@ export class CostGovernor {
         }
 
         // Clean old byte windows
-        const cutoff = now - this.windowDurationMs
-        let validStart = 0
-        const len = this.byteWindows.length
-        while (validStart < len && (this.byteWindows[validStart]?.timestamp ?? 0) < cutoff) {
-            validStart++
-        }
-        if (validStart > 0) {
-            this.byteWindows.splice(0, validStart)
-        }
+        this.advanceBuckets(Math.floor(now / 1000))
     }
 }
 

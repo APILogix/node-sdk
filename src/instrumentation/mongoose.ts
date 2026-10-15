@@ -243,7 +243,7 @@ export class MongooseInstrumentation extends InstrumentationBase {
           }
           const { result, callbackWrapped } = context.with(invocationContext, run)
 
-          if (result && typeof (result as any).then === 'function') {
+          if (!callbackWrapped && result && typeof (result as any).then === 'function') {
             return (result as any).then(
               (value: any) => {
                 endOk()
@@ -445,10 +445,11 @@ export class MongooseInstrumentation extends InstrumentationBase {
           return origAggregateExec.apply(this, args)
         }
 
-        const modelName = this.model?.()?.modelName || 'Aggregate'
+        const aggModel = typeof this.model === 'function' ? this.model() : (this.model ?? this._model)
+        const modelName = aggModel?.modelName || 'Aggregate'
         const spanName = `${modelName}.aggregate`
-        const dbName = this.model?.()?.db?.name || 'db'
-        const collectionName = this.model?.()?.collection?.name || modelName
+        const dbName = aggModel?.db?.name || 'db'
+        const collectionName = aggModel?.collection?.name || modelName
 
         return self._withMongooseSpan(
           spanName,

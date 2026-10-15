@@ -1,5 +1,7 @@
 import { flush } from '../core/lifecycle.js'
 import { captureException } from '../capture/captureException.js'
+import { createContextStore, withContext } from '../core/context.js'
+import { generateId } from '../utils/uuid.js'
 import { getLogger } from '../utils/logger.js'
 
 export interface ServerlessHandlerOptions {
@@ -37,8 +39,10 @@ const DEFAULT_FLUSH_TIMEOUT_MS = 1500
  *
  * `wrapHandler`:
  * 1. Sets `context.callbackWaitsForEmptyEventLoop = false` (AWS Lambda best practice).
- * 2. Catches unhandled errors, captures them with `captureException`, flushes within deadline, and rethrows.
- * 3. On successful return, flushes pending traces, metrics, and logs synchronously before execution freeze.
+ * 2. Isolates execution in a fresh ContextStore to prevent cross-invocation context bleed.
+ * 3. Handles both async/Promise handlers and callback-style handlers (handler.length >= 3).
+ * 4. Catches unhandled errors, captures them with `captureException`, flushes within deadline, and rethrows.
+ * 5. On successful return, flushes pending traces, metrics, and logs synchronously before execution freeze.
  */
 export function wrapHandler<TEvent = unknown, TContext = unknown, TResult = unknown>(
   handler: ServerlessHandler<TEvent, TContext, TResult>,
@@ -49,30 +53,88 @@ export function wrapHandler<TEvent = unknown, TContext = unknown, TResult = unkn
   const setCallbackWaits = options.callbackWaitsForEmptyEventLoop ?? true
 
   return async (event: TEvent, context: TContext, callback?: unknown): Promise<TResult> => {
-    if (setCallbackWaits && context && typeof context === 'object') {
-      try {
-        ;(context as Record<string, unknown>).callbackWaitsForEmptyEventLoop = false
-      } catch {
-        // Ignore if context is frozen or property cannot be set
+    let requestId = generateId()
+    if (context && typeof context === 'object') {
+      const ctxObj = context as Record<string, unknown>
+      if (typeof ctxObj['awsRequestId'] === 'string' && ctxObj['awsRequestId']) {
+        requestId = ctxObj['awsRequestId']
+      }
+      if (setCallbackWaits) {
+        try {
+          ctxObj.callbackWaitsForEmptyEventLoop = false
+        } catch {}
       }
     }
 
-    try {
-      const result = await Promise.resolve(handler(event, context, callback))
-      await flushSafely(flushTimeoutMs)
-      return result
-    } catch (error) {
-      if (captureErrors) {
-        try {
-          captureException(error instanceof Error ? error : new Error(String(error)))
-        } catch (captureErr) {
-          getLogger().debug('Failed to capture serverless handler exception', { error: captureErr })
+    const store = createContextStore(requestId, 100, {
+      tags: { runtime: 'serverless' },
+    })
+
+    return withContext(store, async () => {
+      try {
+        const result = await executeHandler(handler, event, context, callback)
+        await flushSafely(flushTimeoutMs)
+        return result
+      } catch (error) {
+        if (captureErrors) {
+          try {
+            captureException(error instanceof Error ? error : new Error(String(error)))
+          } catch (captureErr) {
+            getLogger().debug('Failed to capture serverless handler exception', { error: captureErr })
+          }
+        }
+        await flushSafely(flushTimeoutMs)
+        throw error
+      }
+    })
+  }
+}
+
+function executeHandler<TEvent, TContext, TResult>(
+  handler: ServerlessHandler<TEvent, TContext, TResult>,
+  event: TEvent,
+  context: TContext,
+  callback?: unknown,
+): Promise<TResult> {
+  if (handler.length >= 3) {
+    return new Promise<TResult>((resolve, reject) => {
+      let settled = false
+      const cb = (err: unknown, res?: TResult) => {
+        if (settled) return
+        settled = true
+        if (typeof callback === 'function') {
+          try { (callback as Function)(err, res) } catch {}
+        }
+        if (err) reject(err)
+        else resolve(res as TResult)
+      }
+      try {
+        const maybePromise = handler(event, context, cb)
+        if (maybePromise && typeof (maybePromise as Promise<TResult>).then === 'function') {
+          ;(maybePromise as Promise<TResult>).then(
+            res => {
+              if (!settled) {
+                settled = true
+                resolve(res)
+              }
+            },
+            err => {
+              if (!settled) {
+                settled = true
+                reject(err)
+              }
+            },
+          )
+        }
+      } catch (syncErr) {
+        if (!settled) {
+          settled = true
+          reject(syncErr)
         }
       }
-      await flushSafely(flushTimeoutMs)
-      throw error
-    }
+    })
   }
+  return Promise.resolve(handler(event, context, callback))
 }
 
 async function flushSafely(timeoutMs: number): Promise<void> {

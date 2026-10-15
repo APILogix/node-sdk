@@ -9,6 +9,7 @@ import type { EnterpriseRoute } from '../../src/transport/route-registry.js'
 import { ConfigManager } from '../../src/core/config-manager.js'
 import { RemoteConfigClient } from '../../src/core/remote-config-client.js'
 import { TEST_REMOTE_CONFIG } from '../fixtures/remote-config.js'
+import { BACKEND_BASE_URL } from '../../src/constants/defaults.js'
 
 const routes: EnterpriseRoute[] = ['errors', 'events', 'traces', 'spans', 'metrics', 'logs', 'profiles', 'crons', 'requests', 'replays']
 const limits = Object.fromEntries(routes.map(route => [route, 2])) as Record<EnterpriseRoute, number>
@@ -116,7 +117,7 @@ describe('BatchManager concurrency and shutdown', () => {
       apiKey: 'test',
       fetchImpl: async input => {
         configCalls++
-        assert.equal(String(input), 'http://127.0.0.1:5000/v1/sdk-config')
+        assert.equal(String(input), `${BACKEND_BASE_URL}/v1/sdk-config`)
         return new Response(JSON.stringify(refreshed), {
           status: 200,
           headers: { 'content-type': 'application/json' },

@@ -14,6 +14,7 @@ import type { PrivacyConfig, ConfigDiff, RemoteConfigResponse } from '../types/c
 import type { SDKEvent } from '../types/event.js';
 export declare class SecurityScrubber {
     private static instance;
+    private captureConfig;
     private scrubbingConfig;
     private piiConfig;
     private destroyed;
@@ -58,7 +59,7 @@ export declare class SecurityScrubber {
      * `ReplayEvent.events`, profile payloads, aggregated trace spans. Returns a new value; never
      * mutates the input. Never throws.
      */
-    scrubValue(value: unknown, depth?: number): unknown;
+    scrubValue(value: unknown, depth?: number, seen?: WeakSet<object>): unknown;
     /** Handle config change — hot-swap privacy config. */
     handleConfigChange(_diff: ConfigDiff, newConfig: Readonly<RemoteConfigResponse>): void;
     /**

@@ -12,7 +12,7 @@
  *     not in PulseSpan or at span creation time
  *   - Centralized SDK name/version constants (no hardcoded strings)
  */
-import { trace as otelTrace, SpanKind, context as otelContext, ROOT_CONTEXT, INVALID_SPAN_CONTEXT, } from '@opentelemetry/api';
+import { trace as otelTrace, SpanKind, context as otelContext, propagation, ROOT_CONTEXT, INVALID_SPAN_CONTEXT, } from '@opentelemetry/api';
 import { computeExclusiveDuration, spanDurationTracker, } from './span-duration.js';
 import { getTraceAggregator, resetTraceAggregator } from './trace-aggregator.js';
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
@@ -73,6 +73,27 @@ function areCustomSpansAllowed() {
  *
  * The OTel ReadableSpan is the SINGLE SOURCE OF TRUTH.
  */
+const convertedSpanCache = new WeakMap();
+const deniedSpanCache = new WeakSet();
+function getOrConvertSpanEvent(span) {
+    if (deniedSpanCache.has(span))
+        return null;
+    const existing = convertedSpanCache.get(span);
+    if (existing)
+        return existing;
+    const ctx = span.spanContext();
+    if (!costGovernor.canCreateSpan(ctx.traceId) || !costGovernor.canContinueTrace(ctx.traceId)) {
+        deniedSpanCache.add(span);
+        return null;
+    }
+    const parentSpanId = span.parentSpanContext?.spanId;
+    if (parentSpanId) {
+        spanDurationTracker.recordChildInterval(ctx.traceId, parentSpanId, hrTimeToMs(span.startTime), hrTimeToMs(span.endTime));
+    }
+    const event = spanToEvent(span);
+    convertedSpanCache.set(span, event);
+    return event;
+}
 class PipelineSpanExporter {
     export(spans, resultCallback) {
         const activeCtx = otelContext.active();
@@ -89,29 +110,13 @@ class PipelineSpanExporter {
             try {
                 let allAccepted = true;
                 const traceIdsInBatch = new Set();
-                const rootTraceIds = new Set();
-                const admittedSpans = new Set();
-                // Pass 1: Record all child intervals for the batch first
                 for (const span of spans) {
-                    const ctx = span.spanContext();
-                    const traceId = ctx.traceId;
-                    if (!costGovernor.canCreateSpan(traceId) || !costGovernor.canContinueTrace(traceId)) {
-                        continue;
-                    }
-                    admittedSpans.add(span);
-                    const parentSpanId = span.parentSpanContext?.spanId;
-                    if (parentSpanId) {
-                        spanDurationTracker.recordChildInterval(traceId, parentSpanId, hrTimeToMs(span.startTime), hrTimeToMs(span.endTime));
-                    }
-                }
-                // Pass 2: Process spans, convert to events, and send to aggregator
-                for (const span of spans) {
-                    if (!admittedSpans.has(span))
+                    const traceEvent = getOrConvertSpanEvent(span);
+                    if (!traceEvent)
                         continue;
                     const ctx = span.spanContext();
                     const traceId = ctx.traceId;
                     traceIdsInBatch.add(traceId);
-                    const traceEvent = spanToEvent(span);
                     const isSampled = (ctx.traceFlags & 1) === 1;
                     // Only emit directly to event pipeline if head-sampled.
                     // Otherwise, the TraceAggregator will buffer and tail-promote if error or slow.
@@ -119,14 +124,6 @@ class PipelineSpanExporter {
                         if (!processEvent(traceEvent)) {
                             allAccepted = false;
                         }
-                    }
-                    try {
-                        getTraceAggregator().addSpan(traceEvent);
-                    }
-                    catch { }
-                    const parentSpanId = span.parentSpanContext?.spanId;
-                    if (!parentSpanId) {
-                        rootTraceIds.add(traceId);
                     }
                 }
                 // Flush completed traces at the end of the batch export to prevent race conditions
@@ -305,17 +302,15 @@ class AggregatorSpanProcessor {
     onEnd(span) {
         try {
             const ctx = span.spanContext();
-            if (ctx?.traceId && ctx?.spanId) {
-                const parentSpanId = span.parentSpanContext?.spanId;
-                if (parentSpanId) {
-                    spanDurationTracker.recordChildInterval(ctx.traceId, parentSpanId, hrTimeToMs(span.startTime), hrTimeToMs(span.endTime));
-                }
-                // Convert span to event immediately and buffer in aggregator
-                const traceEvent = spanToEvent(span);
+            if (!ctx?.traceId || !ctx?.spanId)
+                return;
+            const traceEvent = getOrConvertSpanEvent(span);
+            const isRoot = !span.parentSpanContext?.spanId;
+            if (traceEvent) {
                 getTraceAggregator().addSpan(traceEvent);
-                const isRoot = !parentSpanId;
-                getTraceAggregator().onSpanEnd(ctx.traceId, ctx.spanId, isRoot);
             }
+            // Always decrement activeSpanCount even if costGovernor blocked the span payload
+            getTraceAggregator().onSpanEnd(ctx.traceId, ctx.spanId, isRoot);
         }
         catch (err) {
             getLogger().debug('AggregatorSpanProcessor.onEnd failed', { error: err });
@@ -1154,15 +1149,35 @@ export function startBackgroundSpan(name, options) {
         }
         const span = tracer.startSpan(name, otelOptions, ROOT_CONTEXT);
         activeBackgroundSpans++;
-        const pulseSpan = new PulseSpan(span, undefined);
-        const origEnd = pulseSpan.end.bind(pulseSpan);
         let decremented = false;
-        pulseSpan.end = (endTime) => {
+        const maxLifetimeMs = options?.timeoutMs && options.timeoutMs > 0
+            ? options.timeoutMs
+            : TRACING_DEFAULTS.maxTraceDurationMs;
+        const safetyTimer = setTimeout(() => {
             if (!decremented) {
                 decremented = true;
                 activeBackgroundSpans = Math.max(0, activeBackgroundSpans - 1);
             }
-            origEnd(endTime);
+        }, maxLifetimeMs);
+        safetyTimer.unref?.();
+        const origOtelEnd = span.end.bind(span);
+        span.end = (...args) => {
+            if (!decremented) {
+                decremented = true;
+                clearTimeout(safetyTimer);
+                activeBackgroundSpans = Math.max(0, activeBackgroundSpans - 1);
+            }
+            return origOtelEnd(...args);
+        };
+        const pulseSpan = new PulseSpan(span, undefined);
+        const origPulseEnd = pulseSpan.end.bind(pulseSpan);
+        pulseSpan.end = (endTime) => {
+            if (!decremented) {
+                decremented = true;
+                clearTimeout(safetyTimer);
+                activeBackgroundSpans = Math.max(0, activeBackgroundSpans - 1);
+            }
+            origPulseEnd(endTime);
         };
         return pulseSpan;
     }
@@ -1261,6 +1276,10 @@ export async function shutdownTracer() {
             catch { }
             try {
                 otelContext.disable();
+            }
+            catch { }
+            try {
+                propagation.disable();
             }
             catch { }
         }

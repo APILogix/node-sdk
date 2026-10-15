@@ -192,11 +192,12 @@ export class LoggingSubsystem {
 }
 
 function resolveLoggingConfig(config: Readonly<RemoteConfigResponse>): LoggingRuntimeConfig {
+  const remoteLogs = config.logs
   return {
-    enabled: config.features.logging,
-    captureConsole: LOGGING_DEFAULTS.captureConsole,
-    levels: LOGGING_DEFAULTS.levels,
-    maxLogSize: LOGGING_DEFAULTS.maxLogSize,
+    enabled: remoteLogs?.enabled ?? config.features.logging,
+    captureConsole: remoteLogs?.captureConsole ?? LOGGING_DEFAULTS.captureConsole,
+    levels: remoteLogs?.levels ?? LOGGING_DEFAULTS.levels,
+    maxLogSize: remoteLogs?.maxLogSize ?? LOGGING_DEFAULTS.maxLogSize,
   }
 }
 

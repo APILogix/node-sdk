@@ -4,6 +4,7 @@ import { TEST_REMOTE_CONFIG as BAKED_IN_REMOTE_CONFIG } from '../fixtures/remote
 import { ConfigApplier } from '../../src/core/config-applier.js';
 import { ConfigManager } from '../../src/core/config-manager.js';
 import { RemoteConfigClient } from '../../src/core/remote-config-client.js';
+import { BACKEND_BASE_URL } from '../../src/constants/defaults.js';
 function config(traceRate = 0.25, generatedAt = '2026-07-30T00:00:00.000Z') {
     const routes = Object.fromEntries(Object.entries(BAKED_IN_REMOTE_CONFIG.transport.routes).map(([name, route]) => [
         name,
@@ -137,7 +138,7 @@ describe('single-source remote configuration runtime', () => {
         const initResponse = await remote.initialize();
         ConfigManager.getInstance().initialize(remote, initResponse.config);
         assert.equal(calls.length, 1);
-        assert.equal(calls[0]?.url, 'http://127.0.0.1:5000/v1/init');
+        assert.equal(calls[0]?.url, `${BACKEND_BASE_URL}/v1/init`);
         assert.deepEqual(calls[0]?.body, {});
         assert.equal(calls[0]?.headers?.['X-API-Key'], 'secret-key');
     });

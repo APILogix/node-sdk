@@ -15,7 +15,7 @@
  * - Batching and flush timing come from the active `crons` transport route.
  */
 
-import type { ConfigDiff, RemoteConfigResponse } from '../types/config.js'
+import type { ConfigDiff, RemoteConfigResponse, CronsConfig } from '../types/config.js'
 import type { CronCheckInEvent, EventMetadata } from '../types/event.js'
 import { getLogger } from '../utils/logger.js'
 import { context } from '@opentelemetry/api'
@@ -47,11 +47,14 @@ export class CronSubsystem {
     this.metadata = metadata
   }
 
-  static initialize(emitter: CronEmitter, metadata: EventMetadata): CronSubsystem {
+  static initialize(emitter: CronEmitter, metadata: EventMetadata, cronsConfig?: CronsConfig): CronSubsystem {
     if (CronSubsystem.instance) {
       CronSubsystem.instance.destroy()
     }
     CronSubsystem.instance = new CronSubsystem(emitter, metadata)
+    if (cronsConfig?.timeoutMs) {
+      CronSubsystem.instance.monitorTimeoutMs = cronsConfig.timeoutMs
+    }
     return CronSubsystem.instance
   }
 
@@ -155,6 +158,9 @@ export class CronSubsystem {
   handleConfigChange(diff: ConfigDiff, newConfig: Readonly<RemoteConfigResponse>): void {
     if (diff.featuresChanged && !newConfig.features.crons) {
       this.stop()
+    }
+    if (newConfig.crons?.timeoutMs) {
+      this.monitorTimeoutMs = newConfig.crons.timeoutMs
     }
   }
 

@@ -13,9 +13,42 @@
 import { getLogger } from '../utils/logger.js';
 import { isIP } from 'node:net';
 const REDACTED = '[Redacted]';
-const SYSTEM_ID_KEYS = new Set(['traceId', 'spanId', 'parentSpanId', 'eventId']);
+const SYSTEM_ID_KEYS = new Set([
+    'type',
+    'eventId',
+    'traceId',
+    'spanId',
+    'parentSpanId',
+    'requestId',
+    'sessionId',
+    'userId',
+    'fingerprint',
+    'timestamp',
+    'startTime',
+    'endTime',
+    'duration',
+    'exclusiveDuration',
+    'latency',
+    'statusCode',
+    'status',
+    'http.status_code',
+    'status_code',
+    'error.code',
+    'kind',
+    'method',
+    'severity',
+    'level',
+    'metricName',
+    'metricType',
+    'profileType',
+    'monitorSlug',
+    'handled',
+    'classification',
+    'mechanism',
+]);
 export class SecurityScrubber {
     static instance = null;
+    captureConfig;
     scrubbingConfig;
     piiConfig;
     destroyed = false;
@@ -62,6 +95,7 @@ export class SecurityScrubber {
         return sum % 10 === 0;
     }
     constructor(config) {
+        this.captureConfig = { ...config.capture };
         this.scrubbingConfig = { ...config.scrubbing };
         this.piiConfig = { ...config.piiDetection };
         this.sensitiveHeaders = new Set(config.scrubbing.headers.map((h) => h.toLowerCase()));
@@ -72,7 +106,7 @@ export class SecurityScrubber {
     }
     getPrivacyConfig() {
         return {
-            capture: { headers: true, body: true, response: false, query: true, cookies: false },
+            capture: { ...this.captureConfig },
             scrubbing: {
                 enabled: this.scrubbingConfig.enabled,
                 headers: [...this.sensitiveHeaders],
@@ -156,7 +190,12 @@ export class SecurityScrubber {
             // immutability for nested objects/arrays.
             if (needsDeepScrub) {
                 for (const [key, value] of Object.entries(clone)) {
-                    if (key === 'metadata' || SYSTEM_ID_KEYS.has(key) || SecurityScrubber.DANGEROUS_KEYS.has(key)) {
+                    if (key === 'metadata' ||
+                        key === 'headers' ||
+                        key === 'query' ||
+                        key === 'url' ||
+                        SYSTEM_ID_KEYS.has(key) ||
+                        SecurityScrubber.DANGEROUS_KEYS.has(key)) {
                         if (SecurityScrubber.DANGEROUS_KEYS.has(key))
                             delete clone[key];
                         continue;
@@ -238,14 +277,14 @@ export class SecurityScrubber {
      * `ReplayEvent.events`, profile payloads, aggregated trace spans. Returns a new value; never
      * mutates the input. Never throws.
      */
-    scrubValue(value, depth = 0) {
+    scrubValue(value, depth = 0, seen = new WeakSet()) {
         if (this.destroyed || !this.hasScrubRules)
             return value;
         if (depth > 10)
             return REDACTED;
         try {
             if (typeof value === 'string') {
-                let str = value;
+                let str = value.length > 128 * 1024 ? value.slice(0, 128 * 1024) + '…[truncated]' : value;
                 if (this.scrubbingConfig.enabled &&
                     str.length >= 2 &&
                     str.length <= 64 * 1024 &&
@@ -254,7 +293,7 @@ export class SecurityScrubber {
                     try {
                         const parsed = JSON.parse(str);
                         if (typeof parsed === 'object' && parsed !== null) {
-                            return JSON.stringify(this.scrubValue(parsed, depth + 1));
+                            return JSON.stringify(this.scrubValue(parsed, depth + 1, seen));
                         }
                     }
                     catch {
@@ -295,29 +334,43 @@ export class SecurityScrubber {
                 }
                 return str;
             }
-            if (Array.isArray(value)) {
-                return value.map(item => this.scrubValue(item, depth + 1));
+            if (typeof value === 'bigint')
+                return value.toString();
+            if (typeof value !== 'object' || value === null)
+                return value;
+            if (value instanceof Date)
+                return value.toISOString();
+            if (value instanceof RegExp)
+                return value.toString();
+            if (Buffer.isBuffer(value) || value instanceof Uint8Array) {
+                return `[Binary:${value.byteLength}b]`;
             }
-            if (typeof value === 'object' && value !== null) {
+            if (seen.has(value))
+                return '[Circular]';
+            seen.add(value);
+            try {
+                if (Array.isArray(value)) {
+                    return value.map(item => this.scrubValue(item, depth + 1, seen));
+                }
                 const result = Object.create(null);
                 for (const [key, v] of Object.entries(value)) {
                     if (SecurityScrubber.DANGEROUS_KEYS.has(key))
                         continue;
                     if (SYSTEM_ID_KEYS.has(key)) {
-                        result[key] = v;
+                        result[key] = typeof v === 'bigint' ? v.toString() : v;
                     }
                     else if (this.isKeySensitive(key)) {
                         result[key] = REDACTED;
                     }
                     else {
-                        result[key] = this.scrubValue(v, depth + 1);
+                        result[key] = this.scrubValue(v, depth + 1, seen);
                     }
                 }
                 return result;
             }
-            if (typeof value === 'bigint')
-                return value.toString();
-            return value;
+            finally {
+                seen.delete(value);
+            }
         }
         catch {
             return REDACTED;
@@ -328,6 +381,7 @@ export class SecurityScrubber {
         if (this.destroyed)
             return;
         const newPrivacy = newConfig.privacy;
+        this.captureConfig = { ...newPrivacy.capture };
         this.scrubbingConfig = { ...newPrivacy.scrubbing };
         this.piiConfig = { ...newPrivacy.piiDetection };
         this.sensitiveHeaders = new Set(newPrivacy.scrubbing.headers.map((h) => h.toLowerCase()));
@@ -383,7 +437,7 @@ export class SecurityScrubber {
                     changed = true;
                 }
             }
-            let res = changed ? parsed.toString() : url;
+            let res = changed ? parsed.toString().replace(/%5BRedacted%5D/gi, REDACTED) : url;
             if (this.piiConfig.enabled) {
                 res = this.scrubPiiInString(res);
             }

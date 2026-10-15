@@ -148,35 +148,72 @@ export function scrubQuery(query) {
  * Returns `undefined` if body capture is disabled by remote config or if the
  * body cannot be safely sized.
  */
+function estimateJsonBytesBounded(value, maxBytes) {
+    let bytes = 0;
+    const stack = [value];
+    const seen = new WeakSet();
+    while (stack.length > 0) {
+        const curr = stack.pop();
+        if (curr === null || curr === undefined) {
+            bytes += 4;
+        }
+        else if (typeof curr === 'string') {
+            bytes += curr.length + 2;
+        }
+        else if (typeof curr === 'number' || typeof curr === 'boolean') {
+            bytes += 8;
+        }
+        else if (curr instanceof Uint8Array) {
+            bytes += curr.byteLength;
+        }
+        else if (typeof curr === 'object') {
+            if (seen.has(curr)) {
+                bytes += 12;
+                continue;
+            }
+            seen.add(curr);
+            if (Array.isArray(curr)) {
+                bytes += 2 + curr.length;
+                for (let i = 0; i < curr.length; i++)
+                    stack.push(curr[i]);
+            }
+            else {
+                bytes += 2;
+                for (const [k, v] of Object.entries(curr)) {
+                    bytes += k.length + 4;
+                    if (bytes > maxBytes)
+                        return { size: bytes, exceeded: true };
+                    stack.push(v);
+                }
+            }
+        }
+        if (bytes > maxBytes)
+            return { size: bytes, exceeded: true };
+    }
+    return { size: bytes, exceeded: false };
+}
 export function captureBodySnapshot(rawBody, allowBody) {
-    // Perf: the JSON.stringify-based size computation only runs when body
-    // capture is enabled. When it isn't, we report size only for bodies with
-    // an O(1) length (strings / Uint8Array) and skip serializing objects we
-    // are about to discard anyway.
     if (!allowBody) {
         const cheapSize = rawBody != null && typeof rawBody === 'object' && !(rawBody instanceof Uint8Array)
             ? undefined
             : computeBodySize(rawBody);
         return { bodySize: cheapSize, body: undefined };
     }
-    const size = computeBodySize(rawBody);
     if (rawBody == null)
-        return { bodySize: size, body: undefined };
-    // Only objects are scrubbed and forwarded. Strings and Buffers are reported
-    // by size only — sending raw bodies is opt-in via remote config and we
-    // don't yet have a typed channel for them in `RequestEvent`.
+        return { bodySize: 0, body: undefined };
     if (typeof rawBody !== 'object' || Array.isArray(rawBody)) {
-        return { bodySize: size, body: undefined };
+        return { bodySize: computeBodySize(rawBody), body: undefined };
     }
-    const obj = rawBody;
-    if (size !== undefined && size > MAX_BODY_INSPECT_BYTES) {
-        return { bodySize: size, body: { __truncated: true } };
+    const estimate = estimateJsonBytesBounded(rawBody, MAX_BODY_INSPECT_BYTES);
+    if (estimate.exceeded) {
+        return { bodySize: estimate.size, body: { __truncated: true } };
     }
+    const size = computeBodySize(rawBody);
     const scrubber = SecurityScrubber.getInstance();
     if (!scrubber)
         return { bodySize: size, body: undefined };
     try {
-        const wrapped = scrubber.scrub({ type: 'request', body: obj });
+        const wrapped = scrubber.scrub({ type: 'request', body: rawBody });
         return { bodySize: size, body: wrapped.body };
     }
     catch (error) {

@@ -37,7 +37,7 @@ export declare function setLogLevel(level: SeverityLevel): void;
  * Set the log prefix (defaults to 'Telemetry').
  */
 export declare function setLogPrefix(prefix: string): void;
-export declare function redact(value: unknown, depth?: number): unknown;
+export declare function redact(value: unknown, depth?: number, seen?: WeakSet<object>): unknown;
 export declare const consoleLogger: Logger;
 /**
  * Structured JSON logger — emits newline-delimited JSON (NDJSON) suitable

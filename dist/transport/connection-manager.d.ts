@@ -18,6 +18,15 @@ export interface ConnectionPoolStats {
     readonly routeInUse: Readonly<Record<EnterpriseRoute, number>>;
     readonly routeLimits: Readonly<Record<EnterpriseRoute, number>>;
 }
+export declare class Semaphore {
+    private readonly capacity;
+    private available;
+    private readonly waiters;
+    constructor(capacity: number);
+    acquire(timeoutMs: number): Promise<boolean>;
+    release(): void;
+    inUse(): number;
+}
 export declare class ConnectionManager {
     private readonly options;
     private readonly globalSemaphore;

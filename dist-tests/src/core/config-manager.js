@@ -24,6 +24,7 @@ export class ConfigManager {
     ttlTimer = null;
     destroyed = false;
     state = ConfigState.Pending;
+    internalRouteEndpoints = new Set();
     constructor() { }
     static getInstance() {
         if (!ConfigManager.instance)
@@ -33,6 +34,20 @@ export class ConfigManager {
     /** Return the live instance without creating one. */
     static getCurrent() {
         return ConfigManager.instance;
+    }
+    updateInternalEndpoints(config) {
+        const endpoints = new Set();
+        for (const route of Object.values(config.transport.routes)) {
+            try {
+                const u = new URL(route.url);
+                endpoints.add(`${u.origin}${u.pathname}`);
+            }
+            catch { }
+        }
+        this.internalRouteEndpoints = endpoints;
+    }
+    isInternalEndpoint(url) {
+        return this.internalRouteEndpoints.has(`${url.origin}${url.pathname}`);
     }
     /** Install the complete /v1/init snapshot. */
     initialize(remoteClient, payload) {
@@ -45,6 +60,7 @@ export class ConfigManager {
         this.currentConfig = prepared.config;
         this.currentHash = prepared.hash;
         this.currentRevision = prepared.config.meta.configRevision ?? null;
+        this.updateInternalEndpoints(prepared.config);
         this.state = ConfigState.Live;
         this.scheduleTtlTimer();
         return prepared.config;
@@ -201,6 +217,7 @@ export class ConfigManager {
             this.currentConfig = prepared.config;
             this.currentHash = prepared.hash;
             this.currentRevision = prepared.config.meta.configRevision ?? null;
+            this.updateInternalEndpoints(prepared.config);
             if (applier && diff)
                 await applier.apply(diff, previous, prepared.config);
             getLogger().info('[ConfigManager] Remote configuration replaced', {
@@ -236,15 +253,11 @@ export function inspectTelemetryPayload(httpStatus, payload) {
 function prepareConfig(payload) {
     assertRemoteConfig(payload);
     const clone = structuredClone(payload);
-    const hashSource = structuredClone(clone);
-    delete hashSource.meta.configHash;
-    const hash = createHash('sha256').update(stableStringify(hashSource)).digest('hex');
+    delete clone.meta.configHash;
+    const hash = createHash('sha256').update(stableStringify(clone)).digest('hex');
     const canonicalHash = `sha256:${hash}`;
-    const normalized = {
-        ...clone,
-        meta: { ...clone.meta, configHash: canonicalHash },
-    };
-    return { config: deepFreeze(normalized), hash: canonicalHash };
+    clone.meta.configHash = canonicalHash;
+    return { config: deepFreeze(clone), hash: canonicalHash };
 }
 function stableStringify(value) {
     if (value === null || typeof value !== 'object')

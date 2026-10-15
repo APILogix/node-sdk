@@ -172,6 +172,18 @@ export async function waitForShutdownCompletion(): Promise<void> {
  * Safe to call concurrently with regular event capture.
  */
 export async function flush(): Promise<void> {
+  for (const plugin of client.plugins) {
+    if (typeof plugin.beforeFlush === 'function') {
+      try {
+        plugin.beforeFlush()
+      } catch (err) {
+        getLogger().error('Plugin beforeFlush failed', { plugin: plugin.meta.name, error: err })
+      }
+    }
+  }
+  try { await flushTracer() } catch {}
+  try { await metricsRegistry.flush() } catch {}
+
   await drainPendingEventProcessing()
   const router = TransportRouter.getInstance()
   if (router) {

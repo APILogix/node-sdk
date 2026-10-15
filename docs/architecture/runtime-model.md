@@ -48,7 +48,7 @@ execute asynchronously or offload to background worker threads via `Serializatio
 
 ### 2.2 Synchronous Operations Policy
 The codebase strictly partitions synchronous work:
-- **Permitted at Cold Startup (One-Time Only):** Reading package metadata, reading cached configuration files from the local filesystem during SDK bootstrap (`loadEnvFileSafely`, `loadCachedConfig`).
+- **Permitted at Cold Startup (One-Time Only):** Reading package metadata during SDK bootstrap.
 - **Forbidden on Hot Path:** Zero synchronous filesystem, socket, or crypto-heavy loops during runtime execution.
 
 ---

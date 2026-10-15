@@ -131,43 +131,11 @@ export function pulseFastifyPlugin(fastify, opts, done) {
             hookDone();
         }
     });
-    fastify.addHook('preHandler', (request, reply, hookDone) => {
+    fastify.addHook('preHandler', (request, _reply, hookDone) => {
         const state = request.pulse;
         if (!state) {
             hookDone();
             return;
-        }
-        const rawReply = reply;
-        if (typeof rawReply.send === 'function') {
-            const originalSend = rawReply.send;
-            rawReply.send = function (payload) {
-                if (state && !state.store.extra?.['fastifyErrorCaptured']) {
-                    const errStatusCode = payload?.statusCode
-                        ?? (rawReply.statusCode && rawReply.statusCode !== 200 ? rawReply.statusCode : undefined)
-                        ?? (rawReply.raw?.statusCode && rawReply.raw.statusCode !== 200 ? rawReply.raw.statusCode : undefined)
-                        ?? 500;
-                    if (payload instanceof Error || (payload && typeof payload === 'object' && payload.message && errStatusCode >= 400)) {
-                        withContext(state.store, () => {
-                            try {
-                                if (state.store.extra) {
-                                    ;
-                                    state.store.extra.mechanism = 'fastify.onError';
-                                    state.store.extra.handled = true;
-                                    state.store.extra.statusCode = errStatusCode;
-                                    state.store.extra.getStatusCode = () => errStatusCode;
-                                    state.store.extra.fastifyErrorCaptured = true;
-                                }
-                                attachRequestContextToActiveSpan(state.store);
-                                captureException(payload instanceof Error ? payload : new Error(String(payload.message)));
-                            }
-                            catch (sendErr) {
-                                getLogger().error('pulseFastifyPlugin reply.send error capture failed', { error: sendErr });
-                            }
-                        });
-                    }
-                }
-                return originalSend.apply(this, arguments);
-            };
         }
         const runInScope = () => {
             withContext(state.store, () => {
@@ -191,8 +159,8 @@ export function pulseFastifyPlugin(fastify, opts, done) {
         withContext(state.store, () => {
             try {
                 const statusCode = reply.statusCode ?? reply.raw?.statusCode ?? 0;
-                if (statusCode >= 400 && !state.store.extra?.['fastifyErrorCaptured']) {
-                    const defaultMsg = statusCode === 422 ? 'Fastify 422 error' : statusCode === 401 ? 'Fastify 401 error' : `Fastify HTTP ${statusCode} error`;
+                if (statusCode >= 500 && !state.store.extra?.['fastifyErrorCaptured']) {
+                    const defaultMsg = `Fastify HTTP ${statusCode} error`;
                     const err = reply?.raw?._error
                         ?? request?.raw?._error
                         ?? new Error(defaultMsg);
@@ -231,6 +199,7 @@ export function pulseFastifyPlugin(fastify, opts, done) {
                             state.store.extra.handled = true;
                             state.store.extra.statusCode = errStatusCode;
                             state.store.extra.getStatusCode = () => errStatusCode;
+                            state.store.extra.fastifyErrorCaptured = true;
                         }
                         attachRequestContextToActiveSpan(state.store);
                         captureException(payload instanceof Error ? payload : new Error(String(payload.message)));
@@ -285,12 +254,19 @@ export function pulseFastifyPlugin(fastify, opts, done) {
     });
     fastify.addHook('onSend', (request, reply, payload, hookDone) => {
         const state = request.pulse;
+        const statusCode = reply.statusCode ?? reply.raw?.statusCode ?? 200;
+        // BUG-18: Fast-path for non-error responses (< 400).
+        // Avoid expensive Buffer stringification and JSON.parse on every 200 OK.
+        if (statusCode < 400 && !(payload instanceof Error)) {
+            hookDone(null, payload);
+            return;
+        }
         if (state && !state.store.extra?.['fastifyErrorCaptured']) {
             let errToCapture = null;
-            let statusCode = reply.statusCode ?? reply.raw?.statusCode ?? 200;
+            let effectiveStatusCode = statusCode;
             if (payload instanceof Error) {
                 errToCapture = payload;
-                statusCode = payload.statusCode ?? statusCode;
+                effectiveStatusCode = payload.statusCode ?? effectiveStatusCode;
             }
             else {
                 let payloadStr = '';
@@ -303,9 +279,9 @@ export function pulseFastifyPlugin(fastify, opts, done) {
                 else if (payload && typeof payload === 'object') {
                     const obj = payload;
                     if (typeof obj['statusCode'] === 'number') {
-                        statusCode = obj['statusCode'];
+                        effectiveStatusCode = obj['statusCode'];
                     }
-                    if (typeof obj['message'] === 'string' && statusCode >= 400) {
+                    if (typeof obj['message'] === 'string' && effectiveStatusCode >= 400) {
                         errToCapture = new Error(String(obj['message']));
                     }
                 }
@@ -314,9 +290,9 @@ export function pulseFastifyPlugin(fastify, opts, done) {
                         const parsed = JSON.parse(payloadStr);
                         if (parsed && typeof parsed === 'object') {
                             if (typeof parsed['statusCode'] === 'number') {
-                                statusCode = parsed['statusCode'];
+                                effectiveStatusCode = parsed['statusCode'];
                             }
-                            if (typeof parsed['message'] === 'string' && statusCode >= 400) {
+                            if (typeof parsed['message'] === 'string' && effectiveStatusCode >= 400) {
                                 errToCapture = new Error(parsed['message']);
                             }
                         }
@@ -324,15 +300,15 @@ export function pulseFastifyPlugin(fastify, opts, done) {
                     catch { }
                 }
             }
-            if (errToCapture && statusCode >= 400) {
+            if (errToCapture && effectiveStatusCode >= 400) {
                 withContext(state.store, () => {
                     try {
                         if (state.store.extra) {
                             ;
                             state.store.extra.mechanism = 'fastify.onError';
                             state.store.extra.handled = true;
-                            state.store.extra.statusCode = statusCode;
-                            state.store.extra.getStatusCode = () => statusCode;
+                            state.store.extra.statusCode = effectiveStatusCode;
+                            state.store.extra.getStatusCode = () => effectiveStatusCode;
                             state.store.extra.fastifyErrorCaptured = true;
                         }
                         attachRequestContextToActiveSpan(state.store);
@@ -346,42 +322,6 @@ export function pulseFastifyPlugin(fastify, opts, done) {
         }
         hookDone(null, payload);
     });
-    if (typeof fastify.setErrorHandler === 'function') {
-        const defaultErrorHandler = fastify.errorHandler;
-        fastify.setErrorHandler(function (error, request, reply) {
-            const state = request.pulse;
-            if (state) {
-                const errStatusCode = error?.statusCode
-                    ?? error?.status
-                    ?? (reply.statusCode && reply.statusCode !== 200 ? reply.statusCode : undefined)
-                    ?? (reply.raw?.statusCode && reply.raw.statusCode !== 200 ? reply.raw.statusCode : undefined)
-                    ?? 500;
-                withContext(state.store, () => {
-                    try {
-                        if (state.store.extra) {
-                            ;
-                            state.store.extra.mechanism = 'fastify.onError';
-                            state.store.extra.handled = true;
-                            state.store.extra.statusCode = errStatusCode;
-                            state.store.extra.getStatusCode = () => errStatusCode;
-                            state.store.extra.fastifyErrorCaptured = true;
-                        }
-                        attachRequestContextToActiveSpan(state.store);
-                        captureException(error);
-                    }
-                    catch (err) {
-                        getLogger().error('pulseFastifyPlugin errorHandler error capture failed', { error: err });
-                    }
-                });
-            }
-            if (typeof defaultErrorHandler === 'function') {
-                return defaultErrorHandler.call(this, error, request, reply);
-            }
-            if (typeof reply.send === 'function') {
-                reply.send(error);
-            }
-        });
-    }
     done();
 }
 ;
@@ -398,6 +338,16 @@ function captureFastifyCompletion(request, reply, state) {
     const rawHeaders = request.headers;
     const rawQuery = request.query;
     const route = normalizeRoute(request);
+    const method = request.method;
+    // Release request/reply closure references from context extra (BUG-11)
+    if (state.store.extra) {
+        const extra = state.store.extra;
+        extra.statusCode = statusCode;
+        extra.getStatusCode = () => statusCode;
+        extra.getMethod = () => method;
+        extra.getUrl = () => request.url;
+        extra.getRoute = () => route;
+    }
     const currentActiveSpan = trace.getActiveSpan() ?? state.activeSpan;
     if (currentActiveSpan) {
         const enrichmentAttrs = {
@@ -454,41 +404,43 @@ function captureFastifyCompletion(request, reply, state) {
     // SEC-05: Defer heavy body snapshotting, PII scrubbing, and captureRequest
     // via setImmediate so the HTTP response cycle returns instantly to the event loop.
     setImmediate(() => {
-        try {
-            const bodySnapshot = captureBodySnapshot(rawBody, state.captureBody);
-            if (currentActiveSpan && bodySnapshot.bodySize !== undefined) {
-                try {
-                    currentActiveSpan.setAttribute('http.request.body.size', bodySnapshot.bodySize);
+        withContext(state.store, () => {
+            try {
+                const bodySnapshot = captureBodySnapshot(rawBody, state.captureBody);
+                if (currentActiveSpan && bodySnapshot.bodySize !== undefined) {
+                    try {
+                        currentActiveSpan.setAttribute('http.request.body.size', bodySnapshot.bodySize);
+                    }
+                    catch { }
                 }
-                catch { }
+                captureRequest({
+                    type: 'request',
+                    requestId: state.requestId,
+                    method,
+                    url: route,
+                    statusCode,
+                    latency: latencyMs,
+                    timestamp: Date.now(),
+                    traceId: getTraceId() ?? state.store.traceId ?? state.activeSpan?.spanContext().traceId,
+                    spanId: getSpanId() ?? state.store.spanId ?? state.activeSpan?.spanContext().spanId,
+                    ...(state.userId ? { userId: state.userId } : {}),
+                    ...(state.tenantId ? { tenantId: state.tenantId } : {}),
+                    ...(state.sessionId ? { sessionId: state.sessionId } : {}),
+                    ...(state.clientIp ? { clientIp: state.clientIp } : {}),
+                    ...(state.userAgent ? { userAgent: state.userAgent } : {}),
+                    ...(state.referer ? { referer: state.referer } : {}),
+                    ...(state.captureHeaders ? { headers: scrubHeadersSafe(rawHeaders) } : {}),
+                    ...(state.captureQuery && isRecord(rawQuery) ? { query: scrubQuery(rawQuery) } : {}),
+                    ...(bodySnapshot.body ? { body: bodySnapshot.body } : {}),
+                    ...(bodySnapshot.bodySize !== undefined ? { bodySize: bodySnapshot.bodySize } : {}),
+                    ...(responseSize !== undefined ? { responseSize } : {}),
+                    route,
+                });
             }
-            captureRequest({
-                type: 'request',
-                requestId: state.requestId,
-                method: request.method,
-                url: route,
-                statusCode,
-                latency: latencyMs,
-                timestamp: Date.now(),
-                traceId: getTraceId() ?? state.store.traceId ?? state.activeSpan?.spanContext().traceId,
-                spanId: getSpanId() ?? state.store.spanId ?? state.activeSpan?.spanContext().spanId,
-                ...(state.userId ? { userId: state.userId } : {}),
-                ...(state.tenantId ? { tenantId: state.tenantId } : {}),
-                ...(state.sessionId ? { sessionId: state.sessionId } : {}),
-                ...(state.clientIp ? { clientIp: state.clientIp } : {}),
-                ...(state.userAgent ? { userAgent: state.userAgent } : {}),
-                ...(state.referer ? { referer: state.referer } : {}),
-                ...(state.captureHeaders ? { headers: scrubHeadersSafe(rawHeaders) } : {}),
-                ...(state.captureQuery && isRecord(rawQuery) ? { query: scrubQuery(rawQuery) } : {}),
-                ...(bodySnapshot.body ? { body: bodySnapshot.body } : {}),
-                ...(bodySnapshot.bodySize !== undefined ? { bodySize: bodySnapshot.bodySize } : {}),
-                ...(responseSize !== undefined ? { responseSize } : {}),
-                route,
-            });
-        }
-        catch (err) {
-            getLogger().error('captureFastifyCompletion deferred capture failed', { error: err });
-        }
+            catch (err) {
+                getLogger().error('captureFastifyCompletion deferred capture failed', { error: err });
+            }
+        });
     });
 }
 function normalizeRoute(request) {

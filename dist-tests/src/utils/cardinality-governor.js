@@ -43,6 +43,8 @@ const UUID_PATTERN = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{1
 const NUMERIC_SEGMENT = /^[0-9]+$/;
 const HEX_LONG = /^[0-9a-f]{9,}$/i;
 const MONGO_ID = /^[0-9a-f]{24}$/i;
+const PREFIXED_ID_SEGMENT = /^[a-z]{2,8}_[a-zA-Z0-9]{6,}$/;
+const ULID_OR_TOKEN_SEGMENT = /^(?=[a-zA-Z0-9_-]{16,}$)(?=.*[0-9])(?=.*[a-zA-Z])[a-zA-Z0-9_-]+$/;
 // ─── Implementation ─────────────────────────────────────────────────────────
 export class CardinalityGovernor {
     maxDimensionsPerMetric;
@@ -50,7 +52,7 @@ export class CardinalityGovernor {
     maxTotalSeries;
     blockedAttributes;
     enableRouteNormalization;
-    // Track unique series per instrument: Map<instrumentName, Set<serializedLabels>>
+    // Track unique series per instrument: Map<instrumentName, Map<serializedLabels, lastSeenEpochMs>>
     seriesTracker = new Map();
     totalSeries = 0;
     blockedAttributeCount = 0;
@@ -70,8 +72,6 @@ export class CardinalityGovernor {
             ...(options.blockedAttributes ?? []),
         ]);
         this.enableRouteNormalization = options.enableRouteNormalization ?? true;
-        this.evictionTimer = setInterval(() => this.evictStaleSeries(), CardinalityGovernor.EVICTION_INTERVAL_MS);
-        this.evictionTimer.unref();
     }
     /**
      * Sanitize metric attributes — removes blocked keys, normalizes routes,
@@ -116,19 +116,22 @@ export class CardinalityGovernor {
      * Returns false if cardinality limits would be exceeded.
      */
     canRecordSeries(metricName, attributeKey) {
-        // Check total series limit
+        const now = Date.now();
+        let instrumentSeries = this.seriesTracker.get(metricName);
+        // 1. Always admit already-tracked series and refresh LRU order in O(1)
+        if (instrumentSeries && instrumentSeries.has(attributeKey)) {
+            instrumentSeries.delete(attributeKey);
+            instrumentSeries.set(attributeKey, now);
+            return true;
+        }
+        // 2. Only check caps when registering a NEW series
         if (this.totalSeries >= this.maxTotalSeries) {
             this.droppedSeriesCount++;
             return false;
         }
-        // Check per-instrument limit
-        let instrumentSeries = this.seriesTracker.get(metricName);
         if (!instrumentSeries) {
-            instrumentSeries = new Set();
+            instrumentSeries = new Map();
             this.seriesTracker.set(metricName, instrumentSeries);
-        }
-        if (instrumentSeries.has(attributeKey)) {
-            return true; // Already tracked — no new series
         }
         if (instrumentSeries.size >= this.maxSeriesPerMetric) {
             this.droppedSeriesCount++;
@@ -139,7 +142,7 @@ export class CardinalityGovernor {
             });
             return false;
         }
-        instrumentSeries.add(attributeKey);
+        instrumentSeries.set(attributeKey, now);
         this.totalSeries++;
         return true;
     }
@@ -181,6 +184,12 @@ export class CardinalityGovernor {
             // Long hex strings (likely hashes/IDs)
             if (HEX_LONG.test(segment))
                 return ':id';
+            // Prefixed IDs (e.g. usr_123456, ord_abcdef)
+            if (PREFIXED_ID_SEGMENT.test(segment))
+                return ':id';
+            // ULIDs / high-entropy tokens
+            if (ULID_OR_TOKEN_SEGMENT.test(segment))
+                return ':id';
             return segment;
         });
         return normalized.join('/');
@@ -220,25 +229,41 @@ export class CardinalityGovernor {
         }
     }
     /**
-     * Periodic eviction — clears all tracked series and resets the
-     * totalSeries counter. This is intentionally a full reset rather
-     * than a partial eviction: cardinality limits are a *rate* budget
-     * ("max N unique series per window"), not a lifetime cap.
-     *
-     * Enterprise platforms (Datadog, New Relic) impose hourly custom-
-     * metric limits in the same way.
+     * Periodic eviction — evicts only series that have been idle for longer
+     * than EVICTION_INTERVAL_MS (1 hour), preserving active core metric series.
+     * Because Map preserves insertion/refresh order (oldest first), this runs
+     * in O(1) for active entries and fast breaks as soon as a non-stale entry is hit.
      */
     evictStaleSeries() {
         if (this.seriesTracker.size === 0)
             return;
-        const evictedInstruments = this.seriesTracker.size;
-        const evictedSeries = this.totalSeries;
-        this.seriesTracker = new Map();
-        this.totalSeries = 0;
-        getLogger().debug('Cardinality governor: evicted stale series', {
-            evictedInstruments,
-            evictedSeries,
-        });
+        const now = Date.now();
+        const staleCutoff = now - CardinalityGovernor.EVICTION_INTERVAL_MS;
+        let evictedSeries = 0;
+        let evictedInstruments = 0;
+        for (const [metricName, instrumentSeries] of this.seriesTracker.entries()) {
+            for (const [seriesKey, lastSeen] of instrumentSeries.entries()) {
+                if (lastSeen <= staleCutoff) {
+                    instrumentSeries.delete(seriesKey);
+                    this.totalSeries = Math.max(0, this.totalSeries - 1);
+                    evictedSeries++;
+                }
+                else {
+                    break;
+                }
+            }
+            if (instrumentSeries.size === 0) {
+                this.seriesTracker.delete(metricName);
+                evictedInstruments++;
+            }
+        }
+        if (evictedSeries > 0) {
+            getLogger().debug('Cardinality governor: evicted stale series', {
+                evictedInstruments,
+                evictedSeries,
+                remainingSeries: this.totalSeries,
+            });
+        }
     }
 }
 // ─── Helpers ────────────────────────────────────────────────────────────────

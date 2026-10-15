@@ -47,6 +47,8 @@ import { getLogger } from '../utils/logger.js';
 import { generateId } from '../utils/uuid.js';
 import { epochMs } from '../utils/time.js';
 import { errorDeduplicator, traceDeduplicator } from '../processors/deduplicator.js';
+import { sourceMapResolver } from '../processors/source-map-resolver.js';
+import { SecurityScrubber } from '../processors/security-scrubber.js';
 import { attachSourceContext } from '../processors/source-context.js';
 import { applyScopeToEvent } from './scope.js';
 import { loadShedder } from '../transport/load-shedder.js';
@@ -72,6 +74,7 @@ const BEFORE_SEND_TIMEOUT_MS = 100;
  * can never stall the pipeline. On timeout the original frames are kept.
  */
 const SOURCE_CONTEXT_TIMEOUT_MS = 250;
+const SOURCE_MAP_TIMEOUT_MS = 250;
 /**
  * Hard cap on in-flight pipeline tasks. Under sustained load faster than
  * the pipeline drains, an unbounded set would exhaust memory; excess events
@@ -342,18 +345,33 @@ export async function processEventAsync(rawEvent, assignedEventId) {
             }
         }
         event = applyScopeToEvent(event);
-        // Attach source context to error stack frames
-        if (event.type === 'error' && 'stack' in event && Array.isArray(event.stack)) {
-            try {
-                if (ERROR_DEFAULTS.attachSourceContext) {
-                    const enrichedFrames = await withTimeout(attachSourceContext(event.stack), SOURCE_CONTEXT_TIMEOUT_MS, 'attachSourceContext timed out');
-                    event = { ...event, stack: enrichedFrames };
+        // Step 7: Resolve source maps (if configured) and attach source context to error stack frames
+        if (event.type === 'error' &&
+            'stack' in event &&
+            Array.isArray(event.stack)) {
+            let frames = event.stack;
+            if (sourceMapResolver.getStats().initialized) {
+                try {
+                    frames = await withTimeout(sourceMapResolver.resolveStackFrames(frames), SOURCE_MAP_TIMEOUT_MS, 'resolveStackFrames timed out');
+                    event = { ...event, stack: frames };
+                }
+                catch {
+                    // Best-effort: retain unmapped frames on timeout/error
                 }
             }
-            catch {
-                // Best-effort
+            if (ERROR_DEFAULTS.attachSourceContext) {
+                try {
+                    const enrichedFrames = await withTimeout(attachSourceContext(frames), SOURCE_CONTEXT_TIMEOUT_MS, 'attachSourceContext timed out');
+                    event = { ...event, stack: enrichedFrames };
+                }
+                catch {
+                    // Best-effort
+                }
             }
         }
+        // Step 7.5: Sanitize & scrub PII before plugin/user processors observe the event
+        const activeScrubber = SecurityScrubber.getInstance();
+        event = activeScrubber ? activeScrubber.scrub(event) : sanitizeEvent(event);
         // Plugin event processors
         for (const plugin of client.plugins) {
             if (plugin.processEvent) {

@@ -76,13 +76,10 @@ export declare class CardinalityGovernor {
      */
     shutdown(): void;
     /**
-     * Periodic eviction — clears all tracked series and resets the
-     * totalSeries counter. This is intentionally a full reset rather
-     * than a partial eviction: cardinality limits are a *rate* budget
-     * ("max N unique series per window"), not a lifetime cap.
-     *
-     * Enterprise platforms (Datadog, New Relic) impose hourly custom-
-     * metric limits in the same way.
+     * Periodic eviction — evicts only series that have been idle for longer
+     * than EVICTION_INTERVAL_MS (1 hour), preserving active core metric series.
+     * Because Map preserves insertion/refresh order (oldest first), this runs
+     * in O(1) for active entries and fast breaks as soon as a non-stale entry is hit.
      */
     private evictStaleSeries;
 }

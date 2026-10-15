@@ -29,6 +29,7 @@ export class ConfigManager {
   private ttlTimer: NodeJS.Timeout | null = null
   private destroyed = false
   private state = ConfigState.Pending
+  private internalRouteEndpoints: ReadonlySet<string> = new Set()
 
   private constructor() {}
 
@@ -42,6 +43,21 @@ export class ConfigManager {
     return ConfigManager.instance
   }
 
+  private updateInternalEndpoints(config: Readonly<RemoteConfigResponse>): void {
+    const endpoints = new Set<string>()
+    for (const route of Object.values(config.transport.routes)) {
+      try {
+        const u = new URL(route.url)
+        endpoints.add(`${u.origin}${u.pathname}`)
+      } catch {}
+    }
+    this.internalRouteEndpoints = endpoints
+  }
+
+  isInternalEndpoint(url: URL): boolean {
+    return this.internalRouteEndpoints.has(`${url.origin}${url.pathname}`)
+  }
+
   /** Install the complete /v1/init snapshot. */
   initialize(remoteClient: RemoteConfigClient, payload: unknown): Readonly<RemoteConfigResponse> {
     if (this.destroyed) throw new Error('ConfigManager has been destroyed')
@@ -52,6 +68,7 @@ export class ConfigManager {
     this.currentConfig = prepared.config
     this.currentHash = prepared.hash
     this.currentRevision = prepared.config.meta.configRevision ?? null
+    this.updateInternalEndpoints(prepared.config)
     this.state = ConfigState.Live
     this.scheduleTtlTimer()
     return prepared.config
@@ -216,6 +233,7 @@ export class ConfigManager {
       this.currentConfig = prepared.config
       this.currentHash = prepared.hash
       this.currentRevision = prepared.config.meta.configRevision ?? null
+      this.updateInternalEndpoints(prepared.config)
 
       if (applier && diff) await applier.apply(diff, previous, prepared.config)
       getLogger().info('[ConfigManager] Remote configuration replaced', {
@@ -257,16 +275,14 @@ function prepareConfig(payload: unknown): {
   readonly hash: string
 } {
   assertRemoteConfig(payload)
-  const clone = structuredClone(payload)
-  const hashSource = structuredClone(clone)
-  delete (hashSource.meta as { configHash?: string }).configHash
-  const hash = createHash('sha256').update(stableStringify(hashSource)).digest('hex')
-  const canonicalHash = `sha256:${hash}`
-  const normalized: RemoteConfigResponse = {
-    ...clone,
-    meta: { ...clone.meta, configHash: canonicalHash },
+  const clone = structuredClone(payload) as RemoteConfigResponse & {
+    meta: { configHash?: string }
   }
-  return { config: deepFreeze(normalized), hash: canonicalHash }
+  delete clone.meta.configHash
+  const hash = createHash('sha256').update(stableStringify(clone)).digest('hex')
+  const canonicalHash = `sha256:${hash}`
+  clone.meta.configHash = canonicalHash
+  return { config: deepFreeze(clone), hash: canonicalHash }
 }
 
 function stableStringify(value: unknown): string {

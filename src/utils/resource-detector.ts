@@ -301,6 +301,14 @@ function isContainerHostname(name: string): boolean {
 
 function detectKubernetesMetadata(): Record<string, string | undefined> {
   const meta: Record<string, string | undefined> = {}
+  const isK8s = Boolean(
+    process.env.KUBERNETES_SERVICE_HOST ||
+    process.env.KUBERNETES_PORT ||
+    process.env.KUBERNETES_POD_NAME ||
+    process.env.KUBERNETES_NAMESPACE ||
+    process.env.POD_NAMESPACE
+  )
+  if (!isK8s) return meta
 
   // Standard K8s downward API environment variables
   if (process.env.KUBERNETES_POD_NAME || process.env.HOSTNAME) {

@@ -23,10 +23,13 @@ export declare class ConfigManager {
     private ttlTimer;
     private destroyed;
     private state;
+    private internalRouteEndpoints;
     private constructor();
     static getInstance(): ConfigManager;
     /** Return the live instance without creating one. */
     static getCurrent(): ConfigManager | null;
+    private updateInternalEndpoints;
+    isInternalEndpoint(url: URL): boolean;
     /** Install the complete /v1/init snapshot. */
     initialize(remoteClient: RemoteConfigClient, payload: unknown): Readonly<RemoteConfigResponse>;
     setApplier(applier: ConfigApplier): void;

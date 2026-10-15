@@ -175,12 +175,12 @@ export function installHttpLifecycleGuard(): void {
   const originalEmit = http.ClientRequest.prototype.emit
   g[ORIGINAL_EMIT] = originalEmit
 
-  http.ClientRequest.prototype.emit = function (event: string | symbol, ...args: unknown[]) {
+  http.ClientRequest.prototype.emit = function (event: string | symbol): boolean {
     // Only intercept close and error events which are the ones OTel listens to
     // and where the race condition occurs.
     if (event === 'close' || event === 'error') {
       try {
-        return originalEmit.apply(this, [event, ...args])
+        return Reflect.apply(originalEmit, this, arguments)
       } catch (err) {
         if (err instanceof Error && isOtelInstrumentationError(err)) {
           // Swallow the OTel internal lifecycle TypeError.
@@ -191,7 +191,7 @@ export function installHttpLifecycleGuard(): void {
         throw err
       }
     }
-    return originalEmit.apply(this, [event, ...args])
+    return Reflect.apply(originalEmit, this, arguments)
   }
 
   getLogger().debug('HTTP lifecycle guard installed (ClientRequest.emit patched)')

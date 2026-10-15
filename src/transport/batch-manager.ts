@@ -20,6 +20,7 @@ import { sdkConsoleDebug } from '../utils/console-debug.js'
 import { SerializationPool } from './serialization-pool.js'
 import { safeJsonStringify } from '../utils/safe-json.js'
 import { generateId } from '../utils/uuid.js'
+import { client } from '../core/client.js'
 
 const WORKER_SERIALIZATION_THRESHOLD_BYTES = 50 * 1024 // 50KB
 
@@ -70,6 +71,7 @@ export class BatchManager {
   private readonly pendingRetryTimers = new Map<ReturnType<typeof setTimeout>, { events: SDKEvent[]; resolve: () => void }>()
   private readonly retryAttempts = new Map<string, number>()
   private readonly firstAttemptTimestamps = new Map<string, number>()
+  private readonly persistedEvents = new WeakSet<object>()
   private batched = 0
   private totalSent = 0
   private totalDropped = 0
@@ -268,11 +270,6 @@ export class BatchManager {
         }
 
         if (serializeResult.tooLarge) {
-          lease.release(true)
-          this.activeBatches.delete(events)
-          this.activeSends--
-          this.batched -= events.length
-
           if (events.length === 1) {
             this.totalDropped++
             this.options.onDrop?.({
@@ -287,19 +284,9 @@ export class BatchManager {
           const half = Math.max(1, Math.floor(events.length / 2))
           const firstHalf = events.slice(0, half)
           const secondHalf = events.slice(half)
+          // Requeue in order so finally -> this.pump() processes them with proper lease & concurrency tracking
           this.options.queue.requeueFront(secondHalf)
-          this.activeSends++
-          this.batched += firstHalf.length
-          this.activeBatches.add(firstHalf)
-          const sendPromise = this.sendBatch({ events: firstHalf })
-          this.activeSendPromises.add(sendPromise)
-          void sendPromise.then(
-            () => this.activeSendPromises.delete(sendPromise),
-            error => {
-              this.activeSendPromises.delete(sendPromise)
-              getLogger().warn('[TransportRouter] Unhandled batch send failure', { route: this.options.route, error })
-            },
-          )
+          this.options.queue.requeueFront(firstHalf)
           return
         }
 
@@ -328,20 +315,12 @@ export class BatchManager {
               })
             }
           }
-          lease.release(true)
-          this.activeBatches.delete(events)
-          this.activeSends--
-          this.batched -= events.length
           if (validEvents.length > 0) {
             this.options.queue.requeueFront(validEvents)
           }
           return
         }
 
-        lease.release(true)
-        this.activeBatches.delete(events)
-        this.activeSends--
-        this.batched -= events.length
         this.totalDropped += events.length
         this.options.onDrop?.({
           route: this.options.route,
@@ -491,10 +470,21 @@ export class BatchManager {
           })
 
           inspectTelemetryResponse(response)
+          for (const plugin of client.plugins) {
+            if (typeof plugin.afterSend === 'function') {
+              try {
+                plugin.afterSend(events)
+              } catch (pluginErr) {
+                getLogger().error('Plugin afterSend failed', { plugin: plugin.meta.name, error: pluginErr })
+              }
+            }
+          }
           try {
             await response.text().catch(() => undefined)
           } catch {}
         } else if (response.status >= 500 || response.status === 429 || response.status === 408) {
+          const retryAfterHeader = response.headers.get('retry-after')
+          await response.body?.cancel().catch(() => undefined)
           getLogger().warn('[TransportRouter] Retryable batch response', {
             route: this.options.route,
             statusCode: response.status,
@@ -512,16 +502,16 @@ export class BatchManager {
 
           this.persistOnFailure(events, `http_${response.status}`)
 
-          const retryAfterHeader = response.headers.get('retry-after')
           const retryAfterMs = retryAfterHeader ? parseRetryAfterHeader(retryAfterHeader) : null
           this.retryOrRetain(events, retryAfterMs)
         } else {
+          await response.body?.cancel().catch(() => undefined)
           getLogger().warn('[TransportRouter] Non-retryable batch response', {
             route: this.options.route,
             statusCode: response.status,
             eventCount: events.length,
           })
-        sdkConsoleDebug('batch send failed', {
+          sdkConsoleDebug('batch send failed', {
             route: this.options.route,
             statusCode: response.status,
             retryable: false,
@@ -534,6 +524,17 @@ export class BatchManager {
             const key = event.eventId ?? ''
             this.retryAttempts.delete(key)
             this.firstAttemptTimestamps.delete(key)
+          }
+
+          const nonRetryErr = new Error(`Transport non-retryable response (status ${response.status})`)
+          for (const plugin of client.plugins) {
+            if (typeof plugin.onTransportError === 'function') {
+              try {
+                plugin.onTransportError(nonRetryErr, events)
+              } catch (pluginErr) {
+                getLogger().error('Plugin onTransportError failed', { plugin: plugin.meta.name, error: pluginErr })
+              }
+            }
           }
 
           this.options.onDrop?.({
@@ -573,7 +574,11 @@ export class BatchManager {
       lease.release(true)
       this.activeSends--
       this.batched -= events.length
-      this.firstQueuedAt = this.options.queue.isEmpty() ? 0 : Date.now()
+      if (this.options.queue.isEmpty()) {
+        this.firstQueuedAt = 0
+      } else if (this.firstQueuedAt === 0) {
+        this.firstQueuedAt = Date.now()
+      }
       this.pump()
     }
   }
@@ -643,6 +648,16 @@ export class BatchManager {
         this.retryAttempts.delete(key)
         this.firstAttemptTimestamps.delete(key)
         this.totalDropped++
+        const exhaustedErr = new Error(`Transport retry limit (${this.options.retry.maxRetries}) exceeded`)
+        for (const plugin of client.plugins) {
+          if (typeof plugin.onTransportError === 'function') {
+            try {
+              plugin.onTransportError(exhaustedErr, [event])
+            } catch (pluginErr) {
+              getLogger().error('Plugin onTransportError failed', { plugin: plugin.meta.name, error: pluginErr })
+            }
+          }
+        }
         this.options.onDrop?.({
           route: this.options.route,
           reason: 'route_unavailable',
@@ -690,7 +705,12 @@ export class BatchManager {
   private persistOnFailure(batch: readonly SDKEvent[], reason: string): void {
     try {
       if (!persistentStorage.isInitialized) return
-      const survivable = batch.filter(event => persistenceGovernor.shouldPersist(event as Event))
+      const survivable = batch.filter(event => {
+        if (this.persistedEvents.has(event)) return false
+        if (!persistenceGovernor.shouldPersist(event as Event)) return false
+        this.persistedEvents.add(event)
+        return true
+      })
       if (survivable.length > 0) {
         persistentStorage.persistBatch(survivable as readonly Event[])
       }

@@ -83,6 +83,7 @@ const FLUSH_DEBOUNCE_MS = 1000
  */
 const FLUSH_STRINGIFY_CHUNK_SIZE = 200
 const DEFAULT_IO_TIMEOUT_MS = 5_000 // Per file-operation timeout — protects against frozen filesystems.
+const MAX_BACKUP_FILES = 3
 
 interface PersistentStorageOptions {
   /** Directory to store persisted events. Defaults to OS temp dir. */
@@ -135,12 +136,19 @@ class PersistentStorage {
   private lastReplayAt = 0
   private writeChain: Promise<void> = Promise.resolve()
   private persistedIds = new Set<string>()
+  private customDirectoryConfigured = false
 
   configure(options: PersistentStorageOptions = {}): void {
     if (options.enabled !== undefined) {
       this.enabled = options.enabled
     }
-    this.directoryPath = options.directory ?? this.resolveDefaultDirectory()
+    if (options.directory) {
+      this.directoryPath = options.directory
+      this.customDirectoryConfigured = true
+    } else {
+      this.directoryPath = this.resolveDefaultDirectory()
+      this.customDirectoryConfigured = false
+    }
     this.maxFileSizeBytes = options.maxFileSizeBytes ?? DEFAULT_MAX_FILE_SIZE_BYTES
     this.maxEvents = options.maxEvents ?? DEFAULT_MAX_EVENTS
     this.eventTtlMs = options.eventTtlMs ?? DEFAULT_EVENT_TTL_MS
@@ -166,27 +174,38 @@ class PersistentStorage {
     const logger = getLogger()
 
     try {
-      await this.ensureDirectory()
-    } catch (error) {
-      this.initialized = false
-      const code = (error as NodeJS.ErrnoException)?.code
-      if (code === 'EROFS' || code === 'EACCES' || code === 'EPERM') {
-        logger.debug('Persistent storage: filesystem is read-only or inaccessible, running in pure in-memory mode', {
-          directory: this.directoryPath,
-          code,
-        })
+      await withIoTimeout(this.ensureDirectory(), this.ioTimeoutMs, 'persistent-storage init')
+    } catch (primaryError) {
+      const tmpFallbackDir = join(tmpdir(), 'telemetry-sdk', 'events')
+      if (!this.customDirectoryConfigured && this.directoryPath !== tmpFallbackDir) {
+        try {
+          this.directoryPath = tmpFallbackDir
+          this.dataFile = join(this.directoryPath, `${this.filePrefix}-${process.pid}.ndjson`)
+          await withIoTimeout(this.ensureDirectory(), this.ioTimeoutMs, 'persistent-storage tmp-fallback')
+        } catch (fallbackError) {
+          this.initialized = false
+          logger.debug('Persistent storage: primary and /tmp directories are read-only; running in-memory only', {
+            code: (fallbackError as NodeJS.ErrnoException)?.code,
+          })
+          return []
+        }
       } else {
-        logger.warn('Persistent storage: failed to initialize directory, disabling persistence', {
+        this.initialized = false
+        logger.debug('Persistent storage: filesystem is read-only; running in-memory only', {
           directory: this.directoryPath,
-          error,
+          code: (primaryError as NodeJS.ErrnoException)?.code,
         })
+        return []
       }
-      return []
     }
 
     this.initialized = true
 
-    const replayed = await this.replay()
+    const replayed = await withIoTimeout(
+      this.replay(Date.now() + this.ioTimeoutMs * 2),
+      this.ioTimeoutMs * 2,
+      'persistent-storage replay',
+    ).catch(() => [] as Event[])
     this.totalReplayed = replayed.length
 
     logger.info('Persistent storage initialized', {
@@ -208,14 +227,17 @@ class PersistentStorage {
   persist(event: Event): void {
     if (!this.initialized || !this.enabled) return
 
+    if (this.buffer.length >= this.maxEvents) {
+      this.buffer.shift()
+    }
     this.buffer.push(event)
     this.eventCount++
 
-    if (this.eventCount >= this.maxEvents) {
-      void this.rotate()
+    if (this.buffer.length >= FLUSH_STRINGIFY_CHUNK_SIZE) {
+      void this.flush()
+    } else {
+      this.scheduleFlush()
     }
-
-    this.scheduleFlush()
   }
 
   /**
@@ -249,16 +271,21 @@ class PersistentStorage {
   persistBatch(events: readonly Event[]): void {
     if (!this.initialized || !this.enabled || events.length === 0) return
 
-    for (const event of events) {
+    const toAdd = events.length > this.maxEvents ? events.slice(-this.maxEvents) : events
+    const overflow = (this.buffer.length + toAdd.length) - this.maxEvents
+    if (overflow > 0) {
+      this.buffer.splice(0, overflow)
+    }
+    for (const event of toAdd) {
       this.buffer.push(event)
       this.eventCount++
     }
 
-    if (this.eventCount >= this.maxEvents) {
-      void this.rotate()
+    if (this.buffer.length >= FLUSH_STRINGIFY_CHUNK_SIZE) {
+      void this.flush()
+    } else {
+      this.scheduleFlush()
     }
-
-    this.scheduleFlush()
   }
 
   /**
@@ -297,10 +324,16 @@ class PersistentStorage {
     }
 
     try {
-      await this.checkAndRotate()
-
       const content = entries.join('\n') + '\n'
-      await this.enqueueWrite(() => appendFile(this.dataFile, content, { encoding: 'utf8', mode: 0o600 }))
+      await this.enqueueWrite(async () => {
+        if (this.eventCount + toFlush.length > this.maxEvents) {
+          await this.rotate()
+        } else {
+          await this.checkAndRotate()
+        }
+        await appendFile(this.dataFile, content, { encoding: 'utf8', mode: 0o600 })
+        this.eventCount += toFlush.length
+      })
 
       this.totalPersisted += toFlush.length
       for (const event of toFlush) {
@@ -319,20 +352,26 @@ class PersistentStorage {
       }
     } catch (error) {
       this.writeErrors++
-      // Restore unflushed events to the head of the buffer so they are not lost
-      this.buffer.unshift(...toFlush)
+      const code = (error as NodeJS.ErrnoException)?.code
+      if (code === 'EROFS' || code === 'ENOSPC' || code === 'EACCES' || code === 'EPERM' || code === 'EISDIR' || this.writeErrors >= 10) {
+        logger.warn('Persistent storage disabled due to non-recoverable write error; releasing buffer', {
+          code,
+          writeErrors: this.writeErrors,
+        })
+        this.initialized = false
+        this.buffer.length = 0
+        this.persistedIds.clear()
+        return
+      }
+      const available = Math.max(0, this.maxEvents - this.buffer.length)
+      if (available > 0) {
+        this.buffer.unshift(...toFlush.slice(toFlush.length - available))
+      }
       logger.warn('Persistent storage: write failed', {
         error,
         writeErrors: this.writeErrors,
         bufferedEvents: this.buffer.length,
       })
-
-      if (this.writeErrors >= 10) {
-        logger.error('Persistent storage: too many write errors, disabling', {
-          writeErrors: this.writeErrors,
-        })
-        this.initialized = false
-      }
     }
   }
 
@@ -464,7 +503,7 @@ class PersistentStorage {
    * 4. Exclusively claims candidate files via atomic rename before reading to
    *    prevent multiple workers from racing or duplicating replay batches.
    */
-  async replay(): Promise<Event[]> {
+  async replay(deadlineMs?: number): Promise<Event[]> {
     const logger = getLogger()
     const now = epochMs()
     const validEvents: Event[] = []
@@ -513,6 +552,11 @@ class PersistentStorage {
       const candidateFiles = candidateList.map(c => c.name)
 
       for (const fileName of candidateFiles) {
+        if (deadlineMs !== undefined && Date.now() >= deadlineMs) {
+          logger.debug('Persistent storage: replay deadline reached, remaining files deferred to next startup')
+          break
+        }
+
         const fullPath = join(this.directoryPath, fileName)
         const randomToken = Math.random().toString(36).slice(2)
         const claimPath = join(this.directoryPath, `.${fileName}.claim-${process.pid}-${Date.now()}-${randomToken}.tmp`)
@@ -528,6 +572,7 @@ class PersistentStorage {
 
         if (!claimed) continue
 
+        let completedFile = false
         try {
           const readStream = createReadStream(claimPath, { encoding: 'utf8', highWaterMark: 64 * 1024 })
           const rl = createInterface({ input: readStream, crlfDelay: Infinity })
@@ -555,8 +600,13 @@ class PersistentStorage {
               await new Promise<void>(resolve => setImmediate(resolve))
             }
           }
+          completedFile = true
         } finally {
-          await unlink(claimPath).catch(() => {})
+          if (completedFile) {
+            await unlink(claimPath).catch(() => {})
+          } else {
+            await safeAtomicRename(claimPath, fullPath).catch(() => {})
+          }
         }
       }
 
@@ -734,6 +784,10 @@ class PersistentStorage {
 
   private async checkAndRotate(): Promise<void> {
     try {
+      if (this.eventCount >= this.maxEvents) {
+        await this.rotate()
+        return
+      }
       // Async stat — the previous existsSync + statSync pair issued two
       // blocking syscalls on every flush. `stat` throws ENOENT when the
       // file doesn't exist yet, which the catch treats as "nothing to
@@ -755,6 +809,21 @@ class PersistentStorage {
         const rotatedFile = `${this.dataFile}.${Date.now()}.bak`
         await safeAtomicRename(this.dataFile, rotatedFile)
         logger.debug('Persistent storage: file rotated', { oldFile: rotatedFile })
+
+        const entries = await readdir(this.directoryPath).catch(() => [] as string[])
+        const bakPattern = new RegExp(`^${this.filePrefix}(?:-\\d+)?\\.ndjson\\.(\\d+)\\.bak$`)
+        const bakFiles: Array<{ name: string; ts: number }> = []
+        for (const f of entries) {
+          const m = f.match(bakPattern)
+          if (m && m[1]) {
+            bakFiles.push({ name: f, ts: parseInt(m[1], 10) })
+          }
+        }
+        bakFiles.sort((a, b) => a.ts - b.ts)
+        while (bakFiles.length > MAX_BACKUP_FILES) {
+          const oldest = bakFiles.shift()!
+          await unlink(join(this.directoryPath, oldest.name)).catch(() => {})
+        }
       }
     } catch (error) {
       logger.warn('Persistent storage: rotation failed', { error })

@@ -159,20 +159,21 @@ export class TransportRouter {
                 return;
             // Candidate construction validates every route and allocates all queues
             // before any live reference changes. A failure leaves the old runtime intact.
-            const candidate = this.buildRuntime(transport, limits);
+            // Preserving this.healthMonitor prevents wiping OPEN circuit breakers during config refreshes.
+            const candidate = this.buildRuntime(transport, limits, this.healthMonitor);
             const oldManagers = this.batchManagers;
             const oldQueues = this.queues;
             const queued = [];
             for (const queue of oldQueues.values())
                 queued.push(...queue.drain(queue.size()));
-            // One synchronous commit point: send() observes either complete runtime.
+            // One synchronous commit point: send() observes the new runtime immediately,
+            // ensuring any concurrent sends during the quiesce window are enqueued to the new managers.
             this.transportConfig = transport;
             this.registry = candidate.registry;
             this.connectionManager = candidate.connectionManager;
             this.healthMonitor = candidate.healthMonitor;
             this.batchManagers = candidate.batchManagers;
             this.queues = candidate.queues;
-            this.sendBatch(queued);
             // Quiesce detached managers. Failed/in-flight batches are returned to
             // their old queues by BatchManager.shutdown(), then migrated exactly once.
             const shutdownResults = await Promise.allSettled([...oldManagers.values()].map(manager => manager.shutdown()));
@@ -185,7 +186,21 @@ export class TransportRouter {
             }
             for (const queue of oldQueues.values())
                 residual.push(...queue.drain(queue.size()));
-            this.sendBatch(residual);
+            // Chronological order: older residual/in-flight events migrate first, followed by queued
+            if (residual.length > 0) {
+                for (const event of residual) {
+                    const def = this.registry.resolve(event);
+                    const q = this.queues.get(def.route);
+                    if (q) {
+                        q.requeueFront([event]);
+                    }
+                    else {
+                        this.send(event);
+                    }
+                }
+            }
+            if (queued.length > 0)
+                this.sendBatch(queued);
         });
         this.reconfiguration = operation.catch(error => {
             getLogger().error('[TransportRouter] Transport reconfiguration failed; previous runtime retained', { error });
@@ -292,9 +307,9 @@ export class TransportRouter {
         }
         TransportRouter.instance = null;
     }
-    buildRuntime(config, limits) {
+    buildRuntime(config, limits, existingHealthMonitor) {
         const registry = new RouteRegistry(config);
-        const healthMonitor = new HealthMonitor(registry.routes());
+        const healthMonitor = existingHealthMonitor ?? new HealthMonitor(registry.routes());
         const connectionManager = this.createConnectionManager(config);
         const queues = new Map();
         const batchManagers = new Map();

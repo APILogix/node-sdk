@@ -10,7 +10,7 @@
  * Patch is idempotent (global Symbol guard) and fully reversible.
  */
 
-import { context as otelContext, trace } from '@opentelemetry/api'
+import { context as otelContext, trace, type Context } from '@opentelemetry/api'
 import { EventEmitter } from 'events'
 import { getLogger } from '../utils/logger.js'
 
@@ -30,8 +30,15 @@ let originalOnce: ListenerMethod | null = null
 let originalPrependListener: ListenerMethod | null = null
 let originalPrependOnceListener: ListenerMethod | null = null
 
-// WeakMap caches bound listeners so re-adding the same listener doesn't allocate duplicate wrappers
-const listenerWrapperCache = new WeakMap<EventListener, RemovableListener>()
+const contextListenerCache = new WeakMap<Context, WeakMap<EventListener, RemovableListener>>()
+
+function isSpanEnded(span: unknown): boolean {
+  if (!span || typeof span !== 'object') return true
+  const s = span as { ended?: boolean; _ended?: boolean; isRecording?: () => boolean }
+  if (s.ended === true || s._ended === true) return true
+  if (typeof s.isRecording === 'function' && !s.isRecording()) return true
+  return false
+}
 
 function isGlobalOrSystemEmitter(emitter: unknown): boolean {
   if (!emitter || typeof emitter !== 'object') return false
@@ -65,30 +72,32 @@ export function patchEventEmitter(): void {
   originalPrependOnceListener = EventEmitter.prototype.prependOnceListener
 
   const bind = (emitter: EventEmitter, listener: EventListener): EventListener => {
-    // 1. Do not patch global/long-lived process streams to prevent memory leaks and retaining request context
-    if (isGlobalOrSystemEmitter(emitter)) {
+    if (typeof listener !== 'function' || isGlobalOrSystemEmitter(emitter)) {
       return listener
     }
 
-    // 2. If no active span is in scope, there is no request context to propagate
     const activeSpan = trace.getActiveSpan()
-    if (!activeSpan) {
+    if (!activeSpan || isSpanEnded(activeSpan)) {
       return listener
-    }
-
-    const cached = listenerWrapperCache.get(listener)
-    if (cached) {
-      return cached
     }
 
     const activeCtx = otelContext.active()
-    const contextBound = otelContext.bind(activeCtx, listener)
+    let perContextCache = contextListenerCache.get(activeCtx)
+    if (perContextCache) {
+      const cached = perContextCache.get(listener)
+      if (cached) return cached
+    } else {
+      perContextCache = new WeakMap<EventListener, RemovableListener>()
+      contextListenerCache.set(activeCtx, perContextCache)
+    }
+
+    let contextBound: EventListener | null = otelContext.bind(activeCtx, listener)
+    let spanRef: unknown = activeSpan
 
     const wrapper: RemovableListener = function contextBoundListener(this: unknown, ...args: any[]): void {
-      // 3. Prevent resurrection: If the span that was active when this listener was registered
-      // has already ended, do NOT resurrect that ended trace context. Execute in ambient context.
-      const spanAny = activeSpan as unknown as { ended?: boolean; _ended?: boolean }
-      if (spanAny.ended === true || spanAny._ended === true) {
+      if (!contextBound || isSpanEnded(spanRef)) {
+        contextBound = null
+        spanRef = null
         listener.apply(this, args)
       } else {
         contextBound.apply(this, args)
@@ -96,7 +105,7 @@ export function patchEventEmitter(): void {
     }
 
     Object.defineProperty(wrapper, 'listener', { value: listener, configurable: true })
-    listenerWrapperCache.set(listener, wrapper)
+    perContextCache.set(listener, wrapper)
     return wrapper
   }
 
@@ -106,26 +115,25 @@ export function patchEventEmitter(): void {
     listener: EventListener,
     prepend: boolean,
   ): EventEmitter => {
-    if (isGlobalOrSystemEmitter(emitter)) {
+    if (typeof listener !== 'function' || isGlobalOrSystemEmitter(emitter)) {
       return (prepend ? originalPrependOnceListener! : originalOnce!).call(emitter, event, listener)
     }
 
     const activeSpan = trace.getActiveSpan()
-    if (!activeSpan) {
+    if (!activeSpan || isSpanEnded(activeSpan)) {
       return (prepend ? originalPrependOnceListener! : originalOnce!).call(emitter, event, listener)
     }
 
     const activeCtx = otelContext.active()
-    const contextBound = otelContext.bind(activeCtx, listener)
+    let contextBound: EventListener | null = otelContext.bind(activeCtx, listener)
+    let spanRef: unknown = activeSpan
 
     const wrapper: RemovableListener = function contextBoundOnceListener(this: EventEmitter, ...args: any[]): void {
       this.removeListener(event, wrapper)
-      const spanAny = activeSpan as unknown as { ended?: boolean; _ended?: boolean }
-      if (spanAny.ended === true || spanAny._ended === true) {
-        listener.apply(this, args)
-      } else {
-        contextBound.apply(this, args)
-      }
+      const fn = contextBound && !isSpanEnded(spanRef) ? contextBound : listener
+      contextBound = null
+      spanRef = null
+      fn.apply(this, args)
     }
     Object.defineProperty(wrapper, 'listener', { value: listener, configurable: true })
     return (prepend ? originalPrependListener! : originalOn!).call(emitter, event, wrapper)

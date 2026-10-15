@@ -20,6 +20,27 @@
 import { trace, SpanKind, SpanStatusCode, context, createContextKey, propagation } from '@opentelemetry/api'
 import type { PrivacyCaptureConfig } from '../types/config.js'
 import { getLogger } from '../utils/logger.js'
+import { SecurityScrubber } from '../processors/security-scrubber.js'
+import { sanitizeHeaders } from '../processors/sanitizer.js'
+import { safeJsonStringify } from '../utils/safe-json.js'
+
+function scrubAxiosHeaders(headers: Record<string, unknown>): Record<string, unknown> {
+  const scrubber = SecurityScrubber.getInstance()
+  if (scrubber) {
+    const scrubbed = scrubber.scrub({
+      type: 'request',
+      headers,
+    } as unknown as import('../types/event.js').SDKEvent) as unknown as { headers?: Record<string, unknown> }
+    return scrubbed.headers ?? sanitizeHeaders(headers)
+  }
+  return sanitizeHeaders(headers)
+}
+
+function isStreamOrBinary(data: unknown): boolean {
+  if (!data || typeof data !== 'object') return false
+  if (Buffer.isBuffer(data) || data instanceof Uint8Array || data instanceof ArrayBuffer) return true
+  return typeof (data as { pipe?: unknown }).pipe === 'function'
+}
 
 export const SUPPRESS_INNER_HTTP = createContextKey('pulse.suppress_inner_http')
 
@@ -124,16 +145,20 @@ export function createAxiosInstrumentation(
             config.headers = {}
           }
 
-          if (captureHeaders && config.headers) {
-            const safeHeaders: Record<string, string> = {}
-            for (const [key, value] of Object.entries(config.headers)) {
-              safeHeaders[key] = typeof value === 'string' ? value : String(value)
+          if (captureHeaders && config.headers && typeof config.headers === 'object') {
+            try {
+              span.setAttribute('http.request.headers', safeJsonStringify(scrubAxiosHeaders(config.headers)))
+            } catch {
+              // Fail-open: never block request on header serialization
             }
-            span.setAttribute('http.request.headers', JSON.stringify(safeHeaders))
           }
 
           if (options.captureRequestData && config.params) {
-            span.setAttribute('http.request.query', JSON.stringify(config.params).slice(0, options.maxBodySize))
+            try {
+              span.setAttribute('http.request.query', safeJsonStringify(config.params).slice(0, options.maxBodySize))
+            } catch {
+              // Fail-open
+            }
           }
 
           const activeContext = trace.setSpan(context.active(), span).setValue(SUPPRESS_INNER_HTTP, true)
@@ -168,40 +193,54 @@ export function createAxiosInstrumentation(
             })
           }
           return context.with(activeContext, async () => {
+            let response: AxiosResponseLike
             try {
-              const response = await originalRequest.call(this, config)
+              response = await originalRequest.call(this, config)
+            } catch (error: unknown) {
+              try {
+                span.setStatus({
+                  code: SpanStatusCode.ERROR,
+                  message: error instanceof Error ? error.message : 'Request failed',
+                })
+                if (error instanceof Error) {
+                  span.recordException(error)
+                }
+                const errStatus = (error as { response?: { status?: number } })?.response?.status
+                if (typeof errStatus === 'number') {
+                  span.setAttribute('http.status_code', errStatus)
+                }
+              } catch {
+                // Never mask original error
+              } finally {
+                span.end()
+              }
+              throw error
+            }
 
+            // Telemetry post-processing MUST be isolated from host return path
+            try {
               span.setAttribute('http.status_code', response.status ?? 0)
               span.setAttribute('http.status_text', response.statusText ?? '')
 
-              if (captureHeaders && response.headers) {
-                const safeResponseHeaders: Record<string, string> = {}
-                for (const [key, value] of Object.entries(response.headers)) {
-                  safeResponseHeaders[key] = typeof value === 'string' ? value : String(value)
-                }
-                span.setAttribute('http.response.headers', JSON.stringify(safeResponseHeaders))
+              if (captureHeaders && response.headers && typeof response.headers === 'object') {
+                span.setAttribute('http.response.headers', safeJsonStringify(scrubAxiosHeaders(response.headers)))
               }
 
-              if (options.captureResponseData && response.data) {
+              if (options.captureResponseData && response.data !== undefined && !isStreamOrBinary(response.data)) {
                 const dataStr = typeof response.data === 'string'
                   ? response.data.slice(0, options.maxBodySize)
-                  : JSON.stringify(response.data).slice(0, options.maxBodySize)
+                  : safeJsonStringify(response.data).slice(0, options.maxBodySize)
                 span.setAttribute('http.response.body', dataStr)
               }
 
               span.setStatus({ code: SpanStatusCode.OK })
+            } catch {
+              // Swallow telemetry serialization errors so host response always succeeds
+            } finally {
               span.end()
-
-              return response
-            } catch (error: unknown) {
-              span.setStatus({
-                code: SpanStatusCode.ERROR,
-                message: error instanceof Error ? error.message : 'Request failed',
-              })
-              span.recordException(error as Error)
-              span.end()
-              throw error
             }
+
+            return response
           })
         }
 

@@ -188,12 +188,10 @@ export class AdaptivePressureMonitor {
             : 0;
         let gcPressure = 0;
         if (this.options.gcMonitoring) {
-            const gcWindowDuration = now - this.gcWindowStart;
-            gcPressure = gcWindowDuration > 0 ? (this.gcTimeMs / gcWindowDuration) * 100 : 0;
-            if (gcWindowDuration > 60_000) {
-                this.gcTimeMs = 0;
-                this.gcWindowStart = now;
-            }
+            const gcWindowDuration = Math.max(500, now - this.gcWindowStart);
+            gcPressure = (this.gcTimeMs / gcWindowDuration) * 100;
+            this.gcTimeMs = 0;
+            this.gcWindowStart = now;
         }
         else {
             this.gcTimeMs = 0;
@@ -310,6 +308,8 @@ export class AdaptivePressureMonitor {
         }
     }
     startGCTracking() {
+        if (this.gcObserver)
+            return;
         try {
             this.gcObserver = new PerformanceObserver(list => {
                 for (const entry of list.getEntries()) {

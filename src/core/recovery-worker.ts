@@ -5,6 +5,8 @@ import { RemoteConfigClient, type InitResponse } from './remote-config-client.js
 import { ConfigManager } from './config-manager.js'
 import { classifyError, isPermanentError } from './retry-classifier.js'
 import { isSDKShuttingDown } from './lifecycle.js'
+import { resetAutoInstrumentations } from '../instrumentation/auto-instrument.js'
+import { eventQueue } from '../transport/queue.js'
 
 export interface RecoveryWorkerOptions {
   readonly baseDelayMs?: number | undefined
@@ -147,6 +149,8 @@ export class BackgroundRecoveryWorker {
     const logger = getLogger()
     logger.info(`SDK recovery attempt #${this.attempt}.`)
 
+    let attemptError: unknown = null
+
     try {
       client.setPendingIdentity(this.options)
       const coordinator = client.singleFlightCoordinator
@@ -154,23 +158,32 @@ export class BackgroundRecoveryWorker {
         if (this.abortController.signal.aborted || this.stopped || isSDKShuttingDown() || client.getState() === 'stopping' || client.getState() === 'stopped') {
           return undefined
         }
-        const remoteClient = new RemoteConfigClient({
-          apiKey: this.options.apiKey,
-          initTimeoutMs: this.options.initTimeoutMs ?? 5_000,
-          initRetries: 0,
-        })
-        const initResponse = await remoteClient.initialize()
-        if (!initResponse) {
-          throw new Error('Empty init response received during recovery')
-        }
-        if (this.stopped || isSDKShuttingDown() || client.getState() === 'stopping' || client.getState() === 'stopped') {
+        try {
+          const remoteClient = new RemoteConfigClient({
+            apiKey: this.options.apiKey,
+            initTimeoutMs: this.options.initTimeoutMs ?? 5_000,
+            initRetries: 0,
+          })
+          const initResponse = await remoteClient.initialize()
+          if (!initResponse) {
+            throw new Error('Empty init response received during recovery')
+          }
+          if (this.stopped || isSDKShuttingDown() || client.getState() === 'stopping' || client.getState() === 'stopped') {
+            return undefined
+          }
+          if (this.activateFn) {
+            await this.activateFn(initResponse)
+          }
+          return ConfigManager.getCurrent()?.getConfigOrNull() ?? undefined
+        } catch (err) {
+          attemptError = err
           return undefined
         }
-        if (this.activateFn) {
-          await this.activateFn(initResponse)
-        }
-        return ConfigManager.getCurrent()?.getConfigOrNull() ?? undefined
       })
+
+      if (attemptError) {
+        throw attemptError
+      }
 
       if (this.stopped || isSDKShuttingDown() || client.getState() === 'stopping' || client.getState() === 'stopped') {
         return
@@ -185,11 +198,16 @@ export class BackgroundRecoveryWorker {
 
       const decision = classifyError(error)
       if (decision.permanent || isPermanentError(error)) {
-        logger.error('SDK initialization stopped: authentication/configuration error.', {
+        logger.error('SDK initialization stopped: permanent authentication/configuration error.', {
           reason: decision.reason,
           error,
         })
         this.stop()
+        try { resetAutoInstrumentations() } catch {}
+        try { eventQueue.clear() } catch {}
+        if (client.getState() !== 'stopping' && client.getState() !== 'stopped') {
+          try { client.setState('disabled') } catch {}
+        }
         return
       }
 

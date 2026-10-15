@@ -2,6 +2,7 @@ import { Worker } from 'worker_threads'
 import { getLogger } from '../utils/logger.js'
 import { type CompressionAlgorithm, compressGzip, compressBrotli } from '../utils/compression.js'
 import { SecurityScrubber } from '../processors/security-scrubber.js'
+import { sanitizeEvent } from '../processors/sanitizer.js'
 import type { PrivacyConfig } from '../types/config.js'
 import type { SDKEvent } from '../types/event.js'
 import { safeJsonStringify } from '../utils/safe-json.js'
@@ -37,7 +38,7 @@ export class SerializationPool {
   private roundRobinIndex = 0
   private pendingRequests = new Map<
     number,
-    { resolve: (val: any) => void; reject: (err: any) => void; timer: NodeJS.Timeout }
+    { worker: Worker; resolve: (val: any) => void; reject: (err: any) => void; timer: NodeJS.Timeout }
   >()
   private destroyed = false
   private static instance: SerializationPool | null = null
@@ -49,22 +50,30 @@ export class SerializationPool {
   public static readonly WORKER_OFFLOAD_THRESHOLD_BYTES = 50 * 1024 // 50KB
 
   private static isLargeBatch(events: readonly unknown[]): boolean {
-    // Dynamic byte-based threshold: Offload to worker thread ONLY if estimated
-    // payload size meets or exceeds 50KB, regardless of whether remote config
-    // configured batchSize to 20, 100, or 1000.
+    if (events.length >= 250) return true
     let estimatedBytes = 0
     for (let i = 0; i < events.length; i++) {
-      const ev = events[i] as any
+      const ev = events[i] as Record<string, unknown> | string | null | undefined
       if (!ev) continue
       if (typeof ev === 'string') {
         estimatedBytes += ev.length
       } else if (typeof ev === 'object') {
-        if (typeof ev.message === 'string') estimatedBytes += ev.message.length
-        if (typeof ev.data === 'string') estimatedBytes += ev.data.length
-        if (typeof ev.stack === 'string') estimatedBytes += ev.stack.length
-        if (typeof ev.body === 'string') estimatedBytes += ev.body.length
-        if (typeof ev.payload === 'string') estimatedBytes += ev.payload.length
-        estimatedBytes += 200 // Base telemetry envelope overhead (timestamp, eventId, route, metadata)
+        const type = ev['type']
+        if (type === 'profile' || type === 'replay') return true
+        if (type === 'trace') {
+          const spanCount = typeof ev['spanCount'] === 'number' ? ev['spanCount'] : 20
+          estimatedBytes += spanCount * 600
+        }
+        if (typeof ev['message'] === 'string') estimatedBytes += ev['message'].length
+        if (typeof ev['data'] === 'string') estimatedBytes += ev['data'].length
+        if (typeof ev['bodySize'] === 'number') estimatedBytes += Math.min(ev['bodySize'], 65_536)
+        if (Array.isArray(ev['stack'])) estimatedBytes += ev['stack'].length * 250
+        if (Array.isArray(ev['breadcrumbs'])) estimatedBytes += ev['breadcrumbs'].length * 180
+        if (Array.isArray(ev['events'])) estimatedBytes += ev['events'].length * 200
+        if (typeof ev['stack'] === 'string') estimatedBytes += ev['stack'].length
+        if (typeof ev['body'] === 'string') estimatedBytes += ev['body'].length
+        if (typeof ev['payload'] === 'string') estimatedBytes += ev['payload'].length
+        estimatedBytes += 350
       }
       if (estimatedBytes >= SerializationPool.WORKER_OFFLOAD_THRESHOLD_BYTES) {
         return true
@@ -88,6 +97,7 @@ export class SerializationPool {
 
   private addWorker(workerUrl: URL) {
     const worker = new Worker(workerUrl)
+    worker.unref?.()
     const onlinePromise = new Promise<void>((resolve) => {
       worker.once('online', () => {
         if (!this.destroyed && this.workers.includes(worker)) this.readyWorkers.add(worker)
@@ -141,6 +151,14 @@ export class SerializationPool {
     this.workerEntries = this.workerEntries.filter(e => e.worker !== worker)
     this.readyWorkers.delete(worker)
     this.roundRobinIndex = 0
+
+    for (const [id, req] of this.pendingRequests.entries()) {
+      if (req.worker === worker) {
+        clearTimeout(req.timer)
+        this.pendingRequests.delete(id)
+        req.reject(new Error('Serialization worker crashed'))
+      }
+    }
   }
 
   static initialize(poolSize = 1) {
@@ -207,7 +225,7 @@ export class SerializationPool {
         reject(new Error('Serialization worker timeout'))
       }, 5000)
 
-      this.pendingRequests.set(id, { resolve, reject, timer })
+      this.pendingRequests.set(id, { worker, resolve, reject, timer })
       try {
         worker.postMessage({
           id,
@@ -232,9 +250,13 @@ export class SerializationPool {
   private async fallbackSerializeBatch(options: SerializeBatchOptions): Promise<SerializeBatchResult> {
     const { events, route, timestamp, privacyConfig, compression, maxPayloadBytes } = options
     let safeEvents = events
-    if (privacyConfig && Array.isArray(events)) {
-      const scrubber = SecurityScrubber.getInstance() ?? SecurityScrubber.initialize(privacyConfig)
-      safeEvents = scrubber.scrubBatch(events as SDKEvent[])
+    if (Array.isArray(events)) {
+      const scrubber = SecurityScrubber.getInstance() ?? (privacyConfig ? SecurityScrubber.initialize(privacyConfig) : null)
+      if (scrubber) {
+        safeEvents = scrubber.scrubBatch(events as SDKEvent[])
+      } else {
+        safeEvents = (events as SDKEvent[]).map(e => sanitizeEvent(e))
+      }
     }
     const payload = route
       ? { events: safeEvents, route, timestamp: timestamp ?? Date.now() }
@@ -273,6 +295,11 @@ export class SerializationPool {
   }
 
   async shutdown(): Promise<void> {
+    if (!this.started && this.workers.length === 0) {
+      this.destroyed = true
+      return
+    }
+
     this.destroyed = true
     this.started = false
 
@@ -295,6 +322,7 @@ export class SerializationPool {
       )
     )
 
+    const hadWorkers = this.workers.length > 0
     await Promise.all(
       this.workers.map(async w => {
         try {
@@ -306,7 +334,9 @@ export class SerializationPool {
     this.workerEntries = []
     this.readyWorkers.clear()
     // Allow libuv to process handle close callbacks (uv_process_endgames) on Windows
-    await new Promise(r => setTimeout(r, 25))
+    if (hadWorkers) {
+      await new Promise(r => setTimeout(r, 25))
+    }
   }
 
   static async reset(): Promise<void> {

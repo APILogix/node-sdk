@@ -1,8 +1,8 @@
 # Environment Variables & Discovery
 
-## 1. Zero-Dependency Native `.env` Discovery
+## 1. Pure In-Memory Configuration (Zero Disk I/O)
 
-The Pulse SDK features built-in `.env` file discovery in [`src/utils/env-loader.ts`](file:///c:/Users/vikas/OneDrive/Desktop/APITOOLSDK/sdk-node/src/utils/env-loader.ts). It automatically searches for `.env`, `.env.local`, and `.env.production` files in the current working directory without requiring external dependencies like `dotenv`.
+To ensure zero synchronous disk I/O and optimal cold-start performance, `.env` file loading is permanently removed from the SDK runtime. The backend control plane URL is hardcoded directly (`BACKEND_BASE_URL = 'https://api.lynktrace.com'`). Runtime environment variables present in `process.env` (e.g. injected via Docker, Kubernetes, or cloud hosts) are read directly in-memory without filesystem access.
 
 ---
 
@@ -11,7 +11,8 @@ The Pulse SDK features built-in `.env` file discovery in [`src/utils/env-loader.
 | Variable | Description | Default Fallback |
 |---|---|---|
 | **`PULSE_API_KEY`** | Pulse APM Project API Key. | None (Required) |
-| **`PULSE_ENDPOINT`** | Custom ingestion and control-plane URL. | `https://ingest.pulse.io` |
+| **`LYNKTRACE_ENDPOINT`** | Custom control-plane URL override. | `https://api.lynktrace.com` |
+| **`PULSE_ENDPOINT`** | Custom ingestion and control-plane URL. | `https://api.lynktrace.com` |
 | **`PULSE_API_URL`** | Alias for `PULSE_ENDPOINT`. | — |
 | **`BACKEND_URL`** | Legacy alias for `PULSE_ENDPOINT`. | — |
 | **`PULSE_ENV`** | Environment name (`production`, `staging`, `dev`). | Reads `NODE_ENV` or `'development'` |

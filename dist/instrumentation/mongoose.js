@@ -205,7 +205,7 @@ export class MongooseInstrumentation extends InstrumentationBase {
                     invocationContext = invocationContext.setValue(SUPPRESS_NESTED_MONGOOSE_SPANS, true);
                 }
                 const { result, callbackWrapped } = context.with(invocationContext, run);
-                if (result && typeof result.then === 'function') {
+                if (!callbackWrapped && result && typeof result.then === 'function') {
                     return result.then((value) => {
                         endOk();
                         return value;
@@ -359,10 +359,11 @@ export class MongooseInstrumentation extends InstrumentationBase {
                 if (!self.isEnabled() || context.active().getValue(SUPPRESS_NESTED_MONGOOSE_SPANS)) {
                     return origAggregateExec.apply(this, args);
                 }
-                const modelName = this.model?.()?.modelName || 'Aggregate';
+                const aggModel = typeof this.model === 'function' ? this.model() : (this.model ?? this._model);
+                const modelName = aggModel?.modelName || 'Aggregate';
                 const spanName = `${modelName}.aggregate`;
-                const dbName = this.model?.()?.db?.name || 'db';
-                const collectionName = this.model?.()?.collection?.name || modelName;
+                const dbName = aggModel?.db?.name || 'db';
+                const collectionName = aggModel?.collection?.name || modelName;
                 return self._withMongooseSpan(spanName, self._baseAttributes(dbName, collectionName, 'aggregate'), (endWithError, endOk) => {
                     const wrapped = self._wrapLastCallback(args, endWithError, endOk);
                     return { result: origAggregateExec.apply(this, wrapped.args), callbackWrapped: wrapped.wrapped };

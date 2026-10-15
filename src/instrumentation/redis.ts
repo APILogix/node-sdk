@@ -35,15 +35,23 @@ const SENSITIVE_KEY_PATTERNS = [
   /passw/i,
   /secret/i,
   /token/i,
-  /key/i,
+  /(?:^|[_:.-])(?:api[-_]?key|private[-_]?key|secret[-_]?key|access[-_]?key)(?:$|[_:.-])/i,
   /jwt/i,
   /bearer/i,
   /session/i,
   /cred/i,
 ]
 
+const READ_COMMANDS = new Set([
+  'GET', 'MGET', 'HGET', 'HMGET', 'HGETALL', 'HEXISTS', 'HLEN', 'HKEYS',
+  'EXISTS', 'TTL', 'PTTL', 'TYPE', 'STRLEN', 'LLEN', 'LRANGE', 'LINDEX',
+  'SCARD', 'SMEMBERS', 'SISMEMBER', 'ZCARD', 'ZRANGE', 'ZRANGEBYSCORE', 'ZSCORE', 'ZRANK',
+  'PFCOUNT', 'XREAD', 'XRANGE', 'GEOPOS', 'GETRANGE',
+])
+
 export function isSensitiveRedisKey(key: string): boolean {
-  return SENSITIVE_KEY_PATTERNS.some(pat => pat.test(key))
+  const boundedKey = typeof key === 'string' ? key.slice(0, 256) : String(key ?? '').slice(0, 256)
+  return SENSITIVE_KEY_PATTERNS.some(pat => pat.test(boundedKey))
 }
 
 export function createRedisStatementSerializer(
@@ -69,7 +77,7 @@ export function createRedisStatementSerializer(
       return cmdName
     }
 
-    const rawKey = String(cmdArgs[0] ?? '')
+    const rawKey = String(cmdArgs[0] ?? '').slice(0, 256)
     let formattedKey = rawKey
 
     if (keyPolicy === 'hash') {
@@ -86,8 +94,7 @@ export function createRedisStatementSerializer(
     }
 
     // Read commands: key is visible according to policy
-    const readCommands = ['GET', 'HGET', 'HGETALL', 'EXISTS', 'TTL', 'PTTL', 'TYPE', 'STRLEN', 'LLEN', 'SCARD', 'ZCARD']
-    if (readCommands.includes(upperCmd)) {
+    if (READ_COMMANDS.has(upperCmd)) {
       return `${cmdName} ${formattedKey}`
     }
 

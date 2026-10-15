@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { sdkInitOptionsSchema } from '../types/config.js';
 import { client } from './client.js';
 import { SDKError } from './errors.js';
-import { loadEnvFileSafely } from '../utils/env-loader.js';
+import { BACKEND_BASE_URL } from '../constants/defaults.js';
 import { waitForShutdownCompletion, registerSignalHandlers, isSDKShuttingDown } from './lifecycle.js';
 import { getLogger, setDebugMode, setLogLevel } from '../utils/logger.js';
 import { RemoteConfigClient } from './remote-config-client.js';
@@ -52,7 +52,6 @@ import { resolveMaxMemoryMb } from '../utils/memory-detector.js';
  * a runtime configuration or start telemetry with defaults.
  */
 export async function init(options) {
-    loadEnvFileSafely();
     let normalizedOptions;
     if (typeof options === 'string') {
         normalizedOptions = { apiKey: options };
@@ -65,7 +64,7 @@ export async function init(options) {
     }
     // Fallback to environment variables if apiKey is not explicitly set
     if (!normalizedOptions.apiKey && typeof process !== 'undefined' && process.env) {
-        const envKey = process.env['PULSE_API_KEY'] || process.env['PULSE_KEY'];
+        const envKey = process.env['LYNKTRACE_API_KEY'] || process.env['PULSE_API_KEY'] || process.env['PULSE_KEY'];
         if (envKey && typeof envKey === 'string' && envKey.trim().length > 0) {
             normalizedOptions = { ...normalizedOptions, apiKey: envKey.trim() };
         }
@@ -275,7 +274,7 @@ export async function activateSDK(remoteClient, response, options, mode = 'cold_
             }, {
                 maxHistogramBuckets: 160,
                 percentiles: [50, 75, 90, 95, 99],
-                cardinalityLimit: 2_000,
+                cardinalityLimit: active.metrics?.cardinalityLimit ?? 2_000,
             }, resources);
         };
         RuntimeMetricsSubsystem.getInstance().configure(config);
@@ -333,7 +332,7 @@ export async function activateSDK(remoteClient, response, options, mode = 'cold_
                     await ProfilingSubsystem.getInstance()?.start();
             },
         });
-        await featureController.register('crons', () => { CronSubsystem.initialize(event => { processEvent(event); }, client.metadata); }, () => CronSubsystem.reset());
+        await featureController.register('crons', () => { CronSubsystem.initialize(event => { processEvent(event); }, client.metadata, manager.getConfig().crons); }, () => CronSubsystem.reset());
         await featureController.register('sessionReplay', () => { getSessionManager(); }, () => resetSessionManager());
         manager.setApplier(new ConfigApplier({
             identity: async ({ previous, current }) => {
@@ -552,12 +551,25 @@ function filterBufferedEvents(config) {
     });
 }
 async function replayBufferedEvents(persisted) {
+    const router = TransportRouter.getInstance();
+    const killswitch = KillswitchEngine.getInstance();
+    if (router && !killswitch?.isSDKDisabled() && persisted.length > 0) {
+        for (let index = 0; index < persisted.length; index++) {
+            const ev = persisted[index];
+            if (ev && typeof ev === 'object' && 'type' in ev) {
+                router.send(ev);
+            }
+            if ((index + 1) % 100 === 0) {
+                await new Promise(resolve => setImmediate(resolve));
+            }
+        }
+    }
     const buffered = eventQueue.drainAll();
-    const events = [...persisted, ...buffered];
-    for (let index = 0; index < events.length; index++) {
-        processEvent(events[index]);
-        if ((index + 1) % 100 === 0)
+    for (let index = 0; index < buffered.length; index++) {
+        processEvent(buffered[index]);
+        if ((index + 1) % 100 === 0) {
             await new Promise(resolve => setImmediate(resolve));
+        }
     }
 }
 function setupPersistentStorage(apiKey, config, options) {
@@ -604,9 +616,7 @@ function setupPersistentStorage(apiKey, config, options) {
     return persistedEventsPromise;
 }
 async function enterDormantState(_error, options) {
-    // Non-destructive transition: clean up any partially constructed transport
-    // router or runtime engines from a mid-flight failure, but preserve bootstrap
-    // instrumentation, OTel provider/context, event queue, client options, and API key.
+    const logger = getLogger();
     try {
         await TransportRouter.reset();
     }
@@ -645,9 +655,17 @@ async function enterDormantState(_error, options) {
             catch { }
         }
     }
-    const recoveryOptions = options ?? client.options;
     const decision = classifyError(_error);
-    if (recoveryOptions && !isSDKShuttingDown() && client.getState() === 'recovering' && !decision.permanent && !isPermanentError(_error)) {
+    const permanent = _error !== undefined && (decision.permanent || isPermanentError(_error));
+    if (permanent) {
+        BackgroundRecoveryWorker.stop();
+        logger.warn('Control-plane permanent failure during init; recovery worker will not start', {
+            reason: decision.reason,
+        });
+        return;
+    }
+    const recoveryOptions = options ?? client.options;
+    if (recoveryOptions && !isSDKShuttingDown() && client.getState() === 'recovering') {
         BackgroundRecoveryWorker.start(recoveryOptions, {
             activateFn: async (response) => {
                 const recoveryRemoteClient = new RemoteConfigClient({

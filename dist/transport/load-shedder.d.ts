@@ -24,6 +24,17 @@ export interface LoadShedderStats {
     readonly groupsAdmitted: number;
     readonly groupsShed: number;
 }
+/**
+ * Bounded tracker for Correlation Groups (tracks error/diagnostic promotion).
+ */
+export declare class CorrelationGroupTracker {
+    private readonly maxGroups;
+    private readonly errorGroups;
+    markError(groupKey: string, isFatal?: boolean): void;
+    hasError(groupKey: string): boolean;
+    isFatal(groupKey: string): boolean;
+    clear(): void;
+}
 export type PressureInputState = PressureState | CompositePressureLevel;
 export declare class LoadShedder {
     private readonly getPressureState;
@@ -33,7 +44,9 @@ export declare class LoadShedder {
     private totalAdmitted;
     private groupsAdmitted;
     private groupsShed;
+    private readonly seenGroups;
     private readonly groupTracker;
+    private pruneSeenGroups;
     constructor(getPressureState?: () => PressureInputState);
     /**
      * Extract or resolve the stable correlation group key for an event.

@@ -60,5 +60,6 @@ export declare class EventLoopLagMonitor extends EventEmitter {
     isLagging(thresholdMs: number): boolean;
     private emitStats;
     private extractHistogramStats;
+    private lastStats;
     private readHistogram;
 }

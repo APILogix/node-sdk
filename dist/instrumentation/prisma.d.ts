@@ -17,12 +17,13 @@ export interface PrismaInstrumentationOptions {
     captureQueries: boolean;
     captureParams: boolean;
 }
+export declare function resolvePrismaDbSystem(prismaInstance: any): string;
 /**
  * Creates an OpenTelemetry query extension for Prisma Client.
  * Attach with `prismaClient.$extends(pulsePrismaExtension())`
  * or use automatic instrumentation.
  */
-export declare function pulsePrismaExtension(): {
+export declare function pulsePrismaExtension(dbSystem?: string): {
     name: string;
     query: {
         $allModels: {

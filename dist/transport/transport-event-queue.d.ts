@@ -20,18 +20,18 @@ export interface TransportEventQueueOptions {
     readonly onDrop?: (info: QueueDropInfo) => void;
     readonly overflowStrategy: QueueOverflowStrategy;
 }
-/** Bounded ring-buffer queue with backend-controlled critical capacity. */
+/** Bounded O(1) dual-ring queue with backend-controlled critical capacity. */
 export declare class TransportEventQueue {
     readonly route: EnterpriseRoute;
     readonly maxSize: number;
     readonly priority: QueuePriority;
     private readonly overflowStrategy;
     private readonly criticalReserve;
-    private buffer;
     private readonly capacity;
-    private head;
-    private count;
-    private criticalCount;
+    private readonly criticalRing;
+    private readonly ordinaryRing;
+    private nextTailSeq;
+    private nextHeadSeq;
     private readonly onDrop;
     private dropped;
     constructor(options: TransportEventQueueOptions);
@@ -39,13 +39,9 @@ export declare class TransportEventQueue {
     drain(maxEvents: number): SDKEvent[];
     /**
      * Requeue failed events at the front while preserving critical reserve.
-     * Runs in O(n + k) linear time instead of O(n * k) under queue pressure (SEC-07).
+     * Strict O(k) time with zero full-buffer allocations or array shifts.
      */
     requeueFront(events: readonly SDKEvent[]): void;
-    private append;
-    private prepend;
-    private findOldestNonCritical;
-    private removeAt;
     private notifyDrop;
     getSize(): number;
     size(): number;

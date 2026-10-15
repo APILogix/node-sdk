@@ -1,37 +1,19 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseAndApplyEnv, resetEnvLoaderState } from '../../src/utils/env-loader.js';
-import { resolveApiBaseUrl } from '../../src/constants/defaults.js';
+import { resolveApiBaseUrl, BACKEND_BASE_URL } from '../../src/constants/defaults.js';
 import { init } from '../../src/core/init.js';
 import { shutdown } from '../../src/core/lifecycle.js';
 import { TEST_REMOTE_CONFIG } from '../fixtures/remote-config.js';
-describe('Environment Variables & .env Configuration', () => {
+describe('Environment Variables & Base URL Configuration', () => {
     const originalEnv = { ...process.env };
     let originalFetch;
     beforeEach(() => {
-        resetEnvLoaderState();
         originalFetch = globalThis.fetch;
     });
     afterEach(async () => {
         process.env = { ...originalEnv };
-        resetEnvLoaderState();
         globalThis.fetch = originalFetch;
         await shutdown();
-    });
-    it('1. Parses .env string content and sets unset keys without overwriting existing ones', () => {
-        process.env['ALREADY_SET'] = 'original_value';
-        delete process.env['NEW_KEY'];
-        delete process.env['QUOTED_KEY'];
-        const envContent = `
-# Comment line
-NEW_KEY=backend-endpoint-123
-QUOTED_KEY="secret-api-token"
-ALREADY_SET=should_not_overwrite
-`;
-        parseAndApplyEnv(envContent);
-        assert.equal(process.env['NEW_KEY'], 'backend-endpoint-123');
-        assert.equal(process.env['QUOTED_KEY'], 'secret-api-token');
-        assert.equal(process.env['ALREADY_SET'], 'original_value');
     });
     it('2. resolveApiBaseUrl inspects PULSE_ENDPOINT and normalizes localhost to 127.0.0.1', () => {
         delete process.env['SDK_BASE_URL'];
@@ -55,8 +37,8 @@ ALREADY_SET=should_not_overwrite
         assert.equal(resolveApiBaseUrl(), 'http://127.0.0.1:4001');
         delete process.env['PULSE_API_URL'];
         delete process.env['PULSE_BASE_URL'];
-        // When only generic BACKEND_URL is set, it must not be used (falls back to DEFAULT_API_BASE_URL)
-        assert.equal(resolveApiBaseUrl(), 'http://127.0.0.1:5000');
+        // When only generic BACKEND_URL is set, it must not be used (falls back to BACKEND_BASE_URL)
+        assert.equal(resolveApiBaseUrl(), BACKEND_BASE_URL);
         delete process.env['BACKEND_URL'];
     });
     it('uses the scoped SDK_BASE_URL compatibility alias when no Pulse endpoint is configured', () => {

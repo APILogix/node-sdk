@@ -1,7 +1,9 @@
 import { SAFETY_CEILINGS } from './limits.js';
 import type { NormalizedRemoteConfig, SdkIdentityConfig, FeaturesConfig, SamplingConfig, TransportRemoteConfig, LimitsConfig, KillswitchesConfig, PrivacyConfig, InstrumentationConfig, EntitlementsConfig, ConfigMeta, OfflineQueueConfig, ProfilingConfig, SessionReplayConfig, ErrorsConfig, TracingConfig, MetricsConfig, LogsConfig, CronsConfig, TransportRouteName, TransportRouteConfig } from '../types/config.js';
-/** Local Pulse backend origin used by the SDK control plane. */
-export declare const DEFAULT_API_BASE_URL = "http://127.0.0.1:5000";
+/** Production backend origin used by the SDK control plane. */
+export declare const BACKEND_BASE_URL = "https://api.lynktrace.com";
+/** Default control-plane API base URL alias. */
+export declare const DEFAULT_API_BASE_URL = "https://api.lynktrace.com";
 /** Resolve the control-plane origin with support for environment overrides. */
 export declare function resolveApiBaseUrl(): string;
 export { SAFETY_CEILINGS };

@@ -25,7 +25,9 @@ export type ServerlessHandler<TEvent = unknown, TContext = unknown, TResult = un
  *
  * `wrapHandler`:
  * 1. Sets `context.callbackWaitsForEmptyEventLoop = false` (AWS Lambda best practice).
- * 2. Catches unhandled errors, captures them with `captureException`, flushes within deadline, and rethrows.
- * 3. On successful return, flushes pending traces, metrics, and logs synchronously before execution freeze.
+ * 2. Isolates execution in a fresh ContextStore to prevent cross-invocation context bleed.
+ * 3. Handles both async/Promise handlers and callback-style handlers (handler.length >= 3).
+ * 4. Catches unhandled errors, captures them with `captureException`, flushes within deadline, and rethrows.
+ * 5. On successful return, flushes pending traces, metrics, and logs synchronously before execution freeze.
  */
 export declare function wrapHandler<TEvent = unknown, TContext = unknown, TResult = unknown>(handler: ServerlessHandler<TEvent, TContext, TResult>, options?: ServerlessHandlerOptions): (event: TEvent, context: TContext, callback?: unknown) => Promise<TResult>;

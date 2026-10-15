@@ -3,7 +3,7 @@ import type { RemoteConfigResponse, SDKInitOptions } from '../types/config.js'
 import { sdkInitOptionsSchema } from '../types/config.js'
 import { client } from './client.js'
 import { SDKError } from './errors.js'
-import { loadEnvFileSafely } from '../utils/env-loader.js'
+import { BACKEND_BASE_URL } from '../constants/defaults.js'
 import { waitForShutdownCompletion, registerSignalHandlers, isSDKShuttingDown } from './lifecycle.js'
 import { getLogger, setDebugMode, setLogLevel } from '../utils/logger.js'
 import { RemoteConfigClient, type InitResponse } from './remote-config-client.js'
@@ -59,7 +59,6 @@ import { resolveMaxMemoryMb } from '../utils/memory-detector.js'
  * a runtime configuration or start telemetry with defaults.
  */
 export async function init(options?: string | Partial<SDKInitOptions> | Record<string, unknown>): Promise<Readonly<RemoteConfigResponse> | undefined> {
-  loadEnvFileSafely()
   let normalizedOptions: SDKInitOptions
   if (typeof options === 'string') {
     normalizedOptions = { apiKey: options }
@@ -71,7 +70,7 @@ export async function init(options?: string | Partial<SDKInitOptions> | Record<s
 
   // Fallback to environment variables if apiKey is not explicitly set
   if (!normalizedOptions.apiKey && typeof process !== 'undefined' && process.env) {
-    const envKey = process.env['PULSE_API_KEY'] || process.env['PULSE_KEY']
+    const envKey = process.env['LYNKTRACE_API_KEY'] || process.env['PULSE_API_KEY'] || process.env['PULSE_KEY']
     if (envKey && typeof envKey === 'string' && envKey.trim().length > 0) {
       normalizedOptions = { ...normalizedOptions, apiKey: envKey.trim() }
     }
@@ -310,7 +309,7 @@ export async function activateSDK(
         {
           maxHistogramBuckets: 160,
           percentiles: [50, 75, 90, 95, 99],
-          cardinalityLimit: 2_000,
+          cardinalityLimit: active.metrics?.cardinalityLimit ?? 2_000,
         },
         resources,
       )
@@ -390,7 +389,7 @@ export async function activateSDK(
 
     await featureController.register(
       'crons',
-      () => { CronSubsystem.initialize(event => { processEvent(event) }, client.metadata) },
+      () => { CronSubsystem.initialize(event => { processEvent(event) }, client.metadata, manager.getConfig().crons) },
       () => CronSubsystem.reset(),
     )
     await featureController.register(
@@ -627,11 +626,27 @@ function filterBufferedEvents(config: Readonly<RemoteConfigResponse>): void {
 }
 
 async function replayBufferedEvents(persisted: readonly unknown[]): Promise<void> {
+  const router = TransportRouter.getInstance()
+  const killswitch = KillswitchEngine.getInstance()
+
+  if (router && !killswitch?.isSDKDisabled() && persisted.length > 0) {
+    for (let index = 0; index < persisted.length; index++) {
+      const ev = persisted[index] as import('../types/event.js').SDKEvent | undefined
+      if (ev && typeof ev === 'object' && 'type' in ev) {
+        router.send(ev)
+      }
+      if ((index + 1) % 100 === 0) {
+        await new Promise<void>(resolve => setImmediate(resolve))
+      }
+    }
+  }
+
   const buffered = eventQueue.drainAll()
-  const events = [...persisted, ...buffered]
-  for (let index = 0; index < events.length; index++) {
-    processEvent(events[index] as import('../types/event.js').SDKEvent)
-    if ((index + 1) % 100 === 0) await new Promise<void>(resolve => setImmediate(resolve))
+  for (let index = 0; index < buffered.length; index++) {
+    processEvent(buffered[index] as import('../types/event.js').SDKEvent)
+    if ((index + 1) % 100 === 0) {
+      await new Promise<void>(resolve => setImmediate(resolve))
+    }
   }
 }
 
@@ -682,9 +697,7 @@ function setupPersistentStorage(
 }
 
 async function enterDormantState(_error?: unknown, options?: SDKInitOptions): Promise<void> {
-  // Non-destructive transition: clean up any partially constructed transport
-  // router or runtime engines from a mid-flight failure, but preserve bootstrap
-  // instrumentation, OTel provider/context, event queue, client options, and API key.
+  const logger = getLogger()
   try { await TransportRouter.reset() } catch {}
   try { FeatureController.reset() } catch {}
   try { KillswitchEngine.reset() } catch {}
@@ -703,9 +716,19 @@ async function enterDormantState(_error?: unknown, options?: SDKInitOptions): Pr
     }
   }
 
-  const recoveryOptions = options ?? client.options
   const decision = classifyError(_error)
-  if (recoveryOptions && !isSDKShuttingDown() && client.getState() === 'recovering' && !decision.permanent && !isPermanentError(_error)) {
+  const permanent = _error !== undefined && (decision.permanent || isPermanentError(_error))
+
+  if (permanent) {
+    BackgroundRecoveryWorker.stop()
+    logger.warn('Control-plane permanent failure during init; recovery worker will not start', {
+      reason: decision.reason,
+    })
+    return
+  }
+
+  const recoveryOptions = options ?? client.options
+  if (recoveryOptions && !isSDKShuttingDown() && client.getState() === 'recovering') {
     BackgroundRecoveryWorker.start(recoveryOptions, {
       activateFn: async (response) => {
         const recoveryRemoteClient = new RemoteConfigClient({

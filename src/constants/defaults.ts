@@ -23,16 +23,19 @@ import type {
   TransportRouteConfig,
 } from '../types/config.js'
 
-import { loadEnvFileSafely } from '../utils/env-loader.js'
+/** Production backend origin used by the SDK control plane. */
+export const BACKEND_BASE_URL = 'https://api.lynktrace.com'
 
-/** Local Pulse backend origin used by the SDK control plane. */
-export const DEFAULT_API_BASE_URL = 'http://127.0.0.1:5000'
+/** Default control-plane API base URL alias. */
+export const DEFAULT_API_BASE_URL = BACKEND_BASE_URL
 
 /** Resolve the control-plane origin with support for environment overrides. */
 export function resolveApiBaseUrl(): string {
-  loadEnvFileSafely()
   if (typeof process !== 'undefined' && process.env) {
     const customUrl =
+      process.env['LYNKTRACE_ENDPOINT'] ||
+      process.env['LYNKTRACE_API_URL'] ||
+      process.env['LYNKTRACE_BASE_URL'] ||
       process.env['PULSE_ENDPOINT'] ||
       process.env['PULSE_API_URL'] ||
       process.env['PULSE_BASE_URL'] ||
@@ -50,7 +53,7 @@ export function resolveApiBaseUrl(): string {
       return resolved
     }
   }
-  return DEFAULT_API_BASE_URL
+  return BACKEND_BASE_URL
 }
 
 export { SAFETY_CEILINGS }

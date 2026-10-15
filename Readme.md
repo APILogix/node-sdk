@@ -672,9 +672,6 @@ Returns the currently active, frozen remote configuration object, or `null` if t
 Returns an instantaneous, comprehensive health snapshot across 15 SDK internal subsystems (heap utilization, memory pressure state, tenant quota exhaustion, route circuit breakers, queue size, dropped events, and persistent replay counts).
 - *(Formerly known as `getSDKHealth` in early versions.)*
 
-#### `loadEnvFileSafely(envFilePath?: string): Record<string, string>`
-Safely parses and loads `.env` variables into `process.env` without throwing errors if the file is missing, empty, or unreadable.
-
 ---
 
 ### B. Event & Exception Capture

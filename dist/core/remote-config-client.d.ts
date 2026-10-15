@@ -1,3 +1,5 @@
+import { BACKEND_BASE_URL } from '../constants/defaults.js';
+export { BACKEND_BASE_URL };
 import type { RemoteConfigResponse } from '../types/config.js';
 export interface InitResponse {
     readonly success: boolean;
@@ -45,4 +47,3 @@ export declare class RemoteConfigClient {
     private postInitWithRetry;
     private post;
 }
-export {};

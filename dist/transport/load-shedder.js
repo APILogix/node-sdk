@@ -17,13 +17,20 @@ const CRITICAL_P2_GROUP_KEEP_RATE = 0.10;
 /**
  * Bounded tracker for Correlation Groups (tracks error/diagnostic promotion).
  */
-class CorrelationGroupTracker {
+export class CorrelationGroupTracker {
     maxGroups = 5_000;
     errorGroups = new Map();
     markError(groupKey, isFatal = false) {
         if (!groupKey)
             return;
-        this.errorGroups.set(groupKey, { timestamp: Date.now(), fatal: isFatal });
+        const existing = this.errorGroups.get(groupKey);
+        if (existing) {
+            this.errorGroups.delete(groupKey); // Refresh Map insertion order for LRU
+        }
+        this.errorGroups.set(groupKey, {
+            timestamp: Date.now(),
+            fatal: Boolean(existing?.fatal || isFatal),
+        });
         if (this.errorGroups.size > this.maxGroups) {
             // Evict oldest 500 entries
             const iterator = this.errorGroups.keys();
@@ -76,7 +83,19 @@ export class LoadShedder {
     totalAdmitted = 0;
     groupsAdmitted = 0;
     groupsShed = 0;
+    seenGroups = new Map();
     groupTracker = new CorrelationGroupTracker();
+    pruneSeenGroups() {
+        if (this.seenGroups.size > 5_000) {
+            const iter = this.seenGroups.keys();
+            for (let i = 0; i < 500; i++) {
+                const next = iter.next();
+                if (next.done)
+                    break;
+                this.seenGroups.delete(next.value);
+            }
+        }
+    }
     constructor(getPressureState = () => adaptivePressure.getState()) {
         this.getPressureState = getPressureState;
     }
@@ -204,8 +223,11 @@ export class LoadShedder {
         if (shed) {
             this.droppedCounts[priority]++;
             this.totalShed++;
-            if (groupKey)
+            if (groupKey && !this.seenGroups.has(groupKey)) {
+                this.seenGroups.set(groupKey, false);
                 this.groupsShed++;
+                this.pruneSeenGroups();
+            }
             if (this.totalShed % 100 === 1) {
                 getLogger().warn('Load shedder active — dropping telemetry', {
                     priority,
@@ -218,10 +240,13 @@ export class LoadShedder {
         else {
             this.admittedCounts[priority]++;
             this.totalAdmitted++;
-            if (groupKey)
+            if (groupKey && !this.seenGroups.has(groupKey)) {
+                this.seenGroups.set(groupKey, true);
                 this.groupsAdmitted++;
+                this.pruneSeenGroups();
+            }
             // Tag event with degradation metadata if operating under pressure
-            if (state === 'CRITICAL' || state === 'PRESSURED') {
+            if ((state === 'CRITICAL' || state === 'PRESSURED') && Object.isExtensible(event)) {
                 event['telemetry_degraded'] = true;
                 event['pressure_level'] = state;
                 if (priority === 'p2_request') {

@@ -24,7 +24,7 @@ export interface PgInstrumentationOptions {
  * Patch pg.Pool.prototype.connect to capture connection acquisition wait time
  * and pool saturation metrics (total, idle, waiting).
  */
-export declare function patchPgPoolConnectOnce(): void;
+export declare function patchPgPoolConnectOnce(force?: boolean): void;
 export declare function createPgInstrumentation(enabled: boolean, mergedOptions?: Partial<PgInstrumentationOptions>, captureConfig?: PrivacyCaptureConfig): OTelPgInstrumentation | null;
 export interface PgSpanAttributes {
     'db.system': 'postgresql';

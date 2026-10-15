@@ -108,6 +108,7 @@ declare class PersistentStorage {
     private lastReplayAt;
     private writeChain;
     private persistedIds;
+    private customDirectoryConfigured;
     configure(options?: PersistentStorageOptions): void;
     private createTempFilePath;
     init(): Promise<Event[]>;
@@ -169,7 +170,7 @@ declare class PersistentStorage {
      * 4. Exclusively claims candidate files via atomic rename before reading to
      *    prevent multiple workers from racing or duplicating replay batches.
      */
-    replay(): Promise<Event[]>;
+    replay(deadlineMs?: number): Promise<Event[]>;
     /**
      * Get storage statistics for operational dashboards / health endpoints.
      *

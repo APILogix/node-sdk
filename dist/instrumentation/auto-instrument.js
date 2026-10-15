@@ -178,7 +178,6 @@ function createHttpInstrumentationInstance(httpEnabled, httpsEnabled) {
                 if (reqCheck.headers && reqCheck.headers['x-pulse-internal'] === '1') {
                     return true;
                 }
-                const routes = ConfigManager.getInstance().getConfig().transport.routes;
                 let target = null;
                 if (typeof request === 'string') {
                     try {
@@ -206,6 +205,12 @@ function createHttpInstrumentationInstance(httpEnabled, httpsEnabled) {
                     }
                 }
                 if (!target)
+                    return false;
+                const configMgr = ConfigManager.getCurrent();
+                if (configMgr?.isInternalEndpoint(target))
+                    return true;
+                const routes = configMgr?.getConfigOrNull()?.transport?.routes;
+                if (!routes)
                     return false;
                 return Object.values(routes).some(route => isInternalSdkUrl(target, new URL(route.url)));
             }
@@ -301,13 +306,18 @@ function createUndiciInstrumentationInstance() {
                         return true;
                     }
                 }
-                const routes = ConfigManager.getInstance().getConfig().transport.routes;
                 const req = request;
                 const rawOrigin = req.origin ?? req['origin'];
                 const rawPath = req.path ?? req['path'] ?? req.pathname;
                 const url = rawOrigin
                     ? new URL(String(rawPath ?? '/'), String(rawOrigin))
                     : new URL(String(req.url ?? ''));
+                const configMgr = ConfigManager.getCurrent();
+                if (configMgr?.isInternalEndpoint(url))
+                    return true;
+                const routes = configMgr?.getConfigOrNull()?.transport?.routes;
+                if (!routes)
+                    return false;
                 return Object.values(routes).some(route => isInternalSdkUrl(url, new URL(route.url)));
             }
             catch {

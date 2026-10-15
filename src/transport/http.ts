@@ -39,6 +39,7 @@ export async function postJson<T>(
   const logger = getLogger()
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), timeoutMs)
+  timeout.unref?.()
   const startedAt = Date.now()
   const requestId = generateId()
 
@@ -57,8 +58,8 @@ export async function postJson<T>(
       payload = body as Uint8Array
     } else {
       const pool = SerializationPool.getInstance()
-      if (pool) {
-        const res = await pool.serialize(body as any[], options.compression ?? 'none')
+      if (pool && Array.isArray(body)) {
+        const res = await pool.serialize(body, options.compression ?? 'none')
         payload = new Uint8Array(res.buffer)
         if (res.algorithm !== 'none') {
           encoding = contentEncoding(res.algorithm)

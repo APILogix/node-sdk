@@ -14,7 +14,7 @@
  * - Tracks in-flight monitors for timeout detection.
  * - Batching and flush timing come from the active `crons` transport route.
  */
-import type { ConfigDiff, RemoteConfigResponse } from '../types/config.js';
+import type { ConfigDiff, RemoteConfigResponse, CronsConfig } from '../types/config.js';
 import type { CronCheckInEvent, EventMetadata } from '../types/event.js';
 type CronEmitter = (event: CronCheckInEvent) => void;
 export declare class CronSubsystem {
@@ -25,7 +25,7 @@ export declare class CronSubsystem {
     private monitorTimeoutMs;
     private destroyed;
     private constructor();
-    static initialize(emitter: CronEmitter, metadata: EventMetadata): CronSubsystem;
+    static initialize(emitter: CronEmitter, metadata: EventMetadata, cronsConfig?: CronsConfig): CronSubsystem;
     static getInstance(): CronSubsystem | null;
     updateMetadata(metadata: EventMetadata): void;
     /**

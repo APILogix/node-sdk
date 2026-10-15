@@ -81,13 +81,6 @@ export declare function scrubHeaders(headers: Record<string, unknown> | undefine
  * SecurityScrubber when available, fall back to the local deny-list otherwise.
  */
 export declare function scrubQuery(query: unknown): Record<string, unknown> | undefined;
-/**
- * Best-effort body capture. Adapter-supplied raw body is bounded by
- * `MAX_BODY_INSPECT_BYTES` and always passes through scrubbing.
- *
- * Returns `undefined` if body capture is disabled by remote config or if the
- * body cannot be safely sized.
- */
 export declare function captureBodySnapshot(rawBody: unknown, allowBody: boolean): {
     bodySize: number | undefined;
     body: Record<string, unknown> | undefined;

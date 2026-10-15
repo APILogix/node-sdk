@@ -41,9 +41,15 @@ export class NodemailerInstrumentation extends InstrumentationBase {
         try {
             if (!to)
                 return 'unknown';
-            const recipientStr = Array.isArray(to) ? String(to[0]) : String(to);
-            const match = recipientStr.match(/@([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/);
-            return match ? match[1] : 'unknown';
+            const first = Array.isArray(to) ? to[0] : to;
+            const recipientStr = typeof first === 'object' && first !== null && 'address' in first
+                ? String(first.address ?? '')
+                : String(first ?? '');
+            const atIndex = recipientStr.lastIndexOf('@');
+            if (atIndex === -1)
+                return 'unknown';
+            const domain = recipientStr.slice(atIndex + 1).replace(/[>\s].*$/, '').trim();
+            return /^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(domain) ? domain : 'unknown';
         }
         catch {
             return 'unknown';

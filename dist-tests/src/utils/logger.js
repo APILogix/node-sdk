@@ -46,41 +46,65 @@ export function setLogPrefix(prefix) {
 }
 // ─── Redaction ──────────────────────────────────────────────────────────────
 const SENSITIVE_KEY_PATTERN = /api[-_]?key|api[-_]?secret|authorization|cookie|token|password|secret|credential/i;
-export function redact(value, depth = 0) {
-    // Prevent infinite recursion on deeply nested objects
-    if (depth > 10)
+export function redact(value, depth = 0, seen = new WeakSet()) {
+    if (depth > 8)
         return '[max depth]';
-    if (typeof value === 'string') {
+    if (typeof value === 'string')
         return redactString(value);
-    }
-    if (Array.isArray(value)) {
-        return value.map(item => redact(item, depth + 1));
-    }
-    if (!value || typeof value !== 'object') {
+    if (!value || typeof value !== 'object')
         return value;
+    if (Buffer.isBuffer(value) || value instanceof Uint8Array) {
+        return `[Buffer:${value.byteLength}b]`;
+    }
+    if (value instanceof Date)
+        return value.toISOString();
+    if (value instanceof RegExp)
+        return value.toString();
+    if (seen.has(value))
+        return '[Circular]';
+    seen.add(value);
+    if (Array.isArray(value)) {
+        const maxItems = Math.min(value.length, 50);
+        const out = new Array(maxItems);
+        for (let i = 0; i < maxItems; i++) {
+            out[i] = redact(value[i], depth + 1, seen);
+        }
+        if (value.length > maxItems)
+            out.push(`...(+${value.length - maxItems} items)`);
+        seen.delete(value);
+        return out;
     }
     if (value instanceof Error) {
-        if (value instanceof SDKError) {
-            return {
+        const errObj = value instanceof SDKError
+            ? {
                 name: value.name,
-                message: value.message,
+                message: redactString(value.message),
                 code: value.code,
-                context: redact(value.context, depth + 1),
+                context: redact(value.context, depth + 1, seen),
+                stack: value.stack,
+            }
+            : {
+                name: value.name,
+                message: redactString(value.message),
                 stack: value.stack,
             };
-        }
-        return {
-            name: value.name,
-            message: value.message,
-            stack: value.stack,
-        };
+        seen.delete(value);
+        return errObj;
     }
     const redacted = {};
-    for (const [key, nestedValue] of Object.entries(value)) {
+    const keys = Object.keys(value);
+    const limit = Math.min(keys.length, 50);
+    for (let i = 0; i < limit; i++) {
+        const key = keys[i];
+        const nestedValue = value[key];
         redacted[key] = SENSITIVE_KEY_PATTERN.test(key)
             ? '[REDACTED]'
-            : redact(nestedValue, depth + 1);
+            : redact(nestedValue, depth + 1, seen);
     }
+    if (keys.length > limit) {
+        redacted['__truncatedKeys'] = keys.length - limit;
+    }
+    seen.delete(value);
     return redacted;
 }
 function redactString(value) {

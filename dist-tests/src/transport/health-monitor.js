@@ -25,8 +25,14 @@ class RouteHealth {
         this.route = route;
     }
     canSend() {
-        if (this.circuit !== 'OPEN')
+        if (this.circuit === 'CLOSED')
             return true;
+        if (this.circuit === 'HALF_OPEN') {
+            if (this.probeInFlight)
+                return false;
+            this.probeInFlight = true;
+            return true;
+        }
         const now = Date.now();
         if (now < this.openUntil || this.probeInFlight)
             return false;
@@ -65,7 +71,8 @@ class RouteHealth {
             return 1;
         if (this.state === 'DEGRADED')
             return 0.5;
-        return this.canSend() ? 0.05 : 0;
+        const canProbe = this.circuit === 'HALF_OPEN' || (this.circuit === 'OPEN' && Date.now() >= this.openUntil);
+        return canProbe ? 0.05 : 0;
     }
     concurrencyScale() {
         return this.getConcurrencyScale();

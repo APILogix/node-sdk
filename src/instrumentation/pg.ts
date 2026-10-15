@@ -16,6 +16,34 @@ import type { PgInstrumentationConfig as OTelPgInstrumentationConfig } from '@op
 import { trace } from '@opentelemetry/api'
 import { startSpan } from '../tracing/tracer.js'
 import type { PrivacyCaptureConfig } from '../types/config.js'
+import { createRequire } from 'node:module'
+
+function resolvePgModule(force = false): any {
+  try {
+    const cwdRequire = createRequire(process.cwd() + '/package.json')
+    const resolved = cwdRequire.resolve('pg')
+    if (cwdRequire.cache && cwdRequire.cache[resolved]) {
+      return cwdRequire.cache[resolved].exports
+    }
+    if (force) {
+      return cwdRequire('pg')
+    }
+  } catch {
+    try {
+      const localRequire = createRequire(import.meta.url)
+      const resolved = localRequire.resolve('pg')
+      if (localRequire.cache && localRequire.cache[resolved]) {
+        return localRequire.cache[resolved].exports
+      }
+      if (force) {
+        return localRequire('pg')
+      }
+    } catch {
+      return null
+    }
+  }
+  return null
+}
 
 export interface PgInstrumentationOptions {
   enabled: boolean
@@ -32,19 +60,13 @@ const PG_POOL_PATCH_GUARD = Symbol.for('pulse-sdk.pg-pool.connect-patched')
  * Patch pg.Pool.prototype.connect to capture connection acquisition wait time
  * and pool saturation metrics (total, idle, waiting).
  */
-export function patchPgPoolConnectOnce(): void {
+export function patchPgPoolConnectOnce(force = true): void {
   const globalState = globalThis as any
   if (globalState[PG_POOL_PATCH_GUARD]) return
 
   try {
-    let pgModule: any
-    try {
-      pgModule = (require as any)('pg')
-    } catch {
-      // Fallback
-    }
-
-    const PoolClass = pgModule?.Pool
+    const pgModule = resolvePgModule(force)
+    const PoolClass = pgModule?.Pool ?? pgModule?.default?.Pool
     if (!PoolClass || !PoolClass.prototype || typeof PoolClass.prototype.connect !== 'function') return
 
     const origConnect = PoolClass.prototype.connect
@@ -156,9 +178,9 @@ export function createPgInstrumentation(
     return null
   }
 
-  // Ensure pool acquisition monitoring is installed
+  // Ensure pool acquisition monitoring is installed if pg is already loaded
   if (mergedOptions?.instrumentPool !== false) {
-    patchPgPoolConnectOnce()
+    patchPgPoolConnectOnce(false)
   }
 
   const captureBody = captureConfig?.body ?? false
@@ -167,11 +189,11 @@ export function createPgInstrumentation(
     enabled: true,
     enhancedDatabaseReporting: mergedOptions?.captureParams ?? mergedOptions?.captureQueries ?? captureBody,
     addSqlCommenterCommentToQueries: false,
-    ...(mergedOptions?.requireParentSpan !== undefined ? { requireParentSpan: mergedOptions.requireParentSpan } : {}),
     requireParentSpan: mergedOptions?.requireParentSpan ?? false,
     ...(mergedOptions?.ignoreConnectSpans !== undefined ? { ignoreConnectSpans: mergedOptions.ignoreConnectSpans } : {}),
     responseHook: (span, responseInfo) => {
       try {
+        patchPgPoolConnectOnce(false)
         if (typeof (responseInfo.data as any)?.rowCount === 'number') {
           span.setAttribute('db.rows_affected', (responseInfo.data as any).rowCount)
         }

@@ -1,6 +1,7 @@
 import { context } from '@opentelemetry/api'
 import { suppressTracing } from '@opentelemetry/core'
-import { resolveApiBaseUrl } from '../constants/defaults.js'
+import { BACKEND_BASE_URL, resolveApiBaseUrl } from '../constants/defaults.js'
+export { BACKEND_BASE_URL }
 import type { RemoteConfigResponse } from '../types/config.js'
 import { SDKError, toError } from './errors.js'
 import { validateApiKey } from './api-key.js'
@@ -131,11 +132,12 @@ export class RemoteConfigClient {
       const remainingMs = this.initTimeoutMs - elapsedMs
       if (remainingMs <= 0) break
 
-      // Reserve an equal share of the remaining deadline for every attempt
-      // that has not run yet. This gives a retry a real chance after a stalled
-      // first request while retaining the caller's overall startup bound.
+      // Allocate 60% of the remaining budget to the primary attempt so cold-start
+      // TLS/handshakes don't starve on attempt 1, while reserving remaining budget for retries.
       const attemptsRemaining = this.initRetries - attempt + 1
-      const attemptTimeoutMs = Math.max(1, Math.floor(remainingMs / attemptsRemaining))
+      const attemptTimeoutMs = attemptsRemaining === 1
+        ? remainingMs
+        : Math.min(remainingMs, Math.max(50, Math.floor(remainingMs * 0.6)))
       try {
         return await this.post('/v1/init', attemptTimeoutMs)
       } catch (error) {

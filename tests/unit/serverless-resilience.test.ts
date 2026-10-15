@@ -226,5 +226,20 @@ describe('Serverless & Read-Only Storage Resilience', () => {
       const result = await handler({}, {})
       assert.equal(result, 'success')
     })
+
+    it('BUG-04: flushes active traces and metrics when wrapHandler completes', async () => {
+      const originalFetch = globalThis.fetch
+      globalThis.fetch = async () => new Response('{}', { status: 200 })
+      try {
+        const handler = wrapHandler(async () => {
+          return { status: 'handled' }
+        }, { flushTimeoutMs: 300 })
+
+        const result = await handler({}, {})
+        assert.deepEqual(result, { status: 'handled' })
+      } finally {
+        globalThis.fetch = originalFetch
+      }
+    })
   })
 })

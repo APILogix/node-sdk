@@ -15,12 +15,19 @@ import { PrismaInstrumentation as OTelPrismaInstrumentation } from '@prisma/inst
 import { getLogger } from '../utils/logger.js';
 const PRISMA_EXT_APPLIED = Symbol.for('pulse-sdk.prisma.extension.applied');
 const PRISMA_ORIGINAL_CLIENT = Symbol.for('pulse-sdk.prisma.original-client');
+export function resolvePrismaDbSystem(prismaInstance) {
+    const provider = prismaInstance?._engineConfig?.activeProvider ?? prismaInstance?._activeProvider;
+    if (typeof provider === 'string' && provider) {
+        return provider === 'postgres' ? 'postgresql' : provider;
+    }
+    return 'postgresql';
+}
 /**
  * Creates an OpenTelemetry query extension for Prisma Client.
  * Attach with `prismaClient.$extends(pulsePrismaExtension())`
  * or use automatic instrumentation.
  */
-export function pulsePrismaExtension() {
+export function pulsePrismaExtension(dbSystem = 'postgresql') {
     return {
         name: 'pulse-apm-prisma',
         query: {
@@ -31,7 +38,7 @@ export function pulsePrismaExtension() {
                     return tracer.startActiveSpan(spanName, {
                         kind: SpanKind.CLIENT,
                         attributes: {
-                            'db.system': 'postgresql',
+                            'db.system': dbSystem,
                             'db.operation': operation,
                             'db.sql.table': model,
                         },
@@ -60,6 +67,7 @@ export function pulsePrismaExtension() {
 export function instrumentPrismaClientInstance(prismaInstance) {
     if (!prismaInstance || prismaInstance[PRISMA_EXT_APPLIED])
         return prismaInstance;
+    const dbSystem = resolvePrismaDbSystem(prismaInstance);
     if (typeof prismaInstance.$use === 'function') {
         ;
         prismaInstance[PRISMA_EXT_APPLIED] = true;
@@ -69,7 +77,7 @@ export function instrumentPrismaClientInstance(prismaInstance) {
             return tracer.startActiveSpan(spanName, {
                 kind: SpanKind.CLIENT,
                 attributes: {
-                    'db.system': 'postgresql',
+                    'db.system': dbSystem,
                     'db.operation': params.action,
                     'db.sql.table': params.model || '',
                 },
@@ -91,7 +99,7 @@ export function instrumentPrismaClientInstance(prismaInstance) {
     }
     if (typeof prismaInstance.$extends === 'function') {
         try {
-            const extended = prismaInstance.$extends(pulsePrismaExtension());
+            const extended = prismaInstance.$extends(pulsePrismaExtension(dbSystem));
             if (extended && typeof extended === 'object') {
                 ;
                 extended[PRISMA_EXT_APPLIED] = true;
@@ -125,8 +133,14 @@ function patchPrismaClientExport(moduleExports) {
         return moduleExports;
     }
     const PulsePrismaClient = function PulsePrismaClient(...args) {
-        const instance = Reflect.construct(OriginalPrismaClient, args, new.target || PulsePrismaClient);
-        return instrumentPrismaClientInstance(instance);
+        const target = new.target || PulsePrismaClient;
+        const instance = Reflect.construct(OriginalPrismaClient, args, target);
+        const instrumented = instrumentPrismaClientInstance(instance);
+        // If subclassing (target !== PulsePrismaClient), preserve the original instance reference
+        if (target !== PulsePrismaClient) {
+            return instance;
+        }
+        return instrumented;
     };
     Object.setPrototypeOf(PulsePrismaClient, OriginalPrismaClient);
     PulsePrismaClient.prototype = OriginalPrismaClient.prototype;

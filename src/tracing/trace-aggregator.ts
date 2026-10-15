@@ -550,13 +550,10 @@ export class TraceAggregator {
     this.pending.delete(traceId)
     this.markFinalized(traceId)
 
-    // Clean up span duration tracker after a grace period so BatchSpanProcessor (2000ms delay)
-    // can complete its export pass without losing child intervals.
-    setTimeout(() => {
-      try {
-        spanDurationTracker.cleanupTrace(traceId)
-      } catch {}
-    }, 10000).unref?.()
+    // Clean up span duration tracker synchronously to avoid timer handle churn under load
+    try {
+      spanDurationTracker.cleanupTrace(traceId)
+    } catch {}
 
     const logger = getLogger()
 

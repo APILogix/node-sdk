@@ -14,6 +14,7 @@ import { MongoDBInstrumentation as OTelMongoDBInstrumentation } from '@opentelem
 import type { MongoDBInstrumentationConfig as OTelMongoDBInstrumentationConfig } from '@opentelemetry/instrumentation-mongodb'
 import { context, createContextKey, trace } from '@opentelemetry/api'
 import type { PrivacyCaptureConfig } from '../types/config.js'
+import { safeJsonStringify } from '../utils/safe-json.js'
 
 export const SUPPRESS_MONGODB_DRIVER_SPANS = createContextKey('pulse-sdk.mongodb.suppress-driver-spans')
 
@@ -40,14 +41,22 @@ export function createMongoDBInstrumentation(
   const instrumentationOptions: OTelMongoDBInstrumentationConfig = {
     enabled: true,
     enhancedDatabaseReporting: mergedOptions?.enhancedDatabaseReporting ?? false,
-    ...(mergedOptions?.requireParentSpan !== undefined ? { requireParentSpan: mergedOptions.requireParentSpan } : {}),
     requireParentSpan: mergedOptions?.requireParentSpan ?? false,
     dbStatementSerializer: mergedOptions?.dbStatementSerializer ?? ((command) => {
       if (!captureBody) {
         return '[REDACTED]'
       }
       try {
-        return JSON.stringify(command)
+        const safeCmd: Record<string, unknown> = {}
+        for (const [k, v] of Object.entries(command)) {
+          if (k === 'documents' || k === 'updates' || k === 'deletes' || k === 'lsid' || k === '$clusterTime') {
+            safeCmd[k] = Array.isArray(v) ? `[Array(${v.length})]` : '[OMITTED]'
+          } else {
+            safeCmd[k] = v
+          }
+        }
+        const str = JSON.stringify(safeCmd)
+        return str.length > 2048 ? `${str.slice(0, 2048)}...[truncated]` : str
       } catch {
         return '[UNSERIALIZABLE]'
       }

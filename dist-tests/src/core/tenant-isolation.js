@@ -34,8 +34,6 @@ export class TenantGovernor {
     cleanupTimer = null;
     constructor(options = PRE_INIT_TENANT_GOVERNANCE) {
         this.configure(options);
-        this.cleanupTimer = setInterval(() => this.cleanup(), 30_000);
-        this.cleanupTimer.unref();
     }
     configure(options) {
         this.enabled = options.enabled;
@@ -43,7 +41,9 @@ export class TenantGovernor {
         this.defaultQuota = options.quotaPerWindow;
         this.criticalReserve = options.criticalReserve;
         this.windowDurationMs = options.windowDurationMs;
-        this.reset();
+        if (!this.enabled && this.cleanupTimer) {
+            this.shutdown();
+        }
     }
     /** Atomically check and record one event. */
     admit(tenantId, critical = false) {

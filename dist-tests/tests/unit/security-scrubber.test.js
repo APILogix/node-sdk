@@ -251,7 +251,7 @@ describe('SecurityScrubber', () => {
             assert.equal(scrubber.scrubValue(value), '[Redacted]');
         });
     });
-    describe('Immutability', () => {
+    describe('Immutability & Circular Safety', () => {
         it('should never mutate the original event', () => {
             const event = {
                 type: 'request',
@@ -264,6 +264,15 @@ describe('SecurityScrubber', () => {
             assert.equal(event.headers['Authorization'], original.headers['Authorization']);
             assert.equal(event.context.password, original.context.password);
             assert.equal(event.message, original.message);
+        });
+        it('BUG-08: safely handles circular and shared object graphs without exponential expansion', () => {
+            const circular = { name: 'cyclic-node' };
+            circular.self = circular;
+            circular.nested = { back: circular };
+            const scrubbed = scrubber.scrubValue(circular);
+            assert.equal(scrubbed.name, 'cyclic-node');
+            assert.equal(scrubbed.self, '[Circular]');
+            assert.equal(scrubbed.nested.back, '[Circular]');
         });
     });
 });

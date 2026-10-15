@@ -19,7 +19,7 @@
  *     app.use(pulseMiddleware())
  */
 export { init } from './core/init.js';
-export { loadEnvFileSafely } from './utils/env-loader.js';
+export { BACKEND_BASE_URL } from './constants/defaults.js';
 import { init } from './core/init.js';
 import { flush, shutdown, emergencyFlush } from './core/lifecycle.js';
 import { captureException } from './capture/captureException.js';

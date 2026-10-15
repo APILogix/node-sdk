@@ -44,8 +44,9 @@ export declare class CostGovernor {
     private readonly traceSpanCounts;
     private readonly traceTimestamps;
     private readonly maxTrackedTraces;
-    private readonly byteWindows;
-    private readonly windowDurationMs;
+    private readonly bucketBytes;
+    private readonly bucketSec;
+    private runningWindowBytes;
     private totalBytesSent;
     private totalSpansBlocked;
     private totalBudgetExceeded;
@@ -89,6 +90,7 @@ export declare class CostGovernor {
      */
     start(): void;
     shutdown(): void;
+    private advanceBuckets;
     private getCurrentBytesPerMinute;
     private evictOldestTraces;
     private cleanup;

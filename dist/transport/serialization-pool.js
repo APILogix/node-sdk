@@ -2,6 +2,7 @@ import { Worker } from 'worker_threads';
 import { getLogger } from '../utils/logger.js';
 import { compressGzip, compressBrotli } from '../utils/compression.js';
 import { SecurityScrubber } from '../processors/security-scrubber.js';
+import { sanitizeEvent } from '../processors/sanitizer.js';
 import { safeJsonStringify } from '../utils/safe-json.js';
 const MAX_PENDING_REQUESTS = 64;
 export class SerializationPool {
@@ -20,9 +21,8 @@ export class SerializationPool {
     }
     static WORKER_OFFLOAD_THRESHOLD_BYTES = 50 * 1024; // 50KB
     static isLargeBatch(events) {
-        // Dynamic byte-based threshold: Offload to worker thread ONLY if estimated
-        // payload size meets or exceeds 50KB, regardless of whether remote config
-        // configured batchSize to 20, 100, or 1000.
+        if (events.length >= 250)
+            return true;
         let estimatedBytes = 0;
         for (let i = 0; i < events.length; i++) {
             const ev = events[i];
@@ -32,17 +32,32 @@ export class SerializationPool {
                 estimatedBytes += ev.length;
             }
             else if (typeof ev === 'object') {
-                if (typeof ev.message === 'string')
-                    estimatedBytes += ev.message.length;
-                if (typeof ev.data === 'string')
-                    estimatedBytes += ev.data.length;
-                if (typeof ev.stack === 'string')
-                    estimatedBytes += ev.stack.length;
-                if (typeof ev.body === 'string')
-                    estimatedBytes += ev.body.length;
-                if (typeof ev.payload === 'string')
-                    estimatedBytes += ev.payload.length;
-                estimatedBytes += 200; // Base telemetry envelope overhead (timestamp, eventId, route, metadata)
+                const type = ev['type'];
+                if (type === 'profile' || type === 'replay')
+                    return true;
+                if (type === 'trace') {
+                    const spanCount = typeof ev['spanCount'] === 'number' ? ev['spanCount'] : 20;
+                    estimatedBytes += spanCount * 600;
+                }
+                if (typeof ev['message'] === 'string')
+                    estimatedBytes += ev['message'].length;
+                if (typeof ev['data'] === 'string')
+                    estimatedBytes += ev['data'].length;
+                if (typeof ev['bodySize'] === 'number')
+                    estimatedBytes += Math.min(ev['bodySize'], 65_536);
+                if (Array.isArray(ev['stack']))
+                    estimatedBytes += ev['stack'].length * 250;
+                if (Array.isArray(ev['breadcrumbs']))
+                    estimatedBytes += ev['breadcrumbs'].length * 180;
+                if (Array.isArray(ev['events']))
+                    estimatedBytes += ev['events'].length * 200;
+                if (typeof ev['stack'] === 'string')
+                    estimatedBytes += ev['stack'].length;
+                if (typeof ev['body'] === 'string')
+                    estimatedBytes += ev['body'].length;
+                if (typeof ev['payload'] === 'string')
+                    estimatedBytes += ev['payload'].length;
+                estimatedBytes += 350;
             }
             if (estimatedBytes >= SerializationPool.WORKER_OFFLOAD_THRESHOLD_BYTES) {
                 return true;
@@ -66,6 +81,7 @@ export class SerializationPool {
     }
     addWorker(workerUrl) {
         const worker = new Worker(workerUrl);
+        worker.unref?.();
         const onlinePromise = new Promise((resolve) => {
             worker.once('online', () => {
                 if (!this.destroyed && this.workers.includes(worker))
@@ -121,6 +137,13 @@ export class SerializationPool {
         this.workerEntries = this.workerEntries.filter(e => e.worker !== worker);
         this.readyWorkers.delete(worker);
         this.roundRobinIndex = 0;
+        for (const [id, req] of this.pendingRequests.entries()) {
+            if (req.worker === worker) {
+                clearTimeout(req.timer);
+                this.pendingRequests.delete(id);
+                req.reject(new Error('Serialization worker crashed'));
+            }
+        }
     }
     static initialize(poolSize = 1) {
         if (!SerializationPool.instance) {
@@ -173,7 +196,7 @@ export class SerializationPool {
                 this.pendingRequests.delete(id);
                 reject(new Error('Serialization worker timeout'));
             }, 5000);
-            this.pendingRequests.set(id, { resolve, reject, timer });
+            this.pendingRequests.set(id, { worker, resolve, reject, timer });
             try {
                 worker.postMessage({
                     id,
@@ -198,9 +221,14 @@ export class SerializationPool {
     async fallbackSerializeBatch(options) {
         const { events, route, timestamp, privacyConfig, compression, maxPayloadBytes } = options;
         let safeEvents = events;
-        if (privacyConfig && Array.isArray(events)) {
-            const scrubber = SecurityScrubber.getInstance() ?? SecurityScrubber.initialize(privacyConfig);
-            safeEvents = scrubber.scrubBatch(events);
+        if (Array.isArray(events)) {
+            const scrubber = SecurityScrubber.getInstance() ?? (privacyConfig ? SecurityScrubber.initialize(privacyConfig) : null);
+            if (scrubber) {
+                safeEvents = scrubber.scrubBatch(events);
+            }
+            else {
+                safeEvents = events.map(e => sanitizeEvent(e));
+            }
         }
         const payload = route
             ? { events: safeEvents, route, timestamp: timestamp ?? Date.now() }
@@ -237,6 +265,10 @@ export class SerializationPool {
         };
     }
     async shutdown() {
+        if (!this.started && this.workers.length === 0) {
+            this.destroyed = true;
+            return;
+        }
         this.destroyed = true;
         this.started = false;
         if (this.pendingRequests.size > 0) {
@@ -251,6 +283,7 @@ export class SerializationPool {
         }
         this.pendingRequests.clear();
         await Promise.all(this.workerEntries.map(e => Promise.race([e.onlinePromise, new Promise(r => setTimeout(r, 500))])));
+        const hadWorkers = this.workers.length > 0;
         await Promise.all(this.workers.map(async (w) => {
             try {
                 await w.terminate();
@@ -261,7 +294,9 @@ export class SerializationPool {
         this.workerEntries = [];
         this.readyWorkers.clear();
         // Allow libuv to process handle close callbacks (uv_process_endgames) on Windows
-        await new Promise(r => setTimeout(r, 25));
+        if (hadWorkers) {
+            await new Promise(r => setTimeout(r, 25));
+        }
     }
     static async reset() {
         if (SerializationPool.instance) {

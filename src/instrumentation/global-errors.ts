@@ -20,6 +20,7 @@ import { SecurityScrubber } from "../processors/security-scrubber.js"
 import { Severity } from "../types/severity.js"
 import { createContextStore, withContext, getRequestContext } from "../core/context.js"
 import { client } from "../core/client.js"
+import { ConfigManager } from "../core/config-manager.js"
 
 let registered = false
 let isCrashing = false
@@ -37,7 +38,7 @@ let rejectionHandler: ((reason: unknown) => void) | null = null
 let originalConsoleError: (typeof console.error) | null = null
 let consoleErrorWrapped = false
 
-/** Error-handler mechanics are SDK internals; remote config only gates errors. */
+/** Error-handler mechanics read remote config.errors when provided. */
 function getErrorsConfig(): {
   readonly captureUnhandledRejections: boolean
   readonly captureUncaughtExceptions: boolean
@@ -46,6 +47,17 @@ function getErrorsConfig(): {
   readonly attachSourceContext: boolean
   readonly grouping: { readonly enabled: boolean; readonly normalizePaths: boolean }
 } {
+  const remoteErrors = ConfigManager.getCurrent()?.getConfig()?.errors
+  if (remoteErrors) {
+    return {
+      captureUnhandledRejections: remoteErrors.captureUnhandledRejections ?? ERROR_DEFAULTS.captureUnhandledRejections,
+      captureUncaughtExceptions: remoteErrors.captureUncaughtExceptions ?? ERROR_DEFAULTS.captureUncaughtExceptions,
+      captureConsoleErrors: remoteErrors.captureConsoleErrors ?? ERROR_DEFAULTS.captureConsoleErrors,
+      stackTraceLimit: remoteErrors.stackTraceLimit ?? ERROR_DEFAULTS.stackTraceLimit,
+      attachSourceContext: remoteErrors.attachSourceContext ?? ERROR_DEFAULTS.attachSourceContext,
+      grouping: remoteErrors.grouping ?? ERROR_DEFAULTS.grouping,
+    }
+  }
   return ERROR_DEFAULTS
 }
 
@@ -161,6 +173,8 @@ export function setupGlobalErrorHandlers() {
             // Allow libuv to process pending handle close callbacks (uv_process_endgames) on Windows
             await new Promise(r => setTimeout(r, 30))
             process.exit(targetExitCode)
+          } else {
+            isCrashing = false
           }
         }
       })()

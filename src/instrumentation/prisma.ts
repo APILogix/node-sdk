@@ -25,12 +25,20 @@ export interface PrismaInstrumentationOptions {
 const PRISMA_EXT_APPLIED = Symbol.for('pulse-sdk.prisma.extension.applied')
 const PRISMA_ORIGINAL_CLIENT = Symbol.for('pulse-sdk.prisma.original-client')
 
+export function resolvePrismaDbSystem(prismaInstance: any): string {
+  const provider = prismaInstance?._engineConfig?.activeProvider ?? prismaInstance?._activeProvider
+  if (typeof provider === 'string' && provider) {
+    return provider === 'postgres' ? 'postgresql' : provider
+  }
+  return 'postgresql'
+}
+
 /**
  * Creates an OpenTelemetry query extension for Prisma Client.
  * Attach with `prismaClient.$extends(pulsePrismaExtension())`
  * or use automatic instrumentation.
  */
-export function pulsePrismaExtension() {
+export function pulsePrismaExtension(dbSystem = 'postgresql') {
   return {
     name: 'pulse-apm-prisma',
     query: {
@@ -43,7 +51,7 @@ export function pulsePrismaExtension() {
             {
               kind: SpanKind.CLIENT,
               attributes: {
-                'db.system': 'postgresql',
+                'db.system': dbSystem,
                 'db.operation': operation,
                 'db.sql.table': model,
               },
@@ -73,6 +81,7 @@ export function pulsePrismaExtension() {
  */
 export function instrumentPrismaClientInstance(prismaInstance: any): any {
   if (!prismaInstance || (prismaInstance as any)[PRISMA_EXT_APPLIED]) return prismaInstance
+  const dbSystem = resolvePrismaDbSystem(prismaInstance)
 
   if (typeof prismaInstance.$use === 'function') {
     ;(prismaInstance as any)[PRISMA_EXT_APPLIED] = true
@@ -84,7 +93,7 @@ export function instrumentPrismaClientInstance(prismaInstance: any): any {
         {
           kind: SpanKind.CLIENT,
           attributes: {
-            'db.system': 'postgresql',
+            'db.system': dbSystem,
             'db.operation': params.action,
             'db.sql.table': params.model || '',
           },
@@ -108,7 +117,7 @@ export function instrumentPrismaClientInstance(prismaInstance: any): any {
 
   if (typeof prismaInstance.$extends === 'function') {
     try {
-      const extended = prismaInstance.$extends(pulsePrismaExtension())
+      const extended = prismaInstance.$extends(pulsePrismaExtension(dbSystem))
       if (extended && typeof extended === 'object') {
         ;(extended as any)[PRISMA_EXT_APPLIED] = true
         ;(prismaInstance as any)[PRISMA_EXT_APPLIED] = true
@@ -141,8 +150,14 @@ function patchPrismaClientExport(moduleExports: any): any {
   }
 
   const PulsePrismaClient = function PulsePrismaClient(this: any, ...args: any[]) {
-    const instance = Reflect.construct(OriginalPrismaClient, args, new.target || PulsePrismaClient)
-    return instrumentPrismaClientInstance(instance)
+    const target = new.target || PulsePrismaClient
+    const instance = Reflect.construct(OriginalPrismaClient, args, target)
+    const instrumented = instrumentPrismaClientInstance(instance)
+    // If subclassing (target !== PulsePrismaClient), preserve the original instance reference
+    if (target !== PulsePrismaClient) {
+      return instance
+    }
+    return instrumented
   }
 
   Object.setPrototypeOf(PulsePrismaClient, OriginalPrismaClient)

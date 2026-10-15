@@ -22,9 +22,9 @@ export interface ConnectionPoolStats {
   readonly routeLimits: Readonly<Record<EnterpriseRoute, number>>
 }
 
-class Semaphore {
+export class Semaphore {
   private available: number
-  private readonly waiters: Array<() => void> = []
+  private readonly waiters = new Set<() => void>()
 
   constructor(private readonly capacity: number) {
     this.available = capacity
@@ -35,33 +35,34 @@ class Semaphore {
       this.available--
       return true
     }
+    if (timeoutMs <= 0) return false
 
     return new Promise(resolve => {
       let settled = false
-      const timer = setTimeout(() => {
-        if (settled) return
-        settled = true
-        const index = this.waiters.indexOf(wake)
-        if (index >= 0) this.waiters.splice(index, 1)
-        resolve(false)
-      }, timeoutMs)
-      timer.unref?.()
-
       const wake = () => {
         if (settled) return
         settled = true
         clearTimeout(timer)
+        this.waiters.delete(wake)
         resolve(true)
       }
+      const timer = setTimeout(() => {
+        if (settled) return
+        settled = true
+        this.waiters.delete(wake)
+        resolve(false)
+      }, timeoutMs)
+      timer.unref?.()
 
-      this.waiters.push(wake)
+      this.waiters.add(wake)
     })
   }
 
   release(): void {
-    if (this.waiters.length > 0) {
-      const next = this.waiters.shift()
-      next?.()
+    const first = this.waiters.values().next()
+    if (!first.done) {
+      this.waiters.delete(first.value)
+      first.value()
       return
     }
     this.available = Math.min(this.capacity, this.available + 1)
@@ -101,10 +102,12 @@ export class ConnectionManager {
     const routeSemaphore = this.routeSemaphores.get(route)
     if (!routeSemaphore) return null
 
+    const deadline = Date.now() + this.options.connectionTimeoutMs
     const routeAcquired = await routeSemaphore.acquire(this.options.connectionTimeoutMs)
     if (!routeAcquired) return null
 
-    const globalAcquired = await this.globalSemaphore.acquire(this.options.connectionTimeoutMs)
+    const remainingMs = Math.max(0, deadline - Date.now())
+    const globalAcquired = await this.globalSemaphore.acquire(remainingMs)
     if (!globalAcquired) {
       routeSemaphore.release()
       return null

@@ -250,8 +250,6 @@ function createHttpInstrumentationInstance(httpEnabled: boolean, httpsEnabled: b
           return true
         }
 
-        const routes = ConfigManager.getInstance().getConfig().transport.routes
-
         let target: URL | null = null
         if (typeof request === 'string') {
           try { target = new URL(request) } catch {}
@@ -268,6 +266,12 @@ function createHttpInstrumentationInstance(httpEnabled: boolean, httpsEnabled: b
           }
         }
         if (!target) return false
+
+        const configMgr = ConfigManager.getCurrent()
+        if (configMgr?.isInternalEndpoint(target)) return true
+
+        const routes = configMgr?.getConfigOrNull()?.transport?.routes
+        if (!routes) return false
 
         return Object.values(routes).some(route => isInternalSdkUrl(target!, new URL(route.url)))
       } catch {
@@ -362,13 +366,19 @@ function createUndiciInstrumentationInstance(): UndiciInstrumentation {
           }
         }
 
-        const routes = ConfigManager.getInstance().getConfig().transport.routes
         const req = request as Record<string, unknown>
         const rawOrigin = req.origin ?? req['origin']
         const rawPath = req.path ?? req['path'] ?? req.pathname
         const url = rawOrigin
           ? new URL(String(rawPath ?? '/'), String(rawOrigin))
           : new URL(String(req.url ?? ''))
+
+        const configMgr = ConfigManager.getCurrent()
+        if (configMgr?.isInternalEndpoint(url)) return true
+
+        const routes = configMgr?.getConfigOrNull()?.transport?.routes
+        if (!routes) return false
+
         return Object.values(routes).some(route => isInternalSdkUrl(url, new URL(route.url)))
       } catch {
         return false

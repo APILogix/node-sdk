@@ -36,4 +36,23 @@ describe('EventEmitter context patch', () => {
         process.removeListener('uncaughtException', listener);
         assert.equal(process.listenerCount('uncaughtException'), baseline);
     });
+    it('BUG-06: binds reusable listener independently across emitters without cross-emitter bleed', () => {
+        patchEventEmitter();
+        const emitter1 = new EventEmitter();
+        const emitter2 = new EventEmitter();
+        let invocationCount = 0;
+        const sharedListener = () => { invocationCount++; };
+        emitter1.on('test', sharedListener);
+        emitter2.on('test', sharedListener);
+        assert.equal(emitter1.listenerCount('test'), 1);
+        assert.equal(emitter2.listenerCount('test'), 1);
+        // Removing from emitter1 does not remove from emitter2
+        emitter1.removeListener('test', sharedListener);
+        assert.equal(emitter1.listenerCount('test'), 0);
+        assert.equal(emitter2.listenerCount('test'), 1);
+        emitter2.emit('test');
+        assert.equal(invocationCount, 1);
+        emitter2.removeListener('test', sharedListener);
+        assert.equal(emitter2.listenerCount('test'), 0);
+    });
 });

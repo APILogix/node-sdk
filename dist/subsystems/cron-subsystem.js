@@ -31,11 +31,14 @@ export class CronSubsystem {
         this.emitter = emitter;
         this.metadata = metadata;
     }
-    static initialize(emitter, metadata) {
+    static initialize(emitter, metadata, cronsConfig) {
         if (CronSubsystem.instance) {
             CronSubsystem.instance.destroy();
         }
         CronSubsystem.instance = new CronSubsystem(emitter, metadata);
+        if (cronsConfig?.timeoutMs) {
+            CronSubsystem.instance.monitorTimeoutMs = cronsConfig.timeoutMs;
+        }
         return CronSubsystem.instance;
     }
     static getInstance() {
@@ -127,6 +130,9 @@ export class CronSubsystem {
     handleConfigChange(diff, newConfig) {
         if (diff.featuresChanged && !newConfig.features.crons) {
             this.stop();
+        }
+        if (newConfig.crons?.timeoutMs) {
+            this.monitorTimeoutMs = newConfig.crons.timeoutMs;
         }
     }
     /** Get list of in-flight monitors. */

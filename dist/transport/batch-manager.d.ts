@@ -47,6 +47,7 @@ export declare class BatchManager {
     private readonly pendingRetryTimers;
     private readonly retryAttempts;
     private readonly firstAttemptTimestamps;
+    private readonly persistedEvents;
     private batched;
     private totalSent;
     private totalDropped;

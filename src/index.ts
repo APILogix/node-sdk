@@ -20,7 +20,7 @@
  */
 
 export { init } from './core/init.js'
-export { loadEnvFileSafely } from './utils/env-loader.js'
+export { BACKEND_BASE_URL } from './constants/defaults.js'
 import { init } from './core/init.js'
 import { flush, shutdown, emergencyFlush } from './core/lifecycle.js'
 import { captureException } from './capture/captureException.js'
@@ -206,7 +206,7 @@ export { classifyError } from './core/error-classifier.js'
 
 import { eventQueue } from './transport/queue.js'
 import { TransportRouter } from './transport/transport-router.js'
-import { getSessionManager } from './session/session-manager.js'
+import { peekSessionManager } from './session/session-manager.js'
 import { MemoryPressureMonitor } from './utils/backpressure.js'
 import { client } from './core/client.js'
 import { errorDeduplicator } from './processors/deduplicator.js'
@@ -270,8 +270,8 @@ export function getHealth(): {
   metrics: { histogramCount: number; counterCount: number; gaugeCount: number; totalFlushed: number }
 } {
   const memState = getSharedMemoryMonitor().getState()
-  const sessionMgr = getSessionManager()
-  const sessionHealth = sessionMgr.getSessionHealth()
+  const sessionMgr = peekSessionManager()
+  const sessionHealth = sessionMgr?.getSessionHealth()
   const dedupStats = errorDeduplicator.getStats()
   const persistenceStats = persistentStorage.getStats()
   const sourceMapStats = sourceMapResolver.getStats()
@@ -281,13 +281,17 @@ export function getHealth(): {
   const quotaSnapshot = quotaController.getSnapshot()
   const shedderStats = loadShedder.getStats()
 
+  const transportRoutes = transportHealth ? Object.values(transportHealth.routes) : []
+  const routerQueueSize = transportRoutes.reduce((acc, r) => acc + r.queueSize, 0)
+  const routerDropped = transportRoutes.reduce((acc, r) => acc + r.totalDropped, 0)
+
   return {
     initialized: client.initialized,
-    circuitState: transportHealth
-      ? Object.values(transportHealth.routes).map(route => route.circuitState).join(',')
+    circuitState: transportRoutes.length > 0
+      ? transportRoutes.map(route => route.circuitState).join(',')
       : 'uninitialized',
-    queueSize: eventQueue.size(),
-    queueDropped: eventQueue.getDroppedCount(),
+    queueSize: eventQueue.size() + routerQueueSize,
+    queueDropped: eventQueue.getDroppedCount() + routerDropped,
     queueDeadLetter: eventQueue.getDeadLetterCount(),
     memory: {
       level: memState.level,
@@ -317,9 +321,9 @@ export function getHealth(): {
       groupsShed: shedderStats.groupsShed,
     },
     session: {
-      totalSessions: sessionHealth.totalSessions,
-      crashFreeRate: sessionHealth.crashFreeRate,
-      currentSessionId: sessionHealth.currentSessionId,
+      totalSessions: sessionHealth?.totalSessions ?? 0,
+      crashFreeRate: sessionHealth?.crashFreeRate ?? 1.0,
+      currentSessionId: sessionHealth?.currentSessionId ?? null,
     },
     pluginCount: client.initialized ? client.plugins.length : 0,
     dedup: {
