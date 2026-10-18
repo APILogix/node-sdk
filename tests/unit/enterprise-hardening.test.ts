@@ -137,7 +137,7 @@ describe('Enterprise Hardening & Gap Verification', () => {
   })
 
   describe('SerializationPool Worker Integration & Large Batch Offload', () => {
-    const routes: EnterpriseRoute[] = ['errors', 'events', 'traces', 'spans', 'metrics', 'logs', 'profiles', 'crons', 'requests', 'replays']
+    const routes: EnterpriseRoute[] = ['errors', 'events', 'traces', 'spans', 'metrics', 'logs', 'profiles', 'crons', 'requests']
     const limits = Object.fromEntries(routes.map(route => [route, 2])) as Record<EnterpriseRoute, number>
 
     before(async () => {

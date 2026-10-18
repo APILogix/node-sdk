@@ -85,7 +85,6 @@ async function createBenchmarkServer() {
             ...DEFAULT_REMOTE_CONFIG.features,
             profiling: false,
             crons: false,
-            sessionReplay: false,
           },
           transport: {
             ...DEFAULT_REMOTE_CONFIG.transport,
@@ -227,7 +226,7 @@ async function runBenchmarkSuite() {
     SamplingEngine.reset();
     const samplingConfig = {
       traces: 1.0, requests: 1.0, spans: 1.0, errors: 1.0, messages: 1.0,
-      profiles: 1.0, replays: 1.0, metrics: 1.0, logs: 1.0, events: 1.0, crons: 1.0,
+      profiles: 1.0, metrics: 1.0, logs: 1.0, events: 1.0, crons: 1.0,
       routes: {},
     };
 

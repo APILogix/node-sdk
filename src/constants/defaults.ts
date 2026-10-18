@@ -13,7 +13,6 @@ import type {
   ConfigMeta,
   OfflineQueueConfig,
   ProfilingConfig,
-  SessionReplayConfig,
   ErrorsConfig,
   TracingConfig,
   MetricsConfig,
@@ -73,7 +72,6 @@ export const DEFAULT_FEATURES: Readonly<FeaturesConfig> = Object.freeze({
   logging: true,
   profiling: true,
   crons: true,
-  sessionReplay: true,
   runtimeMetrics: true,
   eventLoopMonitoring: true,
   gcMonitoring: true,
@@ -87,7 +85,6 @@ export const DEFAULT_SAMPLING: Readonly<SamplingConfig> = Object.freeze({
   errors: 1,
   messages: 1,
   profiles: 1,
-  replays: 1,
   metrics: 1,
   logs: 1,
   events: 1,
@@ -106,7 +103,6 @@ export const DEFAULT_TRANSPORT_ROUTES: Readonly<Record<TransportRouteName, Trans
   profiles: Object.freeze({ url: 'https://127.0.0.1:0/v1/profiles', batchSize: 5, flushIntervalMs: 30000, timeoutMs: 15000, compression: 'gzip' as const, priority: 'low' as const }),
   events: Object.freeze({ url: 'https://127.0.0.1:0/v1/events', batchSize: 50, flushIntervalMs: 5000, timeoutMs: 5000, compression: 'gzip' as const, priority: 'normal' as const }),
   crons: Object.freeze({ url: 'https://127.0.0.1:0/v1/crons', batchSize: 1, flushIntervalMs: 0, timeoutMs: 5000, compression: 'none' as const, priority: 'high' as const }),
-  replays: Object.freeze({ url: 'https://127.0.0.1:0/v1/replays', batchSize: 5, flushIntervalMs: 10000, timeoutMs: 30000, compression: 'gzip' as const, priority: 'low' as const }),
 })
 
 export const DEFAULT_TRANSPORT: Readonly<TransportRemoteConfig> = Object.freeze({
@@ -124,7 +120,6 @@ export const DEFAULT_TRANSPORT: Readonly<TransportRemoteConfig> = Object.freeze(
       profiles: 5,
       crons: 5,
       requests: 20,
-      replays: 5,
     }),
     acquireTimeoutMs: 5000,
   }),
@@ -148,16 +143,6 @@ export const DEFAULT_PROFILING: Readonly<ProfilingConfig> = Object.freeze({
   sampleRate: 1,
   maxDurationMs: 30_000,
 })
-
-export const DEFAULT_REPLAY: Readonly<SessionReplayConfig> = Object.freeze({
-  enabled: true,
-  sampleRate: 1,
-  idleTimeoutMs: 30 * 60 * 1000,
-  maxDurationMs: 4 * 60 * 60 * 1000,
-  maxBufferSize: 1_000,
-  maskAllInputs: true,
-})
-
 export const DEFAULT_ERRORS: Readonly<ErrorsConfig> = Object.freeze({
   captureUnhandledRejections: true,
   captureUncaughtExceptions: true,
@@ -281,7 +266,6 @@ export const DEFAULT_ENTITLEMENTS: Readonly<EntitlementsConfig> = Object.freeze(
   customMetrics: true,
   profiling: true,
   logging: true,
-  sessionReplay: true,
   crons: true,
   requestCapture: true,
   tracing: true,
@@ -307,7 +291,6 @@ export const DEFAULT_REMOTE_CONFIG: Readonly<NormalizedRemoteConfig> = Object.fr
   transport: DEFAULT_TRANSPORT,
   offlineQueue: DEFAULT_OFFLINE_QUEUE,
   profiling: DEFAULT_PROFILING,
-  replay: DEFAULT_REPLAY,
   errors: DEFAULT_ERRORS,
   tracing: DEFAULT_TRACING,
   metrics: DEFAULT_METRICS,

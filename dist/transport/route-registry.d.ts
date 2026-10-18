@@ -1,6 +1,6 @@
 import type { SDKEvent } from '../types/event.js';
 import type { TransportRemoteConfig } from '../types/config.js';
-export type EnterpriseRoute = 'errors' | 'events' | 'traces' | 'spans' | 'metrics' | 'logs' | 'profiles' | 'crons' | 'requests' | 'replays';
+export type EnterpriseRoute = 'errors' | 'events' | 'traces' | 'spans' | 'metrics' | 'logs' | 'profiles' | 'crons' | 'requests';
 export interface RouteDefinition {
     readonly route: EnterpriseRoute;
     readonly method: 'POST';

@@ -1,5 +1,5 @@
 import { SAFETY_CEILINGS } from './limits.js';
-import type { NormalizedRemoteConfig, SdkIdentityConfig, FeaturesConfig, SamplingConfig, TransportRemoteConfig, LimitsConfig, KillswitchesConfig, PrivacyConfig, InstrumentationConfig, EntitlementsConfig, ConfigMeta, OfflineQueueConfig, ProfilingConfig, SessionReplayConfig, ErrorsConfig, TracingConfig, MetricsConfig, LogsConfig, CronsConfig, TransportRouteName, TransportRouteConfig } from '../types/config.js';
+import type { NormalizedRemoteConfig, SdkIdentityConfig, FeaturesConfig, SamplingConfig, TransportRemoteConfig, LimitsConfig, KillswitchesConfig, PrivacyConfig, InstrumentationConfig, EntitlementsConfig, ConfigMeta, OfflineQueueConfig, ProfilingConfig, ErrorsConfig, TracingConfig, MetricsConfig, LogsConfig, CronsConfig, TransportRouteName, TransportRouteConfig } from '../types/config.js';
 /** Production backend origin used by the SDK control plane. */
 export declare const BACKEND_BASE_URL = "https://api.lynktrace.com";
 /** Default control-plane API base URL alias. */
@@ -14,7 +14,6 @@ export declare const DEFAULT_TRANSPORT_ROUTES: Readonly<Record<TransportRouteNam
 export declare const DEFAULT_TRANSPORT: Readonly<TransportRemoteConfig>;
 export declare const DEFAULT_OFFLINE_QUEUE: Readonly<OfflineQueueConfig>;
 export declare const DEFAULT_PROFILING: Readonly<ProfilingConfig>;
-export declare const DEFAULT_REPLAY: Readonly<SessionReplayConfig>;
 export declare const DEFAULT_ERRORS: Readonly<ErrorsConfig>;
 export declare const DEFAULT_TRACING: Readonly<TracingConfig>;
 export declare const DEFAULT_METRICS: Readonly<MetricsConfig>;

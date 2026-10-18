@@ -447,7 +447,6 @@ Top-level subsystems can be turned off either in the remote control plane snapsh
     "logging": false,         // Structured log forwarding (turn off if using Datadog/CloudWatch)
     "profiling": false,       // Continuous CPU/heap profiling (turn off to eliminate profiling overhead)
     "crons": true,            // Cron job heartbeat monitoring
-    "sessionReplay": false,   // Session replay recording (disabled by default in Node.js)
     "runtimeMetrics": true,   // Node.js process metrics (heap, event-loop lag, GC)
     "eventLoopMonitoring": true, // Event-loop lag histogram sampling
     "gcMonitoring": true      // Garbage collection pause monitoring
@@ -734,9 +733,6 @@ try {
   captureCronCheckIn('billing-nightly', 'error')
 }
 ```
-
-#### `captureReplay(sessionId: string, segmentId: number, events: readonly unknown[]): void`
-Submits a session replay recording chunk (stubbed and disabled by default in Node.js runtime).
 
 #### `startProfile(profileId: string): Promise<boolean>`
 Starts a CPU profiling session for the given `profileId`. Returns `true` if profiling started.

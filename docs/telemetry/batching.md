@@ -23,7 +23,6 @@ Different telemetry types have different latency tolerances. Pulse configures de
 | **`metrics`** | 1,000 items | 10,000 ms (10 sec) | Normal |
 | **`logs`** | 200 items | 10,000 ms (10 sec) | Normal |
 | **`profiles`** | 5 items | 30,000 ms (30 sec) | Low |
-| **`replays`** | 5 items | 10,000 ms (10 sec) | Low |
 
 ---
 

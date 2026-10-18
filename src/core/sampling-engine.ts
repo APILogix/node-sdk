@@ -28,7 +28,6 @@ export type SamplingEventType =
   | 'errors'
   | 'messages'
   | 'profiles'
-  | 'replays'
   | 'metrics'
   | 'logs'
   | 'events'
@@ -36,7 +35,7 @@ export type SamplingEventType =
 
 const SAMPLING_EVENT_TYPES = [
   'traces', 'requests', 'spans', 'errors', 'messages', 'profiles',
-  'replays', 'metrics', 'logs', 'events', 'crons',
+  'metrics', 'logs', 'events', 'crons',
 ] as const
 
 export interface SamplingEngineOptions {
@@ -105,10 +104,6 @@ export class SamplingEngine {
 
   shouldSampleProfile(traceId: string, route?: string): SamplingDecision {
     return this.decide(traceId, 'profiles', route)
-  }
-
-  shouldSampleReplay(sessionId: string): SamplingDecision {
-    return this.decide(sessionId, 'replays')
   }
 
   shouldSampleMetric(metricId: string, route?: string): SamplingDecision {

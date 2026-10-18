@@ -30,7 +30,6 @@ The SDK transmits an initial identification handshake via HTTP POST to `/v1/init
     "errors",
     "logs",
     "profiles",
-    "replays",
     "crons"
   ]
 }
@@ -57,7 +56,6 @@ The response payload is strictly validated via Zod (`RemoteConfigResponseSchema`
       "errors": { "enabled": true },
       "logs": { "enabled": true },
       "profiling": { "enabled": false },
-      "sessionReplay": { "enabled": false },
       "crons": { "enabled": true }
     },
     "sampling": {

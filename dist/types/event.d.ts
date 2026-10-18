@@ -188,16 +188,6 @@ export interface ProfileEvent {
     readonly sampleRateHz?: number | undefined;
     readonly activeTraceIds?: readonly string[] | undefined;
 }
-/** Session replay event containing recorded DOM mutations. */
-export interface ReplayEvent {
-    readonly type: 'replay';
-    eventId?: string;
-    readonly sessionId: string;
-    readonly segmentId: number;
-    readonly timestamp: number;
-    readonly events: readonly unknown[];
-    readonly metadata?: EventMetadata | undefined;
-}
 /** Cron check-in event for monitoring scheduled jobs. */
 export interface CronCheckInEvent {
     readonly type: 'cron_checkin';
@@ -250,7 +240,7 @@ export interface TraceEvent {
     readonly __pulseInternal?: boolean | undefined;
 }
 /** Discriminated union of all event types. */
-export type SDKEvent = RequestEvent | ErrorEvent | MessageEvent | MetricEvent | SpanEvent | TraceEvent | LogEvent | ProfileEvent | ReplayEvent | CronCheckInEvent;
+export type SDKEvent = RequestEvent | ErrorEvent | MessageEvent | MetricEvent | SpanEvent | TraceEvent | LogEvent | ProfileEvent | CronCheckInEvent;
 /**
  * Legacy compat — the old Event type. Use SDKEvent for new code.
  * @deprecated Use SDKEvent instead.

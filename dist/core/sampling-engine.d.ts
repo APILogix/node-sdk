@@ -17,7 +17,7 @@
  *   3. Compare against the rate for the event type (route-overridden if any).
  */
 import type { SamplingConfig, ConfigDiff, RemoteConfigResponse } from '../types/config.js';
-export type SamplingEventType = 'traces' | 'requests' | 'spans' | 'errors' | 'messages' | 'profiles' | 'replays' | 'metrics' | 'logs' | 'events' | 'crons';
+export type SamplingEventType = 'traces' | 'requests' | 'spans' | 'errors' | 'messages' | 'profiles' | 'metrics' | 'logs' | 'events' | 'crons';
 export interface SamplingEngineOptions {
     readonly adaptive?: boolean | undefined;
 }
@@ -42,7 +42,6 @@ export declare class SamplingEngine {
     shouldSampleError(eventId: string, route?: string): SamplingDecision;
     shouldSampleMessage(messageId: string, route?: string): SamplingDecision;
     shouldSampleProfile(traceId: string, route?: string): SamplingDecision;
-    shouldSampleReplay(sessionId: string): SamplingDecision;
     shouldSampleMetric(metricId: string, route?: string): SamplingDecision;
     shouldSampleLog(logId: string, route?: string): SamplingDecision;
     shouldSampleEvent(eventId: string, route?: string): SamplingDecision;

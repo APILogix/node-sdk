@@ -34,9 +34,6 @@ export function diffConfigs(oldConfig, newConfig) {
     const profilingSectionChanged = safeOld['profiling'] !== undefined || safeNew['profiling'] !== undefined
         ? !deepEqual(safeOld['profiling'], safeNew['profiling'])
         : false;
-    const replaySectionChanged = safeOld['replay'] !== undefined || safeNew['replay'] !== undefined
-        ? !deepEqual(safeOld['replay'], safeNew['replay'])
-        : false;
     const errorsSectionChanged = safeOld['errors'] !== undefined || safeNew['errors'] !== undefined
         ? !deepEqual(safeOld['errors'], safeNew['errors'])
         : false;
@@ -75,8 +72,6 @@ export function diffConfigs(oldConfig, newConfig) {
         collectChanges('offlineQueue', safeOld['offlineQueue'], safeNew['offlineQueue'], changes, fieldChanges, addedKeys, removedKeys, modifiedKeys);
     if (profilingSectionChanged)
         collectChanges('profiling', safeOld['profiling'], safeNew['profiling'], changes, fieldChanges, addedKeys, removedKeys, modifiedKeys);
-    if (replaySectionChanged)
-        collectChanges('replay', safeOld['replay'], safeNew['replay'], changes, fieldChanges, addedKeys, removedKeys, modifiedKeys);
     if (errorsSectionChanged)
         collectChanges('errors', safeOld['errors'], safeNew['errors'], changes, fieldChanges, addedKeys, removedKeys, modifiedKeys);
     if (tracingSectionChanged)
@@ -97,13 +92,6 @@ export function diffConfigs(oldConfig, newConfig) {
             'sampling.profiles',
         ]) ||
         hasKeyPrefix(changes, 'sampling.routes', 'profiles');
-    const replayChanged = replaySectionChanged ||
-        hasAnyKey(changes, [
-            'features.sessionReplay',
-            'entitlements.sessionReplay',
-            'sampling.replays',
-        ]) ||
-        hasKeyPrefix(changes, 'sampling.routes', 'replays');
     const tracingChanged = tracingSectionChanged ||
         hasAnyKey(changes, [
             'features.tracing',
@@ -162,7 +150,6 @@ export function diffConfigs(oldConfig, newConfig) {
         entitlementsChanged,
         offlineQueueChanged,
         profilingChanged,
-        replayChanged,
         tracingChanged,
         metricsChanged,
         loggingChanged,
@@ -193,7 +180,6 @@ function createEmptyDiff() {
         entitlementsChanged: false,
         offlineQueueChanged: false,
         profilingChanged: false,
-        replayChanged: false,
         tracingChanged: false,
         metricsChanged: false,
         loggingChanged: false,

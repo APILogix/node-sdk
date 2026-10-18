@@ -333,7 +333,6 @@ export async function activateSDK(remoteClient, response, options, mode = 'cold_
             },
         });
         await featureController.register('crons', () => { CronSubsystem.initialize(event => { processEvent(event); }, client.metadata, manager.getConfig().crons); }, () => CronSubsystem.reset());
-        await featureController.register('sessionReplay', () => { getSessionManager(); }, () => resetSessionManager());
         manager.setApplier(new ConfigApplier({
             identity: async ({ previous, current }) => {
                 client.applyRemoteIdentity(current);

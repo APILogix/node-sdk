@@ -11,7 +11,7 @@ import { RemoteConfigClient } from '../../src/core/remote-config-client.js'
 import { TEST_REMOTE_CONFIG } from '../fixtures/remote-config.js'
 import { BACKEND_BASE_URL } from '../../src/constants/defaults.js'
 
-const routes: EnterpriseRoute[] = ['errors', 'events', 'traces', 'spans', 'metrics', 'logs', 'profiles', 'crons', 'requests', 'replays']
+const routes: EnterpriseRoute[] = ['errors', 'events', 'traces', 'spans', 'metrics', 'logs', 'profiles', 'crons', 'requests']
 const limits = Object.fromEntries(routes.map(route => [route, 2])) as Record<EnterpriseRoute, number>
 
 function event(id: string): SDKEvent {

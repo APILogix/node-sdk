@@ -33,7 +33,6 @@ export async function runIoResilienceAudit() {
                     logs: '/api/v1/logs',
                     profiles: '/api/v1/profiles',
                     crons: '/api/v1/checkins',
-                    replays: '/api/v1/replays',
                 };
                 const routes = Object.fromEntries(Object.entries(BAKED_IN_REMOTE_CONFIG.transport.routes).map(([name, route]) => [
                     name,

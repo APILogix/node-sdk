@@ -19,7 +19,6 @@ Timeout limits are configured per route based on expected payload sizes:
 | **`metrics`** | 5,000 ms (5 sec) | High-volume metric batches. |
 | **`logs`** | 5,000 ms (5 sec) | Standard log buffer timeout. |
 | **`crons`** | 5,000 ms (5 sec) | Heartbeat check-in deadline. |
-| **`replays`** | 30,000 ms (30 sec) | Large DOM/replay event streams. |
 | **`profiles`** | 15,000 ms (15 sec) | Multi-megabyte V8 CPU profile trees. |
 
 ---

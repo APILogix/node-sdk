@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { gunzipSync } from 'node:zlib';
-import { captureCronCheckIn, captureException, captureEvent, captureLog, captureMessage, captureMetric, captureReplay, captureRequest, flushTracer, incrementCounter, init, shutdown, startProfile, startSpan, stopProfile, } from '../../src/index.js';
+import { captureCronCheckIn, captureException, captureEvent, captureLog, captureMessage, captureMetric, captureRequest, flushTracer, incrementCounter, init, shutdown, startProfile, startSpan, stopProfile, } from '../../src/index.js';
 import { SDK_NAME, SDK_VERSION } from '../../src/constants/version.js';
 import { TEST_REMOTE_CONFIG as BAKED_IN_REMOTE_CONFIG } from '../fixtures/remote-config.js';
 const ROUTE_PATHS = {
@@ -15,7 +15,6 @@ const ROUTE_PATHS = {
     logs: '/api/v1/logs',
     profiles: '/api/v1/profiles',
     crons: '/api/v1/checkins',
-    replays: '/api/v1/replays',
 };
 async function startMockBackend() {
     const requests = [];
@@ -49,7 +48,6 @@ async function startMockBackend() {
                             logging: true,
                             profiling: true,
                             crons: true,
-                            sessionReplay: true,
                         },
                         sampling: {
                             ...BAKED_IN_REMOTE_CONFIG.sampling,
@@ -62,7 +60,6 @@ async function startMockBackend() {
                             logs: 1,
                             crons: 1,
                             profiles: 1,
-                            replays: 1,
                             metrics: 1,
                         },
                         killswitches: { ...BAKED_IN_REMOTE_CONFIG.killswitches, disableTransport: false },
@@ -88,7 +85,6 @@ async function startMockBackend() {
                             customMetrics: true,
                             logging: true,
                             crons: true,
-                            sessionReplay: true,
                             errors: true,
                             tracing: true,
                             metrics: true,
@@ -121,7 +117,6 @@ async function startMockBackend() {
                         logging: true,
                         profiling: true,
                         crons: true,
-                        sessionReplay: true,
                     },
                     sampling: {
                         ...BAKED_IN_REMOTE_CONFIG.sampling,
@@ -129,7 +124,6 @@ async function startMockBackend() {
                         requests: 1,
                         errors: 1,
                         profiles: 1,
-                        replays: 1,
                         metrics: 1,
                     },
                     killswitches: {
@@ -244,7 +238,6 @@ test('public telemetry adapters serialize authoritative application and SDK meta
         assert.equal(metricReceipt.accepted, true);
         assert.equal(await metricReceipt.processed, true);
         captureLog('info', 'integration log', { adapter: 'captureLog' });
-        captureReplay('integration-session', 1, [{ type: 'click', target: '#submit' }]);
         captureCronCheckIn('integration-cron', 'ok', { duration: 7, environment: 'integration' });
         const profileId = deterministicProfileId();
         assert.equal(await startProfile(profileId), true, 'manual CPU profile should start');
@@ -287,7 +280,6 @@ test('public telemetry adapters serialize authoritative application and SDK meta
             metric: '/api/v1/metrics',
             log: '/api/v1/logs',
             profile: '/api/v1/profiles',
-            replay: '/api/v1/replays',
             cron_checkin: '/api/v1/checkins',
             span: '/api/v1/spans',
             trace: '/api/v1/traces',

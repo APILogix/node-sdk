@@ -33,7 +33,7 @@ export class SerializationPool {
             }
             else if (typeof ev === 'object') {
                 const type = ev['type'];
-                if (type === 'profile' || type === 'replay')
+                if (type === 'profile')
                     return true;
                 if (type === 'trace') {
                     const spanCount = typeof ev['spanCount'] === 'number' ? ev['spanCount'] : 20;

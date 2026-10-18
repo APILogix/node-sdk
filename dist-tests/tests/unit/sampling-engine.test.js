@@ -4,7 +4,7 @@
  * Validates:
  *   - FNV-1a 32-bit hash determinism and distribution.
  *   - Global per-event-type sampling rates (traces, requests, errors,
- *     profiles, replays).
+ *     profiles).
  *   - Per-route, per-event-type overrides with longest-prefix-match.
  *   - Edge cases: rate 0 (always drop), rate 1 (always sample).
  *   - Config hot-swap.
@@ -23,7 +23,6 @@ const baseSamplingConfig = {
     errors: 1.0,
     messages: 1.0,
     profiles: 0.02,
-    replays: 0,
     metrics: 1.0,
     logs: 1.0,
     events: 1.0,
@@ -78,13 +77,6 @@ describe('SamplingEngine', () => {
                 const decision = engine.shouldSampleError(`error-${i}`);
                 assert.equal(decision.sampled, true);
                 assert.equal(decision.reason, 'always_sample');
-            }
-        });
-        it('never samples replays (rate 0)', () => {
-            for (let i = 0; i < 100; i++) {
-                const decision = engine.shouldSampleReplay(`session-${i}`);
-                assert.equal(decision.sampled, false);
-                assert.equal(decision.reason, 'always_drop');
             }
         });
         it('samples traces at the configured rate', () => {
@@ -169,7 +161,6 @@ describe('SamplingEngine', () => {
                     errors: 1.0,
                     messages: 1.0,
                     profiles: 0.02,
-                    replays: 0,
                     metrics: 1.0,
                     logs: 1.0,
                     events: 1.0,

@@ -8,7 +8,7 @@ import { ConfigManager } from '../../src/core/config-manager.js';
 import { RemoteConfigClient } from '../../src/core/remote-config-client.js';
 import { TEST_REMOTE_CONFIG } from '../fixtures/remote-config.js';
 import { BACKEND_BASE_URL } from '../../src/constants/defaults.js';
-const routes = ['errors', 'events', 'traces', 'spans', 'metrics', 'logs', 'profiles', 'crons', 'requests', 'replays'];
+const routes = ['errors', 'events', 'traces', 'spans', 'metrics', 'logs', 'profiles', 'crons', 'requests'];
 const limits = Object.fromEntries(routes.map(route => [route, 2]));
 function event(id) {
     return { type: 'error', eventId: id, timestamp: Date.now(), message: id, severity: 'error' };

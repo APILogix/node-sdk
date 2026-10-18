@@ -103,7 +103,6 @@ Provides the zero-overhead developer-facing entry points:
 - `captureMetric(metric)`
 - `captureLog(msg, level, context)`
 - `captureCronCheckIn(options)`
-- `captureReplay(replayData)`
 
 ### 3.3 Tracing Subsystem (`src/tracing/`)
 - [`tracer.ts`](file:///c:/Users/vikas/OneDrive/Desktop/APITOOLSDK/sdk-node/src/tracing/tracer.ts) — Implements OpenTelemetry trace orchestration, manual span spans (`withSpan`, `withSpanSync`, `startSpan`), zero-overhead function wrapping (`Pulse.wrap`), and detached background traces (`withBackgroundSpan`).
@@ -113,7 +112,7 @@ Provides the zero-overhead developer-facing entry points:
 
 ### 3.4 Transport Layer (`src/transport/`)
 - [`queue.ts`](file:///c:/Users/vikas/OneDrive/Desktop/APITOOLSDK/sdk-node/src/transport/queue.ts) — Bounded 3-tier event queue with strict global capacity ceiling and deterministic lower-priority shedding.
-- [`transport-router.ts`](file:///c:/Users/vikas/OneDrive/Desktop/APITOOLSDK/sdk-node/src/transport/transport-router.ts) — Multiplexes telemetry into 10 dedicated routes (`errors`, `events`, `traces`, `spans`, `metrics`, `logs`, `profiles`, `crons`, `requests`, `replays`).
+- [`transport-router.ts`](file:///c:/Users/vikas/OneDrive/Desktop/APITOOLSDK/sdk-node/src/transport/transport-router.ts) — Multiplexes telemetry into 9 dedicated routes (`errors`, `events`, `traces`, `spans`, `metrics`, `logs`, `profiles`, `crons`, `requests`).
 - [`batch-manager.ts`](file:///c:/Users/vikas/OneDrive/Desktop/APITOOLSDK/sdk-node/src/transport/batch-manager.ts) — Aggregates queued events into compressed payload batches, respecting route batch limits and flush intervals.
 - [`circuit-breaker.ts`](file:///c:/Users/vikas/OneDrive/Desktop/APITOOLSDK/sdk-node/src/transport/circuit-breaker.ts) — Tracks consecutive route delivery failures to trip the circuit and protect remote endpoints during prolonged outages.
 - [`serialization-pool.ts`](file:///c:/Users/vikas/OneDrive/Desktop/APITOOLSDK/sdk-node/src/transport/serialization-pool.ts) — Dispatches CPU-intensive JSON serialization and gzip/brotli compression to worker threads.

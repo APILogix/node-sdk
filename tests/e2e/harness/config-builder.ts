@@ -12,7 +12,6 @@ export const ALL_10_ROUTES: readonly TransportRouteName[] = [
   'profiles',
   'events',
   'crons',
-  'replays',
 ] as const
 
 /**
@@ -39,7 +38,7 @@ export function createDefaultMockConfig(
             ? ('critical' as const)
             : route === 'traces' || route === 'requests' || route === 'spans' || route === 'crons'
             ? ('high' as const)
-            : route === 'profiles' || route === 'replays'
+            : route === 'profiles'
             ? ('low' as const)
             : ('normal' as const),
       },
@@ -62,7 +61,6 @@ export function createDefaultMockConfig(
       logging: true,
       profiling: true,
       crons: true,
-      sessionReplay: true,
       runtimeMetrics: false,
       eventLoopMonitoring: false,
       gcMonitoring: false,
@@ -74,7 +72,6 @@ export function createDefaultMockConfig(
       errors: 1.0,
       messages: 1.0,
       profiles: 1.0,
-      replays: 1.0,
       metrics: 1.0,
       logs: 1.0,
       events: 1.0,
@@ -140,7 +137,6 @@ export function createDefaultMockConfig(
       customMetrics: true,
       profiling: true,
       logging: true,
-      sessionReplay: true,
       crons: true,
       requestCapture: true,
       tracing: true,

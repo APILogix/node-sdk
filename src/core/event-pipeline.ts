@@ -593,7 +593,6 @@ function isEntitled(event: SDKEvent): boolean {
   switch (event.type) {
     case 'log': return EntitlementGate.isAllowed('logging')
     case 'profile': return EntitlementGate.isAllowed('profiling')
-    case 'replay': return EntitlementGate.isAllowed('sessionReplay')
     case 'cron_checkin': return EntitlementGate.isAllowed('crons')
     default: return true
   }
@@ -624,8 +623,6 @@ function isSampled(event: SDKEvent): boolean {
       return sampling.shouldSampleTrace(event.traceId, event.rootSpan.attributes ? routeFromAttributes(event.rootSpan.attributes) : undefined).sampled
     case 'profile':
       return sampling.shouldSampleProfile(event.traceId ?? event.eventId ?? event.profileType).sampled
-    case 'replay':
-      return sampling.shouldSampleReplay(event.sessionId).sampled
     case 'cron_checkin':
       return sampling.shouldSampleCron(event.eventId ?? event.monitorSlug).sampled
     default: {
@@ -672,8 +669,6 @@ function isFeatureEnabled(event: SDKEvent, config: Readonly<RemoteConfigResponse
       return features.logging && !killed.disableLogs
     case 'profile':
       return features.profiling && !killed.disableProfiling
-    case 'replay':
-      return features.sessionReplay
     case 'cron_checkin':
       return features.crons
     default:

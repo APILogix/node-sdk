@@ -20,7 +20,6 @@ describe('ConfigDiffer Unit Test Suite', () => {
             assert.equal(diff.instrumentationChanged, false);
             assert.equal(diff.entitlementsChanged, false);
             assert.equal(diff.profilingChanged, false);
-            assert.equal(diff.replayChanged, false);
             assert.equal(diff.tracingChanged, false);
             assert.equal(diff.metricsChanged, false);
             assert.equal(diff.loggingChanged, false);
@@ -48,21 +47,9 @@ describe('ConfigDiffer Unit Test Suite', () => {
             assert.equal(diff.hasChanges, true);
             assert.equal(diff.featuresChanged, true);
             assert.equal(diff.profilingChanged, true);
-            assert.equal(diff.replayChanged, false);
             assert.equal(diff.changes.has('features.profiling'), true);
             const change = diff.changes.get('features.profiling');
             assert.deepEqual(change, { old: false, new: true, changeType: 'modified' });
-        });
-        it('detects sessionReplay toggle and activates replayChanged flag', () => {
-            const oldCfg = cloneConfig();
-            const newCfg = cloneConfig();
-            newCfg.features.sessionReplay = true;
-            const diff = diffConfigs(oldCfg, newCfg);
-            assert.equal(diff.hasChanges, true);
-            assert.equal(diff.featuresChanged, true);
-            assert.equal(diff.replayChanged, true);
-            assert.equal(diff.profilingChanged, false);
-            assert.equal(diff.changes.has('features.sessionReplay'), true);
         });
         it('detects tracing toggle and activates tracingChanged flag', () => {
             const oldCfg = cloneConfig();
@@ -128,14 +115,6 @@ describe('ConfigDiffer Unit Test Suite', () => {
             const diff = diffConfigs(oldCfg, newCfg);
             assert.equal(diff.killswitchesChanged, true);
             assert.equal(diff.tracingChanged, true);
-        });
-        it('entitlements.sessionReplay toggle activates replayChanged', () => {
-            const oldCfg = cloneConfig();
-            const newCfg = cloneConfig();
-            newCfg.entitlements.sessionReplay = false;
-            const diff = diffConfigs(oldCfg, newCfg);
-            assert.equal(diff.entitlementsChanged, true);
-            assert.equal(diff.replayChanged, true);
         });
         it('entitlements.customSpans toggle activates tracingChanged', () => {
             const oldCfg = cloneConfig();

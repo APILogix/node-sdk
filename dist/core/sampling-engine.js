@@ -20,7 +20,7 @@ import { getLogger } from '../utils/logger.js';
 import { adaptivePressure } from '../utils/adaptive-pressure.js';
 const SAMPLING_EVENT_TYPES = [
     'traces', 'requests', 'spans', 'errors', 'messages', 'profiles',
-    'replays', 'metrics', 'logs', 'events', 'crons',
+    'metrics', 'logs', 'events', 'crons',
 ];
 export class SamplingEngine {
     static instance = null;
@@ -65,9 +65,6 @@ export class SamplingEngine {
     }
     shouldSampleProfile(traceId, route) {
         return this.decide(traceId, 'profiles', route);
-    }
-    shouldSampleReplay(sessionId) {
-        return this.decide(sessionId, 'replays');
     }
     shouldSampleMetric(metricId, route) {
         return this.decide(metricId, 'metrics', route);

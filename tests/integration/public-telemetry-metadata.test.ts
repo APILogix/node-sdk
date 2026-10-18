@@ -10,7 +10,6 @@ import {
   captureLog,
   captureMessage,
   captureMetric,
-  captureReplay,
   captureRequest,
   flushTracer,
   incrementCounter,
@@ -51,7 +50,6 @@ const ROUTE_PATHS = {
   logs: '/api/v1/logs',
   profiles: '/api/v1/profiles',
   crons: '/api/v1/checkins',
-  replays: '/api/v1/replays',
 } as const
 
 async function startMockBackend(): Promise<MockBackend> {
@@ -88,7 +86,6 @@ async function startMockBackend(): Promise<MockBackend> {
               logging: true,
               profiling: true,
               crons: true,
-              sessionReplay: true,
             },
             sampling: {
               ...BAKED_IN_REMOTE_CONFIG.sampling,
@@ -101,7 +98,6 @@ async function startMockBackend(): Promise<MockBackend> {
               logs: 1,
               crons: 1,
               profiles: 1,
-              replays: 1,
               metrics: 1,
             },
             killswitches: { ...BAKED_IN_REMOTE_CONFIG.killswitches, disableTransport: false },
@@ -129,7 +125,6 @@ async function startMockBackend(): Promise<MockBackend> {
               customMetrics: true,
               logging: true,
               crons: true,
-              sessionReplay: true,
               errors: true,
               tracing: true,
               metrics: true,
@@ -165,7 +160,6 @@ async function startMockBackend(): Promise<MockBackend> {
             logging: true,
             profiling: true,
             crons: true,
-            sessionReplay: true,
           },
           sampling: {
             ...BAKED_IN_REMOTE_CONFIG.sampling,
@@ -173,7 +167,6 @@ async function startMockBackend(): Promise<MockBackend> {
             requests: 1,
             errors: 1,
             profiles: 1,
-            replays: 1,
             metrics: 1,
           },
           killswitches: {
@@ -300,7 +293,6 @@ test('public telemetry adapters serialize authoritative application and SDK meta
     assert.equal(metricReceipt.accepted, true)
     assert.equal(await metricReceipt.processed, true)
     captureLog('info', 'integration log', { adapter: 'captureLog' })
-    captureReplay('integration-session', 1, [{ type: 'click', target: '#submit' }])
     captureCronCheckIn('integration-cron', 'ok', { duration: 7, environment: 'integration' })
 
     const profileId = deterministicProfileId()
@@ -351,7 +343,6 @@ test('public telemetry adapters serialize authoritative application and SDK meta
       metric: '/api/v1/metrics',
       log: '/api/v1/logs',
       profile: '/api/v1/profiles',
-      replay: '/api/v1/replays',
       cron_checkin: '/api/v1/checkins',
       span: '/api/v1/spans',
       trace: '/api/v1/traces',

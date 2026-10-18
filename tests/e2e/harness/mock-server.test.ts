@@ -326,7 +326,7 @@ describe('RemoteConfigMockServer & E2E Test Harness', () => {
     it('returns HTTP 202 { change: true } on simulateConfigChange() and reverts on subsequent requests', async () => {
       server.simulateConfigChange({
         features: {
-          sessionReplay: false,
+          profiling: false,
         },
       })
 

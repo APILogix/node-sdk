@@ -44,7 +44,6 @@ function schemaConfig(config = {}) {
     logs: "/api/v1/logs",
     profiles: "/api/v1/profiles",
     crons: "/api/v1/checkins",
-    replays: "/api/v1/replays",
   }
   const batchSize = config.ingestion?.batchSize ?? 10
   const flushIntervalMs = config.ingestion?.flushInterval ?? 1000

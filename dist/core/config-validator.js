@@ -4,23 +4,23 @@ import { SAFETY_CEILINGS } from '../constants/limits.js';
 import { DEFAULT_REMOTE_CONFIG } from '../constants/defaults.js';
 const FEATURE_KEYS = [
     'tracing', 'requestCapture', 'errors', 'metrics', 'logging', 'profiling',
-    'crons', 'sessionReplay', 'runtimeMetrics', 'eventLoopMonitoring', 'gcMonitoring',
+    'crons', 'runtimeMetrics', 'eventLoopMonitoring', 'gcMonitoring',
 ];
 const SAMPLING_KEYS = [
     'traces', 'requests', 'spans', 'errors', 'messages', 'profiles',
-    'replays', 'metrics', 'logs', 'events', 'crons',
+    'metrics', 'logs', 'events', 'crons',
 ];
 const KILLSWITCH_KEYS = [
     'disableSDK', 'disableTracing', 'disableMetrics', 'disableTransport',
     'disableProfiling', 'disableErrors', 'disableLogs',
 ];
 const ENTITLEMENT_KEYS = [
-    'customSpans', 'customMetrics', 'profiling', 'logging', 'sessionReplay',
+    'customSpans', 'customMetrics', 'profiling', 'logging',
     'crons', 'requestCapture', 'tracing', 'errors', 'metrics',
 ];
 const REQUIRED_ROUTES = [
     'traces', 'requests', 'spans', 'errors', 'metrics', 'logs', 'profiles',
-    'events', 'crons', 'replays',
+    'events', 'crons',
 ];
 /**
  * Validate a complete replacement snapshot against Schema v1 and safety bounds.
@@ -53,8 +53,6 @@ export function validateRemoteConfig(payload) {
         validateOfflineQueue(config['offlineQueue'], errors);
     if (config['profiling'] !== undefined)
         validateProfiling(config['profiling'], errors);
-    if (config['replay'] !== undefined)
-        validateReplay(config['replay'], errors);
     if (config['errors'] !== undefined)
         validateErrors(config['errors'], errors);
     if (config['tracing'] !== undefined)
@@ -359,20 +357,6 @@ function validateProfiling(value, errors) {
     validateInteger(value, 'maxDurationMs', errors, SAFETY_CEILINGS.minProfileDurationMs, SAFETY_CEILINGS.profileMaxDurationMs, 'profiling');
     if (value['sampleIntervalMicroseconds'] !== undefined) {
         validateInteger(value, 'sampleIntervalMicroseconds', errors, 1, 1_000_000, 'profiling');
-    }
-}
-function validateReplay(value, errors) {
-    if (!isConfigSection(value, 'replay', errors))
-        return;
-    validateBoolean(value, 'enabled', 'replay.enabled', errors);
-    validateProbability(value, 'sampleRate', 'replay.sampleRate', errors);
-    validateInteger(value, 'idleTimeoutMs', errors, 1_000, 24 * 60 * 60 * 1_000, 'replay');
-    validateInteger(value, 'maxDurationMs', errors, SAFETY_CEILINGS.minReplayDurationMs, SAFETY_CEILINGS.replayMaxDurationMs, 'replay');
-    if (value['maxBufferSize'] !== undefined) {
-        validateInteger(value, 'maxBufferSize', errors, 1, 100_000, 'replay');
-    }
-    if (value['maskAllInputs'] !== undefined) {
-        validateBoolean(value, 'maskAllInputs', 'replay.maskAllInputs', errors);
     }
 }
 function validateErrors(value, errors) {

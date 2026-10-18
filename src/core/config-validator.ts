@@ -5,7 +5,6 @@ import type {
   TransportRouteName,
   OfflineQueueConfig,
   ProfilingConfig,
-  SessionReplayConfig,
   ErrorsConfig,
   TracingConfig,
   MetricsConfig,
@@ -18,12 +17,12 @@ import { DEFAULT_REMOTE_CONFIG } from '../constants/defaults.js'
 
 const FEATURE_KEYS = [
   'tracing', 'requestCapture', 'errors', 'metrics', 'logging', 'profiling',
-  'crons', 'sessionReplay', 'runtimeMetrics', 'eventLoopMonitoring', 'gcMonitoring',
+  'crons', 'runtimeMetrics', 'eventLoopMonitoring', 'gcMonitoring',
 ] as const
 
 const SAMPLING_KEYS = [
   'traces', 'requests', 'spans', 'errors', 'messages', 'profiles',
-  'replays', 'metrics', 'logs', 'events', 'crons',
+  'metrics', 'logs', 'events', 'crons',
 ] as const
 
 const KILLSWITCH_KEYS = [
@@ -32,13 +31,13 @@ const KILLSWITCH_KEYS = [
 ] as const
 
 const ENTITLEMENT_KEYS = [
-  'customSpans', 'customMetrics', 'profiling', 'logging', 'sessionReplay',
+  'customSpans', 'customMetrics', 'profiling', 'logging',
   'crons', 'requestCapture', 'tracing', 'errors', 'metrics',
 ] as const
 
 const REQUIRED_ROUTES: readonly TransportRouteName[] = [
   'traces', 'requests', 'spans', 'errors', 'metrics', 'logs', 'profiles',
-  'events', 'crons', 'replays',
+  'events', 'crons',
 ] as const
 
 export interface ValidationResult {
@@ -77,7 +76,6 @@ export function validateRemoteConfig(payload: unknown): ValidationResult {
   // 3. Optional Subsystem Sections (if present)
   if (config['offlineQueue'] !== undefined) validateOfflineQueue(config['offlineQueue'], errors)
   if (config['profiling'] !== undefined) validateProfiling(config['profiling'], errors)
-  if (config['replay'] !== undefined) validateReplay(config['replay'], errors)
   if (config['errors'] !== undefined) validateErrors(config['errors'], errors)
   if (config['tracing'] !== undefined) validateTracing(config['tracing'], errors)
   if (config['metrics'] !== undefined) validateMetrics(config['metrics'], errors)
@@ -412,20 +410,6 @@ function validateProfiling(value: unknown, errors: string[]): void {
   validateInteger(value, 'maxDurationMs', errors, SAFETY_CEILINGS.minProfileDurationMs, SAFETY_CEILINGS.profileMaxDurationMs, 'profiling')
   if (value['sampleIntervalMicroseconds'] !== undefined) {
     validateInteger(value, 'sampleIntervalMicroseconds', errors, 1, 1_000_000, 'profiling')
-  }
-}
-
-function validateReplay(value: unknown, errors: string[]): void {
-  if (!isConfigSection(value, 'replay', errors)) return
-  validateBoolean(value, 'enabled', 'replay.enabled', errors)
-  validateProbability(value, 'sampleRate', 'replay.sampleRate', errors)
-  validateInteger(value, 'idleTimeoutMs', errors, 1_000, 24 * 60 * 60 * 1_000, 'replay')
-  validateInteger(value, 'maxDurationMs', errors, SAFETY_CEILINGS.minReplayDurationMs, SAFETY_CEILINGS.replayMaxDurationMs, 'replay')
-  if (value['maxBufferSize'] !== undefined) {
-    validateInteger(value, 'maxBufferSize', errors, 1, 100_000, 'replay')
-  }
-  if (value['maskAllInputs'] !== undefined) {
-    validateBoolean(value, 'maskAllInputs', 'replay.maskAllInputs', errors)
   }
 }
 

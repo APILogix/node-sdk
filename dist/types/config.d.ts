@@ -25,7 +25,6 @@ export interface NormalizedRemoteConfig {
     readonly runtime?: RuntimeConfig | undefined;
     readonly offlineQueue?: OfflineQueueConfig | undefined;
     readonly profiling?: ProfilingConfig | undefined;
-    readonly replay?: SessionReplayConfig | undefined;
     readonly errors?: ErrorsConfig | undefined;
     readonly tracing?: TracingConfig | undefined;
     readonly metrics?: MetricsConfig | undefined;
@@ -55,7 +54,6 @@ export interface FeaturesConfig {
     readonly logging: boolean;
     readonly profiling: boolean;
     readonly crons: boolean;
-    readonly sessionReplay: boolean;
     readonly runtimeMetrics: boolean;
     readonly eventLoopMonitoring: boolean;
     readonly gcMonitoring: boolean;
@@ -76,7 +74,6 @@ export interface RouteSamplingRates {
     readonly errors?: number | undefined;
     readonly messages?: number | undefined;
     readonly profiles?: number | undefined;
-    readonly replays?: number | undefined;
     readonly metrics?: number | undefined;
     readonly logs?: number | undefined;
     readonly events?: number | undefined;
@@ -89,7 +86,6 @@ export interface SamplingConfig {
     readonly errors: number;
     readonly messages: number;
     readonly profiles: number;
-    readonly replays: number;
     readonly metrics: number;
     readonly logs: number;
     readonly events: number;
@@ -249,8 +245,6 @@ export interface EntitlementsConfig {
     readonly profiling: boolean;
     /** `captureLog()` structured log capture. */
     readonly logging: boolean;
-    /** `captureReplay()` session-replay segment capture. */
-    readonly sessionReplay: boolean;
     /** `captureCronCheckIn()` cron monitoring check-ins. */
     readonly crons: boolean;
     /** Automatic incoming HTTP request capture. */
@@ -289,14 +283,6 @@ export interface ProfilingConfig {
     readonly continuous?: boolean | undefined;
     readonly continuousIntervalMs?: number | undefined;
     readonly sampleRateHz?: number | undefined;
-}
-export interface SessionReplayConfig {
-    readonly enabled: boolean;
-    readonly sampleRate: number;
-    readonly idleTimeoutMs: number;
-    readonly maxDurationMs: number;
-    readonly maxBufferSize?: number | undefined;
-    readonly maskAllInputs?: boolean | undefined;
 }
 export interface ErrorsConfig {
     readonly captureUnhandledRejections: boolean;
@@ -341,7 +327,7 @@ export interface CronsConfig {
  * Per-event-type ingestion routes. The set of route names is fixed by the
  * SDK contract — adding a new event type requires an SDK release.
  */
-export type TransportRouteName = 'traces' | 'requests' | 'spans' | 'errors' | 'metrics' | 'logs' | 'profiles' | 'events' | 'crons' | 'replays';
+export type TransportRouteName = 'traces' | 'requests' | 'spans' | 'errors' | 'metrics' | 'logs' | 'profiles' | 'events' | 'crons';
 export type CompressionType = 'gzip' | 'none';
 export type RoutePriority = 'critical' | 'high' | 'normal' | 'low';
 export type OverflowStrategy = 'drop_oldest' | 'drop_newest';
@@ -425,7 +411,6 @@ export interface ConfigDiff {
     readonly instrumentationChanged: boolean;
     readonly entitlementsChanged: boolean;
     readonly profilingChanged: boolean;
-    readonly replayChanged: boolean;
     readonly tracingChanged: boolean;
     readonly metricsChanged: boolean;
     readonly loggingChanged: boolean;

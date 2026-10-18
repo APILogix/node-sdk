@@ -17,7 +17,6 @@ const EVENT_TYPE_TO_ROUTE = Object.freeze({
     log: 'logs',
     profile: 'profiles',
     cron_checkin: 'crons',
-    replay: 'replays',
 });
 export class RouteRegistry {
     definitions;
@@ -32,7 +31,6 @@ export class RouteRegistry {
             profiles: createDefinition('profiles', config),
             crons: createDefinition('crons', config),
             requests: createDefinition('requests', config),
-            replays: createDefinition('replays', config),
         });
     }
     resolve(event) {
@@ -51,7 +49,7 @@ export class RouteRegistry {
         return this.routes();
     }
     routes() {
-        return ['errors', 'events', 'traces', 'spans', 'metrics', 'logs', 'profiles', 'crons', 'requests', 'replays'];
+        return ['errors', 'events', 'traces', 'spans', 'metrics', 'logs', 'profiles', 'crons', 'requests'];
     }
 }
 function createDefinition(route, config) {

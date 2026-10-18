@@ -36,7 +36,6 @@ describe('P0.1: Axios W3C Trace Context Propagation & Single Client Span', { con
                     errors: '/api/v1/errors', events: '/api/v1/events', traces: '/api/v1/traces',
                     spans: '/api/v1/spans', requests: '/api/v1/requests', metrics: '/api/v1/metrics',
                     logs: '/api/v1/logs', profiles: '/api/v1/profiles', crons: '/api/v1/checkins',
-                    replays: '/api/v1/replays',
                 };
                 const routes = Object.fromEntries(Object.entries(TEST_REMOTE_CONFIG.transport.routes).map(([name, route]) => [
                     name,

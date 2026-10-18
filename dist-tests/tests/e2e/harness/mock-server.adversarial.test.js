@@ -253,11 +253,11 @@ describe('Adversarial & Boundary Verification: RemoteConfigMockServer & test-hel
             assert.equal(res3.statusCode, 200);
             assert.equal(JSON.parse(res3.body).change, false);
         });
-        it('armConfigRefreshSignal(route) triggers 202 ONLY for the targeted route across all 10 routes', async () => {
+        it('armConfigRefreshSignal(route) triggers 202 ONLY for the targeted route across all 9 routes', async () => {
             for (const targetRoute of ALL_10_ROUTES) {
                 server.armConfigRefreshSignal(targetRoute);
-                // Send to a non-target route (e.g. 'replays' if target is not replays, else 'events')
-                const nonTargetRoute = targetRoute === 'replays' ? 'events' : 'replays';
+                // Send to a non-target route (e.g. 'logs' if target is not logs, else 'events')
+                const nonTargetRoute = targetRoute === 'logs' ? 'events' : 'logs';
                 const nonTargetRes = await sendPost(`${server.url}/api/v1/${nonTargetRoute}`, { events: [] });
                 assert.equal(nonTargetRes.statusCode, 200, `Non-target route "${nonTargetRoute}" should return 200 when "${targetRoute}" is armed`);
                 assert.equal(JSON.parse(nonTargetRes.body).change, false);
@@ -350,7 +350,6 @@ describe('Adversarial & Boundary Verification: RemoteConfigMockServer & test-hel
                 'profiles',
                 'events',
                 'crons',
-                'replays',
             ];
             // Start 10 waiters concurrently
             const waiters = targetRoutes.map(route => server.waitForRequests(route, { count: 1, timeoutMs: 2_000 }));

@@ -42,10 +42,10 @@ describe('ConfigValidator Unit Test Suite', () => {
       assert.equal(isNormalizedRemoteConfig(TEST_REMOTE_CONFIG), true)
     })
 
-    it('validates all 10 required transport routes', () => {
+    it('validates all 9 required transport routes', () => {
       const routes = [
         'traces', 'requests', 'spans', 'errors', 'metrics',
-        'logs', 'profiles', 'events', 'crons', 'replays',
+        'logs', 'profiles', 'events', 'crons',
       ]
       for (const route of routes) {
         const config = cloneConfig()
@@ -385,12 +385,6 @@ describe('ConfigValidator Unit Test Suite', () => {
           heap: true,
           sampleRate: 0.5,
           maxDurationMs: 30000,
-        },
-        replay: {
-          enabled: true,
-          sampleRate: 0.1,
-          idleTimeoutMs: 60000,
-          maxDurationMs: 3600000,
         },
         errors: {
           captureUnhandledRejections: true,

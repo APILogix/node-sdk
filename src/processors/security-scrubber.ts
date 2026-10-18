@@ -303,7 +303,7 @@ export class SecurityScrubber {
    * Scrub an arbitrary value (object, array, or string) with the active
    * field-redaction and PII rules. Used for payload sections that are not
    * part of the fixed event shape — e.g. `LogEvent.args`,
-   * `ReplayEvent.events`, profile payloads, aggregated trace spans. Returns a new value; never
+   * profile payloads, aggregated trace spans. Returns a new value; never
    * mutates the input. Never throws.
    */
   scrubValue(value: unknown, depth: number = 0, seen: WeakSet<object> = new WeakSet()): unknown {
@@ -495,7 +495,7 @@ export class SecurityScrubber {
       if (this.sensitiveFields.has(key.toLowerCase())) {
         result[key] = REDACTED
       } else if (typeof value === 'object' && value !== null) {
-        // Arrays (e.g. LogEvent.args, ReplayEvent.events, profile nodes)
+        // Arrays (e.g. LogEvent.args, profile nodes)
         // are traversed item-by-item; objects inside arrays are scrubbed
         // recursively. Scalars pass through untouched.
         result[key] = Array.isArray(value)

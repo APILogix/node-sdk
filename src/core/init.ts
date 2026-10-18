@@ -392,11 +392,6 @@ export async function activateSDK(
       () => { CronSubsystem.initialize(event => { processEvent(event) }, client.metadata, manager.getConfig().crons) },
       () => CronSubsystem.reset(),
     )
-    await featureController.register(
-      'sessionReplay',
-      () => { getSessionManager() },
-      () => resetSessionManager(),
-    )
 
     manager.setApplier(new ConfigApplier({
       identity: async ({ previous, current }) => {

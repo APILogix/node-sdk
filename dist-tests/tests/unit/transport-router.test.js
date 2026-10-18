@@ -26,7 +26,6 @@ function config(base = 'https://collector.example.test') {
             logs: { ...existing.routes.logs, url: `${base}/custom-logs` },
             profiles: { ...existing.routes.profiles, url: `${base}/custom-profiles` },
             crons: { ...existing.routes.crons, url: `${base}/custom-crons` },
-            replays: { ...existing.routes.replays, url: `${base}/custom-replays` },
         },
     };
 }

@@ -38,7 +38,6 @@ export interface NormalizedRemoteConfig {
   // Subsystem-specific configurations
   readonly offlineQueue?: OfflineQueueConfig | undefined
   readonly profiling?: ProfilingConfig | undefined
-  readonly replay?: SessionReplayConfig | undefined
   readonly errors?: ErrorsConfig | undefined
   readonly tracing?: TracingConfig | undefined
   readonly metrics?: MetricsConfig | undefined
@@ -76,7 +75,6 @@ export interface FeaturesConfig {
   readonly logging: boolean
   readonly profiling: boolean
   readonly crons: boolean
-  readonly sessionReplay: boolean
   readonly runtimeMetrics: boolean
   readonly eventLoopMonitoring: boolean
   readonly gcMonitoring: boolean
@@ -100,7 +98,6 @@ export interface RouteSamplingRates {
   readonly errors?: number | undefined
   readonly messages?: number | undefined
   readonly profiles?: number | undefined
-  readonly replays?: number | undefined
   readonly metrics?: number | undefined
   readonly logs?: number | undefined
   readonly events?: number | undefined
@@ -114,7 +111,6 @@ export interface SamplingConfig {
   readonly errors: number
   readonly messages: number
   readonly profiles: number
-  readonly replays: number
   readonly metrics: number
   readonly logs: number
   readonly events: number
@@ -303,8 +299,6 @@ export interface EntitlementsConfig {
   readonly profiling: boolean
   /** `captureLog()` structured log capture. */
   readonly logging: boolean
-  /** `captureReplay()` session-replay segment capture. */
-  readonly sessionReplay: boolean
   /** `captureCronCheckIn()` cron monitoring check-ins. */
   readonly crons: boolean
   /** Automatic incoming HTTP request capture. */
@@ -348,15 +342,6 @@ export interface ProfilingConfig {
   readonly continuous?: boolean | undefined
   readonly continuousIntervalMs?: number | undefined
   readonly sampleRateHz?: number | undefined
-}
-
-export interface SessionReplayConfig {
-  readonly enabled: boolean
-  readonly sampleRate: number
-  readonly idleTimeoutMs: number
-  readonly maxDurationMs: number
-  readonly maxBufferSize?: number | undefined
-  readonly maskAllInputs?: boolean | undefined
 }
 
 export interface ErrorsConfig {
@@ -419,7 +404,6 @@ export type TransportRouteName =
   | 'profiles'
   | 'events'
   | 'crons'
-  | 'replays'
 
 export type CompressionType = 'gzip' | 'none'
 export type RoutePriority = 'critical' | 'high' | 'normal' | 'low'
@@ -524,7 +508,6 @@ export interface ConfigDiff {
 
   // Subsystem Fast-Flags for Direct Dispatch
   readonly profilingChanged: boolean
-  readonly replayChanged: boolean
   readonly tracingChanged: boolean
   readonly metricsChanged: boolean
   readonly loggingChanged: boolean
@@ -552,7 +535,7 @@ export interface ConfigDiff {
 
 const VALID_ROUTE_NAMES = new Set<string>([
   'traces', 'requests', 'spans', 'errors', 'metrics',
-  'logs', 'profiles', 'events', 'crons', 'replays',
+  'logs', 'profiles', 'events', 'crons',
 ])
 
 export function isNormalizedRemoteConfig(value: unknown): value is NormalizedRemoteConfig {

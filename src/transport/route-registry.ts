@@ -1,7 +1,7 @@
 import type { SDKEvent } from '../types/event.js'
 import type { TransportRemoteConfig } from '../types/config.js'
 
-export type EnterpriseRoute = 'errors' | 'events' | 'traces' | 'spans' | 'metrics' | 'logs' | 'profiles' | 'crons' | 'requests' | 'replays'
+export type EnterpriseRoute = 'errors' | 'events' | 'traces' | 'spans' | 'metrics' | 'logs' | 'profiles' | 'crons' | 'requests'
 
 export interface RouteDefinition {
   readonly route: EnterpriseRoute
@@ -30,7 +30,6 @@ const EVENT_TYPE_TO_ROUTE: Readonly<Record<string, EnterpriseRoute>> = Object.fr
   log: 'logs',
   profile: 'profiles',
   cron_checkin: 'crons',
-  replay: 'replays',
 })
 
 export class RouteRegistry {
@@ -47,7 +46,6 @@ export class RouteRegistry {
       profiles: createDefinition('profiles', config),
       crons: createDefinition('crons', config),
       requests: createDefinition('requests', config),
-      replays: createDefinition('replays', config),
     })
   }
 
@@ -70,7 +68,7 @@ export class RouteRegistry {
   }
 
   routes(): readonly EnterpriseRoute[] {
-    return ['errors', 'events', 'traces', 'spans', 'metrics', 'logs', 'profiles', 'crons', 'requests', 'replays'] as const
+    return ['errors', 'events', 'traces', 'spans', 'metrics', 'logs', 'profiles', 'crons', 'requests'] as const
   }
 }
 

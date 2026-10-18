@@ -50,7 +50,6 @@ export { captureCronCheckIn } from './capture/captureCronCheckIn.js';
 export type { CronCheckInOptions } from './capture/captureCronCheckIn.js';
 export { captureLog } from './capture/captureLog.js';
 export type { CaptureLogLevel } from './capture/captureLog.js';
-export { captureReplay } from './capture/captureReplay.js';
 export { startProfile, stopProfile } from './capture/captureProfile.js';
 export { captureMetric, incrementCounter, setGauge, recordHistogram, addUpDownCounter, } from './capture/captureMetric.js';
 export type { EventReceipt } from './core/event-receipt.js';
@@ -95,7 +94,7 @@ export type { SpanInterval, DurationBreakdown } from './tracing/span-duration.js
 export { setLogger, setDebugMode, setLogLevel } from './utils/logger.js';
 export type { Logger, LogFormat } from './utils/logger.js';
 export type { SDKInitOptions, RemoteConfigResponse, EntitlementsConfig, OfflineQueueConfig, OfflineQueueInitOptions, } from './types/config.js';
-export type { SDKEvent, RequestEvent, ErrorEvent, MessageEvent, MetricEvent, EventMetadata, StackFrame, LogEvent, ProfileEvent, ReplayEvent, CronCheckInEvent, SpanEvent, TraceEvent, AggregatedSpanEvent, } from './types/event.js';
+export type { SDKEvent, RequestEvent, ErrorEvent, MessageEvent, MetricEvent, EventMetadata, StackFrame, LogEvent, ProfileEvent, CronCheckInEvent, SpanEvent, TraceEvent, AggregatedSpanEvent, } from './types/event.js';
 export type { Breadcrumb, BreadcrumbInput, BreadcrumbHint } from './types/breadcrumb.js';
 export type { SeverityLevel } from './types/severity.js';
 export { Severity, severityFromString, isSeverityGte, doesSeverityMeetThreshold } from './types/severity.js';

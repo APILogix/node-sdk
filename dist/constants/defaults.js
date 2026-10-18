@@ -44,7 +44,6 @@ export const DEFAULT_FEATURES = Object.freeze({
     logging: true,
     profiling: true,
     crons: true,
-    sessionReplay: true,
     runtimeMetrics: true,
     eventLoopMonitoring: true,
     gcMonitoring: true,
@@ -57,7 +56,6 @@ export const DEFAULT_SAMPLING = Object.freeze({
     errors: 1,
     messages: 1,
     profiles: 1,
-    replays: 1,
     metrics: 1,
     logs: 1,
     events: 1,
@@ -75,7 +73,6 @@ export const DEFAULT_TRANSPORT_ROUTES = Object.freeze({
     profiles: Object.freeze({ url: 'https://127.0.0.1:0/v1/profiles', batchSize: 5, flushIntervalMs: 30000, timeoutMs: 15000, compression: 'gzip', priority: 'low' }),
     events: Object.freeze({ url: 'https://127.0.0.1:0/v1/events', batchSize: 50, flushIntervalMs: 5000, timeoutMs: 5000, compression: 'gzip', priority: 'normal' }),
     crons: Object.freeze({ url: 'https://127.0.0.1:0/v1/crons', batchSize: 1, flushIntervalMs: 0, timeoutMs: 5000, compression: 'none', priority: 'high' }),
-    replays: Object.freeze({ url: 'https://127.0.0.1:0/v1/replays', batchSize: 5, flushIntervalMs: 10000, timeoutMs: 30000, compression: 'gzip', priority: 'low' }),
 });
 export const DEFAULT_TRANSPORT = Object.freeze({
     retry: Object.freeze({ enabled: true, maxRetries: 3, backoff: 'exponential', baseDelayMs: 500 }),
@@ -92,7 +89,6 @@ export const DEFAULT_TRANSPORT = Object.freeze({
             profiles: 5,
             crons: 5,
             requests: 20,
-            replays: 5,
         }),
         acquireTimeoutMs: 5000,
     }),
@@ -113,14 +109,6 @@ export const DEFAULT_PROFILING = Object.freeze({
     heap: true,
     sampleRate: 1,
     maxDurationMs: 30_000,
-});
-export const DEFAULT_REPLAY = Object.freeze({
-    enabled: true,
-    sampleRate: 1,
-    idleTimeoutMs: 30 * 60 * 1000,
-    maxDurationMs: 4 * 60 * 60 * 1000,
-    maxBufferSize: 1_000,
-    maskAllInputs: true,
 });
 export const DEFAULT_ERRORS = Object.freeze({
     captureUnhandledRejections: true,
@@ -236,7 +224,6 @@ export const DEFAULT_ENTITLEMENTS = Object.freeze({
     customMetrics: true,
     profiling: true,
     logging: true,
-    sessionReplay: true,
     crons: true,
     requestCapture: true,
     tracing: true,
@@ -260,7 +247,6 @@ export const DEFAULT_REMOTE_CONFIG = Object.freeze({
     transport: DEFAULT_TRANSPORT,
     offlineQueue: DEFAULT_OFFLINE_QUEUE,
     profiling: DEFAULT_PROFILING,
-    replay: DEFAULT_REPLAY,
     errors: DEFAULT_ERRORS,
     tracing: DEFAULT_TRACING,
     metrics: DEFAULT_METRICS,

@@ -33,7 +33,6 @@ before(() => {
       profiling: true,
       customMetrics: true,
       logging: true,
-      sessionReplay: true,
       crons: true,
       requestCapture: true,
       tracing: true,

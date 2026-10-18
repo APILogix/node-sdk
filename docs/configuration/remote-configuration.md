@@ -18,7 +18,6 @@ Remote configuration is delivered via `/v1/init` and periodically refreshed. All
   "errors": { "enabled": true },
   "logs": { "enabled": true },
   "profiling": { "enabled": false },
-  "sessionReplay": { "enabled": false },
   "crons": { "enabled": true }
 }
 ```

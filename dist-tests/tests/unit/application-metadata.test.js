@@ -50,7 +50,6 @@ describe('application package metadata', () => {
             { type: 'trace', traceId: 't', rootSpan: { spanId: 's', name: 'root', startTime: now, endTime: now + 1, duration: 1, status: 'ok', children: [] }, spanCount: 1, totalDuration: 1, isPartial: false },
             { type: 'log', level: 'info', message: 'l', timestamp: now },
             { type: 'profile', profileType: 'cpu', startTime: now, endTime: now + 1, duration: 1, profile: {}, timestamp: now },
-            { type: 'replay', sessionId: 'session', segmentId: 1, timestamp: now, events: [{}] },
             { type: 'cron_checkin', monitorSlug: 'job', status: 'ok', timestamp: now },
         ];
         for (const event of events) {

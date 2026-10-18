@@ -113,7 +113,7 @@ describe('Enterprise Hardening & Gap Verification', () => {
         });
     });
     describe('SerializationPool Worker Integration & Large Batch Offload', () => {
-        const routes = ['errors', 'events', 'traces', 'spans', 'metrics', 'logs', 'profiles', 'crons', 'requests', 'replays'];
+        const routes = ['errors', 'events', 'traces', 'spans', 'metrics', 'logs', 'profiles', 'crons', 'requests'];
         const limits = Object.fromEntries(routes.map(route => [route, 2]));
         before(async () => {
             await SerializationPool.reset();

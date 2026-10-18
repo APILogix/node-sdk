@@ -44,7 +44,6 @@ const MIN_BATCH_SIZE: Readonly<Record<EnterpriseRoute, number>> = Object.freeze(
   profiles: 1,
   crons: 1,
   requests: 10,
-  replays: 1,
 })
 
 export class TransportRouter {
@@ -252,9 +251,9 @@ export class TransportRouter {
     batchedEvents: Readonly<Record<EnterpriseRoute, number>>
     droppedEvents: readonly QueueDropInfo[]
   } {
-    const inFlightSends: Record<EnterpriseRoute, number> = { errors: 0, events: 0, traces: 0, spans: 0, metrics: 0, logs: 0, profiles: 0, crons: 0, requests: 0, replays: 0 }
-    const queuedEvents: Record<EnterpriseRoute, number> = { errors: 0, events: 0, traces: 0, spans: 0, metrics: 0, logs: 0, profiles: 0, crons: 0, requests: 0, replays: 0 }
-    const batchedEvents: Record<EnterpriseRoute, number> = { errors: 0, events: 0, traces: 0, spans: 0, metrics: 0, logs: 0, profiles: 0, crons: 0, requests: 0, replays: 0 }
+    const inFlightSends: Record<EnterpriseRoute, number> = { errors: 0, events: 0, traces: 0, spans: 0, metrics: 0, logs: 0, profiles: 0, crons: 0, requests: 0 }
+    const queuedEvents: Record<EnterpriseRoute, number> = { errors: 0, events: 0, traces: 0, spans: 0, metrics: 0, logs: 0, profiles: 0, crons: 0, requests: 0 }
+    const batchedEvents: Record<EnterpriseRoute, number> = { errors: 0, events: 0, traces: 0, spans: 0, metrics: 0, logs: 0, profiles: 0, crons: 0, requests: 0 }
 
     for (const route of this.registry.routes()) {
       const stats = this.batchManagers.get(route)?.stats()

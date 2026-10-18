@@ -12,12 +12,12 @@ export const TEST_REMOTE_CONFIG = Object.freeze({
   sdk: { projectId: 'test-project', service: 'test-service', environment: 'test', release: '1.0.0' },
   features: {
     tracing: false, requestCapture: false, errors: false, metrics: false,
-    logging: false, profiling: false, crons: false, sessionReplay: false,
+    logging: false, profiling: false, crons: false,
     runtimeMetrics: false, eventLoopMonitoring: false, gcMonitoring: false,
   },
   sampling: {
     traces: 0, requests: 0, spans: 0, errors: 0, messages: 0,
-    profiles: 0, replays: 0, metrics: 0, logs: 0, events: 0, crons: 0,
+    profiles: 0, metrics: 0, logs: 0, events: 0, crons: 0,
     routes: {},
   },
   instrumentation: {
@@ -60,7 +60,7 @@ export const TEST_REMOTE_CONFIG = Object.freeze({
       maxTotalConnections: 100,
       maxConnectionsPerRoute: {
         errors: 30, events: 30, traces: 50, spans: 50, metrics: 20,
-        logs: 20, profiles: 5, crons: 5, requests: 50, replays: 10,
+        logs: 20, profiles: 5, crons: 5, requests: 50,
       },
       acquireTimeoutMs: 5000,
     },
@@ -75,13 +75,12 @@ export const TEST_REMOTE_CONFIG = Object.freeze({
       profiles: route('profiles', 5, 30000, 15000, 'gzip', 'low'),
       events: route('events', 50, 5000, 5000, 'gzip', 'normal'),
       crons: route('crons', 1, 0, 5000, 'none', 'high'),
-      replays: route('replays', 5, 10000, 30000, 'gzip', 'low'),
     },
   },
   meta: { generatedAt: '2026-07-30T00:00:00.000Z', generatedBy: 'smoke-fixture' },
   entitlements: {
     customSpans: true, customMetrics: true, profiling: true, logging: true,
-    sessionReplay: true, crons: true, requestCapture: true, tracing: true,
+    crons: true, requestCapture: true, tracing: true,
     errors: true, metrics: true,
   },
 })

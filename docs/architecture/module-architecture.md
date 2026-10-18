@@ -19,7 +19,6 @@ src/
 │   ├── captureRequest.ts
 │   ├── captureLog.ts
 │   ├── captureProfile.ts
-│   ├── captureReplay.ts
 │   └── captureCronCheckIn.ts
 │
 ├── constants/                    # Shared system constants, endpoints, and version metadata

@@ -7,7 +7,6 @@ import {
   captureLog,
   captureMetric,
   captureCronCheckIn,
-  captureReplay,
   startProfile,
   stopProfile,
   withSpan,
@@ -104,14 +103,7 @@ console.log('[SDK Emitter] 8. Emitting Profile event...');
 const profId = startProfile('cubicle-checkout-pipeline');
 await new Promise((r) => setTimeout(r, 30));
 stopProfile(profId);
-
-// 9. Replay event
-console.log('[SDK Emitter] 9. Emitting Replay event...');
-captureReplay('sess-cubicle-abc-123', 1, [
-  { type: 'dom_mutation', timestamp: Date.now(), target: '#checkout-btn' },
-]);
-
-// 10. Flush and shutdown
+// 9. Flush and shutdown
 console.log('[SDK Emitter] Flushing all buffers to mock backend...');
 await flush(5000);
 await shutdown(5000);

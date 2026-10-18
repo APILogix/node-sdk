@@ -11,7 +11,6 @@ const testSamplingConfig: SamplingConfig = {
   errors: 1.0,
   messages: 1.0,
   profiles: 1.0,
-  replays: 1.0,
   metrics: 1.0,
   logs: 1.0,
   events: 1.0,

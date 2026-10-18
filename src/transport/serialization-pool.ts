@@ -59,7 +59,7 @@ export class SerializationPool {
         estimatedBytes += ev.length
       } else if (typeof ev === 'object') {
         const type = ev['type']
-        if (type === 'profile' || type === 'replay') return true
+        if (type === 'profile') return true
         if (type === 'trace') {
           const spanCount = typeof ev['spanCount'] === 'number' ? ev['spanCount'] : 20
           estimatedBytes += spanCount * 600

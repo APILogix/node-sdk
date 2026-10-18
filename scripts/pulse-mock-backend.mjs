@@ -18,7 +18,6 @@ const EVENT_DIRS = {
   profile: 'profiles',
   cron_checkin: 'crons',
   cron: 'crons',
-  replay: 'replays',
   message: 'messages',
   event: 'messages',
   init: 'init',
@@ -50,7 +49,6 @@ function buildFullFeaturedConfig(baseUrl) {
     profiles: { url: `${normalizedBase}/api/v1/profiles`, batchSize: 5, flushIntervalMs: 50, timeoutMs: 5000, compression: 'gzip', priority: 'low' },
     events: { url: `${normalizedBase}/api/v1/events`, batchSize: 20, flushIntervalMs: 50, timeoutMs: 5000, compression: 'gzip', priority: 'normal' },
     crons: { url: `${normalizedBase}/api/v1/crons`, batchSize: 1, flushIntervalMs: 0, timeoutMs: 5000, compression: 'none', priority: 'high' },
-    replays: { url: `${normalizedBase}/api/v1/replays`, batchSize: 5, flushIntervalMs: 50, timeoutMs: 5000, compression: 'gzip', priority: 'low' },
   };
 
   const config = {
@@ -69,7 +67,6 @@ function buildFullFeaturedConfig(baseUrl) {
       logging: true,
       profiling: true,
       crons: true,
-      sessionReplay: true,
       runtimeMetrics: true,
       eventLoopMonitoring: true,
       gcMonitoring: true,
@@ -81,7 +78,6 @@ function buildFullFeaturedConfig(baseUrl) {
       errors: 1.0,
       messages: 1.0,
       profiles: 1.0,
-      replays: 1.0,
       metrics: 1.0,
       logs: 1.0,
       events: 1.0,
@@ -158,7 +154,6 @@ function buildFullFeaturedConfig(baseUrl) {
       customMetrics: true,
       profiling: true,
       logging: true,
-      sessionReplay: true,
       crons: true,
       requestCapture: true,
       tracing: true,
@@ -279,7 +274,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   // ─── Ingestion Routes: /api/v1/:route or /v1/:route ─────────────────────
-  const routeMatch = pathname.match(/^\/(?:api\/)?v1\/(traces|requests|spans|errors|metrics|logs|profiles|events|crons|replays)$/);
+  const routeMatch = pathname.match(/^\/(?:api\/)?v1\/(traces|requests|spans|errors|metrics|logs|profiles|events|crons)$/);
   if (routeMatch) {
     const route = routeMatch[1];
     const timestamp = Date.now();

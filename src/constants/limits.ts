@@ -61,8 +61,6 @@ export const SAFETY_CEILINGS = Object.freeze({
   // Subsystem Safety Bounds
   profileMaxDurationMs: 120_000, // 2 minutes
   minProfileDurationMs: 1_000,
-  replayMaxDurationMs: 14_400_000, // 4 hours
-  minReplayDurationMs: 1_000,
   maxLogSize: 1_048_576, // 1 MB
   minLogSize: 256,
   stackTraceLimit: 200,

@@ -207,16 +207,6 @@ export interface ProfileEvent {
   readonly activeTraceIds?: readonly string[] | undefined
 }
 
-/** Session replay event containing recorded DOM mutations. */
-export interface ReplayEvent {
-  readonly type: 'replay'
-  eventId?: string
-  readonly sessionId: string
-  readonly segmentId: number
-  readonly timestamp: number
-  readonly events: readonly unknown[]
-  readonly metadata?: EventMetadata | undefined
-}
 
 /** Cron check-in event for monitoring scheduled jobs. */
 export interface CronCheckInEvent {
@@ -286,7 +276,6 @@ export type SDKEvent =
   | TraceEvent
   | LogEvent
   | ProfileEvent
-  | ReplayEvent
   | CronCheckInEvent
 
 /**

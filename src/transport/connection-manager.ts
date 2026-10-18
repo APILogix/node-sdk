@@ -86,7 +86,6 @@ export class ConnectionManager {
     profiles: 0,
     crons: 0,
     requests: 0,
-    replays: 0,
   }
   private totalInUse = 0
 

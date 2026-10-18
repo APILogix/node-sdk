@@ -48,7 +48,6 @@ async function startMockBackend() {
                     errors: '/api/v1/errors', events: '/api/v1/events', traces: '/api/v1/traces',
                     spans: '/api/v1/spans', requests: '/api/v1/requests', metrics: '/api/v1/metrics',
                     logs: '/api/v1/logs', profiles: '/api/v1/profiles', crons: '/api/v1/checkins',
-                    replays: '/api/v1/replays',
                 };
                 const routes = Object.fromEntries(Object.entries(BAKED_IN_REMOTE_CONFIG.transport.routes).map(([name, route]) => [
                     name,
@@ -79,7 +78,6 @@ async function startMockBackend() {
                     errors: '/api/v1/errors', events: '/api/v1/events', traces: '/api/v1/traces',
                     spans: '/api/v1/spans', requests: '/api/v1/requests', metrics: '/api/v1/metrics',
                     logs: '/api/v1/logs', profiles: '/api/v1/profiles', crons: '/api/v1/checkins',
-                    replays: '/api/v1/replays',
                 };
                 const refreshRoutes = Object.fromEntries(Object.entries(BAKED_IN_REMOTE_CONFIG.transport.routes).map(([name, route]) => [
                     name,

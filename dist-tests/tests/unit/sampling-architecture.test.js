@@ -36,7 +36,6 @@ describe('P1: Sampling Decision Tree & Hybrid Sampling Contract', () => {
             errors: 1,
             messages: 1,
             profiles: 1,
-            replays: 1,
             metrics: 1,
             logs: 1,
             events: 1,

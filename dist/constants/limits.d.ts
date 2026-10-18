@@ -48,8 +48,6 @@ export declare const SAFETY_CEILINGS: Readonly<{
     readonly minBudgetExceededLogIntervalMs: 1000;
     readonly profileMaxDurationMs: 120000;
     readonly minProfileDurationMs: 1000;
-    readonly replayMaxDurationMs: 14400000;
-    readonly minReplayDurationMs: 1000;
     readonly maxLogSize: 1048576;
     readonly minLogSize: 256;
     readonly stackTraceLimit: 200;

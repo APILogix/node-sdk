@@ -16,7 +16,7 @@ export var ConfigState;
 // ─── Type Guards ────────────────────────────────────────────────────────────
 const VALID_ROUTE_NAMES = new Set([
     'traces', 'requests', 'spans', 'errors', 'metrics',
-    'logs', 'profiles', 'events', 'crons', 'replays',
+    'logs', 'profiles', 'events', 'crons',
 ]);
 export function isNormalizedRemoteConfig(value) {
     if (value === null || typeof value !== 'object' || Array.isArray(value))

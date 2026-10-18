@@ -51,7 +51,6 @@ Instead of funneling all telemetry into a single monolithic queue, Pulse partiti
 | **`logs`** | `/v1/logs` | 200 | 10,000 ms | Gzip |
 | **`crons`** | `/v1/crons` | 1 | 0 ms (immediate) | None / Gzip |
 | **`profiles`** | `/v1/profiles` | 5 | 30,000 ms | Gzip |
-| **`replays`** | `/v1/replays` | 5 | 10,000 ms | Gzip |
 | **`events`** | `/v1/events` | 50 | 5,000 ms | Gzip |
 
 ---

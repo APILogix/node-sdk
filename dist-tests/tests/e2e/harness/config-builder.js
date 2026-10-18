@@ -9,7 +9,6 @@ export const ALL_10_ROUTES = [
     'profiles',
     'events',
     'crons',
-    'replays',
 ];
 /**
  * Creates a fully validated Schema-v1 RemoteConfigResponse snapshot with all
@@ -29,7 +28,7 @@ export function createDefaultMockConfig(baseUrl, overrides = {}) {
                 ? 'critical'
                 : route === 'traces' || route === 'requests' || route === 'spans' || route === 'crons'
                     ? 'high'
-                    : route === 'profiles' || route === 'replays'
+                    : route === 'profiles'
                         ? 'low'
                         : 'normal',
         },
@@ -50,7 +49,6 @@ export function createDefaultMockConfig(baseUrl, overrides = {}) {
             logging: true,
             profiling: true,
             crons: true,
-            sessionReplay: true,
             runtimeMetrics: false,
             eventLoopMonitoring: false,
             gcMonitoring: false,
@@ -62,7 +60,6 @@ export function createDefaultMockConfig(baseUrl, overrides = {}) {
             errors: 1.0,
             messages: 1.0,
             profiles: 1.0,
-            replays: 1.0,
             metrics: 1.0,
             logs: 1.0,
             events: 1.0,
@@ -128,7 +125,6 @@ export function createDefaultMockConfig(baseUrl, overrides = {}) {
             customMetrics: true,
             profiling: true,
             logging: true,
-            sessionReplay: true,
             crons: true,
             requestCapture: true,
             tracing: true,

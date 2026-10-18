@@ -2,7 +2,7 @@
 
 ## 1. Unified Telemetry Model
 
-The Pulse Node.js SDK provides a unified telemetry model spanning eight core observability pillars:
+The Pulse Node.js SDK provides a unified telemetry model spanning core backend observability pillars:
 
 1. **Errors & Exceptions (`captureError`):** Captured with complete stack traces, parsed frames, source maps, error classifications, and breadcrumbs.
 2. **Distributed Tracing & Spans (`startSpan`, `withSpan`, `wrap`):** High-resolution spans with truthful exclusive CPU time attribution and context propagation.
@@ -11,7 +11,6 @@ The Pulse Node.js SDK provides a unified telemetry model spanning eight core obs
 5. **Structured Logs (`captureLog`):** High-performance log ingestion with severity levels and metadata.
 6. **V8 CPU Profiling (`startProfile`, `stopProfile`):** Programmatic V8 CPU sampling profiles.
 7. **Cron Heartbeats (`captureCronCheckIn`):** Scheduled job monitoring with status tracking (`in_progress`, `ok`, `error`).
-8. **Session Replay (`captureReplay`):** User interaction and event stream capture for debugging.
 
 ---
 
@@ -28,7 +27,6 @@ import {
   captureMetric,
   captureLog,
   captureCronCheckIn,
-  captureReplay,
   withSpan,
   incrementCounter,
   setGauge,
