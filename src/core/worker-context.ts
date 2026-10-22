@@ -60,9 +60,11 @@ export function serializeContext(): SerializedContext | null {
  * Includes serialized context + any additional data.
  */
 export function createWorkerData(additionalData?: Record<string, unknown>): Record<string, unknown> {
+    const serialized = serializeContext()
     return {
         ...additionalData,
-        __pulseContext: serializeContext(),
+        __lynktraceContext: serialized,
+        __pulseContext: serialized,
     }
 }
 
@@ -71,7 +73,7 @@ export function createWorkerData(additionalData?: Record<string, unknown>): Reco
  * Call this inside the worker thread to get correlation metadata.
  */
 export function extractWorkerContext(workerData: Record<string, unknown>): SerializedContext | null {
-    const ctx = workerData['__pulseContext']
+    const ctx = workerData['__lynktraceContext'] ?? workerData['__pulseContext']
     if (!ctx || typeof ctx !== 'object') return null
     return ctx as SerializedContext
 }

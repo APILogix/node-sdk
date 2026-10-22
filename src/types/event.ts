@@ -169,6 +169,8 @@ export interface SpanEvent {
   readonly links?: readonly SpanLink[] | undefined
   readonly metadata?: EventMetadata | undefined
   /** Internal flag used by the SDK pipeline for shutdown drains. */
+  readonly __lynktraceInternal?: boolean | undefined
+  /** @deprecated Legacy internal flag kept for backward compatibility */
   readonly __pulseInternal?: boolean | undefined
 }
 
@@ -261,6 +263,8 @@ export interface TraceEvent {
   readonly userId?: string | undefined
   readonly tenantId?: string | undefined
   /** Internal flag used by the SDK pipeline for shutdown drains. */
+  readonly __lynktraceInternal?: boolean | undefined
+  /** @deprecated Legacy internal flag kept for backward compatibility */
   readonly __pulseInternal?: boolean | undefined
 }
 

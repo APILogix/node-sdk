@@ -49,7 +49,7 @@ export interface SpanOptions {
      * Explicit parent for cases where the active async context is unavailable
      * (custom queues, worker bridges, or manual context handoff).
      */
-    parent?: PulseSpan | OTelSpan | SpanContext | Context
+    parent?: LynkTraceSpan | PulseSpan | OTelSpan | SpanContext | Context
     /** ISO timestamp to use as span start time. */
     startTime?: TimeInput
     /** Span links — for batch processing, fan-out, or queue consumer patterns. */
@@ -80,7 +80,7 @@ export interface SpanLink {
     attributes?: Attributes
 }
 
-// ─── PulseSpan ──────────────────────────────────────────────────────────────
+// ─── LynkTraceSpan ──────────────────────────────────────────────────────────
 
 /**
  * Thin ergonomic wrapper around OTel Span.
@@ -89,7 +89,7 @@ export interface SpanLink {
  * - No duplicated state — reads everything from the underlying OTel span.
  * - Fluent API for attribute/event chaining.
  */
-export class PulseSpan implements OTelSpan {
+export class LynkTraceSpan implements OTelSpan {
     /** @internal The underlying OTel span — use getOTelSpan() for advanced access. */
     private readonly _span: OTelSpan
 
@@ -329,3 +329,6 @@ export class PulseSpan implements OTelSpan {
         })
     }
 }
+
+export const PulseSpan = LynkTraceSpan
+export type PulseSpan = LynkTraceSpan

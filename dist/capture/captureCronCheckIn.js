@@ -15,7 +15,7 @@ import { getLogger } from '../utils/logger.js';
  *
  * @example
  * ```ts
- * import { captureCronCheckIn } from '@vikasbaplawat1/pulse-sdk'
+ * import { captureCronCheckIn } from '@lynktrace/node'
  *
  * captureCronCheckIn('billing-sync', 'in_progress')
  * try {

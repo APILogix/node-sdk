@@ -1,6 +1,6 @@
 /**
  * MySQL Instrumentation — OpenTelemetry auto-instrumentation
- * wrapped with Pulse SDK guards and remote config support.
+ * wrapped with LynkTrace SDK guards and remote config support.
  *
  * Features:
  * - Query spans with operation name, table, and database

@@ -54,7 +54,8 @@ export interface PgInstrumentationOptions {
   instrumentPool?: boolean
 }
 
-const PG_POOL_PATCH_GUARD = Symbol.for('pulse-sdk.pg-pool.connect-patched')
+const PG_POOL_PATCH_GUARD = Symbol.for('lynktrace.pg-pool.connect-patched')
+const PG_POOL_PATCH_GUARD_LEGACY = Symbol.for('pulse-sdk.pg-pool.connect-patched')
 
 /**
  * Patch pg.Pool.prototype.connect to capture connection acquisition wait time
@@ -62,7 +63,7 @@ const PG_POOL_PATCH_GUARD = Symbol.for('pulse-sdk.pg-pool.connect-patched')
  */
 export function patchPgPoolConnectOnce(force = true): void {
   const globalState = globalThis as any
-  if (globalState[PG_POOL_PATCH_GUARD]) return
+  if (globalState[PG_POOL_PATCH_GUARD] || globalState[PG_POOL_PATCH_GUARD_LEGACY]) return
 
   try {
     const pgModule = resolvePgModule(force)
@@ -71,7 +72,7 @@ export function patchPgPoolConnectOnce(force = true): void {
 
     const origConnect = PoolClass.prototype.connect
 
-    PoolClass.prototype.connect = function pulsePoolConnect(this: any, callback?: any) {
+    PoolClass.prototype.connect = function lynktracePoolConnect(this: any, callback?: any) {
       const activeSpan = trace.getActiveSpan()
       const totalCount = this.totalCount ?? 0
       const idleCount = this.idleCount ?? 0
@@ -166,6 +167,7 @@ export function patchPgPoolConnectOnce(force = true): void {
     }
 
     globalState[PG_POOL_PATCH_GUARD] = true
+    globalState[PG_POOL_PATCH_GUARD_LEGACY] = true
   } catch {}
 }
 

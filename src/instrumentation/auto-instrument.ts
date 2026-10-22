@@ -34,7 +34,7 @@ import { getLogger } from '../utils/logger.js'
 import { ConfigManager } from '../core/config-manager.js'
 import { EntitlementGate } from '../core/entitlement-gate.js'
 import type { InstrumentationConfig } from '../types/config.js'
-import { createAxiosInstrumentation, SUPPRESS_INNER_HTTP } from './axios.js'
+import { createAxiosInstrumentation, SUPPRESS_INNER_HTTP_LYNKTRACE, SUPPRESS_INNER_HTTP } from './axios.js'
 import { createPgInstrumentation } from './pg.js'
 import { createMySQLInstrumentation } from './mysql.js'
 import { createMongoDBInstrumentation } from './mongodb.js'
@@ -44,6 +44,23 @@ import { createBullMQInstrumentation } from './bullmq.js'
 import { createGraphQLInstrumentation } from './graphql.js'
 import { createPrismaInstrumentation } from './prisma.js'
 import { createNodemailerInstrumentation } from './nodemailer.js'
+import { createDynamoDBInstrumentation } from './dynamodb.js'
+import { createCassandraInstrumentation } from './cassandra.js'
+import { createElasticsearchInstrumentation } from './elasticsearch.js'
+import { createMSSQLInstrumentation } from './mssql.js'
+import { createSQLiteInstrumentation } from './sqlite.js'
+import { createTypeORMInstrumentation } from './typeorm.js'
+import { createDrizzleInstrumentation } from './drizzle.js'
+import { createMikroORMInstrumentation } from './mikro-orm.js'
+import { createSequelizeInstrumentation } from './sequelize.js'
+import { createKnexInstrumentation } from './knex.js'
+import { createKafkaInstrumentation } from './kafka.js'
+import { createAMQPInstrumentation } from './amqplib.js'
+import { createSqsSnsInstrumentation } from './sqs-sns.js'
+import { createPubSubInstrumentation } from './pubsub.js'
+import { createGrpcInstrumentation } from './grpc.js'
+import { createNestJSInstrumentation } from './nestjs.js'
+import { createDNSInstrumentation } from './dns.js'
 import { patchEventEmitter, unpatchEventEmitter } from './event-emitter-patch.js'
 import { installHttpLifecycleGuard, uninstallHttpLifecycleGuard } from './http-lifecycle-guard.js'
 import { registerEsmLoaderHooks } from './esm-loader.js'
@@ -54,18 +71,28 @@ import { registerEsmLoaderHooks } from './esm-loader.js'
 // app that depends on two copies of the SDK (e.g., via different transitive
 // dependency paths) would patch http twice.
 
-const INSTRUMENTATION_GUARD = Symbol.for('pulse-sdk.auto-instrumentation.registered')
-const TEARDOWN_REGISTRY = Symbol.for('pulse-sdk.auto-instrumentation.teardowns')
-const UNREGISTER_FN = Symbol.for('pulse-sdk.auto-instrumentation.unregister')
-const BOOTSTRAP_GUARD = Symbol.for('pulse-sdk.auto-instrumentation.bootstrap')
-const ACTIVE_REGISTRY = Symbol.for('pulse-sdk.auto-instrumentation.registry')
+const INSTRUMENTATION_GUARD = Symbol.for('lynktrace.auto-instrumentation.registered')
+const INSTRUMENTATION_GUARD_LEGACY = Symbol.for('pulse-sdk.auto-instrumentation.registered')
+const TEARDOWN_REGISTRY = Symbol.for('lynktrace.auto-instrumentation.teardowns')
+const TEARDOWN_REGISTRY_LEGACY = Symbol.for('pulse-sdk.auto-instrumentation.teardowns')
+const UNREGISTER_FN = Symbol.for('lynktrace.auto-instrumentation.unregister')
+const UNREGISTER_FN_LEGACY = Symbol.for('pulse-sdk.auto-instrumentation.unregister')
+const BOOTSTRAP_GUARD = Symbol.for('lynktrace.auto-instrumentation.bootstrap')
+const BOOTSTRAP_GUARD_LEGACY = Symbol.for('pulse-sdk.auto-instrumentation.bootstrap')
+const ACTIVE_REGISTRY = Symbol.for('lynktrace.auto-instrumentation.registry')
+const ACTIVE_REGISTRY_LEGACY = Symbol.for('pulse-sdk.auto-instrumentation.registry')
 
 interface InstrumentationGlobalState {
   [INSTRUMENTATION_GUARD]?: boolean
+  [INSTRUMENTATION_GUARD_LEGACY]?: boolean
   [TEARDOWN_REGISTRY]?: Array<() => void | Promise<void>>
+  [TEARDOWN_REGISTRY_LEGACY]?: Array<() => void | Promise<void>>
   [UNREGISTER_FN]?: () => void
+  [UNREGISTER_FN_LEGACY]?: () => void
   [BOOTSTRAP_GUARD]?: boolean
+  [BOOTSTRAP_GUARD_LEGACY]?: boolean
   [ACTIVE_REGISTRY]?: Record<string, any>
+  [ACTIVE_REGISTRY_LEGACY]?: Record<string, any>
 }
 
 function getGlobalState(): InstrumentationGlobalState {
@@ -117,6 +144,33 @@ interface ResolvedInstrumentation {
   mysql2Config: { enabled: boolean; captureQueries: boolean }
   eventEmitterPatch: boolean
   fastifyConfig: { captureHooks: boolean; captureValidationErrors: boolean }
+  dynamodb: boolean
+  dynamodbConfig: { enabled: boolean; captureQueries: boolean; captureParams: boolean }
+  cassandra: boolean
+  cassandraConfig: { enabled: boolean; captureQueries: boolean; captureParams: boolean }
+  elasticsearch: boolean
+  elasticsearchConfig: { enabled: boolean; captureQueries: boolean }
+  mssql: boolean
+  mssqlConfig: { enabled: boolean; captureQueries: boolean; captureParams: boolean }
+  sqlite: boolean
+  sqliteConfig: { enabled: boolean; captureQueries: boolean; captureParams: boolean }
+  typeorm: boolean
+  typeormConfig: { enabled: boolean; captureQueries: boolean; captureParams: boolean }
+  drizzle: boolean
+  drizzleConfig: { enabled: boolean; captureQueries: boolean; captureParams: boolean }
+  mikroorm: boolean
+  sequelize: boolean
+  knex: boolean
+  kafkajs: boolean
+  kafkaConfig: { enabled: boolean; emitConsumerBatchSpans: boolean; captureMessageKey: boolean }
+  amqplib: boolean
+  amqpConfig: { enabled: boolean; captureMessageData: boolean }
+  sqs: boolean
+  sns: boolean
+  pubsub: boolean
+  grpc: boolean
+  nestjs: boolean
+  dns: boolean
   captureConfig: TraceCaptureConfig
 }
 
@@ -204,6 +258,66 @@ function resolveInstrumentationOptions(): ResolvedInstrumentation {
   const automaticTracingAllowed = EntitlementGate.isAllowed('tracing')
   const contextBindingAllowed = automaticTracingAllowed || EntitlementGate.isAllowed('customSpans')
 
+  // New Databases & ORMs
+  const dynamodbEnabled = typeof instr.dynamodb === 'object' ? instr.dynamodb.enabled : (instr.dynamodb ?? true)
+  const dynamodbConfig = typeof instr.dynamodb === 'object'
+    ? { enabled: dynamodbEnabled, captureQueries: instr.dynamodb.captureQueries ?? true, captureParams: instr.dynamodb.captureParams ?? false }
+    : { enabled: dynamodbEnabled, captureQueries: true, captureParams: false }
+
+  const cassandraEnabled = typeof instr.cassandra === 'object' ? instr.cassandra.enabled : (instr.cassandra ?? true)
+  const cassandraConfig = typeof instr.cassandra === 'object'
+    ? { enabled: cassandraEnabled, captureQueries: instr.cassandra.captureQueries ?? true, captureParams: instr.cassandra.captureParams ?? false }
+    : { enabled: cassandraEnabled, captureQueries: true, captureParams: false }
+
+  const elasticsearchEnabled = typeof instr.elasticsearch === 'object' ? instr.elasticsearch.enabled : (instr.elasticsearch ?? true)
+  const elasticsearchConfig = typeof instr.elasticsearch === 'object'
+    ? { enabled: elasticsearchEnabled, captureQueries: instr.elasticsearch.captureQueries ?? true }
+    : { enabled: elasticsearchEnabled, captureQueries: true }
+
+  const mssqlEnabled = typeof instr.mssql === 'object' ? instr.mssql.enabled : (instr.mssql ?? true)
+  const mssqlConfig = typeof instr.mssql === 'object'
+    ? { enabled: mssqlEnabled, captureQueries: instr.mssql.captureQueries ?? true, captureParams: instr.mssql.captureParams ?? false }
+    : { enabled: mssqlEnabled, captureQueries: true, captureParams: false }
+
+  const sqliteEnabled = typeof instr.sqlite === 'object' ? instr.sqlite.enabled : (instr.sqlite ?? true)
+  const sqliteConfig = typeof instr.sqlite === 'object'
+    ? { enabled: sqliteEnabled, captureQueries: instr.sqlite.captureQueries ?? true, captureParams: instr.sqlite.captureParams ?? false }
+    : { enabled: sqliteEnabled, captureQueries: true, captureParams: false }
+
+  const typeormEnabled = typeof instr.typeorm === 'object' ? instr.typeorm.enabled : (instr.typeorm ?? true)
+  const typeormConfig = typeof instr.typeorm === 'object'
+    ? { enabled: typeormEnabled, captureQueries: instr.typeorm.captureQueries ?? true, captureParams: instr.typeorm.captureParams ?? false }
+    : { enabled: typeormEnabled, captureQueries: true, captureParams: false }
+
+  const drizzleEnabled = typeof instr.drizzle === 'object' ? instr.drizzle.enabled : (instr.drizzle ?? true)
+  const drizzleConfig = typeof instr.drizzle === 'object'
+    ? { enabled: drizzleEnabled, captureQueries: instr.drizzle.captureQueries ?? true, captureParams: instr.drizzle.captureParams ?? false }
+    : { enabled: drizzleEnabled, captureQueries: true, captureParams: false }
+
+  const mikroormEnabled = instr.mikroorm ?? true
+  const sequelizeEnabled = instr.sequelize ?? true
+  const knexEnabled = instr.knex ?? true
+
+  // New Messaging
+  const kafkaEnabled = typeof instr.kafkajs === 'object' ? instr.kafkajs.enabled : (instr.kafkajs ?? true)
+  const kafkaConfig = typeof instr.kafkajs === 'object'
+    ? { enabled: kafkaEnabled, emitConsumerBatchSpans: instr.kafkajs.emitConsumerBatchSpans ?? true, captureMessageKey: instr.kafkajs.captureMessageKey ?? false }
+    : { enabled: kafkaEnabled, emitConsumerBatchSpans: true, captureMessageKey: false }
+
+  const amqpEnabled = typeof instr.amqplib === 'object' ? instr.amqplib.enabled : (instr.amqplib ?? true)
+  const amqpConfig = typeof instr.amqplib === 'object'
+    ? { enabled: amqpEnabled, captureMessageData: instr.amqplib.captureMessageData ?? false }
+    : { enabled: amqpEnabled, captureMessageData: false }
+
+  const sqsEnabled = instr.sqs ?? true
+  const snsEnabled = instr.sns ?? true
+  const pubsubEnabled = instr.pubsub ?? true
+
+  // RPC & Infrastructure
+  const grpcEnabled = instr.grpc ?? true
+  const nestjsEnabled = instr.nestjs ?? true
+  const dnsEnabled = typeof instr.dns === 'object' ? instr.dns.enabled : (instr.dns ?? false)
+
   return {
     http: httpEnabled && automaticTracingAllowed,
     https: httpsEnabled && automaticTracingAllowed,
@@ -226,6 +340,33 @@ function resolveInstrumentationOptions(): ResolvedInstrumentation {
     pgConfig,
     mysql2: mysql2Config.enabled && automaticTracingAllowed,
     mysql2Config,
+    dynamodb: dynamodbConfig.enabled && automaticTracingAllowed,
+    dynamodbConfig,
+    cassandra: cassandraConfig.enabled && automaticTracingAllowed,
+    cassandraConfig,
+    elasticsearch: elasticsearchConfig.enabled && automaticTracingAllowed,
+    elasticsearchConfig,
+    mssql: mssqlConfig.enabled && automaticTracingAllowed,
+    mssqlConfig,
+    sqlite: sqliteConfig.enabled && automaticTracingAllowed,
+    sqliteConfig,
+    typeorm: typeormConfig.enabled && automaticTracingAllowed,
+    typeormConfig,
+    drizzle: drizzleConfig.enabled && automaticTracingAllowed,
+    drizzleConfig,
+    mikroorm: mikroormEnabled && automaticTracingAllowed,
+    sequelize: sequelizeEnabled && automaticTracingAllowed,
+    knex: knexEnabled && automaticTracingAllowed,
+    kafkajs: kafkaConfig.enabled && automaticTracingAllowed,
+    kafkaConfig,
+    amqplib: amqpConfig.enabled && automaticTracingAllowed,
+    amqpConfig,
+    sqs: sqsEnabled && automaticTracingAllowed,
+    sns: snsEnabled && automaticTracingAllowed,
+    pubsub: pubsubEnabled && automaticTracingAllowed,
+    grpc: grpcEnabled && automaticTracingAllowed,
+    nestjs: nestjsEnabled && automaticTracingAllowed,
+    dns: dnsEnabled && automaticTracingAllowed,
     eventEmitterPatch: eventEmitterPatchEnabled && contextBindingAllowed,
     fastifyConfig: {
       captureHooks: fastifyConfig.captureHooks,
@@ -238,16 +379,20 @@ function resolveInstrumentationOptions(): ResolvedInstrumentation {
 function createHttpInstrumentationInstance(httpEnabled: boolean, httpsEnabled: boolean): HttpInstrumentation {
   return new HttpInstrumentation({
     ignoreOutgoingRequestHook: (request: unknown) => {
-      if (context.active().getValue(SUPPRESS_INNER_HTTP) === true) return true
+      const activeCtx = context.active()
+      if (activeCtx.getValue(SUPPRESS_INNER_HTTP_LYNKTRACE) === true || activeCtx.getValue(SUPPRESS_INNER_HTTP) === true) return true
       if (!client.initialized) return false
       try {
         if (!isRequestProtocolEnabled(request, httpEnabled, httpsEnabled)) return true
         const reqCheck = request as { getHeader?: (name: string) => string | number | string[] | undefined, headers?: Record<string, string | string[]> }
-        if (typeof reqCheck.getHeader === 'function' && reqCheck.getHeader('x-pulse-internal') === '1') {
-          return true
+        if (typeof reqCheck.getHeader === 'function') {
+          const internalVal = reqCheck.getHeader('x-lynktrace-internal') ?? reqCheck.getHeader('x-pulse-internal')
+          if (internalVal === '1' || internalVal === 1) return true
         }
-        if (reqCheck.headers && reqCheck.headers['x-pulse-internal'] === '1') {
-          return true
+        if (reqCheck.headers) {
+          if (reqCheck.headers['x-lynktrace-internal'] === '1' || reqCheck.headers['x-pulse-internal'] === '1') {
+            return true
+          }
         }
 
         let target: URL | null = null
@@ -286,9 +431,11 @@ function createHttpInstrumentationInstance(httpEnabled: boolean, httpsEnabled: b
     requestHook: (span, request) => {
       try {
         const req = request as unknown as Record<string, unknown>
+        ;(req as any).__lynktraceServerSpan = span
         ;(req as any).__pulseServerSpan = span
         const socket = req.socket as Record<string, unknown> | null | undefined
         if (socket && (socket.destroyed === true || socket.writable === false)) {
+          span.setAttribute('lynktrace.http.socket_state', 'destroyed')
           span.setAttribute('pulse.http.socket_state', 'destroyed')
         }
 
@@ -304,7 +451,7 @@ function createHttpInstrumentationInstance(httpEnabled: boolean, httpsEnabled: b
             const originalEnd = (span as any).end.bind(span)
             let ended = false
 
-            ;(span as any).end = function pulseInterceptedRootSpanEnd(this: typeof span, ...args: unknown[]) {
+            ;(span as any).end = function lynktraceInterceptedRootSpanEnd(this: typeof span, ...args: unknown[]) {
               if (ended) return
               const aggregator = getTraceAggregator()
               const activeCount = aggregator.getActiveSpanCount(traceId)
@@ -338,6 +485,7 @@ function createHttpInstrumentationInstance(httpEnabled: boolean, httpsEnabled: b
       try {
         const res = response as unknown as Record<string, unknown>
         if (res.statusCode == null) {
+          span.setAttribute('lynktrace.http.incomplete_response', true)
           span.setAttribute('pulse.http.incomplete_response', true)
         }
       } catch {
@@ -350,18 +498,20 @@ function createHttpInstrumentationInstance(httpEnabled: boolean, httpsEnabled: b
 function createUndiciInstrumentationInstance(): UndiciInstrumentation {
   return new UndiciInstrumentation({
     ignoreRequestHook: (request: unknown) => {
-      if (context.active().getValue(SUPPRESS_INNER_HTTP) === true) return true
+      const activeCtx = context.active()
+      if (activeCtx.getValue(SUPPRESS_INNER_HTTP_LYNKTRACE) === true || activeCtx.getValue(SUPPRESS_INNER_HTTP) === true) return true
       if (!client.initialized) return false
       try {
         const reqCheck = request as { headers?: Record<string, string | string[]> | string[] }
         if (reqCheck.headers) {
           if (Array.isArray(reqCheck.headers)) {
             for (let i = 0; i < reqCheck.headers.length; i += 2) {
-              if (reqCheck.headers[i]?.toLowerCase() === 'x-pulse-internal' && reqCheck.headers[i + 1] === '1') {
+              const h = reqCheck.headers[i]?.toLowerCase()
+              if ((h === 'x-lynktrace-internal' || h === 'x-pulse-internal') && reqCheck.headers[i + 1] === '1') {
                 return true
               }
             }
-          } else if (reqCheck.headers['x-pulse-internal'] === '1') {
+          } else if (reqCheck.headers['x-lynktrace-internal'] === '1' || reqCheck.headers['x-pulse-internal'] === '1') {
             return true
           }
         }
@@ -394,17 +544,21 @@ function createUndiciInstrumentationInstance(): UndiciInstrumentation {
  */
 export function registerAutoInstrumentations(): void {
   const g = getGlobalState()
-  if (g[INSTRUMENTATION_GUARD] && !g[BOOTSTRAP_GUARD]) return
+  const isGuarded = (g[INSTRUMENTATION_GUARD] || g[INSTRUMENTATION_GUARD_LEGACY]) && !(g[BOOTSTRAP_GUARD] || g[BOOTSTRAP_GUARD_LEGACY])
+  if (isGuarded) return
 
   const logger = getLogger()
   const resolved = resolveInstrumentationOptions()
   const activeTracerProvider = trace.getTracerProvider()
 
   // ─── Case 1: Upgrading from bootstrap hooks (Preserve patches in-place) ──
-  if (g[BOOTSTRAP_GUARD] && g[ACTIVE_REGISTRY]) {
+  const isBootstrap = (g[BOOTSTRAP_GUARD] || g[BOOTSTRAP_GUARD_LEGACY]) && (g[ACTIVE_REGISTRY] || g[ACTIVE_REGISTRY_LEGACY])
+  if (isBootstrap) {
     delete g[BOOTSTRAP_GUARD]
+    delete g[BOOTSTRAP_GUARD_LEGACY]
     g[INSTRUMENTATION_GUARD] = true
-    const registry = g[ACTIVE_REGISTRY]
+    g[INSTRUMENTATION_GUARD_LEGACY] = true
+    const registry = g[ACTIVE_REGISTRY] ?? g[ACTIVE_REGISTRY_LEGACY]!
 
     for (const [name, inst] of Object.entries(registry)) {
       if (!inst) continue
@@ -498,8 +652,11 @@ export function registerAutoInstrumentations(): void {
 
   // ─── Case 2: Standalone init (Bootstrap was not run) ──────────────────────
   g[INSTRUMENTATION_GUARD] = true
+  g[INSTRUMENTATION_GUARD_LEGACY] = true
   delete g[BOOTSTRAP_GUARD]
+  delete g[BOOTSTRAP_GUARD_LEGACY]
   g[TEARDOWN_REGISTRY] = []
+  g[TEARDOWN_REGISTRY_LEGACY] = g[TEARDOWN_REGISTRY]
 
   try {
     registerEsmLoaderHooks()
@@ -603,16 +760,71 @@ export function registerAutoInstrumentations(): void {
     resolved.captureConfig
   ))
 
+  if (resolved.dynamodb) {
+    safeRegister('dynamodb', () => createDynamoDBInstrumentation(true, resolved.dynamodbConfig, resolved.captureConfig))
+  }
+  if (resolved.cassandra) {
+    safeRegister('cassandra', () => createCassandraInstrumentation(true, resolved.cassandraConfig, resolved.captureConfig))
+  }
+  if (resolved.elasticsearch) {
+    safeRegister('elasticsearch', () => createElasticsearchInstrumentation(true, resolved.elasticsearchConfig, resolved.captureConfig))
+  }
+  if (resolved.mssql) {
+    safeRegister('mssql', () => createMSSQLInstrumentation(true, resolved.mssqlConfig, resolved.captureConfig))
+  }
+  if (resolved.sqlite) {
+    safeRegister('sqlite', () => createSQLiteInstrumentation(true, resolved.sqliteConfig, resolved.captureConfig))
+  }
+  if (resolved.typeorm) {
+    safeRegister('typeorm', () => createTypeORMInstrumentation(true, resolved.typeormConfig, resolved.captureConfig))
+  }
+  if (resolved.drizzle) {
+    safeRegister('drizzle', () => createDrizzleInstrumentation(true, resolved.drizzleConfig, resolved.captureConfig))
+  }
+  if (resolved.mikroorm) {
+    safeRegister('mikroorm', () => createMikroORMInstrumentation(true))
+  }
+  if (resolved.sequelize) {
+    safeRegister('sequelize', () => createSequelizeInstrumentation(true))
+  }
+  if (resolved.knex) {
+    safeRegister('knex', () => createKnexInstrumentation(true))
+  }
+  if (resolved.kafkajs) {
+    safeRegister('kafkajs', () => createKafkaInstrumentation(true, resolved.kafkaConfig, resolved.captureConfig))
+  }
+  if (resolved.amqplib) {
+    safeRegister('amqplib', () => createAMQPInstrumentation(true, resolved.amqpConfig, resolved.captureConfig))
+  }
+  if (resolved.sqs || resolved.sns) {
+    safeRegister('sqs_sns', () => createSqsSnsInstrumentation(resolved.sqs, resolved.sns))
+  }
+  if (resolved.pubsub) {
+    safeRegister('pubsub', () => createPubSubInstrumentation(true))
+  }
+  if (resolved.grpc) {
+    safeRegister('grpc', () => createGrpcInstrumentation(true))
+  }
+  if (resolved.nestjs) {
+    safeRegister('nestjs', () => createNestJSInstrumentation(true))
+  }
+  if (resolved.dns) {
+    safeRegister('dns', () => createDNSInstrumentation(true))
+  }
+
   g[ACTIVE_REGISTRY] = registry
+  g[ACTIVE_REGISTRY_LEGACY] = registry
   const otelInstrumentations = Object.values(registry).filter(
     (inst): inst is any => Boolean(inst && typeof (inst as any).setTracerProvider === 'function')
   )
   if (otelInstrumentations.length > 0) {
     try {
-      g[UNREGISTER_FN] = registerInstrumentations({
+      const unreg = registerInstrumentations({
         instrumentations: otelInstrumentations,
         tracerProvider: activeTracerProvider,
       })
+      g[UNREGISTER_FN] = unreg
+      g[UNREGISTER_FN_LEGACY] = unreg
     } catch (err) {
       logger.debug('registerInstrumentations threw during auto-instrumentation', { error: String(err) })
     }
@@ -643,7 +855,7 @@ export function registerAutoInstrumentations(): void {
 /**
  * Install safe module-load hooks as soon as the SDK package is imported.
  *
- * This closes the common ESM/CJS race where application code imports Pulse,
+ * This closes the common ESM/CJS race where application code imports LynkTrace,
  * starts `createSDK()`, and imports DB clients while the one remote-config
  * request is still in flight. The early hooks use privacy-safe defaults and
  * a no-op/proxy tracer until `initTracer()` installs the real provider. Once
@@ -658,14 +870,17 @@ export function registerAutoInstrumentations(): void {
  */
 export function registerBootstrapAutoInstrumentations(): void {
   const g = getGlobalState()
-  if (g[INSTRUMENTATION_GUARD]) return
+  if (g[INSTRUMENTATION_GUARD] || g[INSTRUMENTATION_GUARD_LEGACY]) return
 
   const logger = getLogger()
 
   try {
     g[INSTRUMENTATION_GUARD] = true
+    g[INSTRUMENTATION_GUARD_LEGACY] = true
     g[BOOTSTRAP_GUARD] = true
+    g[BOOTSTRAP_GUARD_LEGACY] = true
     g[TEARDOWN_REGISTRY] = []
+    g[TEARDOWN_REGISTRY_LEGACY] = g[TEARDOWN_REGISTRY]
 
     // Ensure Node.js ESM customization hooks are registered as early as possible
     try {
@@ -720,21 +935,42 @@ export function registerBootstrapAutoInstrumentations(): void {
     safeRegister('mysql2', () => createMySQLInstrumentation(true, { captureQueries: false }, captureConfig))
     safeRegister('nodemailer', () => createNodemailerInstrumentation(true, {}, captureConfig))
 
+    safeRegister('dynamodb', () => createDynamoDBInstrumentation(true, { captureQueries: false, captureParams: false }, captureConfig))
+    safeRegister('cassandra', () => createCassandraInstrumentation(true, { captureQueries: false, captureParams: false }, captureConfig))
+    safeRegister('elasticsearch', () => createElasticsearchInstrumentation(true, { captureQueries: false }, captureConfig))
+    safeRegister('mssql', () => createMSSQLInstrumentation(true, { captureQueries: false, captureParams: false }, captureConfig))
+    safeRegister('sqlite', () => createSQLiteInstrumentation(true, { captureQueries: false, captureParams: false }, captureConfig))
+    safeRegister('typeorm', () => createTypeORMInstrumentation(true, { captureQueries: false, captureParams: false }, captureConfig))
+    safeRegister('drizzle', () => createDrizzleInstrumentation(true, { captureQueries: false, captureParams: false }, captureConfig))
+    safeRegister('mikroorm', () => createMikroORMInstrumentation(true))
+    safeRegister('sequelize', () => createSequelizeInstrumentation(true))
+    safeRegister('knex', () => createKnexInstrumentation(true))
+    safeRegister('kafkajs', () => createKafkaInstrumentation(true, { emitConsumerBatchSpans: true, captureMessageKey: false }, captureConfig))
+    safeRegister('amqplib', () => createAMQPInstrumentation(true, { captureMessageData: false }, captureConfig))
+    safeRegister('sqs_sns', () => createSqsSnsInstrumentation(true, true))
+    safeRegister('pubsub', () => createPubSubInstrumentation(true))
+    safeRegister('grpc', () => createGrpcInstrumentation(true))
+    safeRegister('nestjs', () => createNestJSInstrumentation(true))
+    safeRegister('dns', () => createDNSInstrumentation(false))
+
     const instrumentations = Object.values(registry).filter(
       (inst): inst is any => Boolean(inst && typeof (inst as any).setTracerProvider === 'function')
     )
 
     if (instrumentations.length > 0) {
       try {
-        g[UNREGISTER_FN] = registerInstrumentations({
+        const unreg = registerInstrumentations({
           instrumentations: instrumentations,
         })
+        g[UNREGISTER_FN] = unreg
+        g[UNREGISTER_FN_LEGACY] = unreg
       } catch (err) {
         logger.debug('registerInstrumentations threw during bootstrap', { error: String(err) })
       }
     }
 
     g[ACTIVE_REGISTRY] = registry
+    g[ACTIVE_REGISTRY_LEGACY] = registry
 
     // NOTE: patchEventEmitter() is intentionally NOT called during bootstrap.
     // Global prototype patching must be strictly governed by configuration.
@@ -750,7 +986,9 @@ export function registerBootstrapAutoInstrumentations(): void {
   } catch (outerErr) {
     // Top-level fail-open boundary: never crash application module import (SEC-08)
     delete g[INSTRUMENTATION_GUARD]
+    delete g[INSTRUMENTATION_GUARD_LEGACY]
     delete g[BOOTSTRAP_GUARD]
+    delete g[BOOTSTRAP_GUARD_LEGACY]
     logger.debug('Bootstrap auto-instrumentation failed open', { error: String(outerErr) })
   }
 }
@@ -770,7 +1008,7 @@ export function resetAutoInstrumentations(): void {
   const g = getGlobalState()
   const logger = getLogger()
 
-  const teardowns = g[TEARDOWN_REGISTRY] ?? []
+  const teardowns = g[TEARDOWN_REGISTRY] ?? g[TEARDOWN_REGISTRY_LEGACY] ?? []
   for (const teardown of teardowns) {
     try {
       const result = teardown()
@@ -786,7 +1024,7 @@ export function resetAutoInstrumentations(): void {
     }
   }
 
-  const unregister = g[UNREGISTER_FN]
+  const unregister = g[UNREGISTER_FN] ?? g[UNREGISTER_FN_LEGACY]
   if (typeof unregister === 'function') {
     try {
       unregister()
@@ -796,10 +1034,15 @@ export function resetAutoInstrumentations(): void {
   }
 
   delete g[INSTRUMENTATION_GUARD]
+  delete g[INSTRUMENTATION_GUARD_LEGACY]
   delete g[BOOTSTRAP_GUARD]
+  delete g[BOOTSTRAP_GUARD_LEGACY]
   delete g[TEARDOWN_REGISTRY]
+  delete g[TEARDOWN_REGISTRY_LEGACY]
   delete g[UNREGISTER_FN]
+  delete g[UNREGISTER_FN_LEGACY]
   delete g[ACTIVE_REGISTRY]
+  delete g[ACTIVE_REGISTRY_LEGACY]
   pendingAsyncSetup = null
 
   // Remove the EventEmitter context binding patch so the next register

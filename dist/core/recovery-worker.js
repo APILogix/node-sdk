@@ -9,9 +9,11 @@ import { eventQueue } from '../transport/queue.js';
 export function getDefaultBaseDelayMs() {
     if (typeof process !== 'undefined' && process.env) {
         const isProduction = process.env['NODE_ENV'] === 'production' ||
+            process.env['LYNKTRACE_ENV'] === 'production' ||
             process.env['PULSE_ENV'] === 'production';
-        if (!isProduction && process.env['PULSE_TEST_RECOVERY_DELAY_MS']) {
-            const parsed = Number(process.env['PULSE_TEST_RECOVERY_DELAY_MS']);
+        const testDelay = process.env['LYNKTRACE_TEST_RECOVERY_DELAY_MS'] ?? process.env['PULSE_TEST_RECOVERY_DELAY_MS'];
+        if (!isProduction && testDelay) {
+            const parsed = Number(testDelay);
             if (Number.isFinite(parsed) && parsed > 0) {
                 return Math.max(10, Math.min(Math.round(parsed), 60_000));
             }

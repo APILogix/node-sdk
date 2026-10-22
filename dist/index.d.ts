@@ -1,5 +1,5 @@
 /**
- * @vikasbaplawat1/pulse-sdk — Enterprise observability SDK for Node.js.
+ * @lynktrace/node — Enterprise observability SDK for Node.js.
  *
  * This file is the public API contract. Every symbol exported here is part
  * of the supported surface and follows semver.
@@ -9,14 +9,14 @@
  * are deliberately NOT exported from this module. They are available via
  * the explicit, no-stability-guarantee sub-path:
  *
- *     import { KillswitchEngine } from '@vikasbaplawat1/pulse-sdk/internals'
+ *     import { KillswitchEngine } from '@lynktrace/node/internals'
  *
  * Typical usage:
  *
- *     import { init, captureException, pulseMiddleware } from '@lynktrace/node'
+ *     import { init, captureException, lynktraceMiddleware } from '@lynktrace/node'
  *
- *     await init({ apiKey: process.env.PULSE_API_KEY! })
- *     app.use(pulseMiddleware())
+ *     await init({ apiKey: process.env.LYNKTRACE_API_KEY ?? process.env.PULSE_API_KEY! })
+ *     app.use(lynktraceMiddleware())
  */
 export { init } from './core/init.js';
 export { BACKEND_BASE_URL } from './constants/defaults.js';
@@ -33,8 +33,8 @@ import { setUser, setTag, setTags, setContext } from './core/scope.js';
 import { startSpan, withSpan, withSpanSync, withBackgroundSpan, startBackgroundSpan, trace, wrap } from './tracing/tracer.js';
 import { incrementCounter, setGauge, recordHistogram, addUpDownCounter } from './capture/captureMetric.js';
 import { startDbSpan, withDbSpan, withDbSpanSync } from './tracing/db-span.js';
-import { pulseMiddleware, expressErrorHandler } from './instrumentation/express.js';
-import { pulseFastifyPlugin } from './instrumentation/fastify.js';
+import { lynktraceMiddleware, expressErrorHandler } from './instrumentation/express.js';
+import { lynktraceFastifyPlugin } from './instrumentation/fastify.js';
 import { wrapHandler } from './serverless/index.js';
 export { flush, shutdown, emergencyFlush } from './core/lifecycle.js';
 export { wrapHandler } from './serverless/index.js';
@@ -61,21 +61,22 @@ export { startSpan, withSpan, withSpanSync, withBackgroundSpan, startBackgroundS
 export { startDbSpan, withDbSpan, withDbSpanSync } from './tracing/db-span.js';
 export { extractTraceContext, injectTraceContext } from './tracing/context-propagation.js';
 export type { DbSpanOptions, DbSystem } from './tracing/db-span.js';
+export { LynkTraceSpan, PulseSpan } from './tracing/span.js';
 export type { SpanStatus, SpanKindName, SpanOptions, SpanLink } from './tracing/span.js';
 export type { BackgroundSpanOptions } from './tracing/tracer.js';
-export { pulseMiddleware, expressErrorHandler, instrumentExpress } from './instrumentation/express.js';
-export type { PulseExpressOptions } from './instrumentation/express.js';
-export { pulseFastifyPlugin } from './instrumentation/fastify.js';
-export type { PulseFastifyOptions } from './instrumentation/fastify.js';
+export { lynktraceMiddleware, pulseMiddleware, lynktraceExpressErrorHandler, expressErrorHandler, instrumentExpress } from './instrumentation/express.js';
+export type { LynkTraceExpressOptions, PulseExpressOptions } from './instrumentation/express.js';
+export { lynktraceFastifyPlugin, pulseFastifyPlugin } from './instrumentation/fastify.js';
+export type { LynkTraceFastifyOptions, PulseFastifyOptions } from './instrumentation/fastify.js';
 export { registerAutoInstrumentations } from './instrumentation/auto-instrument.js';
 export { registerEsmLoaderHooks } from './instrumentation/esm-loader.js';
 export { createGraphQLInstrumentation } from './instrumentation/graphql.js';
 export type { GraphQLInstrumentationOptions } from './instrumentation/graphql.js';
-export { createPrismaInstrumentation, pulsePrismaExtension, instrumentPrismaClientInstance } from './instrumentation/prisma.js';
+export { createPrismaInstrumentation, lynktracePrismaExtension, pulsePrismaExtension, instrumentPrismaClientInstance } from './instrumentation/prisma.js';
 export type { PrismaInstrumentationOptions } from './instrumentation/prisma.js';
 export { createMongoDBInstrumentation } from './instrumentation/mongodb.js';
 export type { MongoDBInstrumentationOptions } from './instrumentation/mongodb.js';
-export { createMongooseInstrumentation, MongooseInstrumentation } from './instrumentation/mongoose.js';
+export { createMongooseInstrumentation, MongooseInstrumentation, LynkTraceMongooseInstrumentation } from './instrumentation/mongoose.js';
 export type { MongooseInstrumentationOptions } from './instrumentation/mongoose.js';
 export { createRedisInstrumentation } from './instrumentation/redis.js';
 export type { RedisInstrumentationOptions } from './instrumentation/redis.js';
@@ -91,6 +92,8 @@ export { patchEventEmitter, unpatchEventEmitter } from './instrumentation/event-
 export { installHttpLifecycleGuard, uninstallHttpLifecycleGuard, isOtelInstrumentationError } from './instrumentation/http-lifecycle-guard.js';
 export { computeExclusiveDuration, SpanDurationTracker, spanDurationTracker } from './tracing/span-duration.js';
 export type { SpanInterval, DurationBreakdown } from './tracing/span-duration.js';
+export { LynkTraceDrizzleLogger, PulseDrizzleLogger, createDrizzleInstrumentation } from './instrumentation/drizzle.js';
+export type { DrizzleInstrumentationOptions } from './instrumentation/drizzle.js';
 export { setLogger, setDebugMode, setLogLevel } from './utils/logger.js';
 export type { Logger, LogFormat } from './utils/logger.js';
 export type { SDKInitOptions, RemoteConfigResponse, EntitlementsConfig, OfflineQueueConfig, OfflineQueueInitOptions, } from './types/config.js';
@@ -172,8 +175,52 @@ export declare function getHealth(): {
     };
 };
 /**
- * Canonical Pulse SDK facade namespace.
- * Enables both `import { Pulse } from '@lynktrace/node'` and `import Pulse from '@lynktrace/node'`.
+ * Canonical LynkTrace SDK facade namespace.
+ * Enables both `import { LynkTrace } from '@lynktrace/node'` and `import LynkTrace from '@lynktrace/node'`.
+ */
+export declare const LynkTrace: {
+    init: typeof init;
+    flush: typeof flush;
+    shutdown: typeof shutdown;
+    emergencyFlush: typeof emergencyFlush;
+    wrapHandler: typeof wrapHandler;
+    captureException: typeof captureException;
+    captureRequest: typeof captureRequest;
+    captureMessage: typeof captureMessage;
+    captureEvent: typeof captureEvent;
+    captureMetric: typeof captureMetric;
+    captureLog: typeof captureLog;
+    incrementCounter: typeof incrementCounter;
+    setGauge: typeof setGauge;
+    recordHistogram: typeof recordHistogram;
+    addUpDownCounter: typeof addUpDownCounter;
+    addBreadcrumb: typeof addBreadcrumb;
+    setUser: typeof setUser;
+    setTag: typeof setTag;
+    setTags: typeof setTags;
+    setContext: typeof setContext;
+    startSpan: typeof startSpan;
+    withSpan: typeof withSpan;
+    withSpanSync: typeof withSpanSync;
+    withBackgroundSpan: typeof withBackgroundSpan;
+    startBackgroundSpan: typeof startBackgroundSpan;
+    trace: typeof trace;
+    wrap: typeof wrap;
+    startDbSpan: typeof startDbSpan;
+    withDbSpan: typeof withDbSpan;
+    withDbSpanSync: typeof withDbSpanSync;
+    getTraceId: typeof getTraceId;
+    getSpanId: typeof getSpanId;
+    getHealth: typeof getHealth;
+    lynktraceMiddleware: typeof lynktraceMiddleware;
+    pulseMiddleware: typeof lynktraceMiddleware;
+    expressErrorHandler: typeof expressErrorHandler;
+    lynktraceExpressErrorHandler: typeof expressErrorHandler;
+    lynktraceFastifyPlugin: typeof lynktraceFastifyPlugin;
+    pulseFastifyPlugin: typeof lynktraceFastifyPlugin;
+};
+/**
+ * Backward compatibility alias for the LynkTrace facade namespace.
  */
 export declare const Pulse: {
     init: typeof init;
@@ -209,8 +256,11 @@ export declare const Pulse: {
     getTraceId: typeof getTraceId;
     getSpanId: typeof getSpanId;
     getHealth: typeof getHealth;
-    pulseMiddleware: typeof pulseMiddleware;
+    lynktraceMiddleware: typeof lynktraceMiddleware;
+    pulseMiddleware: typeof lynktraceMiddleware;
     expressErrorHandler: typeof expressErrorHandler;
-    pulseFastifyPlugin: typeof pulseFastifyPlugin;
+    lynktraceExpressErrorHandler: typeof expressErrorHandler;
+    lynktraceFastifyPlugin: typeof lynktraceFastifyPlugin;
+    pulseFastifyPlugin: typeof lynktraceFastifyPlugin;
 };
-export default Pulse;
+export default LynkTrace;

@@ -536,6 +536,7 @@ export class TraceAggregator {
                 tailSampled: isTailPromoted,
                 hasError,
                 isSlow,
+                __lynktraceInternal: true,
                 __pulseInternal: true,
             };
             // If this trace was unsampled at head time but promoted by tail-sampling,
@@ -543,7 +544,7 @@ export class TraceAggregator {
             if (isTailPromoted) {
                 for (const span of spans) {
                     try {
-                        const spanToEmit = { ...span, tailSampled: true, __pulseInternal: true };
+                        const spanToEmit = { ...span, tailSampled: true, __lynktraceInternal: true, __pulseInternal: true };
                         processEvent(spanToEmit);
                     }
                     catch { }

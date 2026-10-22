@@ -38,7 +38,8 @@ import { extractTraceContext } from '../tracing/context-propagation.js';
 import { startSpan } from '../tracing/tracer.js';
 import { getTraceAggregator } from '../tracing/trace-aggregator.js';
 import { captureBodySnapshot, evaluateCaptureGate, headerString, matchesIgnoredPath, resolveClientIp, scrubHeaders, scrubQuery, } from './request-capture-utils.js';
-const LAYER_PATCH_GUARD = Symbol.for('pulse-sdk.express.layer-patched');
+const LAYER_PATCH_GUARD = Symbol.for('lynktrace.express.layer-patched');
+const LEGACY_LAYER_PATCH_GUARD = Symbol.for('pulse-sdk.express.layer-patched');
 function isLayerIgnored(name, ignoreMiddlewares) {
     if (!ignoreMiddlewares || ignoreMiddlewares.length === 0)
         return false;
@@ -57,7 +58,7 @@ function isLayerIgnored(name, ignoreMiddlewares) {
 export function ensureExpressLayersInstrumented(app, minDurationMs = 2, ignoreMiddlewares) {
     try {
         const globalState = globalThis;
-        if (globalState[LAYER_PATCH_GUARD])
+        if (globalState[LAYER_PATCH_GUARD] || globalState[LEGACY_LAYER_PATCH_GUARD])
             return;
         const router = app?.router || app?._router;
         if (!router || !Array.isArray(router.stack) || router.stack.length === 0)
@@ -77,10 +78,11 @@ export function ensureExpressLayersInstrumented(app, minDurationMs = 2, ignoreMi
         const originalHandle = layerProto[handleMethod];
         if (typeof originalHandle !== 'function')
             return;
-        layerProto[handleMethod] = function pulseLayerHandle(req, res, next) {
+        layerProto[handleMethod] = function lynktraceLayerHandle(req, res, next) {
             try {
                 const layerName = this?.name || (this?.handle && this.handle.name) || '<anonymous>';
-                if (layerName === 'pulseExpressMiddleware' ||
+                if (layerName === 'lynktraceExpressMiddleware' ||
+                    layerName === 'pulseExpressMiddleware' ||
                     layerName === 'expressInit' ||
                     layerName === 'query' ||
                     layerName === 'router' ||
@@ -160,6 +162,7 @@ export function ensureExpressLayersInstrumented(app, minDurationMs = 2, ignoreMi
             }
         };
         globalState[LAYER_PATCH_GUARD] = true;
+        globalState[LEGACY_LAYER_PATCH_GUARD] = true;
     }
     catch {
         // Fail-open: layer instrumentation failure should never break host app
@@ -171,8 +174,8 @@ export function ensureExpressLayersInstrumented(app, minDurationMs = 2, ignoreMi
 export function instrumentExpress(app, options) {
     ensureExpressLayersInstrumented(app, options?.minMiddlewareDurationMs ?? 2, options?.ignoreMiddlewares);
 }
-export function pulseMiddleware(options = {}) {
-    return function pulseExpressMiddleware(req, res, next) {
+export function lynktraceMiddleware(options = {}) {
+    return function lynktraceExpressMiddleware(req, res, next) {
         let nextCalled = false;
         const safeNext = (err) => {
             if (!nextCalled) {
@@ -184,7 +187,7 @@ export function pulseMiddleware(options = {}) {
             // Resolve the path *once*, defensively. Express attaches `path` only after
             // routing, so callers placing the middleware before any routes still get
             // a usable value via originalUrl/url.
-            if (options.instrumentMiddleware && req?.app) {
+            if (options.instrumentMiddleware !== false && req?.app) {
                 try {
                     ensureExpressLayersInstrumented(req.app, options.minMiddlewareDurationMs ?? 2, options.ignoreMiddlewares);
                 }
@@ -277,7 +280,7 @@ export function pulseMiddleware(options = {}) {
                 httpInstrumentationEnabled = Boolean(config?.instrumentation?.http);
             }
             catch { }
-            let activeSpan = trace.getActiveSpan() ?? req?.__pulseServerSpan;
+            let activeSpan = trace.getActiveSpan() ?? req?.__lynktraceServerSpan ?? req?.__pulseServerSpan;
             let createdServerSpan = false;
             let isTracingActive = false;
             try {
@@ -355,15 +358,23 @@ export function pulseMiddleware(options = {}) {
                                     const enrichmentAttrs = {
                                         'http.route': route,
                                         'http.status_code': statusCode,
+                                        'lynktrace.request_id': requestId,
                                         'pulse.request_id': requestId,
+                                        'lynktrace.latency_ms': latencyMs,
                                         'pulse.latency_ms': latencyMs,
                                     };
-                                    if (tenantId)
+                                    if (tenantId) {
+                                        enrichmentAttrs['lynktrace.tenant_id'] = tenantId;
                                         enrichmentAttrs['pulse.tenant_id'] = tenantId;
-                                    if (userId)
+                                    }
+                                    if (userId) {
+                                        enrichmentAttrs['lynktrace.user_id'] = userId;
                                         enrichmentAttrs['pulse.user_id'] = userId;
-                                    if (sessionId)
+                                    }
+                                    if (sessionId) {
+                                        enrichmentAttrs['lynktrace.session_id'] = sessionId;
                                         enrichmentAttrs['pulse.session_id'] = sessionId;
+                                    }
                                     if (clientIp)
                                         enrichmentAttrs['http.client_ip'] = clientIp;
                                     if (userAgent)
@@ -449,7 +460,7 @@ export function pulseMiddleware(options = {}) {
                                         });
                                     }
                                     catch (err) {
-                                        getLogger().error('pulseMiddleware completion failed', { error: err });
+                                        getLogger().error('lynktraceMiddleware completion failed', { error: err });
                                     }
                                 });
                             });
@@ -477,7 +488,7 @@ export function pulseMiddleware(options = {}) {
                                             }
                                         }
                                         catch (err) {
-                                            getLogger().error('pulseMiddleware error capture failed', { error: err });
+                                            getLogger().error('lynktraceMiddleware error capture failed', { error: err });
                                         }
                                     });
                                 });
@@ -505,7 +516,7 @@ export function pulseMiddleware(options = {}) {
                                         }
                                     }
                                     catch (captureErr) {
-                                        getLogger().error('pulseMiddleware next(err) capture failed', { error: captureErr });
+                                        getLogger().error('lynktraceMiddleware next(err) capture failed', { error: captureErr });
                                     }
                                 });
                             }
@@ -532,26 +543,27 @@ export function pulseMiddleware(options = {}) {
         }
         catch (unhandledErr) {
             try {
-                getLogger().error('pulseMiddleware unhandled exception', { error: unhandledErr });
+                getLogger().error('lynktraceMiddleware unhandled exception', { error: unhandledErr });
             }
             catch { }
             safeNext();
         }
     };
 }
+export const pulseMiddleware = lynktraceMiddleware;
 /**
  * Express error-handling middleware. Place after all routes and before custom error responses.
  * Automatically captures any error passed to next(err) or thrown in route handlers.
  *
  * @example
  * ```ts
- * app.use(pulseMiddleware())
+ * app.use(lynktraceMiddleware())
  * // ... routes ...
  * app.use(expressErrorHandler())
  * ```
  */
 export function expressErrorHandler() {
-    return function pulseExpressErrorHandler(err, req, res, next) {
+    return function lynktraceExpressErrorHandler(err, req, res, next) {
         try {
             if (err) {
                 try {
@@ -587,6 +599,8 @@ export function expressErrorHandler() {
         }
     };
 }
+export const lynktraceExpressErrorHandler = expressErrorHandler;
+export const pulseExpressErrorHandler = expressErrorHandler;
 // ─── Helpers ────────────────────────────────────────────────────────────────
 function normalizeRoute(req) {
     try {

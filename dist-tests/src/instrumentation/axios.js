@@ -1,6 +1,6 @@
 /**
  * Axios Instrumentation — OpenTelemetry-compatible HTTP client instrumentation
- * wrapped with Pulse SDK guards and remote config support.
+ * wrapped with LynkTrace SDK guards and remote config support.
  *
  * Axios is an HTTP client that wraps node:http/https. This instrumentation
  * ensures axios requests are properly traced with axios-specific attributes.
@@ -40,8 +40,9 @@ function isStreamOrBinary(data) {
         return true;
     return typeof data.pipe === 'function';
 }
+export const SUPPRESS_INNER_HTTP_LYNKTRACE = createContextKey('lynktrace.suppress_inner_http');
 export const SUPPRESS_INNER_HTTP = createContextKey('pulse.suppress_inner_http');
-const AXIOS_TRACER = trace.getTracer('@pulse-sdk/axios', '1.0.0');
+const AXIOS_TRACER = trace.getTracer('@lynktrace/axios', '1.0.0');
 export function createAxiosInstrumentation(enabled, mergedOptions, captureConfig) {
     if (!enabled) {
         return null;
@@ -118,7 +119,10 @@ export function createAxiosInstrumentation(enabled, mergedOptions, captureConfig
                             // Fail-open
                         }
                     }
-                    const activeContext = trace.setSpan(context.active(), span).setValue(SUPPRESS_INNER_HTTP, true);
+                    const activeContext = trace
+                        .setSpan(context.active(), span)
+                        .setValue(SUPPRESS_INNER_HTTP_LYNKTRACE, true)
+                        .setValue(SUPPRESS_INNER_HTTP, true);
                     // W3C Trace Context Propagation:
                     // Inject traceparent and tracestate into outbound Axios request headers using the active OTel context.
                     // Respect existing headers and do not overwrite an explicitly supplied valid propagation header.

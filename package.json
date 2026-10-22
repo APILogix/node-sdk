@@ -1,6 +1,6 @@
 {
     "name": "@lynktrace/node",
-    "version": "0.1.0-beta.1",
+    "version": "0.1.0-beta.2",
     "description": "Enterprise-grade observability SDK with error tracking, tracing, metrics, and breadcrumbs",
     "main": "dist/index.js",
     "types": "dist/index.d.ts",

@@ -82,6 +82,7 @@ export interface TraceDocument {
   readonly hasError?: boolean | undefined
   readonly isSlow?: boolean | undefined
   /** Internal marker for event pipeline routing during shutdown flush. */
+  readonly __lynktraceInternal?: true | undefined
   readonly __pulseInternal: true
 }
 
@@ -688,6 +689,7 @@ export class TraceAggregator {
         tailSampled: isTailPromoted,
         hasError,
         isSlow,
+        __lynktraceInternal: true,
         __pulseInternal: true,
       }
 
@@ -696,7 +698,7 @@ export class TraceAggregator {
       if (isTailPromoted) {
         for (const span of spans) {
           try {
-            const spanToEmit = { ...span, tailSampled: true, __pulseInternal: true }
+            const spanToEmit = { ...span, tailSampled: true, __lynktraceInternal: true, __pulseInternal: true }
             processEvent(spanToEmit as unknown as import('../types/event.js').SDKEvent)
           } catch {}
         }

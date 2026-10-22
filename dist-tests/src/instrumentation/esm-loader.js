@@ -18,7 +18,8 @@ import * as nodeModule from 'node:module';
 // @ts-expect-error - import-in-the-middle does not ship TypeScript declaration for register-hooks.mjs
 import { register as registerSyncHooks, supportsSyncHooks } from 'import-in-the-middle/register-hooks.mjs';
 import { getLogger } from '../utils/logger.js';
-const ESM_HOOKS_APPLIED = Symbol.for('pulse-sdk.esm-loader-hooks.applied');
+const ESM_HOOKS_APPLIED = Symbol.for('lynktrace.esm-loader-hooks.applied');
+const ESM_HOOKS_APPLIED_LEGACY = Symbol.for('pulse-sdk.esm-loader-hooks.applied');
 /**
  * Register Node.js ESM loader hooks for import-in-the-middle.
  *
@@ -29,7 +30,7 @@ const ESM_HOOKS_APPLIED = Symbol.for('pulse-sdk.esm-loader-hooks.applied');
  */
 export function registerEsmLoaderHooks() {
     const g = globalThis;
-    if (g[ESM_HOOKS_APPLIED]) {
+    if (g[ESM_HOOKS_APPLIED] || g[ESM_HOOKS_APPLIED_LEGACY]) {
         return true;
     }
     const logger = getLogger();
@@ -38,6 +39,7 @@ export function registerEsmLoaderHooks() {
         if (typeof supportsSyncHooks === 'function' && supportsSyncHooks()) {
             registerSyncHooks();
             g[ESM_HOOKS_APPLIED] = true;
+            g[ESM_HOOKS_APPLIED_LEGACY] = true;
             logger.debug('Registered synchronous in-thread ESM loader hooks via import-in-the-middle');
             return true;
         }
@@ -46,6 +48,7 @@ export function registerEsmLoaderHooks() {
         if (typeof registerFn === 'function') {
             registerFn('import-in-the-middle/hook.mjs', import.meta.url);
             g[ESM_HOOKS_APPLIED] = true;
+            g[ESM_HOOKS_APPLIED_LEGACY] = true;
             logger.debug('Registered asynchronous ESM loader hook via module.register');
             return true;
         }
@@ -64,5 +67,5 @@ export function registerEsmLoaderHooks() {
  */
 export function isEsmLoaderHookRegistered() {
     const g = globalThis;
-    return Boolean(g[ESM_HOOKS_APPLIED]);
+    return Boolean(g[ESM_HOOKS_APPLIED] || g[ESM_HOOKS_APPLIED_LEGACY]);
 }

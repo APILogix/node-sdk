@@ -1,14 +1,28 @@
 import { createHash } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { assertRemoteConfig } from '../core/config-validator.js';
 import { getLogger } from '../utils/logger.js';
 function getCacheDir() {
-    return join(process.cwd(), '.pulse');
+    const lynkDir = join(process.cwd(), '.lynktrace');
+    const pulseDir = join(process.cwd(), '.pulse');
+    try {
+        if (existsSync(lynkDir))
+            return lynkDir;
+        if (existsSync(pulseDir))
+            return pulseDir;
+    }
+    catch { }
+    return lynkDir;
 }
 function getCacheFilePath(apiKey) {
     const hash = createHash('sha256').update(apiKey).digest('hex');
     return join(getCacheDir(), `config-cache-${hash}.json`);
+}
+function getLegacyCacheFilePath(apiKey) {
+    const hash = createHash('sha256').update(apiKey).digest('hex');
+    return join(join(process.cwd(), '.pulse'), `config-cache-${hash}.json`);
 }
 /**
  * @deprecated Disk-based configuration caching has been intentionally removed
@@ -51,8 +65,15 @@ export async function loadConfigCache(apiKey) {
     if (!apiKey)
         return null;
     try {
-        const filePath = getCacheFilePath(apiKey);
-        const raw = await readFile(filePath, 'utf8');
+        let filePath = getCacheFilePath(apiKey);
+        let raw = null;
+        try {
+            raw = await readFile(filePath, 'utf8');
+        }
+        catch {
+            filePath = getLegacyCacheFilePath(apiKey);
+            raw = await readFile(filePath, 'utf8');
+        }
         const parsed = JSON.parse(raw);
         if (!parsed || parsed.version !== 1 || !parsed.config) {
             return null;
@@ -83,10 +104,11 @@ export async function clearConfigCache(apiKey) {
     if (!apiKey)
         return;
     try {
-        const filePath = getCacheFilePath(apiKey);
-        await unlink(filePath);
+        await unlink(getCacheFilePath(apiKey));
     }
-    catch {
-        // Ignore if file doesn't exist
+    catch { }
+    try {
+        await unlink(getLegacyCacheFilePath(apiKey));
     }
+    catch { }
 }

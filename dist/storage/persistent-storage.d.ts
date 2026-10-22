@@ -164,7 +164,7 @@ declare class PersistentStorage {
      * Returns events that are still valid (within TTL).
      *
      * Multi-process / cluster safe:
-     * 1. Inspects the directory for files belonging to this prefix.
+     * 1. Inspects the directory for files belonging to this prefix (or legacy pulse-events).
      * 2. Replays legacy file (pulse-events.ndjson / pulse-events-<hash>.ndjson) if present.
      * 3. Replays files from dead processes (PIDs that are no longer alive).
      * 4. Exclusively claims candidate files via atomic rename before reading to

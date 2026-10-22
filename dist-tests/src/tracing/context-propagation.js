@@ -14,6 +14,9 @@ import { TRACING_DEFAULTS } from '../constants/internal-defaults.js';
 // ─── W3C Header Constants ───────────────────────────────────────────────────
 const TRACEPARENT_HEADER = 'traceparent';
 const TRACESTATE_HEADER = 'tracestate';
+const LYNKTRACE_TRACE_ID_HEADER = 'x-lynktrace-trace-id';
+const LYNKTRACE_SPAN_ID_HEADER = 'x-lynktrace-span-id';
+const LYNKTRACE_SAMPLED_HEADER = 'x-lynktrace-sampled';
 const PULSE_TRACE_ID_HEADER = 'x-pulse-trace-id';
 const PULSE_SPAN_ID_HEADER = 'x-pulse-span-id';
 const PULSE_SAMPLED_HEADER = 'x-pulse-sampled';
@@ -85,22 +88,25 @@ export function extractTraceContext(headers) {
             }
         }
         if (!spanContext || !trace.isSpanContextValid(spanContext)) {
-            const pulseTraceId = headerGetter.get(headers, PULSE_TRACE_ID_HEADER);
-            const pulseSpanId = headerGetter.get(headers, PULSE_SPAN_ID_HEADER);
-            if (typeof pulseTraceId === 'string' &&
-                typeof pulseSpanId === 'string' &&
-                /^[0-9a-f]{32}$/i.test(pulseTraceId) &&
-                /^[0-9a-f]{16}$/i.test(pulseSpanId)) {
-                const pulseSampled = headerGetter.get(headers, PULSE_SAMPLED_HEADER);
-                const traceFlags = pulseSampled === '1' || pulseSampled === 'true' ? 1 : 0;
-                const pulseSpanContext = {
-                    traceId: pulseTraceId.toLowerCase(),
-                    spanId: pulseSpanId.toLowerCase(),
+            const traceIdCandidate = headerGetter.get(headers, LYNKTRACE_TRACE_ID_HEADER)
+                ?? headerGetter.get(headers, PULSE_TRACE_ID_HEADER);
+            const spanIdCandidate = headerGetter.get(headers, LYNKTRACE_SPAN_ID_HEADER)
+                ?? headerGetter.get(headers, PULSE_SPAN_ID_HEADER);
+            if (typeof traceIdCandidate === 'string' &&
+                typeof spanIdCandidate === 'string' &&
+                /^[0-9a-f]{32}$/i.test(traceIdCandidate) &&
+                /^[0-9a-f]{16}$/i.test(spanIdCandidate)) {
+                const sampledCandidate = headerGetter.get(headers, LYNKTRACE_SAMPLED_HEADER)
+                    ?? headerGetter.get(headers, PULSE_SAMPLED_HEADER);
+                const traceFlags = sampledCandidate === '1' || sampledCandidate === 'true' ? 1 : 0;
+                const customSpanContext = {
+                    traceId: traceIdCandidate.toLowerCase(),
+                    spanId: spanIdCandidate.toLowerCase(),
                     traceFlags,
                     isRemote: true,
                 };
-                extracted = trace.setSpanContext(extracted, pulseSpanContext);
-                spanContext = pulseSpanContext;
+                extracted = trace.setSpanContext(extracted, customSpanContext);
+                spanContext = customSpanContext;
             }
         }
         if (spanContext) {
@@ -142,9 +148,12 @@ export function injectTraceContext(headers, ctx) {
                 fallbackW3CPropagator.inject(activeCtx, headers, headerSetter);
             }
         }
-        // Also inject Pulse custom headers for non-OTel consumers
+        // Also inject LynkTrace & Pulse custom headers for non-OTel consumers
         const spanContext = trace.getSpanContext(activeCtx);
         if (spanContext && trace.isSpanContextValid(spanContext)) {
+            headers[LYNKTRACE_TRACE_ID_HEADER] = spanContext.traceId;
+            headers[LYNKTRACE_SPAN_ID_HEADER] = spanContext.spanId;
+            headers[LYNKTRACE_SAMPLED_HEADER] = (spanContext.traceFlags & 1) === 1 ? '1' : '0';
             headers[PULSE_TRACE_ID_HEADER] = spanContext.traceId;
             headers[PULSE_SPAN_ID_HEADER] = spanContext.spanId;
             headers[PULSE_SAMPLED_HEADER] = (spanContext.traceFlags & 1) === 1 ? '1' : '0';
@@ -165,6 +174,9 @@ export function injectTraceContext(headers, ctx) {
 export const TRACE_HEADERS = {
     TRACEPARENT: TRACEPARENT_HEADER,
     TRACESTATE: TRACESTATE_HEADER,
+    LYNKTRACE_TRACE_ID: LYNKTRACE_TRACE_ID_HEADER,
+    LYNKTRACE_SPAN_ID: LYNKTRACE_SPAN_ID_HEADER,
+    LYNKTRACE_SAMPLED: LYNKTRACE_SAMPLED_HEADER,
     PULSE_TRACE_ID: PULSE_TRACE_ID_HEADER,
     PULSE_SPAN_ID: PULSE_SPAN_ID_HEADER,
     PULSE_SAMPLED: PULSE_SAMPLED_HEADER,

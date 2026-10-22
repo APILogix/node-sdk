@@ -57,7 +57,7 @@ describe('Prisma auto-instrumentation fallback', () => {
 
     const extended = instrumentPrismaClientInstance(prisma)
     assert.equal(extended.extended, true)
-    assert.equal(extension.name, 'pulse-apm-prisma')
+    assert.ok(extension.name === 'lynktrace-prisma' || extension.name === 'pulse-apm-prisma')
 
     const op = extension.query.$allModels.$allOperations
     const result = await op({

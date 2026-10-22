@@ -1,15 +1,15 @@
 /**
- * Pulse SDK Tracer — enterprise-grade distributed tracing built on OpenTelemetry.
+ * LynkTrace SDK Tracer — enterprise-grade distributed tracing built on OpenTelemetry.
  *
  * Architecture (v3.0):
- *   PulseTracer → OTel NodeTracerProvider → PipelineSpanExporter → SDK EventPipeline
+ *   LynkTraceTracer → OTel NodeTracerProvider → PipelineSpanExporter → SDK EventPipeline
  *
  * Design principles:
  *   - OTel owns: span lifecycle, context propagation, sampling, instrumentation
  *   - SDK owns: span export → event pipeline, transport, batching, enrichment
- *   - PulseSpan is a THIN wrapper — zero duplicated state
+ *   - LynkTraceSpan is a THIN wrapper — zero duplicated state
  *   - All enrichment (tenant, session, SDK metadata) happens in the exporter,
- *     not in PulseSpan or at span creation time
+ *     not in LynkTraceSpan or at span creation time
  *   - Centralized SDK name/version constants (no hardcoded strings)
  */
 
@@ -55,13 +55,14 @@ import {
     suppressTracing,
 } from '@opentelemetry/core'
 import { TRACING_DEFAULTS } from '../constants/internal-defaults.js'
-import { PulseSpan, type SpanOptions, type SpanLink, type SpanKindName } from './span.js'
+import { LynkTraceSpan, PulseSpan, type SpanOptions, type SpanLink, type SpanKindName } from './span.js'
 import { getLogger } from '../utils/logger.js'
 import { generateId } from '../utils/uuid.js'
 import type { RemoteConfigResponse } from '../types/config.js'
 import { processEvent, drainPendingEventProcessing } from '../core/event-pipeline.js'
 import {
     getRequestContext,
+    LYNKTRACE_CONTEXT_ATTRIBUTES,
     PULSE_CONTEXT_ATTRIBUTES,
     createContextStore,
     withContext,
@@ -83,17 +84,19 @@ let tracer: Tracer | null = null
 let noopTracer: Tracer | null = null
 let initialized = false
 let ownsProvider = false
-const TRACER_PROVIDER_SYMBOL = Symbol.for('pulse-sdk.otel.tracer-provider')
+const TRACER_PROVIDER_SYMBOL = Symbol.for('lynktrace.otel.tracer-provider')
+const LEGACY_TRACER_PROVIDER_SYMBOL = Symbol.for('pulse-sdk.otel.tracer-provider')
+const LYNKTRACE_INTERNAL_CONTEXT_KEY = Symbol.for('lynktrace.internal-context')
 const PULSE_INTERNAL_CONTEXT_KEY = Symbol.for('pulse-sdk.internal-context')
 
 /**
- * Build a non-recording PulseSpan. Used when the tracer is not initialized,
+ * Build a non-recording LynkTraceSpan. Used when the tracer is not initialized,
  * when span creation fails, and when the `customSpans` entitlement is
  * revoked — in every case the caller gets a span object it can safely call
  * `end()` / `setAttribute()` on, but nothing is recorded or exported.
  */
-function createNoopSpan(_name?: string): PulseSpan {
-    return new PulseSpan(otelTrace.wrapSpanContext(INVALID_SPAN_CONTEXT))
+function createNoopSpan(_name?: string): LynkTraceSpan {
+    return new LynkTraceSpan(otelTrace.wrapSpanContext(INVALID_SPAN_CONTEXT))
 }
 
 /**
@@ -153,7 +156,7 @@ class PipelineSpanExporter implements SpanExporter {
 
     export(spans: ReadableSpan[], resultCallback: (result: { code: number; error?: Error }) => void): void {
         const activeCtx = otelContext.active()
-        if (activeCtx.getValue(PULSE_INTERNAL_CONTEXT_KEY)) {
+        if (activeCtx.getValue(LYNKTRACE_INTERNAL_CONTEXT_KEY) || activeCtx.getValue(PULSE_INTERNAL_CONTEXT_KEY)) {
             getLogger().warn('Exporter recursion detected: dropping spans to prevent telemetry loop', {
                 droppedSpans: spans.length,
                 event: 'EXPORTER_RECURSION_PREVENTED'
@@ -162,7 +165,11 @@ class PipelineSpanExporter implements SpanExporter {
             return
         }
 
-        const safeCtx = suppressTracing(activeCtx.setValue(PULSE_INTERNAL_CONTEXT_KEY, true))
+        const safeCtx = suppressTracing(
+            activeCtx
+                .setValue(LYNKTRACE_INTERNAL_CONTEXT_KEY, true)
+                .setValue(PULSE_INTERNAL_CONTEXT_KEY, true)
+        )
 
         otelContext.with(safeCtx, () => {
             try {
@@ -281,8 +288,14 @@ function spanToEvent(span: ReadableSpan): Record<string, unknown> {
     if (attrEntries.length > maxAttrs) {
         const retained = Math.max(0, maxAttrs - Math.min(2, maxAttrs))
         filteredAttrs = Object.fromEntries(attrEntries.slice(0, retained))
-        if (maxAttrs >= 1) filteredAttrs['pulse.attributes_truncated'] = true
-        if (maxAttrs >= 2) filteredAttrs['pulse.original_attribute_count'] = attrEntries.length
+        if (maxAttrs >= 1) {
+            filteredAttrs['lynktrace.attributes_truncated'] = true
+            filteredAttrs['pulse.attributes_truncated'] = true
+        }
+        if (maxAttrs >= 2) {
+            filteredAttrs['lynktrace.original_attribute_count'] = attrEntries.length
+            filteredAttrs['pulse.original_attribute_count'] = attrEntries.length
+        }
     }
 
     const rawStartTimeMs = hrTimeToMs(span.startTime)
@@ -346,11 +359,12 @@ function spanToEvent(span: ReadableSpan): Record<string, unknown> {
         },
         // Internal marker allows shutdown force-flush to route finished spans
         // while rejecting new user-captured events. Stripped by event pipeline.
+        __lynktraceInternal: true,
         __pulseInternal: true,
-        requestId: toAttrString(attrs[PULSE_CONTEXT_ATTRIBUTES.requestId]),
-        sessionId: toAttrString(attrs[PULSE_CONTEXT_ATTRIBUTES.sessionId]),
-        userId: toAttrString(attrs[PULSE_CONTEXT_ATTRIBUTES.userId]),
-        tenantId: toAttrString(attrs[PULSE_CONTEXT_ATTRIBUTES.tenantId]),
+        requestId: toAttrString(attrs[LYNKTRACE_CONTEXT_ATTRIBUTES.requestId]) ?? toAttrString(attrs[PULSE_CONTEXT_ATTRIBUTES.requestId]),
+        sessionId: toAttrString(attrs[LYNKTRACE_CONTEXT_ATTRIBUTES.sessionId]) ?? toAttrString(attrs[PULSE_CONTEXT_ATTRIBUTES.sessionId]),
+        userId: toAttrString(attrs[LYNKTRACE_CONTEXT_ATTRIBUTES.userId]) ?? toAttrString(attrs[PULSE_CONTEXT_ATTRIBUTES.userId]),
+        tenantId: toAttrString(attrs[LYNKTRACE_CONTEXT_ATTRIBUTES.tenantId]) ?? toAttrString(attrs[PULSE_CONTEXT_ATTRIBUTES.tenantId]),
     }
 }
 
@@ -414,8 +428,11 @@ export function initTracer(config: Readonly<RemoteConfigResponse>, customResourc
     const logger = getLogger()
 
     try {
-        const globalState = globalThis as typeof globalThis & { [TRACER_PROVIDER_SYMBOL]?: true }
-        if (globalState[TRACER_PROVIDER_SYMBOL]) {
+        const globalState = globalThis as typeof globalThis & {
+            [TRACER_PROVIDER_SYMBOL]?: true
+            [LEGACY_TRACER_PROVIDER_SYMBOL]?: true
+        }
+        if (globalState[TRACER_PROVIDER_SYMBOL] || globalState[LEGACY_TRACER_PROVIDER_SYMBOL]) {
             tracer = otelTrace.getTracer(SDK_NAME, SDK_VERSION)
             initialized = true
             ownsProvider = false
@@ -481,6 +498,7 @@ export function initTracer(config: Readonly<RemoteConfigResponse>, customResourc
 
         provider.register({ contextManager, propagator })
         globalState[TRACER_PROVIDER_SYMBOL] = true
+        globalState[LEGACY_TRACER_PROVIDER_SYMBOL] = true
         ownsProvider = true
 
         // Get the tracer instance
@@ -548,9 +566,9 @@ function snapshotActiveSpanId(): string | undefined {
  *
  * @param name - Span name (e.g. 'HTTP GET /api/users', 'db.query', 'cache.get')
  * @param options - Optional span configuration
- * @returns PulseSpan instance (or a no-op span if tracing is not initialized)
+ * @returns LynkTraceSpan instance (or a no-op span if tracing is not initialized)
  */
-export function startSpan(name: string, options?: SpanOptions): PulseSpan {
+export function startSpan(name: string, options?: SpanOptions): LynkTraceSpan {
     const logger = getLogger()
 
     if (!areCustomSpansAllowed()) {
@@ -570,7 +588,7 @@ export function startSpan(name: string, options?: SpanOptions): PulseSpan {
         const span = parentContext
             ? tracer.startSpan(name, otelOptions, parentContext)
             : tracer.startSpan(name, otelOptions)
-        return new PulseSpan(span, parentSpanId)
+        return new LynkTraceSpan(span, parentSpanId)
     } catch (err) {
         logger.warn('Failed to start span', { name, error: err })
         return createNoopSpan(name)
@@ -613,8 +631,8 @@ export function startSpan(name: string, options?: SpanOptions): PulseSpan {
  */
 export async function withSpan<T>(
     name: string,
-    fnOrOptions: ((span: PulseSpan) => T | Promise<T>) | SpanOptions,
-    optionsOrFn?: SpanOptions | ((span: PulseSpan) => T | Promise<T>)
+    fnOrOptions: ((span: LynkTraceSpan) => T | Promise<T>) | SpanOptions,
+    optionsOrFn?: SpanOptions | ((span: LynkTraceSpan) => T | Promise<T>)
 ): Promise<T> {
     const { fn, options } = resolveWithSpanArgs(fnOrOptions, optionsOrFn)
     if (!tracer || !areCustomSpansAllowed()) {
@@ -640,7 +658,7 @@ export async function withSpan<T>(
     const isRoot = parentSpanId === undefined
 
     const runCallback = async (span: Span) => {
-        const pulseSpan = new PulseSpan(span, parentSpanId)
+        const pulseSpan = new LynkTraceSpan(span, parentSpanId)
         const logger = getLogger()
 
         if (isRoot) {
@@ -660,7 +678,12 @@ export async function withSpan<T>(
             const timeoutMs = options.timeoutMs
             timeoutTimer = setTimeout(() => {
                 if (!pulseSpan.isEnded) {
+                    pulseSpan.addEvent('lynktrace.span.timeout', {
+                        'lynktrace.timeout_ms': timeoutMs,
+                        'pulse.timeout_ms': timeoutMs,
+                    })
                     pulseSpan.addEvent('pulse.span.timeout', {
+                        'lynktrace.timeout_ms': timeoutMs,
                         'pulse.timeout_ms': timeoutMs,
                     })
                     pulseSpan.setStatus('error', `Span timed out after ${timeoutMs}ms`)
@@ -717,8 +740,8 @@ export async function withSpan<T>(
  */
 export function withSpanSync<T>(
     name: string,
-    fnOrOptions: ((span: PulseSpan) => T) | SpanOptions,
-    optionsOrFn?: SpanOptions | ((span: PulseSpan) => T)
+    fnOrOptions: ((span: LynkTraceSpan) => T) | SpanOptions,
+    optionsOrFn?: SpanOptions | ((span: LynkTraceSpan) => T)
 ): T {
     const { fn, options } = resolveWithSpanSyncArgs(fnOrOptions, optionsOrFn)
     if (!tracer || !areCustomSpansAllowed()) {
@@ -744,7 +767,7 @@ export function withSpanSync<T>(
     const isRoot = parentSpanId === undefined
 
     const runCallback = (span: Span) => {
-        const pulseSpan = new PulseSpan(span, parentSpanId)
+        const pulseSpan = new LynkTraceSpan(span, parentSpanId)
 
         if (isRoot) {
             try {
@@ -800,8 +823,8 @@ export function withSpanSync<T>(
  */
 export function trace<T>(
     name: string,
-    fnOrOptions: ((span: PulseSpan) => T | Promise<T>) | SpanOptions,
-    optionsOrFn?: SpanOptions | ((span: PulseSpan) => T | Promise<T>)
+    fnOrOptions: ((span: LynkTraceSpan) => T | Promise<T>) | SpanOptions,
+    optionsOrFn?: SpanOptions | ((span: LynkTraceSpan) => T | Promise<T>)
 ): T | Promise<T> {
     const { fn, options } = resolveWithSpanArgs<T>(fnOrOptions as any, optionsOrFn as any)
 
@@ -841,7 +864,7 @@ export function trace<T>(
     const isRoot = parentSpanId === undefined
 
     const runCallback = (span: Span): T | Promise<T> => {
-        const pulseSpan = new PulseSpan(span, parentSpanId)
+        const pulseSpan = new LynkTraceSpan(span, parentSpanId)
         if (isRoot) {
             try {
                 const subsystem = ProfilingSubsystem.getInstance()
@@ -946,7 +969,7 @@ export function wrap<F extends (...args: any[]) => any>(
     }
 
     Object.defineProperty(wrapped, 'name', {
-        value: fn.name ? `pulseWrapped_${fn.name}` : `pulseWrapped_${name}`,
+        value: fn.name ? `lynktraceWrapped_${fn.name}` : `lynktraceWrapped_${name}`,
         configurable: true,
     })
     Object.defineProperty(wrapped, 'length', {
@@ -982,7 +1005,7 @@ export interface BackgroundSpanOptions {
      * Originating parent or span to link to.
      * Defaults to the currently active span when withBackgroundSpan is invoked.
      */
-    originatingSpan?: PulseSpan | Span | { traceId: string; spanId: string }
+    originatingSpan?: LynkTraceSpan | Span | { traceId: string; spanId: string }
     /**
      * Explicit links in addition to the originating span link.
      */
@@ -1000,9 +1023,9 @@ export interface BackgroundSpanOptions {
 }
 
 function resolveWithBackgroundSpanArgs<T>(
-    fnOrOptions: ((span: PulseSpan) => T | Promise<T>) | BackgroundSpanOptions,
-    optionsOrFn?: BackgroundSpanOptions | ((span: PulseSpan) => T | Promise<T>)
-): { fn: (span: PulseSpan) => T | Promise<T>; options: BackgroundSpanOptions | undefined } {
+    fnOrOptions: ((span: LynkTraceSpan) => T | Promise<T>) | BackgroundSpanOptions,
+    optionsOrFn?: BackgroundSpanOptions | ((span: LynkTraceSpan) => T | Promise<T>)
+): { fn: (span: LynkTraceSpan) => T | Promise<T>; options: BackgroundSpanOptions | undefined } {
     if (typeof fnOrOptions === 'function') {
         return { fn: fnOrOptions, options: optionsOrFn as BackgroundSpanOptions | undefined }
     }
@@ -1044,8 +1067,8 @@ function resolveWithBackgroundSpanArgs<T>(
  */
 export async function withBackgroundSpan<T>(
     name: string,
-    fnOrOptions: ((span: PulseSpan) => T | Promise<T>) | BackgroundSpanOptions,
-    optionsOrFn?: BackgroundSpanOptions | ((span: PulseSpan) => T | Promise<T>)
+    fnOrOptions: ((span: LynkTraceSpan) => T | Promise<T>) | BackgroundSpanOptions,
+    optionsOrFn?: BackgroundSpanOptions | ((span: LynkTraceSpan) => T | Promise<T>)
 ): Promise<T> {
     const { fn, options } = resolveWithBackgroundSpanArgs(fnOrOptions, optionsOrFn)
     const logger = getLogger()
@@ -1106,6 +1129,7 @@ export async function withBackgroundSpan<T>(
             traceId: originatingTraceId,
             spanId: originatingSpanId,
             attributes: {
+                'lynktrace.link.type': 'caused_by',
                 'pulse.link.type': 'caused_by',
             },
         })
@@ -1116,12 +1140,15 @@ export async function withBackgroundSpan<T>(
 
     const attributes: Attributes = {
         ...(options?.attributes ?? {}),
+        'lynktrace.background': true,
         'pulse.background': true,
     }
     if (originatingTraceId) {
+        attributes['lynktrace.originating.trace_id'] = originatingTraceId
         attributes['pulse.originating.trace_id'] = originatingTraceId
     }
     if (originatingSpanId) {
+        attributes['lynktrace.originating.span_id'] = originatingSpanId
         attributes['pulse.originating.span_id'] = originatingSpanId
     }
 
@@ -1129,7 +1156,7 @@ export async function withBackgroundSpan<T>(
     const otelOptions: OTelSpanOptions = {
         attributes: withRequestContextAttributes(attributes),
         kind: resolvedKind,
-        links: PulseSpan.toOTelLinks(links),
+        links: LynkTraceSpan.toOTelLinks(links),
     }
     if (options?.startTime !== undefined) {
         otelOptions.startTime = options.startTime
@@ -1138,7 +1165,7 @@ export async function withBackgroundSpan<T>(
     const currentStore = getRequestContext()
 
     const runCallback = async (span: Span) => {
-        const pulseSpan = new PulseSpan(span, undefined)
+        const pulseSpan = new LynkTraceSpan(span, undefined)
 
         try {
             const subsystem = ProfilingSubsystem.getInstance()
@@ -1152,7 +1179,12 @@ export async function withBackgroundSpan<T>(
             const timeoutMs = options.timeoutMs
             timeoutTimer = setTimeout(() => {
                 if (!pulseSpan.isEnded) {
+                    pulseSpan.addEvent('lynktrace.span.timeout', {
+                        'lynktrace.timeout_ms': timeoutMs,
+                        'pulse.timeout_ms': timeoutMs,
+                    })
                     pulseSpan.addEvent('pulse.span.timeout', {
+                        'lynktrace.timeout_ms': timeoutMs,
                         'pulse.timeout_ms': timeoutMs,
                     })
                     pulseSpan.setStatus('error', `Background span timed out after ${timeoutMs}ms`)
@@ -1227,7 +1259,7 @@ export async function withBackgroundSpan<T>(
  * background span across async boundaries, `withBackgroundSpan(name, fn)`
  * is strongly recommended instead.
  */
-export function startBackgroundSpan(name: string, options?: BackgroundSpanOptions): PulseSpan {
+export function startBackgroundSpan(name: string, options?: BackgroundSpanOptions): LynkTraceSpan {
     const logger = getLogger()
 
     if (!areCustomSpansAllowed()) {
@@ -1278,6 +1310,7 @@ export function startBackgroundSpan(name: string, options?: BackgroundSpanOption
                 traceId: originatingTraceId,
                 spanId: originatingSpanId,
                 attributes: {
+                    'lynktrace.link.type': 'caused_by',
                     'pulse.link.type': 'caused_by',
                 },
             })
@@ -1288,12 +1321,15 @@ export function startBackgroundSpan(name: string, options?: BackgroundSpanOption
 
         const attributes: Attributes = {
             ...(options?.attributes ?? {}),
+            'lynktrace.background': true,
             'pulse.background': true,
         }
         if (originatingTraceId) {
+            attributes['lynktrace.originating.trace_id'] = originatingTraceId
             attributes['pulse.originating.trace_id'] = originatingTraceId
         }
         if (originatingSpanId) {
+            attributes['lynktrace.originating.span_id'] = originatingSpanId
             attributes['pulse.originating.span_id'] = originatingSpanId
         }
 
@@ -1301,7 +1337,7 @@ export function startBackgroundSpan(name: string, options?: BackgroundSpanOption
         const otelOptions: OTelSpanOptions = {
             attributes: withRequestContextAttributes(attributes),
             kind: resolvedKind,
-            links: PulseSpan.toOTelLinks(links),
+            links: LynkTraceSpan.toOTelLinks(links),
         }
         if (options?.startTime !== undefined) {
             otelOptions.startTime = options.startTime
@@ -1333,7 +1369,7 @@ export function startBackgroundSpan(name: string, options?: BackgroundSpanOption
             return origOtelEnd(...args)
         }
 
-        const pulseSpan = new PulseSpan(span, undefined)
+        const pulseSpan = new LynkTraceSpan(span, undefined)
         const origPulseEnd = pulseSpan.end.bind(pulseSpan)
         pulseSpan.end = (endTime) => {
             if (!decremented) {
@@ -1356,10 +1392,10 @@ export function startBackgroundSpan(name: string, options?: BackgroundSpanOption
 /**
  * Get the currently active span (if any).
  */
-export function getActiveSpan(): PulseSpan | null {
+export function getActiveSpan(): LynkTraceSpan | null {
     const span = otelTrace.getActiveSpan()
     if (!span) return null
-    return new PulseSpan(span)
+    return new LynkTraceSpan(span)
 }
 
 /**
@@ -1413,7 +1449,8 @@ export async function shutdownTracer(): Promise<void> {
         // Clear the global guard if we own it — otherwise leave it for
         // whoever registered the provider externally.
         if (ownsLocal) {
-            delete (globalThis as typeof globalThis & { [TRACER_PROVIDER_SYMBOL]?: true })[TRACER_PROVIDER_SYMBOL]
+            delete (globalThis as Record<symbol, unknown>)[TRACER_PROVIDER_SYMBOL]
+            delete (globalThis as Record<symbol, unknown>)[LEGACY_TRACER_PROVIDER_SYMBOL]
         }
         logger.debug('Tracer shutdown skipped — no active provider')
         return
@@ -1441,7 +1478,8 @@ export async function shutdownTracer(): Promise<void> {
     try {
         if (ownsLocal && localProvider) {
             await localProvider.shutdown()
-            delete (globalThis as typeof globalThis & { [TRACER_PROVIDER_SYMBOL]?: true })[TRACER_PROVIDER_SYMBOL]
+            delete (globalThis as Record<symbol, unknown>)[TRACER_PROVIDER_SYMBOL]
+            delete (globalThis as Record<symbol, unknown>)[LEGACY_TRACER_PROVIDER_SYMBOL]
             try {
                 otelTrace.disable()
             } catch {}
@@ -1511,9 +1549,9 @@ function spanKindToString(kind: SpanKind): 'internal' | 'server' | 'client' | 'p
 }
 
 function resolveWithSpanArgs<T>(
-    fnOrOptions: ((span: PulseSpan) => T | Promise<T>) | SpanOptions,
-    optionsOrFn?: SpanOptions | ((span: PulseSpan) => T | Promise<T>)
-): { fn: (span: PulseSpan) => T | Promise<T>; options: SpanOptions | undefined } {
+    fnOrOptions: ((span: LynkTraceSpan) => T | Promise<T>) | SpanOptions,
+    optionsOrFn?: SpanOptions | ((span: LynkTraceSpan) => T | Promise<T>)
+): { fn: (span: LynkTraceSpan) => T | Promise<T>; options: SpanOptions | undefined } {
     if (typeof fnOrOptions === 'function') {
         return { fn: fnOrOptions, options: optionsOrFn as SpanOptions | undefined }
     }
@@ -1524,9 +1562,9 @@ function resolveWithSpanArgs<T>(
 }
 
 function resolveWithSpanSyncArgs<T>(
-    fnOrOptions: ((span: PulseSpan) => T) | SpanOptions,
-    optionsOrFn?: SpanOptions | ((span: PulseSpan) => T)
-): { fn: (span: PulseSpan) => T; options: SpanOptions | undefined } {
+    fnOrOptions: ((span: LynkTraceSpan) => T) | SpanOptions,
+    optionsOrFn?: SpanOptions | ((span: LynkTraceSpan) => T)
+): { fn: (span: LynkTraceSpan) => T; options: SpanOptions | undefined } {
     if (typeof fnOrOptions === 'function') {
         return { fn: fnOrOptions, options: optionsOrFn as SpanOptions | undefined }
     }
@@ -1546,7 +1584,7 @@ function toOtelSpanOptions(options?: SpanOptions): OTelSpanOptions {
         }
     }
     if (options?.startTime) otelOptions.startTime = options.startTime
-    if (options?.links) otelOptions.links = PulseSpan.toOTelLinks(options.links)
+    if (options?.links) otelOptions.links = LynkTraceSpan.toOTelLinks(options.links)
     return otelOptions
 }
 

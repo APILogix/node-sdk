@@ -13,8 +13,10 @@ import { trace, SpanKind, SpanStatusCode } from '@opentelemetry/api';
 import { InstrumentationBase, InstrumentationNodeModuleDefinition } from '@opentelemetry/instrumentation';
 import { PrismaInstrumentation as OTelPrismaInstrumentation } from '@prisma/instrumentation';
 import { getLogger } from '../utils/logger.js';
-const PRISMA_EXT_APPLIED = Symbol.for('pulse-sdk.prisma.extension.applied');
-const PRISMA_ORIGINAL_CLIENT = Symbol.for('pulse-sdk.prisma.original-client');
+const PRISMA_EXT_APPLIED = Symbol.for('lynktrace.prisma.extension.applied');
+const PRISMA_EXT_APPLIED_LEGACY = Symbol.for('pulse-sdk.prisma.extension.applied');
+const PRISMA_ORIGINAL_CLIENT = Symbol.for('lynktrace.prisma.original-client');
+const PRISMA_ORIGINAL_CLIENT_LEGACY = Symbol.for('pulse-sdk.prisma.original-client');
 export function resolvePrismaDbSystem(prismaInstance) {
     const provider = prismaInstance?._engineConfig?.activeProvider ?? prismaInstance?._activeProvider;
     if (typeof provider === 'string' && provider) {
@@ -24,16 +26,16 @@ export function resolvePrismaDbSystem(prismaInstance) {
 }
 /**
  * Creates an OpenTelemetry query extension for Prisma Client.
- * Attach with `prismaClient.$extends(pulsePrismaExtension())`
+ * Attach with `prismaClient.$extends(lynktracePrismaExtension())`
  * or use automatic instrumentation.
  */
-export function pulsePrismaExtension(dbSystem = 'postgresql') {
+export function lynktracePrismaExtension(dbSystem = 'postgresql') {
     return {
-        name: 'pulse-apm-prisma',
+        name: 'lynktrace-prisma',
         query: {
             $allModels: {
                 async $allOperations({ model, operation, args, query }) {
-                    const tracer = trace.getTracer('@pulse-apm/prisma');
+                    const tracer = trace.getTracer('@lynktrace/prisma');
                     const spanName = `prisma:${model}.${operation}`;
                     return tracer.startActiveSpan(spanName, {
                         kind: SpanKind.CLIENT,
@@ -60,19 +62,21 @@ export function pulsePrismaExtension(dbSystem = 'postgresql') {
         },
     };
 }
+export const pulsePrismaExtension = lynktracePrismaExtension;
 /**
  * Automatically instrument a PrismaClient instance via $use middleware.
  * Ensures queries emit spans even if previewFeatures = ["tracing"] is omitted in schema.prisma.
  */
 export function instrumentPrismaClientInstance(prismaInstance) {
-    if (!prismaInstance || prismaInstance[PRISMA_EXT_APPLIED])
+    if (!prismaInstance || prismaInstance[PRISMA_EXT_APPLIED] || prismaInstance[PRISMA_EXT_APPLIED_LEGACY])
         return prismaInstance;
     const dbSystem = resolvePrismaDbSystem(prismaInstance);
     if (typeof prismaInstance.$use === 'function') {
         ;
         prismaInstance[PRISMA_EXT_APPLIED] = true;
+        prismaInstance[PRISMA_EXT_APPLIED_LEGACY] = true;
         prismaInstance.$use(async (params, next) => {
-            const tracer = trace.getTracer('@pulse-apm/prisma');
+            const tracer = trace.getTracer('@lynktrace/prisma');
             const spanName = `prisma:${params.model || 'raw'}.${params.action}`;
             return tracer.startActiveSpan(spanName, {
                 kind: SpanKind.CLIENT,
@@ -99,11 +103,13 @@ export function instrumentPrismaClientInstance(prismaInstance) {
     }
     if (typeof prismaInstance.$extends === 'function') {
         try {
-            const extended = prismaInstance.$extends(pulsePrismaExtension(dbSystem));
+            const extended = prismaInstance.$extends(lynktracePrismaExtension(dbSystem));
             if (extended && typeof extended === 'object') {
                 ;
                 extended[PRISMA_EXT_APPLIED] = true;
+                extended[PRISMA_EXT_APPLIED_LEGACY] = true;
                 prismaInstance[PRISMA_EXT_APPLIED] = true;
+                prismaInstance[PRISMA_EXT_APPLIED_LEGACY] = true;
                 return extended;
             }
         }
@@ -129,26 +135,29 @@ function copyStaticProperties(target, source) {
 function patchPrismaClientExport(moduleExports) {
     const prismaModule = moduleExports?.default?.PrismaClient ? moduleExports.default : moduleExports;
     const OriginalPrismaClient = prismaModule?.PrismaClient;
-    if (typeof OriginalPrismaClient !== 'function' || OriginalPrismaClient[PRISMA_ORIGINAL_CLIENT]) {
+    if (typeof OriginalPrismaClient !== 'function' ||
+        OriginalPrismaClient[PRISMA_ORIGINAL_CLIENT] ||
+        OriginalPrismaClient[PRISMA_ORIGINAL_CLIENT_LEGACY]) {
         return moduleExports;
     }
-    const PulsePrismaClient = function PulsePrismaClient(...args) {
-        const target = new.target || PulsePrismaClient;
+    const LynkTracePrismaClient = function LynkTracePrismaClient(...args) {
+        const target = new.target || LynkTracePrismaClient;
         const instance = Reflect.construct(OriginalPrismaClient, args, target);
         const instrumented = instrumentPrismaClientInstance(instance);
-        // If subclassing (target !== PulsePrismaClient), preserve the original instance reference
-        if (target !== PulsePrismaClient) {
+        // If subclassing (target !== LynkTracePrismaClient), preserve the original instance reference
+        if (target !== LynkTracePrismaClient) {
             return instance;
         }
         return instrumented;
     };
-    Object.setPrototypeOf(PulsePrismaClient, OriginalPrismaClient);
-    PulsePrismaClient.prototype = OriginalPrismaClient.prototype;
-    PulsePrismaClient[PRISMA_ORIGINAL_CLIENT] = OriginalPrismaClient;
-    copyStaticProperties(PulsePrismaClient, OriginalPrismaClient);
-    prismaModule.PrismaClient = PulsePrismaClient;
+    Object.setPrototypeOf(LynkTracePrismaClient, OriginalPrismaClient);
+    LynkTracePrismaClient.prototype = OriginalPrismaClient.prototype;
+    LynkTracePrismaClient[PRISMA_ORIGINAL_CLIENT] = OriginalPrismaClient;
+    LynkTracePrismaClient[PRISMA_ORIGINAL_CLIENT_LEGACY] = OriginalPrismaClient;
+    copyStaticProperties(LynkTracePrismaClient, OriginalPrismaClient);
+    prismaModule.PrismaClient = LynkTracePrismaClient;
     if (moduleExports?.default?.PrismaClient) {
-        moduleExports.default.PrismaClient = PulsePrismaClient;
+        moduleExports.default.PrismaClient = LynkTracePrismaClient;
     }
     getLogger().debug('PrismaClient constructor auto-instrumentation attached');
     return moduleExports;
@@ -156,7 +165,7 @@ function patchPrismaClientExport(moduleExports) {
 function unpatchPrismaClientExport(moduleExports) {
     const prismaModule = moduleExports?.default?.PrismaClient ? moduleExports.default : moduleExports;
     const current = prismaModule?.PrismaClient;
-    const original = current?.[PRISMA_ORIGINAL_CLIENT];
+    const original = current?.[PRISMA_ORIGINAL_CLIENT] ?? current?.[PRISMA_ORIGINAL_CLIENT_LEGACY];
     if (original) {
         prismaModule.PrismaClient = original;
         if (moduleExports?.default?.PrismaClient) {
@@ -164,10 +173,10 @@ function unpatchPrismaClientExport(moduleExports) {
         }
     }
 }
-export class PulsePrismaInstrumentation extends InstrumentationBase {
+export class LynkTracePrismaInstrumentation extends InstrumentationBase {
     otelPrisma;
     constructor(config = {}) {
-        super('@pulse-apm/instrumentation-prisma', '1.0.0', { enabled: config.enabled ?? true });
+        super('@lynktrace/instrumentation-prisma', '1.0.0', { enabled: config.enabled ?? true });
         try {
             this.otelPrisma = new OTelPrismaInstrumentation({
                 ...(config.captureQueries === false ? { ignoreSpanTypes: [/^prisma:engine:/] } : {}),
@@ -218,6 +227,7 @@ export class PulsePrismaInstrumentation extends InstrumentationBase {
         }
     }
 }
+export { LynkTracePrismaInstrumentation as PulsePrismaInstrumentation };
 export function createPrismaInstrumentation(config, mergedOptions) {
     const enabled = typeof config === 'object' ? config.enabled : config;
     if (!enabled) {
@@ -226,7 +236,7 @@ export function createPrismaInstrumentation(config, mergedOptions) {
     const captureQueries = typeof config === 'object'
         ? (config.captureQueries ?? true)
         : (mergedOptions?.captureQueries ?? true);
-    return new PulsePrismaInstrumentation({
+    return new LynkTracePrismaInstrumentation({
         enabled: true,
         captureQueries,
         captureParams: typeof config === 'object' ? (config.captureParams ?? false) : (mergedOptions?.captureParams ?? false),

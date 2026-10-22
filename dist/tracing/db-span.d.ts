@@ -1,5 +1,5 @@
 import type { Attributes } from '@opentelemetry/api';
-import type { PulseSpan, SpanOptions } from './span.js';
+import type { LynkTraceSpan, SpanOptions } from './span.js';
 export type DbSystem = 'postgresql' | 'mysql' | 'mongodb' | 'redis' | 'prisma' | string;
 export interface DbSpanOptions {
     readonly system: DbSystem;
@@ -16,6 +16,6 @@ export interface DbSpanOptions {
     readonly timeoutMs?: number | undefined;
     readonly slowQueryThresholdMs?: number | undefined;
 }
-export declare function startDbSpan(options: DbSpanOptions): PulseSpan;
-export declare function withDbSpan<T>(options: DbSpanOptions, fn: (span: PulseSpan) => T | Promise<T>): Promise<T>;
-export declare function withDbSpanSync<T>(options: DbSpanOptions, fn: (span: PulseSpan) => T): T;
+export declare function startDbSpan(options: DbSpanOptions): LynkTraceSpan;
+export declare function withDbSpan<T>(options: DbSpanOptions, fn: (span: LynkTraceSpan) => T | Promise<T>): Promise<T>;
+export declare function withDbSpanSync<T>(options: DbSpanOptions, fn: (span: LynkTraceSpan) => T): T;

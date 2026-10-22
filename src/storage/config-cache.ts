@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { existsSync } from 'node:fs'
 import { mkdir, readFile, writeFile, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { RemoteConfigResponse } from '../types/config.js'
@@ -17,12 +18,23 @@ export interface CachedConfigPayload {
 }
 
 function getCacheDir(): string {
-  return join(process.cwd(), '.pulse')
+  const lynkDir = join(process.cwd(), '.lynktrace')
+  const pulseDir = join(process.cwd(), '.pulse')
+  try {
+    if (existsSync(lynkDir)) return lynkDir
+    if (existsSync(pulseDir)) return pulseDir
+  } catch {}
+  return lynkDir
 }
 
 function getCacheFilePath(apiKey: string): string {
   const hash = createHash('sha256').update(apiKey).digest('hex')
   return join(getCacheDir(), `config-cache-${hash}.json`)
+}
+
+function getLegacyCacheFilePath(apiKey: string): string {
+  const hash = createHash('sha256').update(apiKey).digest('hex')
+  return join(join(process.cwd(), '.pulse'), `config-cache-${hash}.json`)
 }
 
 /**
@@ -68,8 +80,14 @@ export async function loadConfigCache(apiKey: string): Promise<InitResponse | nu
   if (!apiKey) return null
 
   try {
-    const filePath = getCacheFilePath(apiKey)
-    const raw = await readFile(filePath, 'utf8')
+    let filePath = getCacheFilePath(apiKey)
+    let raw: string | null = null
+    try {
+      raw = await readFile(filePath, 'utf8')
+    } catch {
+      filePath = getLegacyCacheFilePath(apiKey)
+      raw = await readFile(filePath, 'utf8')
+    }
     const parsed = JSON.parse(raw) as Partial<CachedConfigPayload>
 
     if (!parsed || parsed.version !== 1 || !parsed.config) {
@@ -104,9 +122,9 @@ export async function clearConfigCache(apiKey: string): Promise<void> {
   if (!apiKey) return
 
   try {
-    const filePath = getCacheFilePath(apiKey)
-    await unlink(filePath)
-  } catch {
-    // Ignore if file doesn't exist
-  }
+    await unlink(getCacheFilePath(apiKey))
+  } catch {}
+  try {
+    await unlink(getLegacyCacheFilePath(apiKey))
+  } catch {}
 }

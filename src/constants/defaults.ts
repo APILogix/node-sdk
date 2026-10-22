@@ -259,6 +259,32 @@ export const DEFAULT_INSTRUMENTATION: Readonly<InstrumentationConfig> = Object.f
   pg: true,
   mysql2: true,
   eventEmitterPatch: false,
+
+  // Cloud & NoSQL Databases
+  dynamodb: Object.freeze({ enabled: true, captureQueries: true, captureParams: false }),
+  cassandra: Object.freeze({ enabled: true, captureQueries: true, captureParams: false }),
+  elasticsearch: Object.freeze({ enabled: true, captureQueries: true }),
+  mssql: Object.freeze({ enabled: true, captureQueries: true, captureParams: false }),
+  sqlite: Object.freeze({ enabled: true, captureQueries: true, captureParams: false }),
+
+  // ORMs & Query Builders
+  typeorm: Object.freeze({ enabled: true, captureQueries: true, captureParams: false }),
+  drizzle: Object.freeze({ enabled: true, captureQueries: true, captureParams: false }),
+  mikroorm: true,
+  sequelize: true,
+  knex: true,
+
+  // Distributed Messaging & Streaming
+  kafkajs: Object.freeze({ enabled: true, emitConsumerBatchSpans: true, captureMessageKey: false }),
+  amqplib: Object.freeze({ enabled: true, captureMessageData: false }),
+  sqs: true,
+  sns: true,
+  pubsub: true,
+
+  // RPC & Infrastructure
+  grpc: true,
+  nestjs: true,
+  dns: false,
 })
 
 export const DEFAULT_ENTITLEMENTS: Readonly<EntitlementsConfig> = Object.freeze({

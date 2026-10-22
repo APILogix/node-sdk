@@ -38,6 +38,9 @@ export declare function injectTraceContext(headers: Record<string, string>, ctx?
 export declare const TRACE_HEADERS: {
     readonly TRACEPARENT: "traceparent";
     readonly TRACESTATE: "tracestate";
+    readonly LYNKTRACE_TRACE_ID: "x-lynktrace-trace-id";
+    readonly LYNKTRACE_SPAN_ID: "x-lynktrace-span-id";
+    readonly LYNKTRACE_SAMPLED: "x-lynktrace-sampled";
     readonly PULSE_TRACE_ID: "x-pulse-trace-id";
     readonly PULSE_SPAN_ID: "x-pulse-span-id";
     readonly PULSE_SAMPLED: "x-pulse-sampled";

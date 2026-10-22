@@ -491,7 +491,7 @@ export async function processEventAsync(rawEvent, assignedEventId) {
 }
 // ─── Internal Helpers ───────────────────────────────────────────────────────
 function ensureBaseFields(raw, assignedEventId) {
-    const { __pulseInternal: _internal, ...payload } = raw;
+    const { __lynktraceInternal: _lynkInternal, __pulseInternal: _internal, ...payload } = raw;
     const eventId = assignedEventId
         ?? ((payload.eventId && typeof payload.eventId === 'string') ? payload.eventId : generateId());
     const timestamp = ('timestamp' in payload && typeof payload.timestamp === 'number')
@@ -500,7 +500,8 @@ function ensureBaseFields(raw, assignedEventId) {
     return { ...payload, eventId, timestamp };
 }
 function isInternalTelemetryEvent(raw) {
-    return raw['__pulseInternal'] === true;
+    const rec = raw;
+    return rec['__lynktraceInternal'] === true || rec['__pulseInternal'] === true;
 }
 function isEntitled(event) {
     switch (event.type) {

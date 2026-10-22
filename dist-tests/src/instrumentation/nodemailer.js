@@ -13,7 +13,7 @@ import { InstrumentationBase, InstrumentationNodeModuleDefinition, } from '@open
 import { SpanKind, SpanStatusCode, context, } from '@opentelemetry/api';
 import { getLogger } from '../utils/logger.js';
 const MODULE_NAME = 'nodemailer';
-const INSTRUMENTATION_NAME = '@pulse-apm/instrumentation-nodemailer';
+const INSTRUMENTATION_NAME = '@lynktrace/instrumentation-nodemailer';
 const INSTRUMENTATION_VERSION = '1.0.0';
 export class NodemailerInstrumentation extends InstrumentationBase {
     _captureConfig;
@@ -64,7 +64,7 @@ export class NodemailerInstrumentation extends InstrumentationBase {
         if (typeof moduleExports.createTransport === 'function' && !this._originalCreateTransport) {
             this._originalCreateTransport = moduleExports.createTransport;
             const origCreateTransport = this._originalCreateTransport;
-            moduleExports.createTransport = function pulsePatchedCreateTransport(...args) {
+            moduleExports.createTransport = function lynktracePatchedCreateTransport(...args) {
                 const transporter = origCreateTransport.apply(this, args);
                 if (transporter && typeof transporter.sendMail === 'function') {
                     self._patchTransporter(transporter);
@@ -77,12 +77,13 @@ export class NodemailerInstrumentation extends InstrumentationBase {
         return true;
     }
     _patchTransporter(transporter) {
-        if (transporter._pulsePatched)
+        if (transporter._lynktracePatched || transporter._pulsePatched)
             return;
+        transporter._lynktracePatched = true;
         transporter._pulsePatched = true;
         const self = this;
         const origSendMail = transporter.sendMail;
-        transporter.sendMail = function pulsePatchedSendMail(mailOptions, callback) {
+        transporter.sendMail = function lynktracePatchedSendMail(mailOptions, callback) {
             if (!self.isEnabled()) {
                 return origSendMail.apply(this, arguments);
             }
@@ -166,3 +167,4 @@ export function createNodemailerInstrumentation(enabled = true, options, capture
     return new NodemailerInstrumentation({ enabled: true, ...options }, captureConfig);
 }
 export default createNodemailerInstrumentation;
+export { NodemailerInstrumentation as LynkTraceNodemailerInstrumentation, NodemailerInstrumentation as PulseNodemailerInstrumentation, };

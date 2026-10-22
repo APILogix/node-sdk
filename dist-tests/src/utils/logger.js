@@ -169,7 +169,7 @@ function stripPrefix(message) {
     if (message.startsWith(`[${logPrefix}]`)) {
         return message.slice(logPrefix.length + 2).trim();
     }
-    return message.replace(/^\[(Pulse|Telemetry|APM|SDK)\]\s*/i, '').trim();
+    return message.replace(/^\[(LynkTrace|Pulse|Telemetry|APM|SDK)\]\s*/i, '').trim();
 }
 // ─── Console Logger (Sentry-style) ─────────────────────────────────────────
 export const consoleLogger = {

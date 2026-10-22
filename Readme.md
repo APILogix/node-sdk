@@ -1,4 +1,4 @@
-# @pulse-apm/node
+# @lynktrace/node
 
 > Enterprise-grade observability and distributed tracing SDK for Node.js applications, built natively on OpenTelemetry with automated framework and database interception, truthful timing attribution, adaptive load shedding, resilient offline disk spooling, and detached background task tracing.
 
@@ -45,7 +45,7 @@
   - [G. Framework & Middleware Instrumentation](#g-framework--middleware-instrumentation)
   - [H. Driver Instrumentation Factories & Helpers](#h-driver-instrumentation-factories--helpers)
   - [I. Diagnostic Logging & Error Classification](#i-diagnostic-logging--error-classification)
-  - [J. Canonical `Pulse` Facade Object](#j-canonical-pulse-facade-object)
+  - [J. Canonical `LynkTrace` Facade Object](#j-canonical-lynktrace-facade-object)
 - [11. Server & Runtime Deployment Guides](#11-server--runtime-deployment-guides)
   - [Express.js Deep Dive](#expressjs-deep-dive)
   - [Fastify Deep Dive](#fastify-deep-dive)
@@ -68,7 +68,7 @@
 
 ## 1. Overview & Architecture
 
-`@pulse-apm/node` is engineered with an absolute **fail-open design**: telemetry operations must never degrade, block, leak memory, or crash the host application under any conditions (network outages, invalid keys, rate limits, or memory pressure).
+`@lynktrace/node` is engineered with an absolute **fail-open design**: telemetry operations must never degrade, block, leak memory, or crash the host application under any conditions (network outages, invalid keys, rate limits, or memory pressure).
 
 ```
 Host Application Code
@@ -128,13 +128,13 @@ Install the package via your preferred package manager:
 
 ```bash
 # npm
-npm install @pulse-apm/node
+npm install @lynktrace/node
 
 # pnpm
-pnpm add @pulse-apm/node
+pnpm add @lynktrace/node
 
 # yarn
-yarn add @pulse-apm/node
+yarn add @lynktrace/node
 ```
 
 ---
@@ -144,11 +144,11 @@ yarn add @pulse-apm/node
 ### Minimal Node.js Example
 
 ```ts
-import { init, captureException, captureMessage, flush } from '@pulse-apm/node'
+import { init, captureException, captureMessage, flush } from '@lynktrace/node'
 
 // Initialize the SDK
 await init({
-  apiKey: process.env.PULSE_API_KEY!,
+  apiKey: process.env.LYNKTRACE_API_KEY!,
   applicationName: 'billing-service',
   environment: 'production',
 })
@@ -166,21 +166,21 @@ try {
 
 ### Express.js Application
 
-In Express, mount **`pulseMiddleware`** at the top of your middleware stack and **`expressErrorHandler`** at the bottom:
+In Express, mount **`lynktraceMiddleware`** at the top of your middleware stack and **`expressErrorHandler`** at the bottom:
 
 ```ts
 import express from 'express'
-import { init, pulseMiddleware, expressErrorHandler, captureException } from '@pulse-apm/node'
+import { init, lynktraceMiddleware, expressErrorHandler, captureException } from '@lynktrace/node'
 
 await init({
-  apiKey: process.env.PULSE_API_KEY!,
+  apiKey: process.env.LYNKTRACE_API_KEY!,
   applicationName: 'order-api',
 })
 
 const app = express()
 
 // 1. MUST BE FIRST MIDDLEWARE: Starts request trace, AsyncLocalStorage, and binds context
-app.use(pulseMiddleware({
+app.use(lynktraceMiddleware({
   ignorePaths: ['/health', '/metrics'],
   instrumentMiddleware: true, // Profiles middleware durations (e.g. auth, validation)
   minMiddlewareDurationMs: 2, // Only emit child spans for middlewares taking >= 2ms
@@ -213,14 +213,14 @@ app.listen(3000, () => console.log('Server running on port 3000'))
 
 ```ts
 import Fastify from 'fastify'
-import { init, pulseFastifyPlugin } from '@pulse-apm/node'
+import { init, lynktraceFastifyPlugin } from '@lynktrace/node'
 
-await init({ apiKey: process.env.PULSE_API_KEY! })
+await init({ apiKey: process.env.LYNKTRACE_API_KEY! })
 
 const fastify = Fastify()
 
-// Register the Pulse Fastify plugin
-await fastify.register(pulseFastifyPlugin, {
+// Register the LynkTrace Fastify plugin
+await fastify.register(lynktraceFastifyPlugin, {
   ignorePaths: ['/healthz'],
   captureHeaders: true,
 })
@@ -236,11 +236,11 @@ fastify.get('/api/users/:id', async (request, reply) => {
 In serverless runtimes (AWS Lambda, Vercel, Google Cloud Functions), background timers freeze immediately when the handler returns. Use **`wrapHandler`** to set `callbackWaitsForEmptyEventLoop = false` and guarantee synchronous in-memory HTTP flushing of all traces and errors before the container freezes:
 
 ```ts
-import { init, wrapHandler } from '@pulse-apm/node'
+import { init, wrapHandler } from '@lynktrace/node'
 
 // Initialize once during Lambda cold start (outside the handler)
 await init({
-  apiKey: process.env.PULSE_API_KEY!,
+  apiKey: process.env.LYNKTRACE_API_KEY!,
   applicationName: 'order-processor-fn',
   // Disable disk storage since serverless runtimes are stateless or have read-only filesystems:
   offlineQueue: false,
@@ -261,22 +261,22 @@ export const handler = wrapHandler(async (event: any, context: any) => {
 
 ### NestJS Application
 
-In NestJS, initialize Pulse in `main.ts` before creating the Nest application, mount `pulseMiddleware`, and bind a global exception filter:
+In NestJS, initialize LynkTrace in `main.ts` before creating the Nest application, mount `lynktraceMiddleware`, and bind a global exception filter:
 
 ```ts
 import { NestFactory } from '@nestjs/core'
 import { AppModule } from './app.module'
-import { init, pulseMiddleware, expressErrorHandler, captureException } from '@pulse-apm/node'
+import { init, lynktraceMiddleware, expressErrorHandler, captureException } from '@lynktrace/node'
 import { ExceptionFilter, Catch, ArgumentsHost, HttpException, HttpStatus } from '@nestjs/common'
 
 await init({
-  apiKey: process.env.PULSE_API_KEY!,
+  apiKey: process.env.LYNKTRACE_API_KEY!,
   applicationName: 'nest-backend',
 })
 
 // Global Exception Filter for unhandled NestJS exceptions
 @Catch()
-export class PulseExceptionFilter implements ExceptionFilter {
+export class LynkTraceExceptionFilter implements ExceptionFilter {
   catch(exception: unknown, host: ArgumentsHost) {
     const ctx = host.switchToHttp()
     const response = ctx.getResponse()
@@ -295,8 +295,8 @@ export class PulseExceptionFilter implements ExceptionFilter {
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule)
-  app.use(pulseMiddleware({ instrumentMiddleware: true }))
-  app.useGlobalFilters(new PulseExceptionFilter())
+  app.use(lynktraceMiddleware({ instrumentMiddleware: true }))
+  app.useGlobalFilters(new LynkTraceExceptionFilter())
   await app.listen(3000)
 }
 bootstrap()
@@ -307,11 +307,11 @@ bootstrap()
 For queues, cron jobs, or batch CLI scripts, use `withBackgroundSpan` and call `await flush()` before process exit:
 
 ```ts
-import { init, withBackgroundSpan, captureException, flush } from '@pulse-apm/node'
+import { init, withBackgroundSpan, captureException, flush } from '@lynktrace/node'
 import { Worker } from 'bullmq'
 
 await init({
-  apiKey: process.env.PULSE_API_KEY!,
+  apiKey: process.env.LYNKTRACE_API_KEY!,
   applicationName: 'email-worker',
 })
 
@@ -337,29 +337,29 @@ To guarantee that auto-instrumentation intercepts Node.js core modules (`http`, 
 
 ```bash
 # Node.js >= 18.19.0 (ESM & CJS)
-node --import @pulse-apm/node/register dist/server.js
+node --import @lynktrace/node/register dist/server.js
 
 # Or in your package.json scripts:
 {
   "scripts": {
-    "start": "node --import @pulse-apm/node/register dist/server.js"
+    "start": "node --import @lynktrace/node/register dist/server.js"
   }
 }
 ```
 
-When started with `--import @pulse-apm/node/register`, monkey-patching hooks are registered immediately at process startup. Your application code then simply calls `await init({ apiKey: ... })`.
+When started with `--import @lynktrace/node/register`, monkey-patching hooks are registered immediately at process startup. Your application code then simply calls `await init({ apiKey: ... })`.
 
 ---
 
 ## 6. Initialization (`init`)
 
-The `init(options)` function establishes connection with the Pulse control plane, fetches the remote configuration snapshot (`POST /v1/init`), activates enabled subsystems, and sets up process shutdown hooks.
+The `init(options)` function establishes connection with the LynkTrace control plane, fetches the remote configuration snapshot (`POST /v1/init`), activates enabled subsystems, and sets up process shutdown hooks.
 
 ```ts
-import { init } from '@pulse-apm/node'
+import { init } from '@lynktrace/node'
 
 const config = await init({
-  apiKey: process.env.PULSE_API_KEY!,
+  apiKey: process.env.LYNKTRACE_API_KEY!,
   applicationName: 'payment-gateway',
   applicationVersion: '2.4.0',
   debug: false,
@@ -368,7 +368,7 @@ const config = await init({
 
 > [!NOTE]
 > **Remote vs. Local Configuration Boundary**:
-> - **Ingestion Endpoint**: Configured via the `PULSE_ENDPOINT` or `SDK_BASE_URL` environment variables (default: `https://api.pulse.dev`).
+> - **Ingestion Endpoint**: Configured via the `LYNKTRACE_ENDPOINT` or `SDK_BASE_URL` environment variables (default: `https://api.lynktrace.com`).
 > - **Environment**: Authoritatively assigned by the control plane based on your API key (defaults to `'production'` during initial bootstrap).
 > - **In-Memory Queue Ceilings & Eviction**: Controlled centrally by Remote Configuration (`config.limits.maxQueueSize`, `config.transport.queue.maxSize`, `config.transport.queue.overflowStrategy: 'drop_oldest' | 'drop_newest'`) to prevent memory exhaustion on client hosts.
 > - **Disk Queue Size**: Configured locally via the `offlineQueue` option (see below).
@@ -405,10 +405,10 @@ When configuring the persistent offline queue in `init()`, you can customize dis
 
 ```ts
 await init({
-  apiKey: process.env.PULSE_API_KEY!,
+  apiKey: process.env.LYNKTRACE_API_KEY!,
   offlineQueue: {
     enabled: true,
-    directory: '.pulse-spool',          // Local directory for spool files (default: ~/.pulse-sdk/events or /tmp on serverless)
+    directory: '.lynktrace-spool',          // Local directory for spool files (default: ~/.lynktrace/events or /tmp on serverless)
     maxEvents: 10000,                   // Disk queue capacity (1 - 100,000 events)
     maxFileSizeBytes: 10 * 1024 * 1024, // 10MB maximum spool file size (1KB - 100MB)
     eventTtlMs: 24 * 60 * 60 * 1000,    // Event time-to-live before expiration (1 min - 7 days)
@@ -431,7 +431,7 @@ If the control-plane endpoint is unreachable (network partition, DNS failure, 5x
 
 ## 7. Feature Control & Toggles: What to Use and How to Turn Off Features
 
-Every capability in `@pulse-apm/node` is modular and can be dynamically enabled, tuned, or completely silenced. This section outlines how to disable or customize each feature.
+Every capability in `@lynktrace/node` is modular and can be dynamically enabled, tuned, or completely silenced. This section outlines how to disable or customize each feature.
 
 ### Disabling Subsystems via Remote Config or Local Flags
 
@@ -462,7 +462,7 @@ You can turn off disk persistence completely in `init()`:
 
 ```ts
 await init({
-  apiKey: process.env.PULSE_API_KEY!,
+  apiKey: process.env.LYNKTRACE_API_KEY!,
   offlineQueue: false, // Disables disk spooling completely; runs in 100% in-memory mode
 })
 ```
@@ -470,7 +470,7 @@ await init({
 Or configure fine-grained disk parameters:
 ```ts
 await init({
-  apiKey: process.env.PULSE_API_KEY!,
+  apiKey: process.env.LYNKTRACE_API_KEY!,
   offlineQueue: {
     enabled: true,
     directory: '/tmp/custom-events', // Custom directory (defaults to /tmp on serverless)
@@ -593,7 +593,7 @@ Every 60 seconds, the SDK checks for remote configuration updates. When new dire
 
 ## 9. Automatic Instrumentation
 
-When imported, `@pulse-apm/node` automatically intercepts standard Node.js libraries and database drivers without requiring manual code changes:
+When imported, `@lynktrace/node` automatically intercepts standard Node.js libraries and database drivers without requiring manual code changes:
 
 | Target Library | Supported Versions | Interception Method | What Is Captured |
 |---|---|---|---|
@@ -619,7 +619,7 @@ When imported, `@pulse-apm/node` automatically intercepts standard Node.js libra
 
 Every function below is exported directly from the package entry point:
 ```ts
-import { ... } from '@pulse-apm/node'
+import { ... } from '@lynktrace/node'
 ```
 
 ---
@@ -642,7 +642,7 @@ Wraps an AWS Lambda, Vercel, or Cloud Functions handler. Automatically configure
 - **Returns**: Wrapped serverless handler function.
 
 ```ts
-import { wrapHandler } from '@pulse-apm/node'
+import { wrapHandler } from '@lynktrace/node'
 
 export const handler = wrapHandler(async (event, context) => {
   return { statusCode: 200, body: 'Success' }
@@ -747,7 +747,7 @@ Stops the CPU profiling session for `profileId` and queues the profile payload f
 All metric functions route into OpenTelemetry metric instruments and aggregate in memory with low CPU overhead.
 
 ```ts
-import { incrementCounter, setGauge, recordHistogram, addUpDownCounter } from '@pulse-apm/node'
+import { incrementCounter, setGauge, recordHistogram, addUpDownCounter } from '@lynktrace/node'
 
 // Increment a counter
 incrementCounter('http.requests.total', 1, { method: 'POST', status: '200' })
@@ -869,10 +869,10 @@ await fetch('https://payment-service.internal/charge', { headers })
 
 ### F. Tracing, Custom Spans & Database Queries
 
-#### `startSpan(name: string, options?: SpanOptions): PulseSpan`
+#### `startSpan(name: string, options?: SpanOptions): LynkTraceSpan`
 Starts an un-scoped OpenTelemetry span. The caller is responsible for calling `span.end()`.
 
-#### `withSpan<T>(name: string, fn: (span: PulseSpan) => Promise<T>, options?: SpanOptions): Promise<T>`
+#### `withSpan<T>(name: string, fn: (span: LynkTraceSpan) => Promise<T>, options?: SpanOptions): Promise<T>`
 Executes an async callback within an active span. The span ends automatically upon promise resolution or rejection, with exceptions recorded.
 
 ```ts
@@ -882,10 +882,10 @@ const result = await withSpan('calculateTax', async (span) => {
 })
 ```
 
-#### `withSpanSync<T>(name: string, fn: (span: PulseSpan) => T, options?: SpanOptions): T`
+#### `withSpanSync<T>(name: string, fn: (span: LynkTraceSpan) => T, options?: SpanOptions): T`
 Synchronous version of `withSpan`. Automatically ends upon completion or throw.
 
-#### `trace<T>(name: string, fn: (span: PulseSpan) => T | Promise<T>, options?: SpanOptions): T | Promise<T>`
+#### `trace<T>(name: string, fn: (span: LynkTraceSpan) => T | Promise<T>, options?: SpanOptions): T | Promise<T>`
 Ergonomic auto-detecting tracing function that transparently handles both synchronous and asynchronous callbacks.
 
 #### `wrap<F>(name: string, fn: F, options?: SpanOptions): F`
@@ -895,10 +895,10 @@ Wraps a target function, returning an identical function signature that automati
 const tracedCalculateTax = wrap('calculateTax', calculateTax)
 ```
 
-#### `startBackgroundSpan(name: string, options?: BackgroundSpanOptions): PulseSpan`
+#### `startBackgroundSpan(name: string, options?: BackgroundSpanOptions): LynkTraceSpan`
 Starts a detached background span that survives after the parent HTTP server span has closed, causally linked via OpenTelemetry `SpanLink`.
 
-#### `withBackgroundSpan<T>(name: string, fn: (span: PulseSpan) => Promise<T>, options?: BackgroundSpanOptions): Promise<T>`
+#### `withBackgroundSpan<T>(name: string, fn: (span: LynkTraceSpan) => Promise<T>, options?: BackgroundSpanOptions): Promise<T>`
 Executes an async task within a detached background span. Prevents background jobs from holding HTTP response traces open or creating memory leaks.
 
 ```ts
@@ -913,10 +913,10 @@ app.post('/api/checkout', async (req, res) => {
 })
 ```
 
-#### `startDbSpan(options: DbSpanOptions): PulseSpan`
+#### `startDbSpan(options: DbSpanOptions): LynkTraceSpan`
 Starts an OpenTelemetry database span with semantic attributes (`db.system`, `db.name`, `db.statement`) and slow-query threshold tracking.
 
-#### `withDbSpan<T>(options: DbSpanOptions, fn: (span: PulseSpan) => Promise<T>): Promise<T>`
+#### `withDbSpan<T>(options: DbSpanOptions, fn: (span: LynkTraceSpan) => Promise<T>): Promise<T>`
 Executes an asynchronous database query within a tracked database span, automatically recording query duration, errors, and slow query tags (`db.slow_query = true`).
 
 ```ts
@@ -931,10 +931,10 @@ const users = await withDbSpan({
 })
 ```
 
-#### `withDbSpanSync<T>(options: DbSpanOptions, fn: (span: PulseSpan) => T): T`
+#### `withDbSpanSync<T>(options: DbSpanOptions, fn: (span: LynkTraceSpan) => T): T`
 Synchronous version of `withDbSpan`.
 
-#### `getActiveSpan(): PulseSpan | undefined`
+#### `getActiveSpan(): LynkTraceSpan | undefined`
 Returns the currently active OpenTelemetry span, or `undefined` if none is active.
 
 #### `getActiveBackgroundSpanCount(): number`
@@ -950,7 +950,7 @@ Calculates self-time vs child execution time across a tree of concurrent and seq
 
 ### G. Framework & Middleware Instrumentation
 
-#### `pulseMiddleware(options?: PulseExpressOptions): RequestHandler`
+#### `lynktraceMiddleware(options?: LynkTraceExpressOptions): RequestHandler`
 Express request monitoring middleware. Initializes `RequestContext` inside `AsyncLocalStorage`, extracts incoming W3C trace headers, enriches the active OpenTelemetry server span with route details, and emits transaction telemetry.
 *(Formerly known as `monitorMiddleware` in early versions.)*
 
@@ -960,7 +960,7 @@ Express request monitoring middleware. Initializes `RequestContext` inside `Asyn
 | `ignoreMethods` | `readonly string[]` | `[]` | Case-insensitive HTTP methods to skip (e.g. `['OPTIONS', 'HEAD']`). |
 | `maxBreadcrumbs` | `number` | `100` | Maximum number of breadcrumbs stored in request-scoped storage. |
 | `trustedProxies` | `readonly string[]` | `[]` | Trusted reverse proxy IPs used to extract real client IP from `X-Forwarded-For`. |
-| `instrumentMiddleware` | `boolean` | `false` | When `true`, automatically measures execution durations of Express middleware layers. |
+| `instrumentMiddleware` | `boolean` | `true` | When `true` (default), automatically measures execution durations of Express middleware layers. Set to `false` to opt out. |
 | `minMiddlewareDurationMs` | `number` | `2.0` | Minimum execution duration in ms required for a middleware layer to emit a child span. |
 | `ignoreMiddlewares` | `readonly (string \| RegExp)[]` | `['query', 'expressInit']` | Names of middleware layers to exclude from layer profiling. |
 
@@ -970,9 +970,9 @@ Terminal Express error-handling middleware (`(err, req, res, next)`). Catches un
 #### `instrumentExpress(app: Express, options?): void`
 Profiles Express application middleware layers to measure execution duration without manually wrapping each layer.
 
-#### `pulseFastifyPlugin(fastify: FastifyInstance, options?: PulseFastifyOptions): Promise<void>`
+#### `lynktraceFastifyPlugin(fastify: FastifyInstance, options?: LynkTraceFastifyOptions): Promise<void>`
 Native Fastify plugin for request tracing, AsyncLocalStorage binding, and error capture.
-*(Formerly known as `fastifyPulsePlugin` in early versions.)*
+*(Formerly known as `fastifyLynkTracePlugin` in early versions.)*
 
 ---
 
@@ -980,10 +980,10 @@ Native Fastify plugin for request tracing, AsyncLocalStorage binding, and error 
 
 - **`registerBootstrapAutoInstrumentations()`**: Automatically executed on import. Registers fail-safe monkey-patch hooks for 15 supported drivers.
 - **`registerAutoInstrumentations(options?: AutoInstrumentOptions)`**: Programmatically registers or reconfigures auto-instrumentation drivers with custom driver options.
-- **`registerEsmLoaderHooks()`**: Registers Node.js ESM module resolution customization hooks for zero-code `--import @pulse-apm/node/register`.
+- **`registerEsmLoaderHooks()`**: Registers Node.js ESM module resolution customization hooks for zero-code `--import @lynktrace/node/register`.
 - **`createGraphQLInstrumentation(options?)`**: Creates GraphQL resolver tracing instrumentation.
 - **`createPrismaInstrumentation(options?)`**: Creates OpenTelemetry instrumentation for Prisma.
-- **`pulsePrismaExtension(options?)`**: Returns a `$extends` client extension for Prisma queries.
+- **`lynktracePrismaExtension(options?)`**: Returns a `$extends` client extension for Prisma queries.
 - **`instrumentPrismaClientInstance(prisma, options?)`**: Direct instance instrumentation wrapper for `PrismaClient`.
 - **`createMongoDBInstrumentation(options?)`**: Creates MongoDB driver instrumentation.
 - **`createMongooseInstrumentation(options?)`**: Creates Mongoose query & schema instrumentation.
@@ -1024,38 +1024,39 @@ Evaluates whether a given severity satisfies a configured threshold.
 
 ---
 
-### J. Canonical `Pulse` Facade Object
+### J. Canonical `LynkTrace` Facade Object
 
-All primary SDK methods are also accessible directly via the `Pulse` facade object:
+All primary SDK methods are also accessible directly via the `LynkTrace` facade object (legacy alias `Pulse` is also exported for backward compatibility):
 
 ```ts
-import { Pulse } from '@pulse-apm/node'
-// or: import Pulse from '@pulse-apm/node'
+import { LynkTrace } from '@lynktrace/node'
+// or: import LynkTrace from '@lynktrace/node'
+// legacy: import { Pulse } from '@lynktrace/node'
 
-await Pulse.init({ apiKey: process.env.PULSE_API_KEY! })
+await LynkTrace.init({ apiKey: process.env.LYNKTRACE_API_KEY! })
 
-app.use(Pulse.pulseMiddleware({ instrumentMiddleware: true }))
-app.use(Pulse.expressErrorHandler())
+app.use(LynkTrace.lynktraceMiddleware({ instrumentMiddleware: true }))
+app.use(LynkTrace.expressErrorHandler())
 
-Pulse.captureException(new Error('Something broke'))
-Pulse.captureMessage('Order placed', 'info')
-Pulse.captureMetric('cache.miss', 1)
-Pulse.incrementCounter('orders.total')
-Pulse.setGauge('active.connections', 8)
-Pulse.recordHistogram('render.time', 12.4)
-Pulse.addBreadcrumb({ category: 'cart', message: 'Item added' })
-Pulse.setUser({ id: 'user_1' })
-Pulse.setTag('tenant', 'acme')
+LynkTrace.captureException(new Error('Something broke'))
+LynkTrace.captureMessage('Order placed', 'info')
+LynkTrace.captureMetric('cache.miss', 1)
+LynkTrace.incrementCounter('orders.total')
+LynkTrace.setGauge('active.connections', 8)
+LynkTrace.recordHistogram('render.time', 12.4)
+LynkTrace.addBreadcrumb({ category: 'cart', message: 'Item added' })
+LynkTrace.setUser({ id: 'user_1' })
+LynkTrace.setTag('tenant', 'acme')
 
-await Pulse.withSpan('processPayment', async (span) => { ... })
-await Pulse.withBackgroundSpan('emailReceipt', async (span) => { ... })
-await Pulse.withDbSpan({ system: 'postgresql' }, async () => { ... })
+await LynkTrace.withSpan('processPayment', async (span) => { ... })
+await LynkTrace.withBackgroundSpan('emailReceipt', async (span) => { ... })
+await LynkTrace.withDbSpan({ system: 'postgresql' }, async () => { ... })
 
-const traceId = Pulse.getTraceId()
-const health = Pulse.getHealth()
+const traceId = LynkTrace.getTraceId()
+const health = LynkTrace.getHealth()
 
-await Pulse.flush()
-await Pulse.shutdown()
+await LynkTrace.flush()
+await LynkTrace.shutdown()
 ```
 
 ---
@@ -1064,25 +1065,25 @@ await Pulse.shutdown()
 
 ## 11. Server & Runtime Deployment Guides
 
-`@pulse-apm/node` is engineered to run seamlessly across all major Node.js deployment targets. Below are complete production guides for each runtime.
+`@lynktrace/node` is engineered to run seamlessly across all major Node.js deployment targets. Below are complete production guides for each runtime.
 
 ### Express.js Deep Dive
 
-Mount `pulseMiddleware` at the top of your middleware chain and `expressErrorHandler` at the very end of your route declarations:
+Mount `lynktraceMiddleware` at the top of your middleware chain and `expressErrorHandler` at the very end of your route declarations:
 
 ```ts
 import express from 'express'
-import { init, pulseMiddleware, expressErrorHandler } from '@pulse-apm/node'
+import { init, lynktraceMiddleware, expressErrorHandler } from '@lynktrace/node'
 
 await init({
-  apiKey: process.env.PULSE_API_KEY!,
+  apiKey: process.env.LYNKTRACE_API_KEY!,
   applicationName: 'express-api',
 })
 
 const app = express()
 
-// 1. Mount pulseMiddleware at the very top:
-app.use(pulseMiddleware({
+// 1. Mount lynktraceMiddleware at the very top:
+app.use(lynktraceMiddleware({
   // Filter out health checks and internal endpoints
   ignorePaths: ['/health', '/metrics', /^\/assets\/.*/],
   // Ignore preflight options
@@ -1108,20 +1109,20 @@ app.listen(3000)
 
 ### Fastify Deep Dive
 
-Fastify uses asynchronous hooks for lifecycle tracing. Register `pulseFastifyPlugin`:
+Fastify uses asynchronous hooks for lifecycle tracing. Register `lynktraceFastifyPlugin`:
 
 ```ts
 import Fastify from 'fastify'
-import { init, pulseFastifyPlugin } from '@pulse-apm/node'
+import { init, lynktraceFastifyPlugin } from '@lynktrace/node'
 
 await init({
-  apiKey: process.env.PULSE_API_KEY!,
+  apiKey: process.env.LYNKTRACE_API_KEY!,
   applicationName: 'fastify-api',
 })
 
 const fastify = Fastify()
 
-await fastify.register(pulseFastifyPlugin, {
+await fastify.register(lynktraceFastifyPlugin, {
   ignorePaths: ['/health', '/metrics'],
   ignoreMethods: ['OPTIONS'],
   maxBreadcrumbs: 100,
@@ -1139,7 +1140,7 @@ Serverless execution environments present unique challenges that standard APM SD
 1. **Hypervisor CPU Freeze**: As soon as a serverless function returns a response, the cloud hypervisor instantly freezes CPU execution. Background flush timers (`setInterval`) will never execute until a future request (or will be terminated if the container is recycled).
 2. **Read-Only Filesystems**: Cloud runtimes typically mount root directories (`/var/task`, `/root`) as read-only (`EROFS`).
 
-#### How `@pulse-apm/node` solves Serverless:
+#### How `@lynktrace/node` solves Serverless:
 * **`wrapHandler`**: Automatically sets `context.callbackWaitsForEmptyEventLoop = false` so background handles do not hang the Lambda runtime.
 * **Synchronous In-Memory Flush**: Upon handler return or unhandled error, `wrapHandler` synchronously flushes all captured traces, metrics, and errors over HTTP before the container freezes.
 * **Read-Only / Diskless Fallback**: The SDK automatically detects serverless environments (`AWS_LAMBDA_FUNCTION_NAME`, `VERCEL`, `K_SERVICE`, etc.) and redirects fallback paths to `os.tmpdir()` (`/tmp`). If disk access is completely blocked (`EROFS`/`EACCES`), the SDK degrades gracefully to **pure in-memory mode** without throwing errors or crashing.
@@ -1147,11 +1148,11 @@ Serverless execution environments present unique challenges that standard APM SD
 #### Production AWS Lambda Example:
 
 ```ts
-import { init, wrapHandler, captureException } from '@pulse-apm/node'
+import { init, wrapHandler, captureException } from '@lynktrace/node'
 
 // Initialize during container cold start:
 await init({
-  apiKey: process.env.PULSE_API_KEY!,
+  apiKey: process.env.LYNKTRACE_API_KEY!,
   applicationName: 'payment-webhook-lambda',
   // Disable disk storage since serverless is stateless:
   offlineQueue: false,
@@ -1182,10 +1183,10 @@ export const handler = wrapHandler(async (event: any, context: any) => {
 
 ```ts
 // pages/api/checkout.ts or app/api/checkout/route.ts
-import { init, wrapHandler } from '@pulse-apm/node'
+import { init, wrapHandler } from '@lynktrace/node'
 
 await init({
-  apiKey: process.env.PULSE_API_KEY!,
+  apiKey: process.env.LYNKTRACE_API_KEY!,
   applicationName: 'nextjs-web',
   offlineQueue: false,
 })
@@ -1197,12 +1198,12 @@ export default wrapHandler(async (req: any, res: any) => {
 
 ### NestJS Deep Dive
 
-NestJS applications can use `pulseMiddleware` for incoming request tracing, combined with an `@Catch()` Exception Filter for application-level error tracking:
+NestJS applications can use `lynktraceMiddleware` for incoming request tracing, combined with an `@Catch()` Exception Filter for application-level error tracking:
 
 ```ts
 import { NestFactory } from '@nestjs/core'
 import { AppModule } from './app.module'
-import { init, pulseMiddleware, captureException } from '@pulse-apm/node'
+import { init, lynktraceMiddleware, captureException } from '@lynktrace/node'
 import {
   ExceptionFilter,
   Catch,
@@ -1215,13 +1216,13 @@ import {
 import { Request, Response, NextFunction } from 'express'
 
 await init({
-  apiKey: process.env.PULSE_API_KEY!,
+  apiKey: process.env.LYNKTRACE_API_KEY!,
   applicationName: 'nest-service',
 })
 
 // 1. NestJS Global Exception Filter
 @Catch()
-export class PulseExceptionsFilter implements ExceptionFilter {
+export class LynkTraceExceptionsFilter implements ExceptionFilter {
   catch(exception: unknown, host: ArgumentsHost) {
     const ctx = host.switchToHttp()
     const response = ctx.getResponse<Response>()
@@ -1230,7 +1231,7 @@ export class PulseExceptionsFilter implements ExceptionFilter {
         ? exception.getStatus()
         : HttpStatus.INTERNAL_SERVER_ERROR
 
-    // Capture 5xx server errors to Pulse
+    // Capture 5xx server errors to LynkTrace
     if (status >= 500) {
       captureException(exception)
     }
@@ -1244,8 +1245,8 @@ export class PulseExceptionsFilter implements ExceptionFilter {
 
 // 2. NestJS Middleware Wrapper
 @Injectable()
-export class PulseHttpMiddleware implements NestMiddleware {
-  private readonly handler = pulseMiddleware({ instrumentMiddleware: true })
+export class LynkTraceHttpMiddleware implements NestMiddleware {
+  private readonly handler = lynktraceMiddleware({ instrumentMiddleware: true })
   use(req: Request, res: Response, next: NextFunction) {
     this.handler(req, res, next)
   }
@@ -1253,8 +1254,8 @@ export class PulseHttpMiddleware implements NestMiddleware {
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule)
-  app.use(pulseMiddleware({ instrumentMiddleware: true }))
-  app.useGlobalFilters(new PulseExceptionsFilter())
+  app.use(lynktraceMiddleware({ instrumentMiddleware: true }))
+  app.useGlobalFilters(new LynkTraceExceptionsFilter())
   await app.listen(3000)
 }
 bootstrap()
@@ -1266,10 +1267,10 @@ For applications using Node's standard `http` or `https` modules without a web f
 
 ```ts
 import http from 'node:http'
-import { init, captureRequest, captureException, flush } from '@pulse-apm/node'
+import { init, captureRequest, captureException, flush } from '@lynktrace/node'
 
 await init({
-  apiKey: process.env.PULSE_API_KEY!,
+  apiKey: process.env.LYNKTRACE_API_KEY!,
   applicationName: 'raw-http-server',
 })
 
@@ -1308,11 +1309,11 @@ server.listen(3000)
 When processing jobs in BullMQ, Agenda, or batch worker processes, wrap job execution in `withBackgroundSpan`:
 
 ```ts
-import { init, withBackgroundSpan, captureException } from '@pulse-apm/node'
+import { init, withBackgroundSpan, captureException } from '@lynktrace/node'
 import { Worker } from 'bullmq'
 
 await init({
-  apiKey: process.env.PULSE_API_KEY!,
+  apiKey: process.env.LYNKTRACE_API_KEY!,
   applicationName: 'queue-worker',
 })
 
@@ -1334,10 +1335,10 @@ const worker = new Worker('pdf-generation', async (job) => {
 
 ## 12. Database Instrumentation & Slow Query Tagging
 
-Pulse provides semantic database tracing with automatic slow query tagging:
+LynkTrace provides semantic database tracing with automatic slow query tagging:
 
 ```ts
-import { withDbSpan } from '@pulse-apm/node'
+import { withDbSpan } from '@lynktrace/node'
 
 const users = await withDbSpan({
   system: 'postgresql',
@@ -1382,7 +1383,7 @@ app.post('/api/orders', async (req, res) => {
 Monitor scheduled jobs, BullMQ workers, and batch scripts:
 
 ```ts
-import { captureCronCheckIn } from '@pulse-apm/node'
+import { captureCronCheckIn } from '@lynktrace/node'
 
 // 1. Report start of job:
 captureCronCheckIn('sync-inventory', 'in_progress')
@@ -1426,7 +1427,7 @@ Batches larger than 50KB automatically offload JSON serialization and Gzip compr
 
 ### Offline Disk Spooling
 
-If the host application loses internet connectivity, events are persisted to a local disk queue (`~/.pulse-sdk/events`) with SQLite/file backup. Upon reconnection, replayed events are automatically transmitted without duplicate delivery.
+If the host application loses internet connectivity, events are persisted to a local disk queue (`~/.lynktrace/events`) with SQLite/file backup. Upon reconnection, replayed events are automatically transmitted without duplicate delivery.
 
 ---
 
@@ -1444,7 +1445,7 @@ Before any telemetry is buffered or transmitted, the `SecurityScrubber` applies 
 To ensure no in-flight telemetry is lost during rolling deployments or pod evictions, listen for `SIGTERM` and `SIGINT` signals:
 
 ```ts
-import { shutdown, emergencyFlush } from '@pulse-apm/node'
+import { shutdown, emergencyFlush } from '@lynktrace/node'
 
 // Graceful Kubernetes termination (SIGTERM)
 process.on('SIGTERM', async () => {
@@ -1466,8 +1467,8 @@ process.on('uncaughtException', async (error) => {
 
 ## 18. Production Best Practices
 
-1. **Preload the SDK via `--import`**: Always run `node --import @pulse-apm/node/register dist/server.js`.
-2. **Never Hardcode API Keys**: Load `PULSE_API_KEY` from environment variables or secrets managers.
+1. **Preload the SDK via `--import`**: Always run `node --import @lynktrace/node/register dist/server.js`.
+2. **Never Hardcode API Keys**: Load `LYNKTRACE_API_KEY` from environment variables or secrets managers.
 3. **Always Mount `expressErrorHandler`**: Place it after all routes to capture unhandled promise rejections.
 4. **Use `withBackgroundSpan` for Post-Response Work**: Never attach asynchronous tasks directly to the closed HTTP request trace.
 5. **Set Realistic Shutdown Budgets**: Set `shutdownTimeoutMs` in accordance with your container termination grace period (e.g. 5–10 seconds).
@@ -1480,12 +1481,12 @@ process.on('uncaughtException', async (error) => {
 ❌ INCORRECT: Initializing SDK after importing Express or database drivers
 import express from 'express'
 import { Pool } from 'pg'
-import { init } from '@pulse-apm/node'
+import { init } from '@lynktrace/node'
 await init() // Too late! Drivers are already loaded without hooks.
 
-✅ CORRECT: Initialize Pulse before importing application drivers (or use --import)
-import { init } from '@pulse-apm/node'
-await init({ apiKey: process.env.PULSE_API_KEY! })
+✅ CORRECT: Initialize LynkTrace before importing application drivers (or use --import)
+import { init } from '@lynktrace/node'
+await init({ apiKey: process.env.LYNKTRACE_API_KEY! })
 const { default: express } = await import('express')
 const { Pool } = await import('pg')
 
@@ -1510,9 +1511,9 @@ await init({
 ## 20. Troubleshooting Guide
 
 ### 1. SDK Does Not Initialize
-- **Check API Key**: Verify `PULSE_API_KEY` is present and does not contain whitespace or control characters.
-- **Check Backend Connectivity**: Ensure the host can reach `PULSE_ENDPOINT` (`curl -I https://api.pulse.dev/v1/init`).
-- **Inspect Diagnostics**: Run with `PULSE_SDK_CONSOLE_DEBUG=true` to view raw connection messages.
+- **Check API Key**: Verify `LYNKTRACE_API_KEY` is present and does not contain whitespace or control characters.
+- **Check Backend Connectivity**: Ensure the host can reach `LYNKTRACE_ENDPOINT` (`curl -I https://api.lynktrace.com/v1/init`).
+- **Inspect Diagnostics**: Run with `LYNKTRACE_SDK_CONSOLE_DEBUG=true` to view raw connection messages.
 
 ### 2. Spans Not Appearing in Dashboard
 - **Verify Remote Sampling Rate**: If the remote sampling rate is set to `0.1`, 90% of non-error traces are dropped at head sampling.
@@ -1531,9 +1532,9 @@ If you are upgrading from earlier versions of the SDK, you must update your func
 
 | Modern Canonical Function Name | Legacy Name | Subsystem / Purpose |
 |---|---|---|
-| **`pulseMiddleware`** | `monitorMiddleware` | Express request monitoring middleware |
+| **`lynktraceMiddleware`** | `monitorMiddleware` | Express request monitoring middleware |
 | **`expressErrorHandler`** | *(new)* | Express terminal error-handling middleware |
-| **`pulseFastifyPlugin`** | `fastifyPulsePlugin` | Fastify request monitoring plugin |
+| **`lynktraceFastifyPlugin`** | `fastifyLynkTracePlugin` | Fastify request monitoring plugin |
 | **`captureException`** | `captureError` | Error & exception reporting |
 | **`emergencyFlush`** | `crashFlush` | Synchronous emergency flush on process crash |
 | **`getHealth`** | `getSDKHealth` | SDK operational diagnostics snapshot |
@@ -1542,4 +1543,4 @@ If you are upgrading from earlier versions of the SDK, you must update your func
 
 ## License
 
-ISC © Pulse APM Team
+ISC © LynkTrace APM Team

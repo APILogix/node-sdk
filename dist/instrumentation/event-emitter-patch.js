@@ -12,7 +12,8 @@
 import { context as otelContext, trace } from '@opentelemetry/api';
 import { EventEmitter } from 'events';
 import { getLogger } from '../utils/logger.js';
-const PATCH_SYMBOL = Symbol.for('pulse-sdk.event-emitter-patch.applied');
+const PATCH_SYMBOL = Symbol.for('lynktrace.event-emitter-patch.applied');
+const PATCH_SYMBOL_LEGACY = Symbol.for('pulse-sdk.event-emitter-patch.applied');
 let originalOn = null;
 let originalAddListener = null;
 let originalOnce = null;
@@ -52,9 +53,10 @@ function isGlobalOrSystemEmitter(emitter) {
  */
 export function patchEventEmitter() {
     const g = globalThis;
-    if (g[PATCH_SYMBOL])
+    if (g[PATCH_SYMBOL] || g[PATCH_SYMBOL_LEGACY])
         return;
     g[PATCH_SYMBOL] = true;
+    g[PATCH_SYMBOL_LEGACY] = true;
     originalOn = EventEmitter.prototype.on;
     originalAddListener = EventEmitter.prototype.addListener;
     originalOnce = EventEmitter.prototype.once;
@@ -143,7 +145,7 @@ export function patchEventEmitter() {
  */
 export function unpatchEventEmitter() {
     const g = globalThis;
-    if (!g[PATCH_SYMBOL])
+    if (!g[PATCH_SYMBOL] && !g[PATCH_SYMBOL_LEGACY])
         return;
     if (originalOn)
         EventEmitter.prototype.on = originalOn;
@@ -161,5 +163,6 @@ export function unpatchEventEmitter() {
     originalPrependListener = null;
     originalPrependOnceListener = null;
     delete g[PATCH_SYMBOL];
+    delete g[PATCH_SYMBOL_LEGACY];
     getLogger().debug('EventEmitter context binding patch removed');
 }

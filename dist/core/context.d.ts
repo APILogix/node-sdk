@@ -26,6 +26,12 @@ export interface ContextStore {
     /** Arbitrary extra context data. */
     readonly extra?: Readonly<Record<string, unknown>> | undefined;
 }
+export declare const LYNKTRACE_CONTEXT_ATTRIBUTES: {
+    readonly requestId: 'lynktrace.request_id';
+    readonly sessionId: 'lynktrace.session_id';
+    readonly userId: 'lynktrace.user_id';
+    readonly tenantId: 'lynktrace.tenant_id';
+};
 export declare const PULSE_CONTEXT_ATTRIBUTES: {
     readonly requestId: 'pulse.request_id';
     readonly sessionId: 'pulse.session_id';

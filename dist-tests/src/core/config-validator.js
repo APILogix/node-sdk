@@ -210,6 +210,42 @@ function validateInstrumentation(value, errors) {
     isBooleanOrObject(value, 'bullmq', ['enabled'], errors, [
         'emitCreateSpansForBulk', 'emitCreateSpansForFlow', 'requireParentSpanForPublish',
     ]);
+    // Optional Cloud & NoSQL Databases
+    if (value['dynamodb'] !== undefined)
+        isBooleanOrObject(value, 'dynamodb', ['enabled'], errors, ['captureQueries', 'captureParams']);
+    if (value['cassandra'] !== undefined)
+        isBooleanOrObject(value, 'cassandra', ['enabled'], errors, ['captureQueries', 'captureParams']);
+    if (value['elasticsearch'] !== undefined)
+        isBooleanOrObject(value, 'elasticsearch', ['enabled'], errors, ['captureQueries']);
+    if (value['mssql'] !== undefined)
+        isBooleanOrObject(value, 'mssql', ['enabled'], errors, ['captureQueries', 'captureParams']);
+    if (value['sqlite'] !== undefined)
+        isBooleanOrObject(value, 'sqlite', ['enabled'], errors, ['captureQueries', 'captureParams']);
+    // Optional ORMs & Query Builders
+    if (value['typeorm'] !== undefined)
+        isBooleanOrObject(value, 'typeorm', ['enabled'], errors, ['captureQueries', 'captureParams']);
+    if (value['drizzle'] !== undefined)
+        isBooleanOrObject(value, 'drizzle', ['enabled'], errors, ['captureQueries', 'captureParams']);
+    for (const ormKey of ['mikroorm', 'sequelize', 'knex']) {
+        if (value[ormKey] !== undefined)
+            validateBoolean(value, ormKey, `instrumentation.${ormKey}`, errors);
+    }
+    // Optional Distributed Messaging & Streaming
+    if (value['kafkajs'] !== undefined)
+        isBooleanOrObject(value, 'kafkajs', ['enabled'], errors, ['emitConsumerBatchSpans', 'captureMessageKey']);
+    if (value['amqplib'] !== undefined)
+        isBooleanOrObject(value, 'amqplib', ['enabled'], errors, ['captureMessageData']);
+    for (const msgKey of ['sqs', 'sns', 'pubsub']) {
+        if (value[msgKey] !== undefined)
+            validateBoolean(value, msgKey, `instrumentation.${msgKey}`, errors);
+    }
+    // Optional RPC & Infrastructure
+    for (const rpcKey of ['grpc', 'nestjs']) {
+        if (value[rpcKey] !== undefined)
+            validateBoolean(value, rpcKey, `instrumentation.${rpcKey}`, errors);
+    }
+    if (value['dns'] !== undefined)
+        isBooleanOrObject(value, 'dns', ['enabled'], errors);
 }
 function validatePrivacy(value, errors) {
     if (!isConfigSection(value, 'privacy', errors))

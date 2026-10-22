@@ -12,6 +12,7 @@
 import { MongoDBInstrumentation as OTelMongoDBInstrumentation } from '@opentelemetry/instrumentation-mongodb';
 import type { PrivacyCaptureConfig } from '../types/config.js';
 export declare const SUPPRESS_MONGODB_DRIVER_SPANS: symbol;
+export declare const SUPPRESS_MONGODB_DRIVER_SPANS_LEGACY: symbol;
 export interface MongoDBInstrumentationOptions {
     enabled: boolean;
     enhancedDatabaseReporting?: boolean;

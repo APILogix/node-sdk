@@ -22,10 +22,12 @@ interface LoggingRuntimeConfig {
   readonly maxLogSize: number
 }
 
-const WRAPPER_MARKER = Symbol.for('pulse-sdk.logging-subsystem.wrapper')
+const WRAPPER_MARKER = Symbol.for('lynktrace.logging-subsystem.wrapper')
+const WRAPPER_MARKER_LEGACY = Symbol.for('pulse-sdk.logging-subsystem.wrapper')
 
 interface MarkedWrapper extends ConsoleMethod {
   [WRAPPER_MARKER]?: true
+  [WRAPPER_MARKER_LEGACY]?: true
 }
 
 export class LoggingSubsystem {
@@ -133,7 +135,7 @@ export class LoggingSubsystem {
       if (typeof current !== 'function') continue
       if (isMarkedWrapper(current)) {
         logger.warn(
-          `[LoggingSubsystem] console.${level} is already wrapped by Pulse telemetry; skipping install`,
+          `[LoggingSubsystem] console.${level} is already wrapped by LynkTrace telemetry; skipping install`,
         )
         continue
       }
@@ -162,6 +164,7 @@ export class LoggingSubsystem {
         }
       }
       wrapper[WRAPPER_MARKER] = true
+      wrapper[WRAPPER_MARKER_LEGACY] = true
       this.wrappers.set(level, wrapper)
       consoleMethods[level] = wrapper
     }
@@ -202,7 +205,7 @@ function resolveLoggingConfig(config: Readonly<RemoteConfigResponse>): LoggingRu
 }
 
 function isMarkedWrapper(fn: ConsoleMethod): fn is MarkedWrapper {
-  return (fn as MarkedWrapper)[WRAPPER_MARKER] === true
+  return (fn as MarkedWrapper)[WRAPPER_MARKER] === true || (fn as MarkedWrapper)[WRAPPER_MARKER_LEGACY] === true
 }
 
 function safeStringify(value: unknown): string {

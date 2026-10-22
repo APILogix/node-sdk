@@ -109,6 +109,24 @@ export interface InstrumentationConfig {
     readonly pg: PgInstrumentationConfig | boolean;
     readonly mysql2: MySQLInstrumentationConfig | boolean;
     readonly eventEmitterPatch: boolean;
+    readonly dynamodb?: DynamoDBInstrumentationConfig | boolean | undefined;
+    readonly cassandra?: CassandraInstrumentationConfig | boolean | undefined;
+    readonly elasticsearch?: ElasticsearchInstrumentationConfig | boolean | undefined;
+    readonly mssql?: MSSQLInstrumentationConfig | boolean | undefined;
+    readonly sqlite?: SQLiteInstrumentationConfig | boolean | undefined;
+    readonly typeorm?: TypeORMInstrumentationConfig | boolean | undefined;
+    readonly drizzle?: DrizzleInstrumentationConfig | boolean | undefined;
+    readonly mikroorm?: boolean | undefined;
+    readonly sequelize?: boolean | undefined;
+    readonly knex?: boolean | undefined;
+    readonly kafkajs?: KafkaInstrumentationConfig | boolean | undefined;
+    readonly amqplib?: AMQPInstrumentationConfig | boolean | undefined;
+    readonly sqs?: boolean | undefined;
+    readonly sns?: boolean | undefined;
+    readonly pubsub?: boolean | undefined;
+    readonly grpc?: boolean | undefined;
+    readonly nestjs?: boolean | undefined;
+    readonly dns?: DNSInstrumentationConfig | boolean | undefined;
 }
 export interface FastifyInstrumentationConfig {
     readonly enabled: boolean;
@@ -148,6 +166,55 @@ export interface MySQLInstrumentationConfig {
 export interface RedisInstrumentationConfig {
     readonly enabled: boolean;
     readonly keyPolicy?: 'command-only' | 'sanitized-key' | 'full' | 'hash';
+}
+export interface DynamoDBInstrumentationConfig {
+    readonly enabled: boolean;
+    readonly captureQueries?: boolean | undefined;
+    readonly captureParams?: boolean | undefined;
+}
+export interface CassandraInstrumentationConfig {
+    readonly enabled: boolean;
+    readonly captureQueries?: boolean | undefined;
+    readonly captureParams?: boolean | undefined;
+}
+export interface ElasticsearchInstrumentationConfig {
+    readonly enabled: boolean;
+    readonly captureQueries?: boolean | undefined;
+}
+export interface MSSQLInstrumentationConfig {
+    readonly enabled: boolean;
+    readonly captureQueries?: boolean | undefined;
+    readonly captureParams?: boolean | undefined;
+}
+export interface SQLiteInstrumentationConfig {
+    readonly enabled: boolean;
+    readonly captureQueries?: boolean | undefined;
+    readonly captureParams?: boolean | undefined;
+}
+export interface TypeORMInstrumentationConfig {
+    readonly enabled: boolean;
+    readonly captureQueries?: boolean | undefined;
+    readonly captureParams?: boolean | undefined;
+}
+export interface DrizzleInstrumentationConfig {
+    readonly enabled: boolean;
+    readonly captureQueries?: boolean | undefined;
+    readonly captureParams?: boolean | undefined;
+}
+export interface KafkaInstrumentationConfig {
+    readonly enabled: boolean;
+    /** Emit single consumer span per batch instead of individual child spans. Default: true. */
+    readonly emitConsumerBatchSpans?: boolean | undefined;
+    /** Capture message key in span attributes. Default: false. */
+    readonly captureMessageKey?: boolean | undefined;
+}
+export interface AMQPInstrumentationConfig {
+    readonly enabled: boolean;
+    /** Capture message headers/payload in span attributes up to max buffer. Default: false. */
+    readonly captureMessageData?: boolean | undefined;
+}
+export interface DNSInstrumentationConfig {
+    readonly enabled: boolean;
 }
 /**
  * Combined PII / scrubbing config. Replaces the older `security` block.

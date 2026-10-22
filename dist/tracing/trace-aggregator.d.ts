@@ -81,6 +81,7 @@ export interface TraceDocument {
     readonly hasError?: boolean | undefined;
     readonly isSlow?: boolean | undefined;
     /** Internal marker for event pipeline routing during shutdown flush. */
+    readonly __lynktraceInternal?: true | undefined;
     readonly __pulseInternal: true;
 }
 export type TraceState = 'OPEN' | 'ROOT_ENDED' | 'QUIESCING' | 'FINALIZED';

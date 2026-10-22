@@ -23,7 +23,7 @@ import { generateId } from '../utils/uuid.js';
 import { extractTraceContext } from '../tracing/context-propagation.js';
 import { getTraceAggregator } from '../tracing/trace-aggregator.js';
 import { captureBodySnapshot, evaluateCaptureGate, headerString, matchesIgnoredPath, resolveClientIp, scrubHeaders, scrubQuery, } from './request-capture-utils.js';
-export function pulseFastifyPlugin(fastify, opts, done) {
+export function lynktraceFastifyPlugin(fastify, opts, done) {
     const options = opts ?? {};
     fastify.addHook('onRequest', (request, _reply, hookDone) => {
         try {
@@ -96,7 +96,7 @@ export function pulseFastifyPlugin(fastify, opts, done) {
                     // Fail-open
                 }
             }
-            request.pulse = {
+            request.lynktrace = {
                 requestId,
                 store,
                 startTime: Date.now(),
@@ -113,6 +113,7 @@ export function pulseFastifyPlugin(fastify, opts, done) {
                 captureQuery: decision.allowQuery,
                 captureBody: decision.allowBody,
             };
+            request.pulse = request.lynktrace;
             const runHook = () => {
                 withContext(store, () => {
                     attachRequestContextToActiveSpan(store);
@@ -127,12 +128,12 @@ export function pulseFastifyPlugin(fastify, opts, done) {
             }
         }
         catch (err) {
-            getLogger().error('pulseFastifyPlugin onRequest failed', { error: err });
+            getLogger().error('lynktraceFastifyPlugin onRequest failed', { error: err });
             hookDone();
         }
     });
     fastify.addHook('preHandler', (request, _reply, hookDone) => {
-        const state = request.pulse;
+        const state = request.lynktrace ?? request.pulse;
         if (!state) {
             hookDone();
             return;
@@ -151,7 +152,7 @@ export function pulseFastifyPlugin(fastify, opts, done) {
         }
     });
     fastify.addHook('onResponse', (request, reply, hookDone) => {
-        const state = request.pulse;
+        const state = request.lynktrace ?? request.pulse;
         if (!state) {
             hookDone();
             return;
@@ -178,13 +179,13 @@ export function pulseFastifyPlugin(fastify, opts, done) {
                 captureFastifyCompletion(request, reply, state);
             }
             catch (err) {
-                getLogger().error('pulseFastifyPlugin completion failed', { error: err });
+                getLogger().error('lynktraceFastifyPlugin completion failed', { error: err });
             }
             hookDone();
         });
     });
     fastify.addHook('preSerialization', (request, reply, payload, hookDone) => {
-        const state = request.pulse;
+        const state = request.lynktrace ?? request.pulse;
         if (state) {
             const errStatusCode = payload?.statusCode
                 ?? (reply.statusCode && reply.statusCode !== 200 ? reply.statusCode : undefined)
@@ -205,7 +206,7 @@ export function pulseFastifyPlugin(fastify, opts, done) {
                         captureException(payload instanceof Error ? payload : new Error(String(payload.message)));
                     }
                     catch (err) {
-                        getLogger().error('pulseFastifyPlugin preSerialization error capture failed', { error: err });
+                        getLogger().error('lynktraceFastifyPlugin preSerialization error capture failed', { error: err });
                     }
                 });
             }
@@ -213,7 +214,7 @@ export function pulseFastifyPlugin(fastify, opts, done) {
         hookDone(null, payload);
     });
     fastify.addHook('onError', (request, reply, error, hookDone) => {
-        const state = request.pulse;
+        const state = request.lynktrace ?? request.pulse;
         if (!state) {
             if (typeof hookDone === 'function')
                 hookDone();
@@ -246,14 +247,14 @@ export function pulseFastifyPlugin(fastify, opts, done) {
                 }
             }
             catch (err) {
-                getLogger().error('pulseFastifyPlugin error capture failed', { error: err });
+                getLogger().error('lynktraceFastifyPlugin error capture failed', { error: err });
             }
             if (typeof hookDone === 'function')
                 hookDone();
         });
     });
     fastify.addHook('onSend', (request, reply, payload, hookDone) => {
-        const state = request.pulse;
+        const state = request.lynktrace ?? request.pulse;
         const statusCode = reply.statusCode ?? reply.raw?.statusCode ?? 200;
         // BUG-18: Fast-path for non-error responses (< 400).
         // Avoid expensive Buffer stringification and JSON.parse on every 200 OK.
@@ -315,7 +316,7 @@ export function pulseFastifyPlugin(fastify, opts, done) {
                         captureException(errToCapture);
                     }
                     catch (err) {
-                        getLogger().error('pulseFastifyPlugin onSend error capture failed', { error: err });
+                        getLogger().error('lynktraceFastifyPlugin onSend error capture failed', { error: err });
                     }
                 });
             }
@@ -325,6 +326,9 @@ export function pulseFastifyPlugin(fastify, opts, done) {
     done();
 }
 ;
+lynktraceFastifyPlugin[Symbol.for('skip-override')] = true;
+lynktraceFastifyPlugin[Symbol.for('fastify.display-name')] = 'lynktrace-fastify';
+export const pulseFastifyPlugin = lynktraceFastifyPlugin;
 pulseFastifyPlugin[Symbol.for('skip-override')] = true;
 pulseFastifyPlugin[Symbol.for('fastify.display-name')] = 'pulse-fastify';
 function captureFastifyCompletion(request, reply, state) {
@@ -353,15 +357,23 @@ function captureFastifyCompletion(request, reply, state) {
         const enrichmentAttrs = {
             'http.route': route,
             'http.status_code': statusCode,
+            'lynktrace.request_id': state.requestId,
+            'lynktrace.latency_ms': latencyMs,
             'pulse.request_id': state.requestId,
             'pulse.latency_ms': latencyMs,
         };
-        if (state.tenantId)
+        if (state.tenantId) {
+            enrichmentAttrs['lynktrace.tenant_id'] = state.tenantId;
             enrichmentAttrs['pulse.tenant_id'] = state.tenantId;
-        if (state.userId)
+        }
+        if (state.userId) {
+            enrichmentAttrs['lynktrace.user_id'] = state.userId;
             enrichmentAttrs['pulse.user_id'] = state.userId;
-        if (state.sessionId)
+        }
+        if (state.sessionId) {
+            enrichmentAttrs['lynktrace.session_id'] = state.sessionId;
             enrichmentAttrs['pulse.session_id'] = state.sessionId;
+        }
         if (state.clientIp)
             enrichmentAttrs['http.client_ip'] = state.clientIp;
         if (state.userAgent)

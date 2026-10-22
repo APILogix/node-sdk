@@ -18,10 +18,12 @@ type ListenerMethod = typeof EventEmitter.prototype.on
 type EventListener = (...args: any[]) => void
 type RemovableListener = EventListener & { listener?: EventListener }
 
-const PATCH_SYMBOL = Symbol.for('pulse-sdk.event-emitter-patch.applied')
+const PATCH_SYMBOL = Symbol.for('lynktrace.event-emitter-patch.applied')
+const PATCH_SYMBOL_LEGACY = Symbol.for('pulse-sdk.event-emitter-patch.applied')
 
 interface GlobalWithPatch {
   [PATCH_SYMBOL]?: boolean
+  [PATCH_SYMBOL_LEGACY]?: boolean
 }
 
 let originalOn: ListenerMethod | null = null
@@ -62,8 +64,9 @@ function isGlobalOrSystemEmitter(emitter: unknown): boolean {
  */
 export function patchEventEmitter(): void {
   const g = globalThis as typeof globalThis & GlobalWithPatch
-  if (g[PATCH_SYMBOL]) return
+  if (g[PATCH_SYMBOL] || g[PATCH_SYMBOL_LEGACY]) return
   g[PATCH_SYMBOL] = true
+  g[PATCH_SYMBOL_LEGACY] = true
 
   originalOn = EventEmitter.prototype.on
   originalAddListener = EventEmitter.prototype.addListener
@@ -188,7 +191,7 @@ export function patchEventEmitter(): void {
  */
 export function unpatchEventEmitter(): void {
   const g = globalThis as typeof globalThis & GlobalWithPatch
-  if (!g[PATCH_SYMBOL]) return
+  if (!g[PATCH_SYMBOL] && !g[PATCH_SYMBOL_LEGACY]) return
 
   if (originalOn) EventEmitter.prototype.on = originalOn
   if (originalAddListener) EventEmitter.prototype.addListener = originalAddListener
@@ -202,6 +205,7 @@ export function unpatchEventEmitter(): void {
   originalPrependListener = null
   originalPrependOnceListener = null
   delete g[PATCH_SYMBOL]
+  delete g[PATCH_SYMBOL_LEGACY]
 
   getLogger().debug('EventEmitter context binding patch removed')
 }

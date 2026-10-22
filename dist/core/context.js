@@ -5,8 +5,15 @@ import { isoNow } from '../utils/time.js';
 import { RingBuffer } from './ring-buffer.js';
 import { client } from './client.js';
 import { getLogger } from '../utils/logger.js';
-const CONTEXT_STORE_KEY = createContextKey('pulse-sdk-context-store');
+const CONTEXT_STORE_KEY = createContextKey('lynktrace-sdk-context-store');
+const LEGACY_CONTEXT_STORE_KEY = createContextKey('pulse-sdk-context-store');
 const contextStorage = new AsyncLocalStorage();
+export const LYNKTRACE_CONTEXT_ATTRIBUTES = {
+    requestId: 'lynktrace.request_id',
+    sessionId: 'lynktrace.session_id',
+    userId: 'lynktrace.user_id',
+    tenantId: 'lynktrace.tenant_id',
+};
 export const PULSE_CONTEXT_ATTRIBUTES = {
     requestId: 'pulse.request_id',
     sessionId: 'pulse.session_id',
@@ -19,10 +26,12 @@ export const PULSE_CONTEXT_ATTRIBUTES = {
  */
 export function getRequestContext() {
     return contextStorage.getStore()
-        ?? otelContext.active().getValue(CONTEXT_STORE_KEY);
+        ?? otelContext.active().getValue(CONTEXT_STORE_KEY)
+        ?? otelContext.active().getValue(LEGACY_CONTEXT_STORE_KEY);
 }
 export function getRequestContextFromOtelContext(ctx = otelContext.active()) {
-    return ctx.getValue(CONTEXT_STORE_KEY);
+    return ctx.getValue(CONTEXT_STORE_KEY)
+        ?? ctx.getValue(LEGACY_CONTEXT_STORE_KEY);
 }
 /**
  * Get the current trace ID from context, or undefined.
@@ -83,14 +92,21 @@ export function attachRequestContextToActiveSpan(store = getRequestContext()) {
     }
     const tenantId = store.extra?.['tenantId'];
     const attributes = {
+        [LYNKTRACE_CONTEXT_ATTRIBUTES.requestId]: store.requestId,
         [PULSE_CONTEXT_ATTRIBUTES.requestId]: store.requestId,
     };
-    if (store.sessionId)
+    if (store.sessionId) {
+        attributes[LYNKTRACE_CONTEXT_ATTRIBUTES.sessionId] = store.sessionId;
         attributes[PULSE_CONTEXT_ATTRIBUTES.sessionId] = store.sessionId;
-    if (store.userId)
+    }
+    if (store.userId) {
+        attributes[LYNKTRACE_CONTEXT_ATTRIBUTES.userId] = store.userId;
         attributes[PULSE_CONTEXT_ATTRIBUTES.userId] = store.userId;
-    if (typeof tenantId === 'string' && tenantId)
+    }
+    if (typeof tenantId === 'string' && tenantId) {
+        attributes[LYNKTRACE_CONTEXT_ATTRIBUTES.tenantId] = tenantId;
         attributes[PULSE_CONTEXT_ATTRIBUTES.tenantId] = tenantId;
+    }
     try {
         activeSpan.setAttributes(attributes);
     }
@@ -184,7 +200,9 @@ export function createContextStore(requestId, maxBreadcrumbs, overrides) {
  * The context is automatically propagated through all async operations.
  */
 export function withContext(store, fn) {
-    const ctx = otelContext.active().setValue(CONTEXT_STORE_KEY, store);
+    const ctx = otelContext.active()
+        .setValue(CONTEXT_STORE_KEY, store)
+        .setValue(LEGACY_CONTEXT_STORE_KEY, store);
     return contextStorage.run(store, () => otelContext.with(ctx, () => {
         attachRequestContextToActiveSpan(store);
         return fn();

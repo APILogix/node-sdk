@@ -1,6 +1,6 @@
 /**
  * @module memory-detector
- * @description Enterprise-grade automatic memory limit detection for the Pulse SDK.
+ * @description Enterprise-grade automatic memory limit detection for the LynkTrace SDK.
  *
  * Detection priority chain (highest to lowest):
  * 1. cgroup v2 — `/sys/fs/cgroup/memory.max`

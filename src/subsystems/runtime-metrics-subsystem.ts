@@ -1,7 +1,7 @@
 /**
  * RuntimeMetricsSubsystem — continuously monitors Node.js & V8 runtime diagnostics.
  *
- * Emits reserved runtime metrics conforming to the Pulse Ingestion & Analytics contract:
+ * Emits reserved runtime metrics conforming to the LynkTrace Ingestion & Analytics contract:
  *   - runtime.heap.used
  *   - runtime.heap.total
  *   - runtime.memory.external

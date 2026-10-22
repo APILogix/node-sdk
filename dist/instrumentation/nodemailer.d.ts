@@ -30,3 +30,4 @@ export declare class NodemailerInstrumentation extends InstrumentationBase {
 }
 export declare function createNodemailerInstrumentation(enabled?: boolean, options?: Partial<NodemailerInstrumentationOptions>, captureConfig?: PrivacyCaptureConfig): NodemailerInstrumentation | null;
 export default createNodemailerInstrumentation;
+export { NodemailerInstrumentation as LynkTraceNodemailerInstrumentation, NodemailerInstrumentation as PulseNodemailerInstrumentation, };

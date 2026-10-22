@@ -9,9 +9,10 @@ import { InstrumentationBase, InstrumentationNodeModuleDefinition } from '@opent
 import { getLogger } from '../utils/logger.js';
 import { SUPPRESS_MONGODB_DRIVER_SPANS } from './mongodb.js';
 const MODULE_NAME = 'mongoose';
-const INSTRUMENTATION_NAME = '@pulse-apm/instrumentation-mongoose';
+const INSTRUMENTATION_NAME = '@lynktrace/instrumentation-mongoose';
 const INSTRUMENTATION_VERSION = '1.0.0';
-const SUPPRESS_NESTED_MONGOOSE_SPANS = createContextKey('pulse-sdk.mongoose.suppress-nested-spans');
+const SUPPRESS_NESTED_MONGOOSE_SPANS = createContextKey('lynktrace.mongoose.suppress-nested-spans');
+const SUPPRESS_NESTED_MONGOOSE_SPANS_LEGACY = createContextKey('pulse-sdk.mongoose.suppress-nested-spans');
 export class MongooseInstrumentation extends InstrumentationBase {
     _captureConfig;
     _isPatched = false;
@@ -150,6 +151,7 @@ export class MongooseInstrumentation extends InstrumentationBase {
             'db.collection.name': collectionName,
             'db.operation': operation,
             'db.operation.name': operation,
+            'lynktrace.instrumentation.layer': 'mongoose',
             'pulse.instrumentation.layer': 'mongoose',
             ...(readyState !== undefined ? {
                 'db.mongodb.buffering': isBuffering,
@@ -170,7 +172,7 @@ export class MongooseInstrumentation extends InstrumentationBase {
             return { args, wrapped: false };
         }
         const wrappedArgs = args.slice();
-        wrappedArgs[wrappedArgs.length - 1] = function pulseMongooseCallback(err, ...rest) {
+        wrappedArgs[wrappedArgs.length - 1] = function lynktraceMongooseCallback(err, ...rest) {
             if (err)
                 endWithError(err);
             else
@@ -202,7 +204,9 @@ export class MongooseInstrumentation extends InstrumentationBase {
             try {
                 let invocationContext = context.active().setValue(SUPPRESS_MONGODB_DRIVER_SPANS, true);
                 if (suppressNested) {
-                    invocationContext = invocationContext.setValue(SUPPRESS_NESTED_MONGOOSE_SPANS, true);
+                    invocationContext = invocationContext
+                        .setValue(SUPPRESS_NESTED_MONGOOSE_SPANS, true)
+                        .setValue(SUPPRESS_NESTED_MONGOOSE_SPANS_LEGACY, true);
                 }
                 const { result, callbackWrapped } = context.with(invocationContext, run);
                 if (!callbackWrapped && result && typeof result.then === 'function') {
@@ -243,7 +247,7 @@ export class MongooseInstrumentation extends InstrumentationBase {
             this._originalExec = Query.prototype.exec;
             const origExec = this._originalExec;
             Query.prototype.exec = function pulsePatchedQueryExec(op, callback) {
-                if (!self.isEnabled() || context.active().getValue(SUPPRESS_NESTED_MONGOOSE_SPANS)) {
+                if (!self.isEnabled() || context.active().getValue(SUPPRESS_NESTED_MONGOOSE_SPANS) || context.active().getValue(SUPPRESS_NESTED_MONGOOSE_SPANS_LEGACY)) {
                     return origExec.apply(this, arguments);
                 }
                 if (typeof op === 'function') {
@@ -285,7 +289,7 @@ export class MongooseInstrumentation extends InstrumentationBase {
             this._originalSave = Model.prototype.save;
             const origSave = this._originalSave;
             Model.prototype.save = function pulsePatchedModelSave(...args) {
-                if (!self.isEnabled() || context.active().getValue(SUPPRESS_NESTED_MONGOOSE_SPANS)) {
+                if (!self.isEnabled() || context.active().getValue(SUPPRESS_NESTED_MONGOOSE_SPANS) || context.active().getValue(SUPPRESS_NESTED_MONGOOSE_SPANS_LEGACY)) {
                     return origSave.apply(this, args);
                 }
                 const modelName = this.constructor?.modelName || 'Document';
@@ -305,7 +309,7 @@ export class MongooseInstrumentation extends InstrumentationBase {
             this._originalCreate = Model.create;
             const origCreate = this._originalCreate;
             Model.create = function pulsePatchedModelCreate(...args) {
-                if (!self.isEnabled() || context.active().getValue(SUPPRESS_NESTED_MONGOOSE_SPANS)) {
+                if (!self.isEnabled() || context.active().getValue(SUPPRESS_NESTED_MONGOOSE_SPANS) || context.active().getValue(SUPPRESS_NESTED_MONGOOSE_SPANS_LEGACY)) {
                     return origCreate.apply(this, args);
                 }
                 const modelName = this.modelName || this.collection?.name || 'Model';
@@ -322,7 +326,7 @@ export class MongooseInstrumentation extends InstrumentationBase {
             this._originalInsertMany = Model.insertMany;
             const origInsertMany = this._originalInsertMany;
             Model.insertMany = function pulsePatchedModelInsertMany(...args) {
-                if (!self.isEnabled() || context.active().getValue(SUPPRESS_NESTED_MONGOOSE_SPANS)) {
+                if (!self.isEnabled() || context.active().getValue(SUPPRESS_NESTED_MONGOOSE_SPANS) || context.active().getValue(SUPPRESS_NESTED_MONGOOSE_SPANS_LEGACY)) {
                     return origInsertMany.apply(this, args);
                 }
                 const modelName = this.modelName || this.collection?.name || 'Model';
@@ -339,7 +343,7 @@ export class MongooseInstrumentation extends InstrumentationBase {
             this._originalBulkWrite = Model.bulkWrite;
             const origBulkWrite = this._originalBulkWrite;
             Model.bulkWrite = function pulsePatchedModelBulkWrite(...args) {
-                if (!self.isEnabled() || context.active().getValue(SUPPRESS_NESTED_MONGOOSE_SPANS)) {
+                if (!self.isEnabled() || context.active().getValue(SUPPRESS_NESTED_MONGOOSE_SPANS) || context.active().getValue(SUPPRESS_NESTED_MONGOOSE_SPANS_LEGACY)) {
                     return origBulkWrite.apply(this, args);
                 }
                 const modelName = this.modelName || this.collection?.name || 'Model';
@@ -356,7 +360,7 @@ export class MongooseInstrumentation extends InstrumentationBase {
             this._originalAggregateExec = Aggregate.prototype.exec;
             const origAggregateExec = this._originalAggregateExec;
             Aggregate.prototype.exec = function pulsePatchedAggregateExec(...args) {
-                if (!self.isEnabled() || context.active().getValue(SUPPRESS_NESTED_MONGOOSE_SPANS)) {
+                if (!self.isEnabled() || context.active().getValue(SUPPRESS_NESTED_MONGOOSE_SPANS) || context.active().getValue(SUPPRESS_NESTED_MONGOOSE_SPANS_LEGACY)) {
                     return origAggregateExec.apply(this, args);
                 }
                 const aggModel = typeof this.model === 'function' ? this.model() : (this.model ?? this._model);
@@ -375,7 +379,7 @@ export class MongooseInstrumentation extends InstrumentationBase {
             this._originalPopulate = Model.populate;
             const origPopulate = this._originalPopulate;
             Model.populate = function pulsePatchedModelPopulate(...args) {
-                if (!self.isEnabled() || context.active().getValue(SUPPRESS_NESTED_MONGOOSE_SPANS)) {
+                if (!self.isEnabled() || context.active().getValue(SUPPRESS_NESTED_MONGOOSE_SPANS) || context.active().getValue(SUPPRESS_NESTED_MONGOOSE_SPANS_LEGACY)) {
                     return origPopulate.apply(this, args);
                 }
                 const modelName = this.modelName || 'Model';
@@ -440,4 +444,5 @@ export function createMongooseInstrumentation(enabled, captureConfig) {
         return null;
     return new MongooseInstrumentation({ enabled: true }, captureConfig);
 }
+export { MongooseInstrumentation as LynkTraceMongooseInstrumentation };
 export default createMongooseInstrumentation;

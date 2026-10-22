@@ -22,8 +22,10 @@ export interface PrismaInstrumentationOptions {
   captureParams: boolean
 }
 
-const PRISMA_EXT_APPLIED = Symbol.for('pulse-sdk.prisma.extension.applied')
-const PRISMA_ORIGINAL_CLIENT = Symbol.for('pulse-sdk.prisma.original-client')
+const PRISMA_EXT_APPLIED = Symbol.for('lynktrace.prisma.extension.applied')
+const PRISMA_EXT_APPLIED_LEGACY = Symbol.for('pulse-sdk.prisma.extension.applied')
+const PRISMA_ORIGINAL_CLIENT = Symbol.for('lynktrace.prisma.original-client')
+const PRISMA_ORIGINAL_CLIENT_LEGACY = Symbol.for('pulse-sdk.prisma.original-client')
 
 export function resolvePrismaDbSystem(prismaInstance: any): string {
   const provider = prismaInstance?._engineConfig?.activeProvider ?? prismaInstance?._activeProvider
@@ -35,16 +37,16 @@ export function resolvePrismaDbSystem(prismaInstance: any): string {
 
 /**
  * Creates an OpenTelemetry query extension for Prisma Client.
- * Attach with `prismaClient.$extends(pulsePrismaExtension())`
+ * Attach with `prismaClient.$extends(lynktracePrismaExtension())`
  * or use automatic instrumentation.
  */
-export function pulsePrismaExtension(dbSystem = 'postgresql') {
+export function lynktracePrismaExtension(dbSystem = 'postgresql') {
   return {
-    name: 'pulse-apm-prisma',
+    name: 'lynktrace-prisma',
     query: {
       $allModels: {
         async $allOperations({ model, operation, args, query }: any) {
-          const tracer = trace.getTracer('@pulse-apm/prisma')
+          const tracer = trace.getTracer('@lynktrace/prisma')
           const spanName = `prisma:${model}.${operation}`
           return tracer.startActiveSpan(
             spanName,
@@ -75,18 +77,21 @@ export function pulsePrismaExtension(dbSystem = 'postgresql') {
   }
 }
 
+export const pulsePrismaExtension = lynktracePrismaExtension
+
 /**
  * Automatically instrument a PrismaClient instance via $use middleware.
  * Ensures queries emit spans even if previewFeatures = ["tracing"] is omitted in schema.prisma.
  */
 export function instrumentPrismaClientInstance(prismaInstance: any): any {
-  if (!prismaInstance || (prismaInstance as any)[PRISMA_EXT_APPLIED]) return prismaInstance
+  if (!prismaInstance || (prismaInstance as any)[PRISMA_EXT_APPLIED] || (prismaInstance as any)[PRISMA_EXT_APPLIED_LEGACY]) return prismaInstance
   const dbSystem = resolvePrismaDbSystem(prismaInstance)
 
   if (typeof prismaInstance.$use === 'function') {
     ;(prismaInstance as any)[PRISMA_EXT_APPLIED] = true
+    ;(prismaInstance as any)[PRISMA_EXT_APPLIED_LEGACY] = true
     prismaInstance.$use(async (params: any, next: any) => {
-      const tracer = trace.getTracer('@pulse-apm/prisma')
+      const tracer = trace.getTracer('@lynktrace/prisma')
       const spanName = `prisma:${params.model || 'raw'}.${params.action}`
       return tracer.startActiveSpan(
         spanName,
@@ -117,10 +122,12 @@ export function instrumentPrismaClientInstance(prismaInstance: any): any {
 
   if (typeof prismaInstance.$extends === 'function') {
     try {
-      const extended = prismaInstance.$extends(pulsePrismaExtension(dbSystem))
+      const extended = prismaInstance.$extends(lynktracePrismaExtension(dbSystem))
       if (extended && typeof extended === 'object') {
         ;(extended as any)[PRISMA_EXT_APPLIED] = true
+        ;(extended as any)[PRISMA_EXT_APPLIED_LEGACY] = true
         ;(prismaInstance as any)[PRISMA_EXT_APPLIED] = true
+        ;(prismaInstance as any)[PRISMA_EXT_APPLIED_LEGACY] = true
         return extended
       }
     } catch (err) {
@@ -145,29 +152,34 @@ function copyStaticProperties(target: any, source: any): void {
 function patchPrismaClientExport(moduleExports: any): any {
   const prismaModule = moduleExports?.default?.PrismaClient ? moduleExports.default : moduleExports
   const OriginalPrismaClient = prismaModule?.PrismaClient
-  if (typeof OriginalPrismaClient !== 'function' || (OriginalPrismaClient as any)[PRISMA_ORIGINAL_CLIENT]) {
+  if (
+    typeof OriginalPrismaClient !== 'function' ||
+    (OriginalPrismaClient as any)[PRISMA_ORIGINAL_CLIENT] ||
+    (OriginalPrismaClient as any)[PRISMA_ORIGINAL_CLIENT_LEGACY]
+  ) {
     return moduleExports
   }
 
-  const PulsePrismaClient = function PulsePrismaClient(this: any, ...args: any[]) {
-    const target = new.target || PulsePrismaClient
+  const LynkTracePrismaClient = function LynkTracePrismaClient(this: any, ...args: any[]) {
+    const target = new.target || LynkTracePrismaClient
     const instance = Reflect.construct(OriginalPrismaClient, args, target)
     const instrumented = instrumentPrismaClientInstance(instance)
-    // If subclassing (target !== PulsePrismaClient), preserve the original instance reference
-    if (target !== PulsePrismaClient) {
+    // If subclassing (target !== LynkTracePrismaClient), preserve the original instance reference
+    if (target !== LynkTracePrismaClient) {
       return instance
     }
     return instrumented
   }
 
-  Object.setPrototypeOf(PulsePrismaClient, OriginalPrismaClient)
-  PulsePrismaClient.prototype = OriginalPrismaClient.prototype
-  ;(PulsePrismaClient as any)[PRISMA_ORIGINAL_CLIENT] = OriginalPrismaClient
-  copyStaticProperties(PulsePrismaClient, OriginalPrismaClient)
+  Object.setPrototypeOf(LynkTracePrismaClient, OriginalPrismaClient)
+  LynkTracePrismaClient.prototype = OriginalPrismaClient.prototype
+  ;(LynkTracePrismaClient as any)[PRISMA_ORIGINAL_CLIENT] = OriginalPrismaClient
+  ;(LynkTracePrismaClient as any)[PRISMA_ORIGINAL_CLIENT_LEGACY] = OriginalPrismaClient
+  copyStaticProperties(LynkTracePrismaClient, OriginalPrismaClient)
 
-  prismaModule.PrismaClient = PulsePrismaClient
+  prismaModule.PrismaClient = LynkTracePrismaClient
   if (moduleExports?.default?.PrismaClient) {
-    moduleExports.default.PrismaClient = PulsePrismaClient
+    moduleExports.default.PrismaClient = LynkTracePrismaClient
   }
 
   getLogger().debug('PrismaClient constructor auto-instrumentation attached')
@@ -177,7 +189,7 @@ function patchPrismaClientExport(moduleExports: any): any {
 function unpatchPrismaClientExport(moduleExports: any): void {
   const prismaModule = moduleExports?.default?.PrismaClient ? moduleExports.default : moduleExports
   const current = prismaModule?.PrismaClient
-  const original = current?.[PRISMA_ORIGINAL_CLIENT]
+  const original = current?.[PRISMA_ORIGINAL_CLIENT] ?? current?.[PRISMA_ORIGINAL_CLIENT_LEGACY]
   if (original) {
     prismaModule.PrismaClient = original
     if (moduleExports?.default?.PrismaClient) {
@@ -186,11 +198,11 @@ function unpatchPrismaClientExport(moduleExports: any): void {
   }
 }
 
-export class PulsePrismaInstrumentation extends InstrumentationBase {
+export class LynkTracePrismaInstrumentation extends InstrumentationBase {
   private otelPrisma?: OTelPrismaInstrumentation
 
   constructor(config: { enabled?: boolean; captureQueries?: boolean; captureParams?: boolean; ignoreSpanTypes?: (string | RegExp)[] } = {}) {
-    super('@pulse-apm/instrumentation-prisma', '1.0.0', { enabled: config.enabled ?? true })
+    super('@lynktrace/instrumentation-prisma', '1.0.0', { enabled: config.enabled ?? true })
     try {
       this.otelPrisma = new OTelPrismaInstrumentation({
         ...(config.captureQueries === false ? { ignoreSpanTypes: [/^prisma:engine:/] } : {}),
@@ -243,10 +255,12 @@ export class PulsePrismaInstrumentation extends InstrumentationBase {
   }
 }
 
+export { LynkTracePrismaInstrumentation as PulsePrismaInstrumentation }
+
 export function createPrismaInstrumentation(
   config: { enabled: boolean; captureQueries?: boolean; captureParams?: boolean } | boolean,
   mergedOptions?: Partial<PrismaInstrumentationOptions>
-): PulsePrismaInstrumentation | null {
+): LynkTracePrismaInstrumentation | null {
   const enabled = typeof config === 'object' ? config.enabled : config
 
   if (!enabled) {
@@ -257,7 +271,7 @@ export function createPrismaInstrumentation(
     ? (config.captureQueries ?? true)
     : (mergedOptions?.captureQueries ?? true)
 
-  return new PulsePrismaInstrumentation({
+  return new LynkTracePrismaInstrumentation({
     enabled: true,
     captureQueries,
     captureParams: typeof config === 'object' ? (config.captureParams ?? false) : (mergedOptions?.captureParams ?? false),

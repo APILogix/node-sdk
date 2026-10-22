@@ -2,7 +2,7 @@
  * QuotaController — Transport Rate-Limit & Backpressure Controller.
  *
  * Architectural Separation:
- * 1. The Pulse backend is the single source of truth for customer usage,
+ * 1. The LynkTrace backend is the single source of truth for customer usage,
  *    monthly quotas, billing entitlement, subscription plans, and quota resets.
  * 2. The SDK does NOT maintain customer billing state or calculate usage.
  * 3. This controller is strictly a transport-level mechanism to protect the
@@ -75,8 +75,8 @@ export class QuotaController extends EventEmitter {
     }
     /**
      * Inspect HTTP response status and headers for transport rate-limiting signals.
-     * Billing/usage headers (x-pulse-quota-*) are intentionally ignored as billing
-     * is owned entirely by the Pulse backend.
+     * Billing/usage headers (x-lynktrace-quota-*, x-pulse-quota-*) are intentionally ignored as billing
+     * is owned entirely by the LynkTrace backend.
      */
     inspectResponse(status, headers) {
         if (this.destroyed)

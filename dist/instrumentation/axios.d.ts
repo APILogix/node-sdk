@@ -1,4 +1,5 @@
 import type { PrivacyCaptureConfig } from '../types/config.js';
+export declare const SUPPRESS_INNER_HTTP_LYNKTRACE: symbol;
 export declare const SUPPRESS_INNER_HTTP: symbol;
 export interface AxiosInstrumentationOptions {
     enabled: boolean;

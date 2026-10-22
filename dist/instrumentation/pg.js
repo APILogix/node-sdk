@@ -42,14 +42,15 @@ function resolvePgModule(force = false) {
     }
     return null;
 }
-const PG_POOL_PATCH_GUARD = Symbol.for('pulse-sdk.pg-pool.connect-patched');
+const PG_POOL_PATCH_GUARD = Symbol.for('lynktrace.pg-pool.connect-patched');
+const PG_POOL_PATCH_GUARD_LEGACY = Symbol.for('pulse-sdk.pg-pool.connect-patched');
 /**
  * Patch pg.Pool.prototype.connect to capture connection acquisition wait time
  * and pool saturation metrics (total, idle, waiting).
  */
 export function patchPgPoolConnectOnce(force = true) {
     const globalState = globalThis;
-    if (globalState[PG_POOL_PATCH_GUARD])
+    if (globalState[PG_POOL_PATCH_GUARD] || globalState[PG_POOL_PATCH_GUARD_LEGACY])
         return;
     try {
         const pgModule = resolvePgModule(force);
@@ -57,7 +58,7 @@ export function patchPgPoolConnectOnce(force = true) {
         if (!PoolClass || !PoolClass.prototype || typeof PoolClass.prototype.connect !== 'function')
             return;
         const origConnect = PoolClass.prototype.connect;
-        PoolClass.prototype.connect = function pulsePoolConnect(callback) {
+        PoolClass.prototype.connect = function lynktracePoolConnect(callback) {
             const activeSpan = trace.getActiveSpan();
             const totalCount = this.totalCount ?? 0;
             const idleCount = this.idleCount ?? 0;
@@ -145,6 +146,7 @@ export function patchPgPoolConnectOnce(force = true) {
             });
         };
         globalState[PG_POOL_PATCH_GUARD] = true;
+        globalState[PG_POOL_PATCH_GUARD_LEGACY] = true;
     }
     catch { }
 }

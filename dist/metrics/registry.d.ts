@@ -18,7 +18,7 @@
  * - Auto-flush lifecycle management
  *
  * Architecture:
- *   MetricsRegistry → OtelMetricsManager → MeterProvider → ExponentialHistogramAggregation → PulseMetricReader → EventPipeline
+ *   MetricsRegistry → OtelMetricsManager → MeterProvider → ExponentialHistogramAggregation → LynkTraceMetricReader → EventPipeline
  */
 import { cardinalityGovernor } from '../utils/cardinality-governor.js';
 export interface MetricLabels {

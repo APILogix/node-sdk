@@ -310,6 +310,7 @@ export class BatchManager {
                 'Content-Type': this.options.definition.contentType,
                 Authorization: `Bearer ${this.options.apiKey}`,
                 'X-Route': this.options.route,
+                'x-lynktrace-internal': '1',
                 'x-pulse-internal': '1',
                 Connection: this.options.keepAlive ? 'keep-alive' : 'close',
                 ...(isGzip ? { 'Content-Encoding': 'gzip' } : {}),
@@ -774,7 +775,7 @@ async function settleWithin(promises, timeoutMs) {
     }
 }
 function logTransportConsole(direction, details) {
-    if (process.env['PULSE_TRANSPORT_CONSOLE'] !== 'true')
+    if (process.env['LYNKTRACE_TRANSPORT_CONSOLE'] !== 'true' && process.env['PULSE_TRANSPORT_CONSOLE'] !== 'true')
         return;
     const status = typeof details['statusCode'] === 'number' ? details['statusCode'] : undefined;
     const count = typeof details['eventCount'] === 'number' ? details['eventCount'] : undefined;

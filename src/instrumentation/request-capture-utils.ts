@@ -69,7 +69,7 @@ export interface CaptureGateDecision {
   readonly maskIp: boolean
   /**
    * The sampling rate that was applied (0..1). Useful for adapters that
-   * want to attach `pulse.sampling.rate` as a span attribute so the
+   * want to attach `lynktrace.sampling.rate` as a span attribute so the
    * backend can re-weight aggregates.
    */
   readonly sampledRate: number

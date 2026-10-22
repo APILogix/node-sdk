@@ -103,6 +103,7 @@ export async function postJson<T>(
         method: 'POST',
         headers: {
           ...requestHeaders,
+          'x-lynktrace-internal': '1',
           'x-pulse-internal': '1',
         },
         body: payload as BodyInit,

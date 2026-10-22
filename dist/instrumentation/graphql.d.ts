@@ -1,6 +1,6 @@
 /**
  * GraphQL Instrumentation — OpenTelemetry auto-instrumentation
- * wrapped with Pulse SDK guards and remote config support.
+ * wrapped with LynkTrace SDK guards and remote config support.
  *
  * Features:
  * - Per-resolver spans (optional, controlled by captureResolvers)

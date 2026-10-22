@@ -18,9 +18,10 @@ export interface MongooseInstrumentationOptions {
 }
 
 const MODULE_NAME = 'mongoose'
-const INSTRUMENTATION_NAME = '@pulse-apm/instrumentation-mongoose'
+const INSTRUMENTATION_NAME = '@lynktrace/instrumentation-mongoose'
 const INSTRUMENTATION_VERSION = '1.0.0'
-const SUPPRESS_NESTED_MONGOOSE_SPANS = createContextKey('pulse-sdk.mongoose.suppress-nested-spans')
+const SUPPRESS_NESTED_MONGOOSE_SPANS = createContextKey('lynktrace.mongoose.suppress-nested-spans')
+const SUPPRESS_NESTED_MONGOOSE_SPANS_LEGACY = createContextKey('pulse-sdk.mongoose.suppress-nested-spans')
 
 type MongooseSpanAttributes = Record<string, string | number | boolean>
 
@@ -177,6 +178,7 @@ export class MongooseInstrumentation extends InstrumentationBase {
       'db.collection.name': collectionName,
       'db.operation': operation,
       'db.operation.name': operation,
+      'lynktrace.instrumentation.layer': 'mongoose',
       'pulse.instrumentation.layer': 'mongoose',
       ...(readyState !== undefined ? {
         'db.mongodb.buffering': isBuffering,
@@ -200,7 +202,7 @@ export class MongooseInstrumentation extends InstrumentationBase {
     }
 
     const wrappedArgs = args.slice()
-    wrappedArgs[wrappedArgs.length - 1] = function pulseMongooseCallback(this: any, err: any, ...rest: any[]) {
+    wrappedArgs[wrappedArgs.length - 1] = function lynktraceMongooseCallback(this: any, err: any, ...rest: any[]) {
       if (err) endWithError(err)
       else endOk()
       return last.apply(this, [err, ...rest])
@@ -239,7 +241,9 @@ export class MongooseInstrumentation extends InstrumentationBase {
         try {
           let invocationContext = context.active().setValue(SUPPRESS_MONGODB_DRIVER_SPANS, true)
           if (suppressNested) {
-            invocationContext = invocationContext.setValue(SUPPRESS_NESTED_MONGOOSE_SPANS, true)
+            invocationContext = invocationContext
+              .setValue(SUPPRESS_NESTED_MONGOOSE_SPANS, true)
+              .setValue(SUPPRESS_NESTED_MONGOOSE_SPANS_LEGACY, true)
           }
           const { result, callbackWrapped } = context.with(invocationContext, run)
 
@@ -288,7 +292,7 @@ export class MongooseInstrumentation extends InstrumentationBase {
       const origExec = this._originalExec
 
       Query.prototype.exec = function pulsePatchedQueryExec(this: any, op?: any, callback?: any) {
-        if (!self.isEnabled() || context.active().getValue(SUPPRESS_NESTED_MONGOOSE_SPANS)) {
+        if (!self.isEnabled() || context.active().getValue(SUPPRESS_NESTED_MONGOOSE_SPANS) || context.active().getValue(SUPPRESS_NESTED_MONGOOSE_SPANS_LEGACY)) {
           return origExec.apply(this, arguments as any)
         }
 
@@ -338,7 +342,7 @@ export class MongooseInstrumentation extends InstrumentationBase {
       const origSave = this._originalSave
 
       Model.prototype.save = function pulsePatchedModelSave(this: any, ...args: any[]) {
-        if (!self.isEnabled() || context.active().getValue(SUPPRESS_NESTED_MONGOOSE_SPANS)) {
+        if (!self.isEnabled() || context.active().getValue(SUPPRESS_NESTED_MONGOOSE_SPANS) || context.active().getValue(SUPPRESS_NESTED_MONGOOSE_SPANS_LEGACY)) {
           return origSave.apply(this, args)
         }
 
@@ -366,7 +370,7 @@ export class MongooseInstrumentation extends InstrumentationBase {
       const origCreate = this._originalCreate
 
       Model.create = function pulsePatchedModelCreate(this: any, ...args: any[]) {
-        if (!self.isEnabled() || context.active().getValue(SUPPRESS_NESTED_MONGOOSE_SPANS)) {
+        if (!self.isEnabled() || context.active().getValue(SUPPRESS_NESTED_MONGOOSE_SPANS) || context.active().getValue(SUPPRESS_NESTED_MONGOOSE_SPANS_LEGACY)) {
           return origCreate.apply(this, args)
         }
 
@@ -391,7 +395,7 @@ export class MongooseInstrumentation extends InstrumentationBase {
       const origInsertMany = this._originalInsertMany
 
       Model.insertMany = function pulsePatchedModelInsertMany(this: any, ...args: any[]) {
-        if (!self.isEnabled() || context.active().getValue(SUPPRESS_NESTED_MONGOOSE_SPANS)) {
+        if (!self.isEnabled() || context.active().getValue(SUPPRESS_NESTED_MONGOOSE_SPANS) || context.active().getValue(SUPPRESS_NESTED_MONGOOSE_SPANS_LEGACY)) {
           return origInsertMany.apply(this, args)
         }
 
@@ -416,7 +420,7 @@ export class MongooseInstrumentation extends InstrumentationBase {
       const origBulkWrite = this._originalBulkWrite
 
       Model.bulkWrite = function pulsePatchedModelBulkWrite(this: any, ...args: any[]) {
-        if (!self.isEnabled() || context.active().getValue(SUPPRESS_NESTED_MONGOOSE_SPANS)) {
+        if (!self.isEnabled() || context.active().getValue(SUPPRESS_NESTED_MONGOOSE_SPANS) || context.active().getValue(SUPPRESS_NESTED_MONGOOSE_SPANS_LEGACY)) {
           return origBulkWrite.apply(this, args)
         }
 
@@ -441,7 +445,7 @@ export class MongooseInstrumentation extends InstrumentationBase {
       const origAggregateExec = this._originalAggregateExec
 
       Aggregate.prototype.exec = function pulsePatchedAggregateExec(this: any, ...args: any[]) {
-        if (!self.isEnabled() || context.active().getValue(SUPPRESS_NESTED_MONGOOSE_SPANS)) {
+        if (!self.isEnabled() || context.active().getValue(SUPPRESS_NESTED_MONGOOSE_SPANS) || context.active().getValue(SUPPRESS_NESTED_MONGOOSE_SPANS_LEGACY)) {
           return origAggregateExec.apply(this, args)
         }
 
@@ -468,7 +472,7 @@ export class MongooseInstrumentation extends InstrumentationBase {
       const origPopulate = this._originalPopulate
 
       Model.populate = function pulsePatchedModelPopulate(this: any, ...args: any[]) {
-        if (!self.isEnabled() || context.active().getValue(SUPPRESS_NESTED_MONGOOSE_SPANS)) {
+        if (!self.isEnabled() || context.active().getValue(SUPPRESS_NESTED_MONGOOSE_SPANS) || context.active().getValue(SUPPRESS_NESTED_MONGOOSE_SPANS_LEGACY)) {
           return origPopulate.apply(this, args)
         }
 
@@ -551,5 +555,7 @@ export function createMongooseInstrumentation(
   if (!enabled) return null
   return new MongooseInstrumentation({ enabled: true }, captureConfig)
 }
+
+export { MongooseInstrumentation as LynkTraceMongooseInstrumentation }
 
 export default createMongooseInstrumentation

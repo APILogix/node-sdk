@@ -49,7 +49,7 @@ export interface AggregatedHistogramPoint {
  * This ensures metrics get the same sanitization, plugin processing,
  * and transport resilience as all other SDK events.
  */
-export class PulseMetricReader extends MetricReader {
+export class LynkTraceMetricReader extends MetricReader {
   private totalCollected = 0
   private totalDropped = 0
 
@@ -85,7 +85,7 @@ export class PulseMetricReader extends MetricReader {
           for (const dp of dataPoints) {
             const event = this.dataPointToEvent(dp)
             if (event) {
-              processEvent(internalTelemetry ? { ...event, __pulseInternal: true } : event)
+              processEvent(internalTelemetry ? { ...event, __lynktraceInternal: true, __pulseInternal: true } : event)
               exportedCount++
             }
           }
@@ -249,3 +249,6 @@ export function extractLabels(attributes: Record<string, unknown> | undefined): 
   }
   return labels
 }
+
+export const PulseMetricReader = LynkTraceMetricReader
+export type PulseMetricReader = LynkTraceMetricReader

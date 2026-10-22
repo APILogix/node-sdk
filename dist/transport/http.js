@@ -69,6 +69,7 @@ export async function postJson(url, body, headers, timeoutMs, options = {}) {
             method: 'POST',
             headers: {
                 ...requestHeaders,
+                'x-lynktrace-internal': '1',
                 'x-pulse-internal': '1',
             },
             body: payload,

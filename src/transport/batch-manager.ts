@@ -359,6 +359,7 @@ export class BatchManager {
         'Content-Type': this.options.definition.contentType,
         Authorization: `Bearer ${this.options.apiKey}`,
         'X-Route': this.options.route,
+        'x-lynktrace-internal': '1',
         'x-pulse-internal': '1',
         Connection: this.options.keepAlive ? 'keep-alive' : 'close',
         ...(isGzip ? { 'Content-Encoding': 'gzip' } : {}),
@@ -838,7 +839,7 @@ async function settleWithin(promises: readonly Promise<void>[], timeoutMs: numbe
 }
 
 function logTransportConsole(direction: 'request' | 'response', details: Readonly<Record<string, unknown>>): void {
-  if (process.env['PULSE_TRANSPORT_CONSOLE'] !== 'true') return
+  if (process.env['LYNKTRACE_TRANSPORT_CONSOLE'] !== 'true' && process.env['PULSE_TRANSPORT_CONSOLE'] !== 'true') return
   const status = typeof details['statusCode'] === 'number' ? details['statusCode'] : undefined
   const count = typeof details['eventCount'] === 'number' ? details['eventCount'] : undefined
   console.log(`[Telemetry transport] ${direction}`, {

@@ -40,7 +40,7 @@ import {
   scrubQuery,
 } from './request-capture-utils.js'
 
-export interface PulseFastifyOptions {
+export interface LynkTraceFastifyOptions {
   readonly ignorePaths?: readonly (string | RegExp)[]
   readonly ignoreMethods?: readonly string[]
   readonly maxBreadcrumbs?: number
@@ -53,6 +53,8 @@ export interface PulseFastifyOptions {
    */
   readonly trustedProxies?: readonly string[]
 }
+
+export type PulseFastifyOptions = LynkTraceFastifyOptions
 
 type FastifyInstance = {
   addHook(name: 'onRequest', handler: (request: FastifyRequest, reply: FastifyReply, done: HookDone) => void): void
@@ -77,7 +79,8 @@ type FastifyRequest = {
   routeOptions?: { url?: string }
   routerPath?: string
   user?: { id?: unknown; userId?: unknown }
-  pulse?: PulseFastifyState
+  lynktrace?: LynkTraceFastifyState
+  pulse?: LynkTraceFastifyState
 }
 
 type FastifyReply = {
@@ -86,7 +89,7 @@ type FastifyReply = {
   getHeader?: (name: string) => string | string[] | number | undefined
 }
 
-interface PulseFastifyState {
+export interface LynkTraceFastifyState {
   requestId: string
   store: ContextStore
   startTime: number
@@ -104,9 +107,11 @@ interface PulseFastifyState {
   captureBody: boolean
 }
 
-export function pulseFastifyPlugin(
+export type PulseFastifyState = LynkTraceFastifyState
+
+export function lynktraceFastifyPlugin(
   fastify: FastifyInstance,
-  opts: PulseFastifyOptions,
+  opts: LynkTraceFastifyOptions,
   done: (err?: Error) => void,
 ): void {
   const options = opts ?? {}
@@ -201,7 +206,7 @@ export function pulseFastifyPlugin(
         }
       }
 
-      request.pulse = {
+      request.lynktrace = {
         requestId,
         store,
         startTime: Date.now(),
@@ -218,6 +223,7 @@ export function pulseFastifyPlugin(
         captureQuery: decision.allowQuery,
         captureBody: decision.allowBody,
       }
+      request.pulse = request.lynktrace
 
       const runHook = () => {
         withContext(store, () => {
@@ -232,13 +238,13 @@ export function pulseFastifyPlugin(
         runHook()
       }
     } catch (err) {
-      getLogger().error('pulseFastifyPlugin onRequest failed', { error: err })
+      getLogger().error('lynktraceFastifyPlugin onRequest failed', { error: err })
       hookDone()
     }
   })
 
   fastify.addHook('preHandler', (request, _reply, hookDone) => {
-    const state = request.pulse
+    const state = request.lynktrace ?? request.pulse
     if (!state) {
       hookDone()
       return
@@ -259,7 +265,7 @@ export function pulseFastifyPlugin(
   })
 
   fastify.addHook('onResponse', (request, reply, hookDone) => {
-    const state = request.pulse
+    const state = request.lynktrace ?? request.pulse
     if (!state) {
       hookDone()
       return
@@ -285,14 +291,14 @@ export function pulseFastifyPlugin(
         }
         captureFastifyCompletion(request, reply, state)
       } catch (err) {
-        getLogger().error('pulseFastifyPlugin completion failed', { error: err })
+        getLogger().error('lynktraceFastifyPlugin completion failed', { error: err })
       }
       hookDone()
     })
   })
 
   fastify.addHook('preSerialization', (request, reply, payload, hookDone) => {
-    const state = request.pulse
+    const state = request.lynktrace ?? request.pulse
     if (state) {
       const errStatusCode = (payload as unknown as { statusCode?: number })?.statusCode
         ?? (reply.statusCode && reply.statusCode !== 200 ? reply.statusCode : undefined)
@@ -311,7 +317,7 @@ export function pulseFastifyPlugin(
             attachRequestContextToActiveSpan(state.store)
             captureException(payload instanceof Error ? payload : new Error(String((payload as Record<string, unknown>).message)))
           } catch (err) {
-            getLogger().error('pulseFastifyPlugin preSerialization error capture failed', { error: err })
+            getLogger().error('lynktraceFastifyPlugin preSerialization error capture failed', { error: err })
           }
         })
       }
@@ -320,7 +326,7 @@ export function pulseFastifyPlugin(
   })
 
   fastify.addHook('onError', (request, reply, error, hookDone) => {
-    const state = request.pulse
+    const state = request.lynktrace ?? request.pulse
     if (!state) {
       if (typeof hookDone === 'function') hookDone()
       return
@@ -351,14 +357,14 @@ export function pulseFastifyPlugin(
           } catch { /* fail-open */ }
         }
       } catch (err) {
-        getLogger().error('pulseFastifyPlugin error capture failed', { error: err })
+        getLogger().error('lynktraceFastifyPlugin error capture failed', { error: err })
       }
       if (typeof hookDone === 'function') hookDone()
     })
   })
 
   fastify.addHook('onSend', (request, reply, payload, hookDone) => {
-    const state = request.pulse
+    const state = request.lynktrace ?? request.pulse
     const statusCode = reply.statusCode ?? reply.raw?.statusCode ?? 200
 
     // BUG-18: Fast-path for non-error responses (< 400).
@@ -419,7 +425,7 @@ export function pulseFastifyPlugin(
             attachRequestContextToActiveSpan(state.store)
             captureException(errToCapture)
           } catch (err) {
-            getLogger().error('pulseFastifyPlugin onSend error capture failed', { error: err })
+            getLogger().error('lynktraceFastifyPlugin onSend error capture failed', { error: err })
           }
         })
       }
@@ -430,13 +436,17 @@ export function pulseFastifyPlugin(
   done()
 }
 
+;(lynktraceFastifyPlugin as any)[Symbol.for('skip-override')] = true
+;(lynktraceFastifyPlugin as any)[Symbol.for('fastify.display-name')] = 'lynktrace-fastify'
+
+export const pulseFastifyPlugin = lynktraceFastifyPlugin
 ;(pulseFastifyPlugin as any)[Symbol.for('skip-override')] = true
 ;(pulseFastifyPlugin as any)[Symbol.for('fastify.display-name')] = 'pulse-fastify'
 
 function captureFastifyCompletion(
   request: FastifyRequest,
   reply: FastifyReply,
-  state: PulseFastifyState,
+  state: LynkTraceFastifyState,
 ): void {
   if (state.captured) return
   state.captured = true
@@ -465,12 +475,23 @@ function captureFastifyCompletion(
     const enrichmentAttrs: Record<string, string | number | boolean> = {
       'http.route': route,
       'http.status_code': statusCode,
+      'lynktrace.request_id': state.requestId,
+      'lynktrace.latency_ms': latencyMs,
       'pulse.request_id': state.requestId,
       'pulse.latency_ms': latencyMs,
     }
-    if (state.tenantId) enrichmentAttrs['pulse.tenant_id'] = state.tenantId
-    if (state.userId) enrichmentAttrs['pulse.user_id'] = state.userId
-    if (state.sessionId) enrichmentAttrs['pulse.session_id'] = state.sessionId
+    if (state.tenantId) {
+      enrichmentAttrs['lynktrace.tenant_id'] = state.tenantId
+      enrichmentAttrs['pulse.tenant_id'] = state.tenantId
+    }
+    if (state.userId) {
+      enrichmentAttrs['lynktrace.user_id'] = state.userId
+      enrichmentAttrs['pulse.user_id'] = state.userId
+    }
+    if (state.sessionId) {
+      enrichmentAttrs['lynktrace.session_id'] = state.sessionId
+      enrichmentAttrs['pulse.session_id'] = state.sessionId
+    }
     if (state.clientIp) enrichmentAttrs['http.client_ip'] = state.clientIp
     if (state.userAgent) enrichmentAttrs['http.user_agent'] = state.userAgent
     if (state.referer) enrichmentAttrs['http.referer'] = state.referer

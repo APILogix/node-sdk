@@ -12,7 +12,7 @@
  */
 import { type Span } from '@opentelemetry/api';
 import { type ContextStore } from '../core/context.js';
-export interface PulseFastifyOptions {
+export interface LynkTraceFastifyOptions {
     readonly ignorePaths?: readonly (string | RegExp)[];
     readonly ignoreMethods?: readonly string[];
     readonly maxBreadcrumbs?: number;
@@ -25,6 +25,7 @@ export interface PulseFastifyOptions {
      */
     readonly trustedProxies?: readonly string[];
 }
+export type PulseFastifyOptions = LynkTraceFastifyOptions;
 type FastifyInstance = {
     addHook(name: 'onRequest', handler: (request: FastifyRequest, reply: FastifyReply, done: HookDone) => void): void;
     addHook(name: 'preHandler', handler: (request: FastifyRequest, reply: FastifyReply, done: HookDone) => void): void;
@@ -53,7 +54,8 @@ type FastifyRequest = {
         id?: unknown;
         userId?: unknown;
     };
-    pulse?: PulseFastifyState;
+    lynktrace?: LynkTraceFastifyState;
+    pulse?: LynkTraceFastifyState;
 };
 type FastifyReply = {
     statusCode?: number;
@@ -62,7 +64,7 @@ type FastifyReply = {
     };
     getHeader?: (name: string) => string | string[] | number | undefined;
 };
-interface PulseFastifyState {
+export interface LynkTraceFastifyState {
     requestId: string;
     store: ContextStore;
     startTime: number;
@@ -79,5 +81,7 @@ interface PulseFastifyState {
     captureQuery: boolean;
     captureBody: boolean;
 }
-export declare function pulseFastifyPlugin(fastify: FastifyInstance, opts: PulseFastifyOptions, done: (err?: Error) => void): void;
+export type PulseFastifyState = LynkTraceFastifyState;
+export declare function lynktraceFastifyPlugin(fastify: FastifyInstance, opts: LynkTraceFastifyOptions, done: (err?: Error) => void): void;
+export declare const pulseFastifyPlugin: typeof lynktraceFastifyPlugin;
 export {};

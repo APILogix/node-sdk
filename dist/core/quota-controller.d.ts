@@ -2,7 +2,7 @@
  * QuotaController — Transport Rate-Limit & Backpressure Controller.
  *
  * Architectural Separation:
- * 1. The Pulse backend is the single source of truth for customer usage,
+ * 1. The LynkTrace backend is the single source of truth for customer usage,
  *    monthly quotas, billing entitlement, subscription plans, and quota resets.
  * 2. The SDK does NOT maintain customer billing state or calculate usage.
  * 3. This controller is strictly a transport-level mechanism to protect the
@@ -15,13 +15,13 @@ import { EventEmitter } from 'node:events';
 import type { QuotaState, TelemetryPriority } from '../types/telemetry-classes.js';
 export interface QuotaStatusSnapshot {
     readonly state: QuotaState;
-    /** @deprecated Quota limits are owned by Pulse backend. Always null in SDK. */
+    /** @deprecated Quota limits are owned by LynkTrace backend. Always null in SDK. */
     readonly quotaLimit: number | null;
-    /** @deprecated Quota usage accounting is owned by Pulse backend. Always null in SDK. */
+    /** @deprecated Quota usage accounting is owned by LynkTrace backend. Always null in SDK. */
     readonly quotaUsed: number | null;
-    /** @deprecated Quota remaining is owned by Pulse backend. Always null in SDK. */
+    /** @deprecated Quota remaining is owned by LynkTrace backend. Always null in SDK. */
     readonly quotaRemaining: number | null;
-    /** @deprecated Quota reset scheduling is owned by Pulse backend. Always null in SDK. */
+    /** @deprecated Quota reset scheduling is owned by LynkTrace backend. Always null in SDK. */
     readonly quotaResetAt: number | null;
     /** Active backoff delay in ms derived from Retry-After header. */
     readonly retryAfterMs: number | null;
@@ -64,8 +64,8 @@ export declare class QuotaController extends EventEmitter {
     shouldAdmit(priority: TelemetryPriority): boolean;
     /**
      * Inspect HTTP response status and headers for transport rate-limiting signals.
-     * Billing/usage headers (x-pulse-quota-*) are intentionally ignored as billing
-     * is owned entirely by the Pulse backend.
+     * Billing/usage headers (x-lynktrace-quota-*, x-pulse-quota-*) are intentionally ignored as billing
+     * is owned entirely by the LynkTrace backend.
      */
     inspectResponse(status: number, headers?: Headers | Record<string, string | string[] | undefined>): void;
     /**

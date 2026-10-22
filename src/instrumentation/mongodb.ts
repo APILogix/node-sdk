@@ -16,7 +16,8 @@ import { context, createContextKey, trace } from '@opentelemetry/api'
 import type { PrivacyCaptureConfig } from '../types/config.js'
 import { safeJsonStringify } from '../utils/safe-json.js'
 
-export const SUPPRESS_MONGODB_DRIVER_SPANS = createContextKey('pulse-sdk.mongodb.suppress-driver-spans')
+export const SUPPRESS_MONGODB_DRIVER_SPANS = createContextKey('lynktrace.mongodb.suppress-driver-spans')
+export const SUPPRESS_MONGODB_DRIVER_SPANS_LEGACY = createContextKey('pulse-sdk.mongodb.suppress-driver-spans')
 
 export interface MongoDBInstrumentationOptions {
   enabled: boolean
@@ -66,8 +67,11 @@ export function createMongoDBInstrumentation(
   const instrumentation = new OTelMongoDBInstrumentation(instrumentationOptions)
   const originalSkipCheck = (instrumentation as any)._checkSkipInstrumentation
   if (typeof originalSkipCheck === 'function') {
-    ;(instrumentation as any)._checkSkipInstrumentation = function pulseCheckSkipMongoDBInstrumentation(currentSpan: unknown) {
-      if (context.active().getValue(SUPPRESS_MONGODB_DRIVER_SPANS) === true) {
+    ;(instrumentation as any)._checkSkipInstrumentation = function lynktraceCheckSkipMongoDBInstrumentation(currentSpan: unknown) {
+      if (
+        context.active().getValue(SUPPRESS_MONGODB_DRIVER_SPANS) === true ||
+        context.active().getValue(SUPPRESS_MONGODB_DRIVER_SPANS_LEGACY) === true
+      ) {
         return true
       }
       return originalSkipCheck.call(this, currentSpan)
@@ -78,7 +82,7 @@ export function createMongoDBInstrumentation(
   // when executed without an active parent span, preventing thousands of 1-span startup traces from flooding APM.
   const origV4Promise = (instrumentation as any)._getV4PatchCommandPromise
   if (typeof origV4Promise === 'function') {
-    ;(instrumentation as any)._getV4PatchCommandPromise = function pulseGetV4PatchCommandPromise(this: any, ...promiseArgs: any[]) {
+    ;(instrumentation as any)._getV4PatchCommandPromise = function lynktraceGetV4PatchCommandPromise(this: any, ...promiseArgs: any[]) {
       const patcher = origV4Promise.apply(this, promiseArgs)
       return function (original: any) {
         const patched = patcher(original)
@@ -96,7 +100,7 @@ export function createMongoDBInstrumentation(
 
   const origV4Callback = (instrumentation as any)._getV4PatchCommandCallback
   if (typeof origV4Callback === 'function') {
-    ;(instrumentation as any)._getV4PatchCommandCallback = function pulseGetV4PatchCommandCallback(this: any, ...callbackArgs: any[]) {
+    ;(instrumentation as any)._getV4PatchCommandCallback = function lynktraceGetV4PatchCommandCallback(this: any, ...callbackArgs: any[]) {
       const patcher = origV4Callback.apply(this, callbackArgs)
       return function (original: any) {
         const patched = patcher(original)

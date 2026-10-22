@@ -40,7 +40,8 @@ import { SecurityScrubber } from '../processors/security-scrubber.js';
  * Context key for scope storage on the OTel context.
  * This enables ALS propagation of scope through all async operations.
  */
-const SCOPE_KEY = createContextKey('pulse-sdk-scope');
+const LYNKTRACE_SCOPE_KEY = createContextKey('lynktrace-sdk-scope');
+const PULSE_SCOPE_KEY = createContextKey('pulse-sdk-scope');
 // ─── Scope Manager ──────────────────────────────────────────────────────────
 export class ScopeManager {
     user = null;
@@ -204,7 +205,8 @@ export const scopeManager = new ScopeManager();
  * depending on whether they're called inside a `withScope()` block.
  */
 function getActiveScope() {
-    const ctxScope = otelContext.active().getValue(SCOPE_KEY);
+    const activeCtx = otelContext.active();
+    const ctxScope = (activeCtx.getValue(LYNKTRACE_SCOPE_KEY) ?? activeCtx.getValue(PULSE_SCOPE_KEY));
     return ctxScope ?? scopeManager;
 }
 // ─── Public API ─────────────────────────────────────────────────────────────
@@ -311,7 +313,9 @@ export function clearScope() {
  */
 export function withScope(fn) {
     const cloned = getActiveScope().clone();
-    const ctx = otelContext.active().setValue(SCOPE_KEY, cloned);
+    const ctx = otelContext.active()
+        .setValue(LYNKTRACE_SCOPE_KEY, cloned)
+        .setValue(PULSE_SCOPE_KEY, cloned);
     return otelContext.with(ctx, () => fn(cloned));
 }
 /**

@@ -1,19 +1,19 @@
 /**
- * Pulse SDK Tracer — enterprise-grade distributed tracing built on OpenTelemetry.
+ * LynkTrace SDK Tracer — enterprise-grade distributed tracing built on OpenTelemetry.
  *
  * Architecture (v3.0):
- *   PulseTracer → OTel NodeTracerProvider → PipelineSpanExporter → SDK EventPipeline
+ *   LynkTraceTracer → OTel NodeTracerProvider → PipelineSpanExporter → SDK EventPipeline
  *
  * Design principles:
  *   - OTel owns: span lifecycle, context propagation, sampling, instrumentation
  *   - SDK owns: span export → event pipeline, transport, batching, enrichment
- *   - PulseSpan is a THIN wrapper — zero duplicated state
+ *   - LynkTraceSpan is a THIN wrapper — zero duplicated state
  *   - All enrichment (tenant, session, SDK metadata) happens in the exporter,
- *     not in PulseSpan or at span creation time
+ *     not in LynkTraceSpan or at span creation time
  *   - Centralized SDK name/version constants (no hardcoded strings)
  */
 import { type Tracer, type Span, type Attributes, type Context } from '@opentelemetry/api';
-import { PulseSpan, type SpanOptions, type SpanLink, type SpanKindName } from './span.js';
+import { LynkTraceSpan, type SpanOptions, type SpanLink, type SpanKindName } from './span.js';
 import type { RemoteConfigResponse } from '../types/config.js';
 import type { ResourceAttributes } from '../utils/resource-detector.js';
 /**
@@ -49,9 +49,9 @@ export declare function initTracer(config: Readonly<RemoteConfigResponse>, custo
  *
  * @param name - Span name (e.g. 'HTTP GET /api/users', 'db.query', 'cache.get')
  * @param options - Optional span configuration
- * @returns PulseSpan instance (or a no-op span if tracing is not initialized)
+ * @returns LynkTraceSpan instance (or a no-op span if tracing is not initialized)
  */
-export declare function startSpan(name: string, options?: SpanOptions): PulseSpan;
+export declare function startSpan(name: string, options?: SpanOptions): LynkTraceSpan;
 /**
  * Execute an async function within a new span context.
  *
@@ -86,14 +86,14 @@ export declare function startSpan(name: string, options?: SpanOptions): PulseSpa
  *   `pulseSpan.parentSpanId` returns and what flows into the exported
  *   span event via OTel's own `parentSpanContext`.
  */
-export declare function withSpan<T>(name: string, fnOrOptions: ((span: PulseSpan) => T | Promise<T>) | SpanOptions, optionsOrFn?: SpanOptions | ((span: PulseSpan) => T | Promise<T>)): Promise<T>;
+export declare function withSpan<T>(name: string, fnOrOptions: ((span: LynkTraceSpan) => T | Promise<T>) | SpanOptions, optionsOrFn?: SpanOptions | ((span: LynkTraceSpan) => T | Promise<T>)): Promise<T>;
 /**
  * Synchronous version of `withSpan`. Same contract, except `fn` may not
  * return a Promise. The span is ended synchronously when `fn` returns or
  * throws. Use this only when you genuinely need synchronous span ownership;
  * `withSpan` is preferred everywhere else.
  */
-export declare function withSpanSync<T>(name: string, fnOrOptions: ((span: PulseSpan) => T) | SpanOptions, optionsOrFn?: SpanOptions | ((span: PulseSpan) => T)): T;
+export declare function withSpanSync<T>(name: string, fnOrOptions: ((span: LynkTraceSpan) => T) | SpanOptions, optionsOrFn?: SpanOptions | ((span: LynkTraceSpan) => T)): T;
 /**
  * Execute a synchronous or asynchronous function within an active span.
  * Automatically detects whether the callback returns a Promise and tracks
@@ -108,7 +108,7 @@ export declare function withSpanSync<T>(name: string, fnOrOptions: ((span: Pulse
  * const hash = trace('crypto.hash', () => computeHash(data))
  * ```
  */
-export declare function trace<T>(name: string, fnOrOptions: ((span: PulseSpan) => T | Promise<T>) | SpanOptions, optionsOrFn?: SpanOptions | ((span: PulseSpan) => T | Promise<T>)): T | Promise<T>;
+export declare function trace<T>(name: string, fnOrOptions: ((span: LynkTraceSpan) => T | Promise<T>) | SpanOptions, optionsOrFn?: SpanOptions | ((span: LynkTraceSpan) => T | Promise<T>)): T | Promise<T>;
 /**
  * Wrap a function so every invocation runs within an active span.
  * Works seamlessly for both synchronous and asynchronous functions, preserving
@@ -142,7 +142,7 @@ export interface BackgroundSpanOptions {
      * Originating parent or span to link to.
      * Defaults to the currently active span when withBackgroundSpan is invoked.
      */
-    originatingSpan?: PulseSpan | Span | {
+    originatingSpan?: LynkTraceSpan | Span | {
         traceId: string;
         spanId: string;
     };
@@ -191,7 +191,7 @@ export interface BackgroundSpanOptions {
  *   - Independent finalization: the HTTP trace finalizes promptly after `res.end()`,
  *     and the background trace finalizes independently when its own work finishes.
  */
-export declare function withBackgroundSpan<T>(name: string, fnOrOptions: ((span: PulseSpan) => T | Promise<T>) | BackgroundSpanOptions, optionsOrFn?: BackgroundSpanOptions | ((span: PulseSpan) => T | Promise<T>)): Promise<T>;
+export declare function withBackgroundSpan<T>(name: string, fnOrOptions: ((span: LynkTraceSpan) => T | Promise<T>) | BackgroundSpanOptions, optionsOrFn?: BackgroundSpanOptions | ((span: LynkTraceSpan) => T | Promise<T>)): Promise<T>;
 /**
  * Manually start a detached background span.
  * The caller is responsible for calling `span.end()`.
@@ -200,11 +200,11 @@ export declare function withBackgroundSpan<T>(name: string, fnOrOptions: ((span:
  * background span across async boundaries, `withBackgroundSpan(name, fn)`
  * is strongly recommended instead.
  */
-export declare function startBackgroundSpan(name: string, options?: BackgroundSpanOptions): PulseSpan;
+export declare function startBackgroundSpan(name: string, options?: BackgroundSpanOptions): LynkTraceSpan;
 /**
  * Get the currently active span (if any).
  */
-export declare function getActiveSpan(): PulseSpan | null;
+export declare function getActiveSpan(): LynkTraceSpan | null;
 /**
  * Get the internal tracer instance for advanced SDK use.
  * Returns null if tracing is not initialized.

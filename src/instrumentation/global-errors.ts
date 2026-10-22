@@ -215,7 +215,8 @@ export function setupGlobalErrorHandlers() {
  * Marks the wrapper so we can detect it on restore and skip restoring if
  * something else wrapped on top of us.
  */
-const CONSOLE_ERROR_MARKER = Symbol.for('pulse-sdk.global-errors.console-error-wrapper')
+const CONSOLE_ERROR_MARKER = Symbol.for('lynktrace.global-errors.console-error-wrapper')
+const CONSOLE_ERROR_MARKER_LEGACY = Symbol.for('pulse-sdk.global-errors.console-error-wrapper')
 
 const PROCESS_WARNING_PATTERN = /^(?:\(node:\d+\)\s+)?(?:\[[A-Z0-9_-]+\]\s+)?(?:SECURITY\s+)?(?:Warning|DeprecationWarning|ExperimentalWarning):/i
 
@@ -232,6 +233,7 @@ function isProcessWarning(error?: Error, message?: string): boolean {
 interface MarkedConsoleError {
   (...args: unknown[]): void
   [CONSOLE_ERROR_MARKER]?: true
+  [CONSOLE_ERROR_MARKER_LEGACY]?: true
 }
 
 function wrapConsoleError(): void {
@@ -298,6 +300,7 @@ function wrapConsoleError(): void {
     }
   }
   wrapped[CONSOLE_ERROR_MARKER] = true
+  wrapped[CONSOLE_ERROR_MARKER_LEGACY] = true
   console.error = wrapped
 }
 
@@ -332,7 +335,7 @@ export function resetGlobalErrorHandlers() {
   // their wrapper in place — they own the restore path.
   if (consoleErrorWrapped && originalConsoleError) {
     const current = console.error as MarkedConsoleError
-    if (current && current[CONSOLE_ERROR_MARKER] === true) {
+    if (current && (current[CONSOLE_ERROR_MARKER] === true || current[CONSOLE_ERROR_MARKER_LEGACY] === true)) {
       console.error = originalConsoleError
     }
     originalConsoleError = null

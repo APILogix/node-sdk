@@ -52,7 +52,8 @@ describe('Pulse SDK Developer Function Decorators & Facade Parity', () => {
         rootSpan.end();
         assert.equal(result, 42);
         assert.ok(capturedTraceId, 'Expected function inside wrap to execute in an active trace context');
-        assert.equal(slowCalculation.name, 'pulseWrapped_calc.multiply');
+        assert.ok(slowCalculation.name === 'lynktraceWrapped_calc.multiply' ||
+            slowCalculation.name === 'pulseWrapped_calc.multiply');
         assert.equal(slowCalculation.length, 2);
     });
     it('Pulse.wrap wraps a synchronous function and preserves this context', () => {

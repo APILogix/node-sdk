@@ -56,7 +56,7 @@ import {
   scrubQuery,
 } from './request-capture-utils.js'
 
-export interface PulseExpressOptions {
+export interface LynkTraceExpressOptions {
   /**
    * Paths that should never be captured. Matching is prefix-based for strings
    * and full regex for `RegExp`. Evaluated before any remote-config rules,
@@ -76,9 +76,10 @@ export interface PulseExpressOptions {
    */
   readonly trustedProxies?: readonly string[]
   /**
-   * If true, instruments Express middleware layers to measure execution duration.
+   * If true (default), instruments Express middleware layers to measure execution duration.
    * Emits child spans for middlewares that exceed `minMiddlewareDurationMs` (default: 2ms)
-   * or throw an error.
+   * or throw an error. Set to `false` to disable.
+   * @default true
    */
   readonly instrumentMiddleware?: boolean
   /**
@@ -93,8 +94,10 @@ export interface PulseExpressOptions {
   readonly ignoreMiddlewares?: readonly (string | RegExp)[]
 }
 
+export type PulseExpressOptions = LynkTraceExpressOptions
 
-const LAYER_PATCH_GUARD = Symbol.for('pulse-sdk.express.layer-patched')
+const LAYER_PATCH_GUARD = Symbol.for('lynktrace.express.layer-patched')
+const LEGACY_LAYER_PATCH_GUARD = Symbol.for('pulse-sdk.express.layer-patched')
 
 function isLayerIgnored(name: string, ignoreMiddlewares?: readonly (string | RegExp)[]): boolean {
   if (!ignoreMiddlewares || ignoreMiddlewares.length === 0) return false
@@ -116,7 +119,7 @@ export function ensureExpressLayersInstrumented(
 ): void {
   try {
     const globalState = globalThis as any
-    if (globalState[LAYER_PATCH_GUARD]) return
+    if (globalState[LAYER_PATCH_GUARD] || globalState[LEGACY_LAYER_PATCH_GUARD]) return
 
     const router = app?.router || app?._router
     if (!router || !Array.isArray(router.stack) || router.stack.length === 0) return
@@ -136,11 +139,12 @@ export function ensureExpressLayersInstrumented(
     const originalHandle = layerProto[handleMethod]
     if (typeof originalHandle !== 'function') return
 
-    layerProto[handleMethod] = function pulseLayerHandle(this: any, req: any, res: any, next: any) {
+    layerProto[handleMethod] = function lynktraceLayerHandle(this: any, req: any, res: any, next: any) {
       try {
         const layerName = this?.name || (this?.handle && this.handle.name) || '<anonymous>'
 
         if (
+          layerName === 'lynktraceExpressMiddleware' ||
           layerName === 'pulseExpressMiddleware' ||
           layerName === 'expressInit' ||
           layerName === 'query' ||
@@ -222,6 +226,7 @@ export function ensureExpressLayersInstrumented(
     }
 
     globalState[LAYER_PATCH_GUARD] = true
+    globalState[LEGACY_LAYER_PATCH_GUARD] = true
   } catch {
     // Fail-open: layer instrumentation failure should never break host app
   }
@@ -232,7 +237,7 @@ export function ensureExpressLayersInstrumented(
  */
 export function instrumentExpress(
   app: any,
-  options?: Pick<PulseExpressOptions, 'minMiddlewareDurationMs' | 'ignoreMiddlewares'>
+  options?: Pick<LynkTraceExpressOptions, 'minMiddlewareDurationMs' | 'ignoreMiddlewares'>
 ): void {
   ensureExpressLayersInstrumented(
     app,
@@ -241,8 +246,8 @@ export function instrumentExpress(
   )
 }
 
-export function pulseMiddleware(options: PulseExpressOptions = {}) {
-  return function pulseExpressMiddleware(req: Request, res: Response, next: NextFunction): void {
+export function lynktraceMiddleware(options: LynkTraceExpressOptions = {}) {
+  return function lynktraceExpressMiddleware(req: Request, res: Response, next: NextFunction): void {
     let nextCalled = false
     const safeNext: NextFunction = (err?: unknown) => {
       if (!nextCalled) {
@@ -255,7 +260,7 @@ export function pulseMiddleware(options: PulseExpressOptions = {}) {
       // Resolve the path *once*, defensively. Express attaches `path` only after
       // routing, so callers placing the middleware before any routes still get
       // a usable value via originalUrl/url.
-      if (options.instrumentMiddleware && (req as any)?.app) {
+      if (options.instrumentMiddleware !== false && (req as any)?.app) {
         try {
           ensureExpressLayersInstrumented(
             (req as any).app,
@@ -361,7 +366,7 @@ export function pulseMiddleware(options: PulseExpressOptions = {}) {
         const config = configManager.getConfigOrNull()
         httpInstrumentationEnabled = Boolean(config?.instrumentation?.http)
       } catch {}
-      let activeSpan = trace.getActiveSpan() ?? (req as any)?.__pulseServerSpan
+      let activeSpan = trace.getActiveSpan() ?? (req as any)?.__lynktraceServerSpan ?? (req as any)?.__pulseServerSpan
       let createdServerSpan = false
 
       let isTracingActive = false
@@ -445,12 +450,23 @@ export function pulseMiddleware(options: PulseExpressOptions = {}) {
                   const enrichmentAttrs: Record<string, string | number | boolean> = {
                     'http.route': route,
                     'http.status_code': statusCode,
+                    'lynktrace.request_id': requestId,
                     'pulse.request_id': requestId,
+                    'lynktrace.latency_ms': latencyMs,
                     'pulse.latency_ms': latencyMs,
                   }
-                  if (tenantId) enrichmentAttrs['pulse.tenant_id'] = tenantId
-                  if (userId) enrichmentAttrs['pulse.user_id'] = userId
-                  if (sessionId) enrichmentAttrs['pulse.session_id'] = sessionId
+                  if (tenantId) {
+                    enrichmentAttrs['lynktrace.tenant_id'] = tenantId
+                    enrichmentAttrs['pulse.tenant_id'] = tenantId
+                  }
+                  if (userId) {
+                    enrichmentAttrs['lynktrace.user_id'] = userId
+                    enrichmentAttrs['pulse.user_id'] = userId
+                  }
+                  if (sessionId) {
+                    enrichmentAttrs['lynktrace.session_id'] = sessionId
+                    enrichmentAttrs['pulse.session_id'] = sessionId
+                  }
                   if (clientIp) enrichmentAttrs['http.client_ip'] = clientIp
                   if (userAgent) enrichmentAttrs['http.user_agent'] = userAgent
                   if (referer) enrichmentAttrs['http.referer'] = referer
@@ -527,7 +543,7 @@ export function pulseMiddleware(options: PulseExpressOptions = {}) {
                       route,
                     })
                   } catch (err) {
-                    getLogger().error('pulseMiddleware completion failed', { error: err })
+                    getLogger().error('lynktraceMiddleware completion failed', { error: err })
                   }
                 })
               })
@@ -553,7 +569,7 @@ export function pulseMiddleware(options: PulseExpressOptions = {}) {
                         } catch { /* fail-open */ }
                       }
                     } catch (err) {
-                      getLogger().error('pulseMiddleware error capture failed', { error: err })
+                      getLogger().error('lynktraceMiddleware error capture failed', { error: err })
                     }
                   })
                 })
@@ -578,7 +594,7 @@ export function pulseMiddleware(options: PulseExpressOptions = {}) {
                       } catch { /* fail-open */ }
                     }
                   } catch (captureErr) {
-                    getLogger().error('pulseMiddleware next(err) capture failed', { error: captureErr })
+                    getLogger().error('lynktraceMiddleware next(err) capture failed', { error: captureErr })
                   }
                 })
               }
@@ -603,12 +619,14 @@ export function pulseMiddleware(options: PulseExpressOptions = {}) {
       }
     } catch (unhandledErr) {
       try {
-        getLogger().error('pulseMiddleware unhandled exception', { error: unhandledErr })
+        getLogger().error('lynktraceMiddleware unhandled exception', { error: unhandledErr })
       } catch {}
       safeNext()
     }
   }
 }
+
+export const pulseMiddleware = lynktraceMiddleware
 
 /**
  * Express error-handling middleware. Place after all routes and before custom error responses.
@@ -616,13 +634,13 @@ export function pulseMiddleware(options: PulseExpressOptions = {}) {
  *
  * @example
  * ```ts
- * app.use(pulseMiddleware())
+ * app.use(lynktraceMiddleware())
  * // ... routes ...
  * app.use(expressErrorHandler())
  * ```
  */
 export function expressErrorHandler() {
-  return function pulseExpressErrorHandler(err: unknown, req: Request, res: Response, next: NextFunction): void {
+  return function lynktraceExpressErrorHandler(err: unknown, req: Request, res: Response, next: NextFunction): void {
     try {
       if (err) {
         try {
@@ -653,6 +671,9 @@ export function expressErrorHandler() {
     }
   }
 }
+
+export const lynktraceExpressErrorHandler = expressErrorHandler
+export const pulseExpressErrorHandler = expressErrorHandler
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 

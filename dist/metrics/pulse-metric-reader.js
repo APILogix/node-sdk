@@ -19,7 +19,7 @@ import { generateId } from '../utils/uuid.js';
  * This ensures metrics get the same sanitization, plugin processing,
  * and transport resilience as all other SDK events.
  */
-export class PulseMetricReader extends MetricReader {
+export class LynkTraceMetricReader extends MetricReader {
     totalCollected = 0;
     totalDropped = 0;
     constructor(options = {}) {
@@ -50,7 +50,7 @@ export class PulseMetricReader extends MetricReader {
                     for (const dp of dataPoints) {
                         const event = this.dataPointToEvent(dp);
                         if (event) {
-                            processEvent(internalTelemetry ? { ...event, __pulseInternal: true } : event);
+                            processEvent(internalTelemetry ? { ...event, __lynktraceInternal: true, __pulseInternal: true } : event);
                             exportedCount++;
                         }
                     }
@@ -200,3 +200,4 @@ export function extractLabels(attributes) {
     }
     return labels;
 }
+export const PulseMetricReader = LynkTraceMetricReader;

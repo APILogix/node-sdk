@@ -35,7 +35,7 @@ export declare function registerAutoInstrumentations(): void;
 /**
  * Install safe module-load hooks as soon as the SDK package is imported.
  *
- * This closes the common ESM/CJS race where application code imports Pulse,
+ * This closes the common ESM/CJS race where application code imports LynkTrace,
  * starts `createSDK()`, and imports DB clients while the one remote-config
  * request is still in flight. The early hooks use privacy-safe defaults and
  * a no-op/proxy tracer until `initTracer()` installs the real provider. Once

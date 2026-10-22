@@ -23,7 +23,7 @@ import type { PrivacyCaptureConfig } from '../types/config.js'
 import { getLogger } from '../utils/logger.js'
 
 const MODULE_NAME = 'nodemailer'
-const INSTRUMENTATION_NAME = '@pulse-apm/instrumentation-nodemailer'
+const INSTRUMENTATION_NAME = '@lynktrace/instrumentation-nodemailer'
 const INSTRUMENTATION_VERSION = '1.0.0'
 
 export interface NodemailerInstrumentationOptions {
@@ -91,7 +91,7 @@ export class NodemailerInstrumentation extends InstrumentationBase {
       this._originalCreateTransport = moduleExports.createTransport
       const origCreateTransport = this._originalCreateTransport
 
-      moduleExports.createTransport = function pulsePatchedCreateTransport(this: any, ...args: any[]) {
+      moduleExports.createTransport = function lynktracePatchedCreateTransport(this: any, ...args: any[]) {
         const transporter = origCreateTransport.apply(this, args)
         if (transporter && typeof transporter.sendMail === 'function') {
           self._patchTransporter(transporter)
@@ -106,12 +106,13 @@ export class NodemailerInstrumentation extends InstrumentationBase {
   }
 
   public _patchTransporter(transporter: any): void {
-    if (transporter._pulsePatched) return
+    if (transporter._lynktracePatched || transporter._pulsePatched) return
+    transporter._lynktracePatched = true
     transporter._pulsePatched = true
     const self = this
     const origSendMail = transporter.sendMail
 
-    transporter.sendMail = function pulsePatchedSendMail(this: any, mailOptions: any, callback?: any) {
+    transporter.sendMail = function lynktracePatchedSendMail(this: any, mailOptions: any, callback?: any) {
       if (!self.isEnabled()) {
         return origSendMail.apply(this, arguments as any)
       }
@@ -213,3 +214,8 @@ export function createNodemailerInstrumentation(
 }
 
 export default createNodemailerInstrumentation
+
+export {
+  NodemailerInstrumentation as LynkTraceNodemailerInstrumentation,
+  NodemailerInstrumentation as PulseNodemailerInstrumentation,
+}

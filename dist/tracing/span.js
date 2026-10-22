@@ -26,7 +26,7 @@
  */
 import { SpanStatusCode, } from '@opentelemetry/api';
 import { getLogger } from '../utils/logger.js';
-// ─── PulseSpan ──────────────────────────────────────────────────────────────
+// ─── LynkTraceSpan ──────────────────────────────────────────────────────────
 /**
  * Thin ergonomic wrapper around OTel Span.
  *
@@ -34,7 +34,7 @@ import { getLogger } from '../utils/logger.js';
  * - No duplicated state — reads everything from the underlying OTel span.
  * - Fluent API for attribute/event chaining.
  */
-export class PulseSpan {
+export class LynkTraceSpan {
     /** @internal The underlying OTel span — use getOTelSpan() for advanced access. */
     _span;
     /**
@@ -266,3 +266,4 @@ export class PulseSpan {
         });
     }
 }
+export const PulseSpan = LynkTraceSpan;

@@ -575,7 +575,10 @@ export async function processEventAsync(rawEvent: SDKEvent | Event, assignedEven
 // ─── Internal Helpers ───────────────────────────────────────────────────────
 
 function ensureBaseFields(raw: SDKEvent | Event, assignedEventId?: string): SDKEvent {
-  const { __pulseInternal: _internal, ...payload } = raw as SDKEvent & { __pulseInternal?: boolean }
+  const { __lynktraceInternal: _lynkInternal, __pulseInternal: _internal, ...payload } = raw as SDKEvent & {
+    __lynktraceInternal?: boolean
+    __pulseInternal?: boolean
+  }
   const eventId = assignedEventId
     ?? ((payload.eventId && typeof payload.eventId === 'string') ? payload.eventId : generateId())
   const timestamp = ('timestamp' in payload && typeof payload.timestamp === 'number')
@@ -586,7 +589,8 @@ function ensureBaseFields(raw: SDKEvent | Event, assignedEventId?: string): SDKE
 }
 
 function isInternalTelemetryEvent(raw: SDKEvent | Event): boolean {
-  return (raw as Record<string, unknown>)['__pulseInternal'] === true
+  const rec = raw as Record<string, unknown>
+  return rec['__lynktraceInternal'] === true || rec['__pulseInternal'] === true
 }
 
 function isEntitled(event: SDKEvent): boolean {

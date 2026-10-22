@@ -14,7 +14,7 @@
  *
  * How it works:
  *   OTel auto-instrumentation records http.server.duration → ExponentialHistogram
- *   → Pulse backend queries: WHERE percentile(http.server.duration, 0.99) > threshold
+ *   → LynkTrace backend queries: WHERE percentile(http.server.duration, 0.99) > threshold
  *   → Backend triggers alerts/anomaly detection
  *
  * This file is a BACKWARD-COMPATIBLE STUB. All methods are no-ops.

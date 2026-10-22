@@ -48,8 +48,10 @@
  */
 import http from 'node:http';
 import { getLogger } from '../utils/logger.js';
-const GUARD_SYMBOL = Symbol.for('pulse-sdk.http-lifecycle-guard.installed');
-const ORIGINAL_EMIT = Symbol.for('pulse-sdk.http-lifecycle-guard.original-emit');
+const GUARD_SYMBOL = Symbol.for('lynktrace.http-lifecycle-guard.installed');
+const GUARD_SYMBOL_LEGACY = Symbol.for('pulse-sdk.http-lifecycle-guard.installed');
+const ORIGINAL_EMIT = Symbol.for('lynktrace.http-lifecycle-guard.original-emit');
+const ORIGINAL_EMIT_LEGACY = Symbol.for('pulse-sdk.http-lifecycle-guard.original-emit');
 /**
  * Classify whether an error originates from OTel HTTP instrumentation
  * lifecycle internals rather than from user application code.
@@ -141,11 +143,13 @@ export function isOtelInstrumentationError(err) {
  */
 export function installHttpLifecycleGuard() {
     const g = globalThis;
-    if (g[GUARD_SYMBOL])
+    if (g[GUARD_SYMBOL] || g[GUARD_SYMBOL_LEGACY])
         return;
     g[GUARD_SYMBOL] = true;
+    g[GUARD_SYMBOL_LEGACY] = true;
     const originalEmit = http.ClientRequest.prototype.emit;
     g[ORIGINAL_EMIT] = originalEmit;
+    g[ORIGINAL_EMIT_LEGACY] = originalEmit;
     http.ClientRequest.prototype.emit = function (event) {
         // Only intercept close and error events which are the ones OTel listens to
         // and where the race condition occurs.
@@ -173,12 +177,15 @@ export function installHttpLifecycleGuard() {
  */
 export function uninstallHttpLifecycleGuard() {
     const g = globalThis;
-    if (!g[GUARD_SYMBOL])
+    if (!g[GUARD_SYMBOL] && !g[GUARD_SYMBOL_LEGACY])
         return;
-    if (g[ORIGINAL_EMIT]) {
-        http.ClientRequest.prototype.emit = g[ORIGINAL_EMIT];
+    const originalEmit = g[ORIGINAL_EMIT] ?? g[ORIGINAL_EMIT_LEGACY];
+    if (originalEmit) {
+        http.ClientRequest.prototype.emit = originalEmit;
     }
     delete g[GUARD_SYMBOL];
+    delete g[GUARD_SYMBOL_LEGACY];
     delete g[ORIGINAL_EMIT];
+    delete g[ORIGINAL_EMIT_LEGACY];
     getLogger().debug('HTTP lifecycle guard removed (ClientRequest.emit restored)');
 }

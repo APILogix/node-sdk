@@ -164,6 +164,7 @@ export class RemoteConfigClient {
                     headers: {
                         'Content-Type': 'application/json',
                         'Connection': 'keep-alive',
+                        'x-lynktrace-internal': '1',
                         'x-pulse-internal': '1',
                         'X-API-Key': this.apiKey,
                         ...(extraHeaders ?? {}),

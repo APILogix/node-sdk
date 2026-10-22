@@ -20,10 +20,10 @@ export interface PrismaInstrumentationOptions {
 export declare function resolvePrismaDbSystem(prismaInstance: any): string;
 /**
  * Creates an OpenTelemetry query extension for Prisma Client.
- * Attach with `prismaClient.$extends(pulsePrismaExtension())`
+ * Attach with `prismaClient.$extends(lynktracePrismaExtension())`
  * or use automatic instrumentation.
  */
-export declare function pulsePrismaExtension(dbSystem?: string): {
+export declare function lynktracePrismaExtension(dbSystem?: string): {
     name: string;
     query: {
         $allModels: {
@@ -31,12 +31,13 @@ export declare function pulsePrismaExtension(dbSystem?: string): {
         };
     };
 };
+export declare const pulsePrismaExtension: typeof lynktracePrismaExtension;
 /**
  * Automatically instrument a PrismaClient instance via $use middleware.
  * Ensures queries emit spans even if previewFeatures = ["tracing"] is omitted in schema.prisma.
  */
 export declare function instrumentPrismaClientInstance(prismaInstance: any): any;
-export declare class PulsePrismaInstrumentation extends InstrumentationBase {
+export declare class LynkTracePrismaInstrumentation extends InstrumentationBase {
     private otelPrisma?;
     constructor(config?: {
         enabled?: boolean;
@@ -49,10 +50,11 @@ export declare class PulsePrismaInstrumentation extends InstrumentationBase {
     enable(): void;
     disable(): void;
 }
+export { LynkTracePrismaInstrumentation as PulsePrismaInstrumentation };
 export declare function createPrismaInstrumentation(config: {
     enabled: boolean;
     captureQueries?: boolean;
     captureParams?: boolean;
-} | boolean, mergedOptions?: Partial<PrismaInstrumentationOptions>): PulsePrismaInstrumentation | null;
+} | boolean, mergedOptions?: Partial<PrismaInstrumentationOptions>): LynkTracePrismaInstrumentation | null;
 export { OTelPrismaInstrumentation };
 export default createPrismaInstrumentation;

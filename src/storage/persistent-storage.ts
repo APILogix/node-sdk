@@ -113,7 +113,7 @@ interface PersistedEventEntry {
 
 class PersistentStorage {
   private directoryPath: string = ''
-  private filePrefix: string = 'pulse-events'
+  private filePrefix: string = 'lynktrace-events'
   private dataFile: string = ''
   private enabled: boolean = true
   private maxFileSizeBytes: number = DEFAULT_MAX_FILE_SIZE_BYTES
@@ -155,7 +155,7 @@ class PersistentStorage {
     this.ioTimeoutMs = options.ioTimeoutMs ?? DEFAULT_IO_TIMEOUT_MS
 
     const suffix = options.apiKeyHash ? `-${options.apiKeyHash.slice(0, 8)}` : ''
-    this.filePrefix = `pulse-events${suffix}`
+    this.filePrefix = `lynktrace-events${suffix}`
     this.dataFile = join(this.directoryPath, `${this.filePrefix}-${process.pid}.ndjson`)
   }
 
@@ -497,7 +497,7 @@ class PersistentStorage {
    * Returns events that are still valid (within TTL).
    *
    * Multi-process / cluster safe:
-   * 1. Inspects the directory for files belonging to this prefix.
+   * 1. Inspects the directory for files belonging to this prefix (or legacy pulse-events).
    * 2. Replays legacy file (pulse-events.ndjson / pulse-events-<hash>.ndjson) if present.
    * 3. Replays files from dead processes (PIDs that are no longer alive).
    * 4. Exclusively claims candidate files via atomic rename before reading to
@@ -516,6 +516,7 @@ class PersistentStorage {
     try {
       const dirEntries = await readdir(this.directoryPath).catch(() => [] as string[])
       const prefix = this.filePrefix
+      const legacyPrefix = `pulse-events${this.filePrefix.startsWith('lynktrace-events') ? this.filePrefix.slice('lynktrace-events'.length) : ''}`
 
       // Match legacy un-pid'd files, orphaned pid files, and rotated (.bak) files for this apiKeyHash
       interface CandidateFile {
@@ -523,7 +524,7 @@ class PersistentStorage {
         orderTimestamp: number
       }
       const candidateList: CandidateFile[] = []
-      const filePattern = new RegExp(`^${prefix}(?:-(\\d+))?\\.ndjson(?:\\.(\\d+)\\.bak)?$`)
+      const filePattern = new RegExp(`^(?:${prefix}|${legacyPrefix})(?:-(\\d+))?\\.ndjson(?:\\.(\\d+)\\.bak)?$`)
 
       for (const entry of dirEntries) {
         if (entry.startsWith('.')) continue
@@ -777,7 +778,7 @@ class PersistentStorage {
       await mkdir(this.directoryPath, { recursive: true, mode: 0o700 })
     }
     // Writability probe: verifies the directory is actually writable (not EROFS / EACCES)
-    const probeFile = join(this.directoryPath, `.pulse-probe-${process.pid}-${Date.now()}.tmp`)
+    const probeFile = join(this.directoryPath, `.lynktrace-probe-${process.pid}-${Date.now()}.tmp`)
     await writeFile(probeFile, '', { encoding: 'utf8' })
     await unlink(probeFile).catch(() => {})
   }

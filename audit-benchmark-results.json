@@ -1,0 +1,512 @@
+{
+  "timestamp": "2026-10-18T11:18:56.293Z",
+  "environment": {
+    "nodeVersion": "v26.5.0",
+    "platform": "win32",
+    "arch": "x64",
+    "v8Version": "14.6.202.34-node.24",
+    "pid": 17516
+  },
+  "microbenchmarks": {
+    "initDurationMs": 670.04,
+    "eventLoopLag": {
+      "minMs": 9223372036854.78,
+      "maxMs": 0,
+      "meanMs": null,
+      "p50Ms": 0,
+      "p95Ms": 0,
+      "p99Ms": 0
+    },
+    "results": [
+      {
+        "operation": "addBreadcrumb",
+        "iterations": 10000,
+        "totalDurationMs": 6.3,
+        "avgLatencyUs": 0.44,
+        "p50Us": 0.3,
+        "p95Us": 0.7,
+        "p99Us": 1.1,
+        "maxUs": 120.4,
+        "opsPerSec": 1588033,
+        "cpuUserUs": 47000,
+        "cpuSystemUs": 0,
+        "cpuTotalUs": 47000,
+        "cpuPerOpUs": 4.7
+      },
+      {
+        "operation": "setUser & setTag",
+        "iterations": 10000,
+        "totalDurationMs": 29.42,
+        "avgLatencyUs": 2.7,
+        "p50Us": 2.5,
+        "p95Us": 4,
+        "p99Us": 5.8,
+        "maxUs": 169.3,
+        "opsPerSec": 339894,
+        "cpuUserUs": 47000,
+        "cpuSystemUs": 0,
+        "cpuTotalUs": 47000,
+        "cpuPerOpUs": 4.7
+      },
+      {
+        "operation": "getTraceId",
+        "iterations": 10000,
+        "totalDurationMs": 5.29,
+        "avgLatencyUs": 0.34,
+        "p50Us": 0.3,
+        "p95Us": 0.6,
+        "p99Us": 1.1,
+        "maxUs": 53.8,
+        "opsPerSec": 1889752,
+        "cpuUserUs": 47000,
+        "cpuSystemUs": 0,
+        "cpuTotalUs": 47000,
+        "cpuPerOpUs": 4.7
+      },
+      {
+        "operation": "captureMetric (incrementCounter)",
+        "iterations": 10000,
+        "totalDurationMs": 17.65,
+        "avgLatencyUs": 1.61,
+        "p50Us": 1.2,
+        "p95Us": 2.4,
+        "p99Us": 4.2,
+        "maxUs": 143,
+        "opsPerSec": 566701,
+        "cpuUserUs": 0,
+        "cpuSystemUs": 16000,
+        "cpuTotalUs": 16000,
+        "cpuPerOpUs": 1.6
+      },
+      {
+        "operation": "captureMetric (recordHistogram)",
+        "iterations": 10000,
+        "totalDurationMs": 43.5,
+        "avgLatencyUs": 4.16,
+        "p50Us": 3.3,
+        "p95Us": 7.2,
+        "p99Us": 12.2,
+        "maxUs": 1503.4,
+        "opsPerSec": 229904,
+        "cpuUserUs": 31000,
+        "cpuSystemUs": 16000,
+        "cpuTotalUs": 47000,
+        "cpuPerOpUs": 4.7
+      },
+      {
+        "operation": "captureMessage",
+        "iterations": 10000,
+        "totalDurationMs": 62.53,
+        "avgLatencyUs": 6.07,
+        "p50Us": 3.7,
+        "p95Us": 12.5,
+        "p99Us": 29.4,
+        "maxUs": 1796.5,
+        "opsPerSec": 159932,
+        "cpuUserUs": 47000,
+        "cpuSystemUs": 16000,
+        "cpuTotalUs": 63000,
+        "cpuPerOpUs": 6.3
+      },
+      {
+        "operation": "startSpan & span.end()",
+        "iterations": 10000,
+        "totalDurationMs": 327.97,
+        "avgLatencyUs": 32.52,
+        "p50Us": 19.5,
+        "p95Us": 63.8,
+        "p99Us": 138.7,
+        "maxUs": 12393,
+        "opsPerSec": 30490,
+        "cpuUserUs": 515000,
+        "cpuSystemUs": 125000,
+        "cpuTotalUs": 640000,
+        "cpuPerOpUs": 64
+      },
+      {
+        "operation": "withSpan async wrapper",
+        "iterations": 10000,
+        "totalDurationMs": 451.47,
+        "avgLatencyUs": 44.71,
+        "p50Us": 23.5,
+        "p95Us": 99.8,
+        "p99Us": 261.3,
+        "maxUs": 8479,
+        "opsPerSec": 22150,
+        "cpuUserUs": 562000,
+        "cpuSystemUs": 141000,
+        "cpuTotalUs": 703000,
+        "cpuPerOpUs": 70.3
+      },
+      {
+        "operation": "captureException (with stack trace)",
+        "iterations": 10000,
+        "totalDurationMs": 744.73,
+        "avgLatencyUs": 74.09,
+        "p50Us": 61.2,
+        "p95Us": 156.4,
+        "p99Us": 347.2,
+        "maxUs": 12195.4,
+        "opsPerSec": 13428,
+        "cpuUserUs": 781000,
+        "cpuSystemUs": 78000,
+        "cpuTotalUs": 859000,
+        "cpuPerOpUs": 85.9
+      }
+    ]
+  },
+  "httpComparative": [
+    {
+      "concurrency": 1,
+      "totalRequests": 1000,
+      "baseline": {
+        "rps": 1100,
+        "durationMs": 909.46,
+        "p50Ms": 0.66,
+        "p95Ms": 2.3,
+        "p99Ms": 4.36,
+        "maxMs": 7.35,
+        "meanMs": 0.91,
+        "cpuTotalUs": 1047000,
+        "eventLoopLagP99Ms": 20.92
+      },
+      "withSdk": {
+        "rps": 179,
+        "durationMs": 5579.68,
+        "p50Ms": 4.35,
+        "p95Ms": 14.05,
+        "p99Ms": 23.93,
+        "maxMs": 59.98,
+        "meanMs": 5.58,
+        "cpuTotalUs": 7327000,
+        "eventLoopLagP99Ms": 31.9
+      },
+      "delta": {
+        "rpsChangePercent": -83.7,
+        "latencyP50DeltaMs": 3.69,
+        "latencyP95DeltaMs": 11.75,
+        "latencyP99DeltaMs": 19.57,
+        "addedLatencyMeanMs": 4.67,
+        "cpuIncreasePercent": 599.8
+      }
+    },
+    {
+      "concurrency": 10,
+      "totalRequests": 2500,
+      "baseline": {
+        "rps": 1203,
+        "durationMs": 2078.76,
+        "p50Ms": 6.9,
+        "p95Ms": 16.51,
+        "p99Ms": 27.57,
+        "maxMs": 39.2,
+        "meanMs": 8.31,
+        "cpuTotalUs": 2093000,
+        "eventLoopLagP99Ms": 33.41
+      },
+      "withSdk": {
+        "rps": 336,
+        "durationMs": 7433.65,
+        "p50Ms": 24.92,
+        "p95Ms": 61.53,
+        "p99Ms": 78.56,
+        "maxMs": 110.47,
+        "meanMs": 29.72,
+        "cpuTotalUs": 8671000,
+        "eventLoopLagP99Ms": 54.92
+      },
+      "delta": {
+        "rpsChangePercent": -72.1,
+        "latencyP50DeltaMs": 18.02,
+        "latencyP95DeltaMs": 45.02,
+        "latencyP99DeltaMs": 50.99,
+        "addedLatencyMeanMs": 21.41,
+        "cpuIncreasePercent": 314.3
+      }
+    },
+    {
+      "concurrency": 50,
+      "totalRequests": 5000,
+      "baseline": {
+        "rps": 923,
+        "durationMs": 5414.56,
+        "p50Ms": 48.85,
+        "p95Ms": 93.49,
+        "p99Ms": 132.74,
+        "maxMs": 181.73,
+        "meanMs": 54.03,
+        "cpuTotalUs": 5657000,
+        "eventLoopLagP99Ms": 71.96
+      },
+      "withSdk": {
+        "rps": 422,
+        "durationMs": 11862.09,
+        "p50Ms": 106.41,
+        "p95Ms": 202.6,
+        "p99Ms": 298.51,
+        "maxMs": 379.87,
+        "meanMs": 118.2,
+        "cpuTotalUs": 17843000,
+        "eventLoopLagP99Ms": 134.35
+      },
+      "delta": {
+        "rpsChangePercent": -54.3,
+        "latencyP50DeltaMs": 57.56,
+        "latencyP95DeltaMs": 109.11,
+        "latencyP99DeltaMs": 165.77,
+        "addedLatencyMeanMs": 64.17,
+        "cpuIncreasePercent": 215.4
+      }
+    },
+    {
+      "concurrency": 100,
+      "totalRequests": 5000,
+      "baseline": {
+        "rps": 953,
+        "durationMs": 5244.8,
+        "p50Ms": 95.52,
+        "p95Ms": 179.57,
+        "p99Ms": 218.34,
+        "maxMs": 307.09,
+        "meanMs": 104.25,
+        "cpuTotalUs": 5844000,
+        "eventLoopLagP99Ms": 106.23
+      },
+      "withSdk": {
+        "rps": 353,
+        "durationMs": 14145.84,
+        "p50Ms": 256.76,
+        "p95Ms": 467.85,
+        "p99Ms": 530.36,
+        "maxMs": 573.53,
+        "meanMs": 280.76,
+        "cpuTotalUs": 21062000,
+        "eventLoopLagP99Ms": 288.36
+      },
+      "delta": {
+        "rpsChangePercent": -63,
+        "latencyP50DeltaMs": 161.24,
+        "latencyP95DeltaMs": 288.28,
+        "latencyP99DeltaMs": 312.02,
+        "addedLatencyMeanMs": 176.51,
+        "cpuIncreasePercent": 260.4
+      }
+    }
+  ],
+  "memoryAndGc": {
+    "totalOperations": 10000,
+    "heapInitialMb": 48.28,
+    "heapPeakMb": 97.58,
+    "heapPostLoadMb": 97.58,
+    "heapFinalPostGcMb": 52.87,
+    "rssInitialMb": 443.86,
+    "rssPeakMb": 451.03,
+    "rssFinalMb": 303.56,
+    "heapGrowthMb": 4.6,
+    "retainedLeakBytes": 4821040,
+    "isLeakSuspected": false,
+    "gcPauses": {
+      "count": 15,
+      "totalDurationMs": 192.07,
+      "maxDurationMs": 94.41,
+      "avgDurationMs": 12.8
+    },
+    "activeHandlesAfterShutdown": 3
+  },
+  "cpuProfiling": {
+    "totalSamples": 691,
+    "durationMs": 1128.25,
+    "hotspots": [
+      {
+        "functionName": "flush",
+        "url": "file:///C:/Users/vikas/OneDrive/Desktop/APITOOLSDK/sdk-node/dist-tests/src/storage/persistent-storage.js",
+        "lineNumber": 248,
+        "hitCount": 40,
+        "percentage": 5.8
+      },
+      {
+        "functionName": "(garbage collector)",
+        "url": "(internal)",
+        "lineNumber": -1,
+        "hitCount": 31,
+        "percentage": 4.5
+      },
+      {
+        "functionName": "processEventAsync",
+        "url": "file:///C:/Users/vikas/OneDrive/Desktop/APITOOLSDK/sdk-node/dist-tests/src/core/event-pipeline.js",
+        "lineNumber": 257,
+        "hitCount": 27,
+        "percentage": 3.9
+      },
+      {
+        "functionName": "postMessage",
+        "url": "node:internal/worker",
+        "lineNumber": 469,
+        "hitCount": 23,
+        "percentage": 3.3
+      },
+      {
+        "functionName": "spanToEvent",
+        "url": "file:///C:/Users/vikas/OneDrive/Desktop/APITOOLSDK/sdk-node/dist-tests/src/tracing/tracer.js",
+        "lineNumber": 173,
+        "hitCount": 18,
+        "percentage": 2.6
+      },
+      {
+        "functionName": "scrub",
+        "url": "file:///C:/Users/vikas/OneDrive/Desktop/APITOOLSDK/sdk-node/dist-tests/src/processors/security-scrubber.js",
+        "lineNumber": 140,
+        "hitCount": 18,
+        "percentage": 2.6
+      },
+      {
+        "functionName": "runCpuProfiling",
+        "url": "file:///C:/Users/vikas/OneDrive/Desktop/APITOOLSDK/sdk-node/dist-tests/tests/audit-suite/audit-cpu-flamegraph.test.js",
+        "lineNumber": 73,
+        "hitCount": 15,
+        "percentage": 2.2
+      },
+      {
+        "functionName": "ensureBaseFields",
+        "url": "file:///C:/Users/vikas/OneDrive/Desktop/APITOOLSDK/sdk-node/dist-tests/src/core/event-pipeline.js",
+        "lineNumber": 492,
+        "hitCount": 15,
+        "percentage": 2.2
+      },
+      {
+        "functionName": "scrubValue",
+        "url": "file:///C:/Users/vikas/OneDrive/Desktop/APITOOLSDK/sdk-node/dist-tests/src/processors/security-scrubber.js",
+        "lineNumber": 279,
+        "hitCount": 14,
+        "percentage": 2
+      },
+      {
+        "functionName": "defaultPrepareStackTrace",
+        "url": "node:internal/errors",
+        "lineNumber": 95,
+        "hitCount": 11,
+        "percentage": 1.6
+      },
+      {
+        "functionName": "canCreateSpan",
+        "url": "file:///C:/Users/vikas/OneDrive/Desktop/APITOOLSDK/sdk-node/dist-tests/src/utils/cost-governor.js",
+        "lineNumber": 75,
+        "hitCount": 9,
+        "percentage": 1.3
+      },
+      {
+        "functionName": "(anonymous)",
+        "url": "file:///C:/Users/vikas/OneDrive/Desktop/APITOOLSDK/sdk-node/dist-tests/src/core/event-pipeline.js",
+        "lineNumber": 209,
+        "hitCount": 9,
+        "percentage": 1.3
+      },
+      {
+        "functionName": "sdkConsoleDebug",
+        "url": "file:///C:/Users/vikas/OneDrive/Desktop/APITOOLSDK/sdk-node/dist-tests/src/utils/console-debug.js",
+        "lineNumber": 0,
+        "hitCount": 9,
+        "percentage": 1.3
+      },
+      {
+        "functionName": "onSpanStart",
+        "url": "file:///C:/Users/vikas/OneDrive/Desktop/APITOOLSDK/sdk-node/dist-tests/src/tracing/trace-aggregator.js",
+        "lineNumber": 107,
+        "hitCount": 8,
+        "percentage": 1.2
+      },
+      {
+        "functionName": "startSpan",
+        "url": "file:///C:/Users/vikas/OneDrive/Desktop/APITOOLSDK/sdk-node/node_modules/@opentelemetry/sdk-trace/build/src/TracerMetrics.js",
+        "lineNumber": 22,
+        "hitCount": 8,
+        "percentage": 1.2
+      }
+    ],
+    "sdkOverheadHotspots": [
+      {
+        "functionName": "flush",
+        "url": "file:///C:/Users/vikas/OneDrive/Desktop/APITOOLSDK/sdk-node/dist-tests/src/storage/persistent-storage.js",
+        "lineNumber": 248,
+        "hitCount": 40,
+        "percentage": 5.8
+      },
+      {
+        "functionName": "processEventAsync",
+        "url": "file:///C:/Users/vikas/OneDrive/Desktop/APITOOLSDK/sdk-node/dist-tests/src/core/event-pipeline.js",
+        "lineNumber": 257,
+        "hitCount": 27,
+        "percentage": 3.9
+      },
+      {
+        "functionName": "spanToEvent",
+        "url": "file:///C:/Users/vikas/OneDrive/Desktop/APITOOLSDK/sdk-node/dist-tests/src/tracing/tracer.js",
+        "lineNumber": 173,
+        "hitCount": 18,
+        "percentage": 2.6
+      },
+      {
+        "functionName": "scrub",
+        "url": "file:///C:/Users/vikas/OneDrive/Desktop/APITOOLSDK/sdk-node/dist-tests/src/processors/security-scrubber.js",
+        "lineNumber": 140,
+        "hitCount": 18,
+        "percentage": 2.6
+      },
+      {
+        "functionName": "runCpuProfiling",
+        "url": "file:///C:/Users/vikas/OneDrive/Desktop/APITOOLSDK/sdk-node/dist-tests/tests/audit-suite/audit-cpu-flamegraph.test.js",
+        "lineNumber": 73,
+        "hitCount": 15,
+        "percentage": 2.2
+      },
+      {
+        "functionName": "ensureBaseFields",
+        "url": "file:///C:/Users/vikas/OneDrive/Desktop/APITOOLSDK/sdk-node/dist-tests/src/core/event-pipeline.js",
+        "lineNumber": 492,
+        "hitCount": 15,
+        "percentage": 2.2
+      },
+      {
+        "functionName": "scrubValue",
+        "url": "file:///C:/Users/vikas/OneDrive/Desktop/APITOOLSDK/sdk-node/dist-tests/src/processors/security-scrubber.js",
+        "lineNumber": 279,
+        "hitCount": 14,
+        "percentage": 2
+      },
+      {
+        "functionName": "canCreateSpan",
+        "url": "file:///C:/Users/vikas/OneDrive/Desktop/APITOOLSDK/sdk-node/dist-tests/src/utils/cost-governor.js",
+        "lineNumber": 75,
+        "hitCount": 9,
+        "percentage": 1.3
+      },
+      {
+        "functionName": "(anonymous)",
+        "url": "file:///C:/Users/vikas/OneDrive/Desktop/APITOOLSDK/sdk-node/dist-tests/src/core/event-pipeline.js",
+        "lineNumber": 209,
+        "hitCount": 9,
+        "percentage": 1.3
+      },
+      {
+        "functionName": "sdkConsoleDebug",
+        "url": "file:///C:/Users/vikas/OneDrive/Desktop/APITOOLSDK/sdk-node/dist-tests/src/utils/console-debug.js",
+        "lineNumber": 0,
+        "hitCount": 9,
+        "percentage": 1.3
+      }
+    ]
+  },
+  "ioAndResilience": {
+    "totalEventsEmitted": 3000,
+    "totalBatchesReceived": 70,
+    "totalEventsReceived": 10868,
+    "rawPayloadBytesTotal": 8767950,
+    "wirePayloadBytesTotal": 880583,
+    "compressionRatioPercent": 90,
+    "keepAliveReusedSockets": 36,
+    "failOpenUnder500Success": true,
+    "failOpenUnder429Success": true,
+    "failOpenUnderTimeoutSuccess": true,
+    "fsOperationsSynchronous": false
+  }
+}

@@ -1,15 +1,15 @@
 /**
- * Pulse SDK Tracer — enterprise-grade distributed tracing built on OpenTelemetry.
+ * LynkTrace SDK Tracer — enterprise-grade distributed tracing built on OpenTelemetry.
  *
  * Architecture (v3.0):
- *   PulseTracer → OTel NodeTracerProvider → PipelineSpanExporter → SDK EventPipeline
+ *   LynkTraceTracer → OTel NodeTracerProvider → PipelineSpanExporter → SDK EventPipeline
  *
  * Design principles:
  *   - OTel owns: span lifecycle, context propagation, sampling, instrumentation
  *   - SDK owns: span export → event pipeline, transport, batching, enrichment
- *   - PulseSpan is a THIN wrapper — zero duplicated state
+ *   - LynkTraceSpan is a THIN wrapper — zero duplicated state
  *   - All enrichment (tenant, session, SDK metadata) happens in the exporter,
- *     not in PulseSpan or at span creation time
+ *     not in LynkTraceSpan or at span creation time
  *   - Centralized SDK name/version constants (no hardcoded strings)
  */
 import { trace as otelTrace, SpanKind, context as otelContext, propagation, ROOT_CONTEXT, INVALID_SPAN_CONTEXT, } from '@opentelemetry/api';
@@ -22,11 +22,11 @@ import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION, ATTR_DEPLOYMENT_ENVIRONMENT_NA
 import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks';
 import { W3CTraceContextPropagator, CompositePropagator, W3CBaggagePropagator, suppressTracing, } from '@opentelemetry/core';
 import { TRACING_DEFAULTS } from '../constants/internal-defaults.js';
-import { PulseSpan } from './span.js';
+import { LynkTraceSpan, PulseSpan } from './span.js';
 import { getLogger } from '../utils/logger.js';
 import { generateId } from '../utils/uuid.js';
 import { processEvent, drainPendingEventProcessing } from '../core/event-pipeline.js';
-import { getRequestContext, PULSE_CONTEXT_ATTRIBUTES, createContextStore, withContext, } from '../core/context.js';
+import { getRequestContext, LYNKTRACE_CONTEXT_ATTRIBUTES, PULSE_CONTEXT_ATTRIBUTES, createContextStore, withContext, } from '../core/context.js';
 import { costGovernor } from '../utils/cost-governor.js';
 import { RemoteConfigSampler, LocalRecordSampler } from './remote-config-sampler.js';
 import { ConfigManager } from '../core/config-manager.js';
@@ -40,16 +40,18 @@ let tracer = null;
 let noopTracer = null;
 let initialized = false;
 let ownsProvider = false;
-const TRACER_PROVIDER_SYMBOL = Symbol.for('pulse-sdk.otel.tracer-provider');
+const TRACER_PROVIDER_SYMBOL = Symbol.for('lynktrace.otel.tracer-provider');
+const LEGACY_TRACER_PROVIDER_SYMBOL = Symbol.for('pulse-sdk.otel.tracer-provider');
+const LYNKTRACE_INTERNAL_CONTEXT_KEY = Symbol.for('lynktrace.internal-context');
 const PULSE_INTERNAL_CONTEXT_KEY = Symbol.for('pulse-sdk.internal-context');
 /**
- * Build a non-recording PulseSpan. Used when the tracer is not initialized,
+ * Build a non-recording LynkTraceSpan. Used when the tracer is not initialized,
  * when span creation fails, and when the `customSpans` entitlement is
  * revoked — in every case the caller gets a span object it can safely call
  * `end()` / `setAttribute()` on, but nothing is recorded or exported.
  */
 function createNoopSpan(_name) {
-    return new PulseSpan(otelTrace.wrapSpanContext(INVALID_SPAN_CONTEXT));
+    return new LynkTraceSpan(otelTrace.wrapSpanContext(INVALID_SPAN_CONTEXT));
 }
 /**
  * Custom developer spans are gated by the `customSpans` entitlement.
@@ -97,7 +99,7 @@ function getOrConvertSpanEvent(span) {
 class PipelineSpanExporter {
     export(spans, resultCallback) {
         const activeCtx = otelContext.active();
-        if (activeCtx.getValue(PULSE_INTERNAL_CONTEXT_KEY)) {
+        if (activeCtx.getValue(LYNKTRACE_INTERNAL_CONTEXT_KEY) || activeCtx.getValue(PULSE_INTERNAL_CONTEXT_KEY)) {
             getLogger().warn('Exporter recursion detected: dropping spans to prevent telemetry loop', {
                 droppedSpans: spans.length,
                 event: 'EXPORTER_RECURSION_PREVENTED'
@@ -105,7 +107,9 @@ class PipelineSpanExporter {
             resultCallback({ code: 0 });
             return;
         }
-        const safeCtx = suppressTracing(activeCtx.setValue(PULSE_INTERNAL_CONTEXT_KEY, true));
+        const safeCtx = suppressTracing(activeCtx
+            .setValue(LYNKTRACE_INTERNAL_CONTEXT_KEY, true)
+            .setValue(PULSE_INTERNAL_CONTEXT_KEY, true));
         otelContext.with(safeCtx, () => {
             try {
                 let allAccepted = true;
@@ -208,10 +212,14 @@ function spanToEvent(span) {
     if (attrEntries.length > maxAttrs) {
         const retained = Math.max(0, maxAttrs - Math.min(2, maxAttrs));
         filteredAttrs = Object.fromEntries(attrEntries.slice(0, retained));
-        if (maxAttrs >= 1)
+        if (maxAttrs >= 1) {
+            filteredAttrs['lynktrace.attributes_truncated'] = true;
             filteredAttrs['pulse.attributes_truncated'] = true;
-        if (maxAttrs >= 2)
+        }
+        if (maxAttrs >= 2) {
+            filteredAttrs['lynktrace.original_attribute_count'] = attrEntries.length;
             filteredAttrs['pulse.original_attribute_count'] = attrEntries.length;
+        }
     }
     const rawStartTimeMs = hrTimeToMs(span.startTime);
     const rawEndTimeMs = hrTimeToMs(span.endTime);
@@ -273,11 +281,12 @@ function spanToEvent(span) {
         },
         // Internal marker allows shutdown force-flush to route finished spans
         // while rejecting new user-captured events. Stripped by event pipeline.
+        __lynktraceInternal: true,
         __pulseInternal: true,
-        requestId: toAttrString(attrs[PULSE_CONTEXT_ATTRIBUTES.requestId]),
-        sessionId: toAttrString(attrs[PULSE_CONTEXT_ATTRIBUTES.sessionId]),
-        userId: toAttrString(attrs[PULSE_CONTEXT_ATTRIBUTES.userId]),
-        tenantId: toAttrString(attrs[PULSE_CONTEXT_ATTRIBUTES.tenantId]),
+        requestId: toAttrString(attrs[LYNKTRACE_CONTEXT_ATTRIBUTES.requestId]) ?? toAttrString(attrs[PULSE_CONTEXT_ATTRIBUTES.requestId]),
+        sessionId: toAttrString(attrs[LYNKTRACE_CONTEXT_ATTRIBUTES.sessionId]) ?? toAttrString(attrs[PULSE_CONTEXT_ATTRIBUTES.sessionId]),
+        userId: toAttrString(attrs[LYNKTRACE_CONTEXT_ATTRIBUTES.userId]) ?? toAttrString(attrs[PULSE_CONTEXT_ATTRIBUTES.userId]),
+        tenantId: toAttrString(attrs[LYNKTRACE_CONTEXT_ATTRIBUTES.tenantId]) ?? toAttrString(attrs[PULSE_CONTEXT_ATTRIBUTES.tenantId]),
     };
 }
 /**
@@ -336,7 +345,7 @@ export function initTracer(config, customResources) {
     const logger = getLogger();
     try {
         const globalState = globalThis;
-        if (globalState[TRACER_PROVIDER_SYMBOL]) {
+        if (globalState[TRACER_PROVIDER_SYMBOL] || globalState[LEGACY_TRACER_PROVIDER_SYMBOL]) {
             tracer = otelTrace.getTracer(SDK_NAME, SDK_VERSION);
             initialized = true;
             ownsProvider = false;
@@ -398,6 +407,7 @@ export function initTracer(config, customResources) {
         const propagator = new CompositePropagator({ propagators });
         provider.register({ contextManager, propagator });
         globalState[TRACER_PROVIDER_SYMBOL] = true;
+        globalState[LEGACY_TRACER_PROVIDER_SYMBOL] = true;
         ownsProvider = true;
         // Get the tracer instance
         tracer = otelTrace.getTracer(SDK_NAME, SDK_VERSION);
@@ -460,7 +470,7 @@ function snapshotActiveSpanId() {
  *
  * @param name - Span name (e.g. 'HTTP GET /api/users', 'db.query', 'cache.get')
  * @param options - Optional span configuration
- * @returns PulseSpan instance (or a no-op span if tracing is not initialized)
+ * @returns LynkTraceSpan instance (or a no-op span if tracing is not initialized)
  */
 export function startSpan(name, options) {
     const logger = getLogger();
@@ -479,7 +489,7 @@ export function startSpan(name, options) {
         const span = parentContext
             ? tracer.startSpan(name, otelOptions, parentContext)
             : tracer.startSpan(name, otelOptions);
-        return new PulseSpan(span, parentSpanId);
+        return new LynkTraceSpan(span, parentSpanId);
     }
     catch (err) {
         logger.warn('Failed to start span', { name, error: err });
@@ -545,7 +555,7 @@ export async function withSpan(name, fnOrOptions, optionsOrFn) {
     const parentSpanId = resolveParentSpanId(options, parentContext);
     const isRoot = parentSpanId === undefined;
     const runCallback = async (span) => {
-        const pulseSpan = new PulseSpan(span, parentSpanId);
+        const pulseSpan = new LynkTraceSpan(span, parentSpanId);
         const logger = getLogger();
         if (isRoot) {
             try {
@@ -565,7 +575,12 @@ export async function withSpan(name, fnOrOptions, optionsOrFn) {
             const timeoutMs = options.timeoutMs;
             timeoutTimer = setTimeout(() => {
                 if (!pulseSpan.isEnded) {
+                    pulseSpan.addEvent('lynktrace.span.timeout', {
+                        'lynktrace.timeout_ms': timeoutMs,
+                        'pulse.timeout_ms': timeoutMs,
+                    });
                     pulseSpan.addEvent('pulse.span.timeout', {
+                        'lynktrace.timeout_ms': timeoutMs,
                         'pulse.timeout_ms': timeoutMs,
                     });
                     pulseSpan.setStatus('error', `Span timed out after ${timeoutMs}ms`);
@@ -647,7 +662,7 @@ export function withSpanSync(name, fnOrOptions, optionsOrFn) {
     const parentSpanId = resolveParentSpanId(options, parentContext);
     const isRoot = parentSpanId === undefined;
     const runCallback = (span) => {
-        const pulseSpan = new PulseSpan(span, parentSpanId);
+        const pulseSpan = new LynkTraceSpan(span, parentSpanId);
         if (isRoot) {
             try {
                 const subsystem = ProfilingSubsystem.getInstance();
@@ -738,7 +753,7 @@ export function trace(name, fnOrOptions, optionsOrFn) {
     const parentSpanId = resolveParentSpanId(options, parentContext);
     const isRoot = parentSpanId === undefined;
     const runCallback = (span) => {
-        const pulseSpan = new PulseSpan(span, parentSpanId);
+        const pulseSpan = new LynkTraceSpan(span, parentSpanId);
         if (isRoot) {
             try {
                 const subsystem = ProfilingSubsystem.getInstance();
@@ -843,7 +858,7 @@ export function wrap(name, fn, options) {
         return trace(name, () => fn.apply(this, args), options);
     };
     Object.defineProperty(wrapped, 'name', {
-        value: fn.name ? `pulseWrapped_${fn.name}` : `pulseWrapped_${name}`,
+        value: fn.name ? `lynktraceWrapped_${fn.name}` : `lynktraceWrapped_${name}`,
         configurable: true,
     });
     Object.defineProperty(wrapped, 'length', {
@@ -959,6 +974,7 @@ export async function withBackgroundSpan(name, fnOrOptions, optionsOrFn) {
             traceId: originatingTraceId,
             spanId: originatingSpanId,
             attributes: {
+                'lynktrace.link.type': 'caused_by',
                 'pulse.link.type': 'caused_by',
             },
         });
@@ -968,26 +984,29 @@ export async function withBackgroundSpan(name, fnOrOptions, optionsOrFn) {
     }
     const attributes = {
         ...(options?.attributes ?? {}),
+        'lynktrace.background': true,
         'pulse.background': true,
     };
     if (originatingTraceId) {
+        attributes['lynktrace.originating.trace_id'] = originatingTraceId;
         attributes['pulse.originating.trace_id'] = originatingTraceId;
     }
     if (originatingSpanId) {
+        attributes['lynktrace.originating.span_id'] = originatingSpanId;
         attributes['pulse.originating.span_id'] = originatingSpanId;
     }
     const resolvedKind = (options?.kind ? toOtelSpanKind(options.kind) : undefined) ?? SpanKind.INTERNAL;
     const otelOptions = {
         attributes: withRequestContextAttributes(attributes),
         kind: resolvedKind,
-        links: PulseSpan.toOTelLinks(links),
+        links: LynkTraceSpan.toOTelLinks(links),
     };
     if (options?.startTime !== undefined) {
         otelOptions.startTime = options.startTime;
     }
     const currentStore = getRequestContext();
     const runCallback = async (span) => {
-        const pulseSpan = new PulseSpan(span, undefined);
+        const pulseSpan = new LynkTraceSpan(span, undefined);
         try {
             const subsystem = ProfilingSubsystem.getInstance();
             if (subsystem)
@@ -1001,7 +1020,12 @@ export async function withBackgroundSpan(name, fnOrOptions, optionsOrFn) {
             const timeoutMs = options.timeoutMs;
             timeoutTimer = setTimeout(() => {
                 if (!pulseSpan.isEnded) {
+                    pulseSpan.addEvent('lynktrace.span.timeout', {
+                        'lynktrace.timeout_ms': timeoutMs,
+                        'pulse.timeout_ms': timeoutMs,
+                    });
                     pulseSpan.addEvent('pulse.span.timeout', {
+                        'lynktrace.timeout_ms': timeoutMs,
                         'pulse.timeout_ms': timeoutMs,
                     });
                     pulseSpan.setStatus('error', `Background span timed out after ${timeoutMs}ms`);
@@ -1121,6 +1145,7 @@ export function startBackgroundSpan(name, options) {
                 traceId: originatingTraceId,
                 spanId: originatingSpanId,
                 attributes: {
+                    'lynktrace.link.type': 'caused_by',
                     'pulse.link.type': 'caused_by',
                 },
             });
@@ -1130,19 +1155,22 @@ export function startBackgroundSpan(name, options) {
         }
         const attributes = {
             ...(options?.attributes ?? {}),
+            'lynktrace.background': true,
             'pulse.background': true,
         };
         if (originatingTraceId) {
+            attributes['lynktrace.originating.trace_id'] = originatingTraceId;
             attributes['pulse.originating.trace_id'] = originatingTraceId;
         }
         if (originatingSpanId) {
+            attributes['lynktrace.originating.span_id'] = originatingSpanId;
             attributes['pulse.originating.span_id'] = originatingSpanId;
         }
         const resolvedKind = (options?.kind ? toOtelSpanKind(options.kind) : undefined) ?? SpanKind.INTERNAL;
         const otelOptions = {
             attributes: withRequestContextAttributes(attributes),
             kind: resolvedKind,
-            links: PulseSpan.toOTelLinks(links),
+            links: LynkTraceSpan.toOTelLinks(links),
         };
         if (options?.startTime !== undefined) {
             otelOptions.startTime = options.startTime;
@@ -1169,7 +1197,7 @@ export function startBackgroundSpan(name, options) {
             }
             return origOtelEnd(...args);
         };
-        const pulseSpan = new PulseSpan(span, undefined);
+        const pulseSpan = new LynkTraceSpan(span, undefined);
         const origPulseEnd = pulseSpan.end.bind(pulseSpan);
         pulseSpan.end = (endTime) => {
             if (!decremented) {
@@ -1194,7 +1222,7 @@ export function getActiveSpan() {
     const span = otelTrace.getActiveSpan();
     if (!span)
         return null;
-    return new PulseSpan(span);
+    return new LynkTraceSpan(span);
 }
 /**
  * Get the internal tracer instance for advanced SDK use.
@@ -1243,6 +1271,7 @@ export async function shutdownTracer() {
         // whoever registered the provider externally.
         if (ownsLocal) {
             delete globalThis[TRACER_PROVIDER_SYMBOL];
+            delete globalThis[LEGACY_TRACER_PROVIDER_SYMBOL];
         }
         logger.debug('Tracer shutdown skipped — no active provider');
         return;
@@ -1270,6 +1299,7 @@ export async function shutdownTracer() {
         if (ownsLocal && localProvider) {
             await localProvider.shutdown();
             delete globalThis[TRACER_PROVIDER_SYMBOL];
+            delete globalThis[LEGACY_TRACER_PROVIDER_SYMBOL];
             try {
                 otelTrace.disable();
             }
@@ -1372,7 +1402,7 @@ function toOtelSpanOptions(options) {
     if (options?.startTime)
         otelOptions.startTime = options.startTime;
     if (options?.links)
-        otelOptions.links = PulseSpan.toOTelLinks(options.links);
+        otelOptions.links = LynkTraceSpan.toOTelLinks(options.links);
     return otelOptions;
 }
 function toOtelSpanKind(kind) {

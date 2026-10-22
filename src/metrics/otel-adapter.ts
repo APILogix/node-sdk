@@ -32,11 +32,17 @@ import {
 import { metrics, context, type Meter, type Histogram, type Counter, type UpDownCounter, type Gauge } from '@opentelemetry/api'
 import { suppressTracing } from '@opentelemetry/core'
 import { getLogger } from '../utils/logger.js'
-import { PulseMetricReader } from './pulse-metric-reader.js'
+import { LynkTraceMetricReader, PulseMetricReader } from './pulse-metric-reader.js'
 import type { ResourceAttributes } from '../utils/resource-detector.js'
 import os from 'node:os'
 
-const METER_PROVIDER_SYMBOL = Symbol.for('pulse-sdk.otel.meter-provider')
+const METER_PROVIDER_SYMBOL = Symbol.for('lynktrace.otel.meter-provider')
+const METER_PROVIDER_SYMBOL_LEGACY = Symbol.for('pulse-sdk.otel.meter-provider')
+
+interface GlobalWithMeterProvider {
+  [METER_PROVIDER_SYMBOL]?: boolean
+  [METER_PROVIDER_SYMBOL_LEGACY]?: boolean
+}
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -56,7 +62,7 @@ export interface OtelMetricsConfig {
 class OtelMetricsManager {
   private provider: MeterProvider | null = null
   private meter: Meter | null = null
-  private reader: PulseMetricReader | null = null
+  private reader: LynkTraceMetricReader | null = null
   private initialized = false
   private flushTimer: ReturnType<typeof setInterval> | null = null
   private flushIntervalMs: number
@@ -80,9 +86,9 @@ class OtelMetricsManager {
     const logger = getLogger()
 
     try {
-      const globalState = globalThis as typeof globalThis & { [METER_PROVIDER_SYMBOL]?: true }
-      if (globalState[METER_PROVIDER_SYMBOL]) {
-        this.meter = metrics.getMeter('@vikasbaplawat1/pulse-sdk', '2.0.0')
+      const globalState = globalThis as typeof globalThis & GlobalWithMeterProvider
+      if (globalState[METER_PROVIDER_SYMBOL] || globalState[METER_PROVIDER_SYMBOL_LEGACY]) {
+        this.meter = metrics.getMeter('@lynktrace/node', '0.1.0-beta.2')
         this.initialized = true
         this.ownsProvider = false
         logger.info('OpenTelemetry meter provider already registered by APM telemetry; reusing global provider')
@@ -104,13 +110,13 @@ class OtelMetricsManager {
         'process.pid': process.pid,
         'process.runtime.name': 'node',
         'process.runtime.version': process.version,
-        'telemetry.sdk.name': '@vikasbaplawat1/pulse-sdk',
-        'telemetry.sdk.version': '2.0.0',
+        'telemetry.sdk.name': '@lynktrace/node',
+        'telemetry.sdk.version': '0.1.0-beta.2',
         'telemetry.sdk.language': 'nodejs',
         ...(customResources ?? {}),
       })
 
-      this.reader = new PulseMetricReader({ percentiles })
+      this.reader = new LynkTraceMetricReader({ percentiles })
 
       const meterProviderOptions: MeterProviderOptions = {
         resource,
@@ -142,10 +148,11 @@ class OtelMetricsManager {
 
       this.provider = new MeterProvider(meterProviderOptions)
 
-      this.meter = this.provider.getMeter('@vikasbaplawat1/pulse-sdk', '2.0.0')
+      this.meter = this.provider.getMeter('@lynktrace/node', '0.1.0-beta.2')
 
       metrics.setGlobalMeterProvider(this.provider)
       globalState[METER_PROVIDER_SYMBOL] = true
+      globalState[METER_PROVIDER_SYMBOL_LEGACY] = true
       this.ownsProvider = true
 
       this.flushTimer = setInterval(() => {
@@ -285,7 +292,9 @@ class OtelMetricsManager {
     try {
       if (this.ownsProvider) {
         await this.provider.shutdown()
-        delete (globalThis as typeof globalThis & { [METER_PROVIDER_SYMBOL]?: true })[METER_PROVIDER_SYMBOL]
+        const g = globalThis as typeof globalThis & GlobalWithMeterProvider
+        delete g[METER_PROVIDER_SYMBOL]
+        delete g[METER_PROVIDER_SYMBOL_LEGACY]
       }
       this.initialized = false
       this.provider = null

@@ -1,6 +1,6 @@
 /**
  * BullMQ Instrumentation — OpenTelemetry auto-instrumentation
- * wrapped with Pulse SDK guards and remote config support.
+ * wrapped with LynkTrace SDK guards and remote config support.
  *
  * Features:
  * - Job spans with name, queue, attempts, and duration

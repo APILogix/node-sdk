@@ -1,6 +1,6 @@
 /**
  * Redis & ioredis Instrumentation — OpenTelemetry auto-instrumentation
- * wrapped with Pulse SDK guards, configurable key visibility policies,
+ * wrapped with LynkTrace SDK guards, configurable key visibility policies,
  * and remote config support.
  *
  * Supported key policies:

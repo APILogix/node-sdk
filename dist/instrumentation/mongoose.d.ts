@@ -36,4 +36,5 @@ export declare class MongooseInstrumentation extends InstrumentationBase {
     private _unpatchMongoose;
 }
 export declare function createMongooseInstrumentation(enabled: boolean, captureConfig?: PrivacyCaptureConfig): MongooseInstrumentation | null;
+export { MongooseInstrumentation as LynkTraceMongooseInstrumentation };
 export default createMongooseInstrumentation;

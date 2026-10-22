@@ -286,8 +286,11 @@ export class ProfilingSubsystem {
     // If continuous profiling is active, record the trace association and let continuous profiling track it
     if (this.isContinuousRunning) {
       this.recordActiveTrace(resolvedTraceId)
+      activeSpan?.addEvent('lynktrace.profile.continuous', { 'profile.type': 'cpu', 'profile.id': key })
       activeSpan?.addEvent('pulse.profile.continuous', { 'profile.type': 'cpu', 'profile.id': key })
+      activeSpan?.setAttribute('lynktrace.profile.active', true)
       activeSpan?.setAttribute('pulse.profile.active', true)
+      activeSpan?.setAttribute('lynktrace.profile.continuous', true)
       activeSpan?.setAttribute('pulse.profile.continuous', true)
       return true
     }
@@ -308,7 +311,9 @@ export class ProfilingSubsystem {
         startTime,
         timeoutHandle,
       })
+      activeSpan?.addEvent('lynktrace.profile.start', { 'profile.type': 'cpu', 'profile.id': key })
       activeSpan?.addEvent('pulse.profile.start', { 'profile.type': 'cpu', 'profile.id': key })
+      activeSpan?.setAttribute('lynktrace.profile.active', true)
       activeSpan?.setAttribute('pulse.profile.active', true)
       return true
     } catch (error) {
@@ -353,10 +358,15 @@ export class ProfilingSubsystem {
 
       const activeSpan = trace.getActiveSpan()
       if (activeSpan?.spanContext().traceId === active.traceId) {
+        activeSpan.addEvent('lynktrace.profile.stop', {
+          'profile.type': 'cpu',
+          'profile.duration_ms': endTime - active.startTime,
+        })
         activeSpan.addEvent('pulse.profile.stop', {
           'profile.type': 'cpu',
           'profile.duration_ms': endTime - active.startTime,
         })
+        activeSpan.setAttribute('lynktrace.profile.active', false)
         activeSpan.setAttribute('pulse.profile.active', false)
       }
     } catch (error) {
