@@ -17,16 +17,16 @@ describe('SEC-12: CommonJS & ESM Interoperability', () => {
     assert.equal(typeof sdkCjs.captureLog, 'function', 'Should export captureLog')
     assert.equal(typeof sdkCjs.startSpan, 'function', 'Should export startSpan')
     assert.equal(typeof sdkCjs.withSpan, 'function', 'Should export withSpan')
-    assert.equal(typeof sdkCjs.Pulse, 'object', 'Should export Pulse facade')
-    assert.equal(typeof sdkCjs.default, 'object', 'Should export default Pulse facade')
+    assert.equal(typeof sdkCjs.LynkTrace, 'object', 'Should export LynkTrace facade')
+    assert.equal(typeof sdkCjs.default, 'object', 'Should export default LynkTrace facade')
   })
 
   it('allows CommonJS consumer to call facade methods fail-open', () => {
     const sdkCjs = require(packageRoot)
     assert.doesNotThrow(() => {
-      sdkCjs.Pulse.captureMessage('test-cjs-message')
+      sdkCjs.LynkTrace.captureMessage('test-cjs-message')
     })
-    const health = sdkCjs.Pulse.getHealth()
+    const health = sdkCjs.LynkTrace.getHealth()
     assert.ok(health, 'getHealth should return snapshot')
     assert.equal(typeof health.initialized, 'boolean')
   })
@@ -37,6 +37,6 @@ describe('SEC-12: CommonJS & ESM Interoperability', () => {
     assert.ok(sdkEsm, 'ESM import should succeed')
     assert.equal(typeof sdkEsm.init, 'function')
     assert.equal(typeof sdkEsm.captureException, 'function')
-    assert.equal(typeof sdkEsm.Pulse, 'object')
+    assert.equal(typeof sdkEsm.LynkTrace, 'object')
   })
 })

@@ -9,8 +9,8 @@ import { init } from '../../src/core/init.js';
 import { shutdown, flush } from '../../src/core/lifecycle.js';
 import { captureException } from '../../src/capture/captureException.js';
 import { client } from '../../src/core/client.js';
-import { pulseMiddleware } from '../../src/instrumentation/express.js';
-import { pulseFastifyPlugin } from '../../src/instrumentation/fastify.js';
+import { lynktraceMiddleware } from '../../src/instrumentation/express.js';
+import { lynktraceFastifyPlugin } from '../../src/instrumentation/fastify.js';
 import { createContextStore, withContext } from '../../src/core/context.js';
 import { TEST_REMOTE_CONFIG as BAKED_IN_REMOTE_CONFIG } from '../fixtures/remote-config.js';
 async function startMockBackend() {
@@ -140,7 +140,7 @@ describe('HTTP Status Enrichment', { timeout: 60_000 }, () => {
         let baseUrl;
         before(async () => {
             app = express();
-            app.use(pulseMiddleware());
+            app.use(lynktraceMiddleware());
             app.get('/test-500', (req, res, next) => {
                 next(new Error('Express 500 error'));
             });
@@ -197,8 +197,8 @@ describe('HTTP Status Enrichment', { timeout: 60_000 }, () => {
         let baseUrl;
         before(async () => {
             app = Fastify();
-            pulseFastifyPlugin[Symbol.for('skip-override')] = true;
-            await app.register(pulseFastifyPlugin, {});
+            lynktraceFastifyPlugin[Symbol.for('skip-override')] = true;
+            await app.register(lynktraceFastifyPlugin, {});
             app.get('/test-500', async () => {
                 throw new Error('Fastify 500 error');
             });

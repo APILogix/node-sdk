@@ -34,8 +34,8 @@ import { setUser, setTag, setTags, setContext } from './core/scope.js';
 import { startSpan, withSpan, withSpanSync, withBackgroundSpan, startBackgroundSpan, trace, wrap, } from './tracing/tracer.js';
 import { incrementCounter, setGauge, recordHistogram, addUpDownCounter, } from './capture/captureMetric.js';
 import { startDbSpan, withDbSpan, withDbSpanSync } from './tracing/db-span.js';
-import { lynktraceMiddleware, pulseMiddleware, lynktraceExpressErrorHandler, expressErrorHandler } from './instrumentation/express.js';
-import { lynktraceFastifyPlugin, pulseFastifyPlugin } from './instrumentation/fastify.js';
+import { lynktraceMiddleware, lynktraceExpressErrorHandler, expressErrorHandler } from './instrumentation/express.js';
+import { lynktraceFastifyPlugin } from './instrumentation/fastify.js';
 import { wrapHandler } from './serverless/index.js';
 import { registerBootstrapAutoInstrumentations } from './instrumentation/auto-instrument.js';
 try {
@@ -71,14 +71,14 @@ export { setUser, setTag, setTags, removeTag, setExtra, setExtras, removeExtra, 
 export { startSpan, withSpan, withSpanSync, withBackgroundSpan, startBackgroundSpan, trace, wrap, getActiveBackgroundSpanCount, getActiveSpan, flushTracer, } from './tracing/tracer.js';
 export { startDbSpan, withDbSpan, withDbSpanSync } from './tracing/db-span.js';
 export { extractTraceContext, injectTraceContext } from './tracing/context-propagation.js';
-export { LynkTraceSpan, PulseSpan } from './tracing/span.js';
+export { LynkTraceSpan } from './tracing/span.js';
 // ─── Framework instrumentation ──────────────────────────────────────────────
-export { lynktraceMiddleware, pulseMiddleware, lynktraceExpressErrorHandler, expressErrorHandler, instrumentExpress } from './instrumentation/express.js';
-export { lynktraceFastifyPlugin, pulseFastifyPlugin } from './instrumentation/fastify.js';
+export { lynktraceMiddleware, lynktraceExpressErrorHandler, expressErrorHandler, instrumentExpress } from './instrumentation/express.js';
+export { lynktraceFastifyPlugin } from './instrumentation/fastify.js';
 export { registerAutoInstrumentations } from './instrumentation/auto-instrument.js';
 export { registerEsmLoaderHooks } from './instrumentation/esm-loader.js';
 export { createGraphQLInstrumentation } from './instrumentation/graphql.js';
-export { createPrismaInstrumentation, lynktracePrismaExtension, pulsePrismaExtension, instrumentPrismaClientInstance } from './instrumentation/prisma.js';
+export { createPrismaInstrumentation, lynktracePrismaExtension, instrumentPrismaClientInstance } from './instrumentation/prisma.js';
 export { createMongoDBInstrumentation } from './instrumentation/mongodb.js';
 export { createMongooseInstrumentation, MongooseInstrumentation, LynkTraceMongooseInstrumentation } from './instrumentation/mongoose.js';
 export { createRedisInstrumentation } from './instrumentation/redis.js';
@@ -89,7 +89,7 @@ export { createMySQLInstrumentation } from './instrumentation/mysql.js';
 export { patchEventEmitter, unpatchEventEmitter } from './instrumentation/event-emitter-patch.js';
 export { installHttpLifecycleGuard, uninstallHttpLifecycleGuard, isOtelInstrumentationError } from './instrumentation/http-lifecycle-guard.js';
 export { computeExclusiveDuration, SpanDurationTracker, spanDurationTracker } from './tracing/span-duration.js';
-export { LynkTraceDrizzleLogger, PulseDrizzleLogger, createDrizzleInstrumentation } from './instrumentation/drizzle.js';
+export { LynkTraceDrizzleLogger, createDrizzleInstrumentation } from './instrumentation/drizzle.js';
 // ─── Logger control (apps wiring SDK into their own logger) ─────────────────
 export { setLogger, setDebugMode, setLogLevel } from './utils/logger.js';
 export { Severity, severityFromString, isSeverityGte, doesSeverityMeetThreshold } from './types/severity.js';
@@ -242,14 +242,8 @@ export const LynkTrace = {
     getSpanId,
     getHealth,
     lynktraceMiddleware,
-    pulseMiddleware,
     expressErrorHandler: lynktraceExpressErrorHandler,
     lynktraceExpressErrorHandler,
     lynktraceFastifyPlugin,
-    pulseFastifyPlugin,
 };
-/**
- * Backward compatibility alias for the LynkTrace facade namespace.
- */
-export const Pulse = LynkTrace;
 export default LynkTrace;

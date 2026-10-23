@@ -3,7 +3,7 @@
  * integration for Drizzle ORM.
  *
  * Provides:
- * - PulseDrizzleLogger: Drop-in logger implementing Drizzle's Logger interface
+ * - LynkTraceDrizzleLogger: Drop-in logger implementing Drizzle's Logger interface
  * - Auto-instrumentation wrapper for Drizzle database query executions
  */
 
@@ -36,17 +36,14 @@ export class LynkTraceDrizzleLogger {
   }
 }
 
-export const PulseDrizzleLogger = LynkTraceDrizzleLogger
-export type PulseDrizzleLogger = LynkTraceDrizzleLogger
-
 export function createDrizzleInstrumentation(
   enabled: boolean,
   _options?: Partial<DrizzleInstrumentationOptions>,
   _captureConfig?: PrivacyCaptureConfig,
-): { enable: () => void; disable: () => void; teardown: () => void; logger: PulseDrizzleLogger } | null {
+): { enable: () => void; disable: () => void; teardown: () => void; logger: LynkTraceDrizzleLogger } | null {
   if (!enabled) return null
 
-  const logger = new PulseDrizzleLogger()
+  const logger = new LynkTraceDrizzleLogger()
   let active = true
 
   return {

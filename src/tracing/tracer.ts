@@ -55,7 +55,7 @@ import {
     suppressTracing,
 } from '@opentelemetry/core'
 import { TRACING_DEFAULTS } from '../constants/internal-defaults.js'
-import { LynkTraceSpan, PulseSpan, type SpanOptions, type SpanLink, type SpanKindName } from './span.js'
+import { LynkTraceSpan, type SpanOptions, type SpanLink, type SpanKindName } from './span.js'
 import { getLogger } from '../utils/logger.js'
 import { generateId } from '../utils/uuid.js'
 import type { RemoteConfigResponse } from '../types/config.js'
@@ -541,7 +541,7 @@ function snapshotActiveSpanId(): string | undefined {
 }
 
 /**
- * Start a new span and return a `PulseSpan` wrapper.
+ * Start a new span and return a `LynkTraceSpan` wrapper.
  *
  * ⚠️  IMPORTANT — context semantics:
  *

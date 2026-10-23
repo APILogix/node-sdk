@@ -5,7 +5,7 @@ import {
   shutdown,
   trace,
   wrap,
-  Pulse,
+  LynkTrace,
   getTraceId,
   getSpanId,
   startSpan,
@@ -45,7 +45,7 @@ function setupMockFetch() {
   }) as any
 }
 
-describe('Pulse SDK Developer Function Decorators & Facade Parity', () => {
+describe('LynkTrace SDK Developer Function Decorators & Facade Parity', () => {
   beforeEach(async () => {
     setupMockFetch()
     await init({
@@ -58,10 +58,10 @@ describe('Pulse SDK Developer Function Decorators & Facade Parity', () => {
     await shutdown()
   })
 
-  it('Pulse.wrap wraps an async function, preserving arguments, return value, and trace context', async () => {
+  it('LynkTrace.wrap wraps an async function, preserving arguments, return value, and trace context', async () => {
     let capturedTraceId: string | undefined
 
-    const slowCalculation = Pulse.wrap('calc.multiply', async (a: number, b: number) => {
+    const slowCalculation = LynkTrace.wrap('calc.multiply', async (a: number, b: number) => {
       capturedTraceId = getTraceId()
       return a * b
     })
@@ -79,10 +79,10 @@ describe('Pulse SDK Developer Function Decorators & Facade Parity', () => {
     assert.equal(slowCalculation.length, 2)
   })
 
-  it('Pulse.wrap wraps a synchronous function and preserves this context', () => {
+  it('LynkTrace.wrap wraps a synchronous function and preserves this context', () => {
     class Calculator {
       private factor = 10
-      multiply = Pulse.wrap('calc.sync', function (this: Calculator, n: number) {
+      multiply = LynkTrace.wrap('calc.sync', function (this: Calculator, n: number) {
         return n * this.factor
       })
     }
@@ -92,8 +92,8 @@ describe('Pulse SDK Developer Function Decorators & Facade Parity', () => {
     assert.equal(result, 50)
   })
 
-  it('Pulse.wrap re-throws errors, preserves original error, and marks span as error', async () => {
-    const faultyOperation = Pulse.wrap('calc.faulty', async () => {
+  it('LynkTrace.wrap re-throws errors, preserves original error, and marks span as error', async () => {
+    const faultyOperation = LynkTrace.wrap('calc.faulty', async () => {
       throw new Error('Database connection failed')
     })
 
@@ -108,9 +108,9 @@ describe('Pulse SDK Developer Function Decorators & Facade Parity', () => {
     )
   })
 
-  it('Pulse.trace handles synchronous callbacks seamlessly', () => {
+  it('LynkTrace.trace handles synchronous callbacks seamlessly', () => {
     let spanExecuted = false
-    const output = Pulse.trace('sync.hash', (span) => {
+    const output = LynkTrace.trace('sync.hash', (span) => {
       spanExecuted = true
       span.setAttribute('crypto.algo', 'sha256')
       return 'hash_12345'
@@ -120,8 +120,8 @@ describe('Pulse SDK Developer Function Decorators & Facade Parity', () => {
     assert.equal(output, 'hash_12345')
   })
 
-  it('Pulse.trace handles asynchronous callbacks seamlessly', async () => {
-    const output = await Pulse.trace('async.fetch', async (span) => {
+  it('LynkTrace.trace handles asynchronous callbacks seamlessly', async () => {
+    const output = await LynkTrace.trace('async.fetch', async (span) => {
       span.setAttribute('fetch.target', 'user_profile')
       return { id: 101, name: 'Alice' }
     })
@@ -129,27 +129,27 @@ describe('Pulse SDK Developer Function Decorators & Facade Parity', () => {
     assert.deepEqual(output, { id: 101, name: 'Alice' })
   })
 
-  it('Pulse facade namespace exposes all required APM methods', () => {
-    assert.equal(typeof Pulse.wrap, 'function')
-    assert.equal(typeof Pulse.trace, 'function')
-    assert.equal(typeof Pulse.withSpan, 'function')
-    assert.equal(typeof Pulse.withSpanSync, 'function')
-    assert.equal(typeof Pulse.withBackgroundSpan, 'function')
-    assert.equal(typeof Pulse.startBackgroundSpan, 'function')
-    assert.equal(typeof Pulse.incrementCounter, 'function')
-    assert.equal(typeof Pulse.setGauge, 'function')
-    assert.equal(typeof Pulse.recordHistogram, 'function')
-    assert.equal(typeof Pulse.addUpDownCounter, 'function')
+  it('LynkTrace facade namespace exposes all required APM methods', () => {
+    assert.equal(typeof LynkTrace.wrap, 'function')
+    assert.equal(typeof LynkTrace.trace, 'function')
+    assert.equal(typeof LynkTrace.withSpan, 'function')
+    assert.equal(typeof LynkTrace.withSpanSync, 'function')
+    assert.equal(typeof LynkTrace.withBackgroundSpan, 'function')
+    assert.equal(typeof LynkTrace.startBackgroundSpan, 'function')
+    assert.equal(typeof LynkTrace.incrementCounter, 'function')
+    assert.equal(typeof LynkTrace.setGauge, 'function')
+    assert.equal(typeof LynkTrace.recordHistogram, 'function')
+    assert.equal(typeof LynkTrace.addUpDownCounter, 'function')
   })
 
-  it('Pulse.wrap and trace fail-open when uninitialized', async () => {
+  it('LynkTrace.wrap and trace fail-open when uninitialized', async () => {
     await shutdown() // Shut down SDK completely
 
-    const uninitializedWrapped = Pulse.wrap('uninit.test', (x: number) => x + 1)
+    const uninitializedWrapped = LynkTrace.wrap('uninit.test', (x: number) => x + 1)
     const result = uninitializedWrapped(99)
     assert.equal(result, 100)
 
-    const traceResult = await Pulse.trace('uninit.async', async () => 'fallback_ok')
+    const traceResult = await LynkTrace.trace('uninit.async', async () => 'fallback_ok')
     assert.equal(traceResult, 'fallback_ok')
   })
 })

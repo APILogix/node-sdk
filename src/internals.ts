@@ -87,7 +87,7 @@ export type { Session, SessionManagerOptions } from './session/session-manager.j
 
 // ─── Span class (advanced tracing access) ───────────────────────────────────
 
-export { LynkTraceSpan, PulseSpan } from './tracing/span.js'
+export { LynkTraceSpan } from './tracing/span.js'
 
 // ─── Logging plumbing ───────────────────────────────────────────────────────
 

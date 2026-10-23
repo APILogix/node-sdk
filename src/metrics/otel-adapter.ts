@@ -32,7 +32,7 @@ import {
 import { metrics, context, type Meter, type Histogram, type Counter, type UpDownCounter, type Gauge } from '@opentelemetry/api'
 import { suppressTracing } from '@opentelemetry/core'
 import { getLogger } from '../utils/logger.js'
-import { LynkTraceMetricReader, PulseMetricReader } from './pulse-metric-reader.js'
+import { LynkTraceMetricReader } from './pulse-metric-reader.js'
 import { SDK_NAME, SDK_VERSION } from '../constants/version.js'
 import type { ResourceAttributes } from '../utils/resource-detector.js'
 import os from 'node:os'

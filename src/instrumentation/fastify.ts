@@ -54,8 +54,6 @@ export interface LynkTraceFastifyOptions {
   readonly trustedProxies?: readonly string[]
 }
 
-export type PulseFastifyOptions = LynkTraceFastifyOptions
-
 type FastifyInstance = {
   addHook(name: 'onRequest', handler: (request: FastifyRequest, reply: FastifyReply, done: HookDone) => void): void
   addHook(name: 'preHandler', handler: (request: FastifyRequest, reply: FastifyReply, done: HookDone) => void): void
@@ -106,8 +104,6 @@ export interface LynkTraceFastifyState {
   captureQuery: boolean
   captureBody: boolean
 }
-
-export type PulseFastifyState = LynkTraceFastifyState
 
 export function lynktraceFastifyPlugin(
   fastify: FastifyInstance,
@@ -438,10 +434,6 @@ export function lynktraceFastifyPlugin(
 
 ;(lynktraceFastifyPlugin as any)[Symbol.for('skip-override')] = true
 ;(lynktraceFastifyPlugin as any)[Symbol.for('fastify.display-name')] = 'lynktrace-fastify'
-
-export const pulseFastifyPlugin = lynktraceFastifyPlugin
-;(pulseFastifyPlugin as any)[Symbol.for('skip-override')] = true
-;(pulseFastifyPlugin as any)[Symbol.for('fastify.display-name')] = 'pulse-fastify'
 
 function captureFastifyCompletion(
   request: FastifyRequest,

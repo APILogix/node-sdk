@@ -6,7 +6,7 @@ import { gunzipSync } from 'node:zlib';
 import { init } from '../../src/core/init.js';
 import { shutdown, flush } from '../../src/core/lifecycle.js';
 import { captureException } from '../../src/capture/captureException.js';
-import { pulseMiddleware, expressErrorHandler } from '../../src/instrumentation/express.js';
+import { lynktraceMiddleware, expressErrorHandler } from '../../src/instrumentation/express.js';
 import { createContextStore, withContext } from '../../src/core/context.js';
 import { TEST_REMOTE_CONFIG as BAKED_IN_REMOTE_CONFIG } from '../fixtures/remote-config.js';
 function delay(ms) {
@@ -146,7 +146,7 @@ describe('SDK Error Classification Wire Payloads', () => {
     });
     it('3. Express next(err) route error emits unhandled=false, fatal=false, crash=false', async () => {
         const app = express();
-        app.use(pulseMiddleware());
+        app.use(lynktraceMiddleware());
         app.get('/test-express-error', (_req, _res, next) => {
             next(new Error('Express routed calculation error'));
         });

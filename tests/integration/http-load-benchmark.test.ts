@@ -23,7 +23,7 @@ import { gunzipSync } from 'node:zlib'
 
 import { init } from '../../src/core/init.js'
 import { shutdown } from '../../src/core/lifecycle.js'
-import { pulseMiddleware } from '../../src/instrumentation/express.js'
+import { lynktraceMiddleware } from '../../src/instrumentation/express.js'
 import { TEST_REMOTE_CONFIG as BAKED_IN_REMOTE_CONFIG } from '../fixtures/remote-config.js'
 
 interface MockBackendServer {
@@ -339,7 +339,7 @@ describe('test_http_load_benchmark_suite: Real HTTP Baseline vs Pulse Comparativ
 
     const app = express()
     // Mount Pulse monitoring middleware
-    app.use(pulseMiddleware())
+    app.use(lynktraceMiddleware())
     app.get('/api/v1/test-workload', (_req, res) => {
       res.setHeader('content-type', 'application/json')
       res.end(JSON.stringify({ status: 'ok', time: Date.now() }))

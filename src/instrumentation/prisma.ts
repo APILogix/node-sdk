@@ -1,6 +1,6 @@
 /**
  * Prisma Instrumentation — OpenTelemetry auto-instrumentation
- * wrapped with Pulse SDK guards and remote config support.
+ * wrapped with LynkTrace SDK guards and remote config support.
  *
  * Features:
  * - Query spans with operation name, timing, and model
@@ -76,8 +76,6 @@ export function lynktracePrismaExtension(dbSystem = 'postgresql') {
     },
   }
 }
-
-export const pulsePrismaExtension = lynktracePrismaExtension
 
 /**
  * Automatically instrument a PrismaClient instance via $use middleware.
@@ -254,8 +252,6 @@ export class LynkTracePrismaInstrumentation extends InstrumentationBase {
     }
   }
 }
-
-export { LynkTracePrismaInstrumentation as PulsePrismaInstrumentation }
 
 export function createPrismaInstrumentation(
   config: { enabled: boolean; captureQueries?: boolean; captureParams?: boolean } | boolean,

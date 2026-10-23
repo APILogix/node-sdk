@@ -2,7 +2,7 @@ import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
 import http from 'node:http';
-import { init, shutdown, pulseMiddleware, instrumentExpress, } from '../../src/index.js';
+import { init, shutdown, lynktraceMiddleware, instrumentExpress, } from '../../src/index.js';
 import { TEST_REMOTE_CONFIG } from '../fixtures/remote-config.js';
 const originalFetch = globalThis.fetch;
 function setupMockFetch() {
@@ -71,7 +71,7 @@ describe('Express Middleware Layer Timing & Threshold Instrumentation', () => {
                 next();
             }, 10);
         }
-        app.use(pulseMiddleware({
+        app.use(lynktraceMiddleware({
             instrumentMiddleware: true,
             minMiddlewareDurationMs: 2,
         }));
@@ -98,7 +98,7 @@ describe('Express Middleware Layer Timing & Threshold Instrumentation', () => {
         function failingAuth(req, res, next) {
             next(new Error('Invalid bearer token'));
         }
-        app.use(pulseMiddleware({
+        app.use(lynktraceMiddleware({
             instrumentMiddleware: true,
             minMiddlewareDurationMs: 1,
         }));
@@ -127,7 +127,7 @@ describe('Express Middleware Layer Timing & Threshold Instrumentation', () => {
         function ignoredSlow(req, res, next) {
             setTimeout(next, 5);
         }
-        app.use(pulseMiddleware());
+        app.use(lynktraceMiddleware());
         app.use(ignoredSlow);
         app.get('/api/ignored', (req, res) => res.json({ ignored: true }));
         const server = http.createServer(app);
@@ -141,7 +141,7 @@ describe('Express Middleware Layer Timing & Threshold Instrumentation', () => {
             await new Promise((resolve) => server.close(() => resolve()));
         }
     });
-    it('instruments middlewares by default when pulseMiddleware is called without arguments', async () => {
+    it('instruments middlewares by default when lynktraceMiddleware is called without arguments', async () => {
         const app = express();
         function customMiddleware(req, res, next) {
             setTimeout(() => {
@@ -150,7 +150,7 @@ describe('Express Middleware Layer Timing & Threshold Instrumentation', () => {
             }, 5);
         }
         // Default: no options passed -> should profile middlewares >= 2ms
-        app.use(pulseMiddleware());
+        app.use(lynktraceMiddleware());
         app.use(customMiddleware);
         app.get('/api/default-timing', (req, res) => {
             res.json({ processed: req.processedByDefault });
@@ -175,7 +175,7 @@ describe('Express Middleware Layer Timing & Threshold Instrumentation', () => {
             }, 5);
         }
         // Explicit opt-out
-        app.use(pulseMiddleware({ instrumentMiddleware: false }));
+        app.use(lynktraceMiddleware({ instrumentMiddleware: false }));
         app.use(customMiddleware);
         app.get('/api/opt-out', (req, res) => {
             res.json({ processed: req.processedWithoutTiming });

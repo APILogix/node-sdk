@@ -61,7 +61,6 @@ export interface LynkTraceExpressOptions {
      */
     readonly ignoreMiddlewares?: readonly (string | RegExp)[];
 }
-export type PulseExpressOptions = LynkTraceExpressOptions;
 /**
  * Patch Express Layer.prototype once to measure middleware execution durations.
  * Only emits spans if duration >= minDurationMs or if an error is encountered.
@@ -72,7 +71,6 @@ export declare function ensureExpressLayersInstrumented(app: any, minDurationMs?
  */
 export declare function instrumentExpress(app: any, options?: Pick<LynkTraceExpressOptions, 'minMiddlewareDurationMs' | 'ignoreMiddlewares'>): void;
 export declare function lynktraceMiddleware(options?: LynkTraceExpressOptions): (req: Request, res: Response, next: NextFunction) => void;
-export declare const pulseMiddleware: typeof lynktraceMiddleware;
 /**
  * Express error-handling middleware. Place after all routes and before custom error responses.
  * Automatically captures any error passed to next(err) or thrown in route handlers.
@@ -81,9 +79,8 @@ export declare const pulseMiddleware: typeof lynktraceMiddleware;
  * ```ts
  * app.use(lynktraceMiddleware())
  * // ... routes ...
- * app.use(expressErrorHandler())
+ * app.use(lynktraceExpressErrorHandler())
  * ```
  */
 export declare function expressErrorHandler(): (err: unknown, req: Request, res: Response, next: NextFunction) => void;
 export declare const lynktraceExpressErrorHandler: typeof expressErrorHandler;
-export declare const pulseExpressErrorHandler: typeof expressErrorHandler;

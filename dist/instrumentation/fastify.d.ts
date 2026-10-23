@@ -25,7 +25,6 @@ export interface LynkTraceFastifyOptions {
      */
     readonly trustedProxies?: readonly string[];
 }
-export type PulseFastifyOptions = LynkTraceFastifyOptions;
 type FastifyInstance = {
     addHook(name: 'onRequest', handler: (request: FastifyRequest, reply: FastifyReply, done: HookDone) => void): void;
     addHook(name: 'preHandler', handler: (request: FastifyRequest, reply: FastifyReply, done: HookDone) => void): void;
@@ -81,7 +80,5 @@ export interface LynkTraceFastifyState {
     captureQuery: boolean;
     captureBody: boolean;
 }
-export type PulseFastifyState = LynkTraceFastifyState;
 export declare function lynktraceFastifyPlugin(fastify: FastifyInstance, opts: LynkTraceFastifyOptions, done: (err?: Error) => void): void;
-export declare const pulseFastifyPlugin: typeof lynktraceFastifyPlugin;
 export {};

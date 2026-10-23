@@ -167,4 +167,4 @@ export function createNodemailerInstrumentation(enabled = true, options, capture
     return new NodemailerInstrumentation({ enabled: true, ...options }, captureConfig);
 }
 export default createNodemailerInstrumentation;
-export { NodemailerInstrumentation as LynkTraceNodemailerInstrumentation, NodemailerInstrumentation as PulseNodemailerInstrumentation, };
+export { NodemailerInstrumentation as LynkTraceNodemailerInstrumentation, };

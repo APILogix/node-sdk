@@ -3,11 +3,13 @@ import assert from 'node:assert'
 import * as sdk from '../../src/index.js'
 import {
   captureException,
-  pulseMiddleware,
-  pulseFastifyPlugin,
+  lynktraceMiddleware,
+  lynktraceFastifyPlugin,
+  lynktraceExpressErrorHandler,
+  expressErrorHandler,
   emergencyFlush,
   getHealth,
-  Pulse,
+  LynkTrace,
 } from '../../src/index.js'
 import {
   Severity,
@@ -28,12 +30,17 @@ import { TransportEventQueue } from '../../src/transport/transport-event-queue.j
 
 describe('Pure Canonical Standards Suite (Zero Legacy Baggage)', () => {
   describe('1. Canonical Public Named Exports', () => {
-    it('exports pulseMiddleware as canonical Express request middleware', () => {
-      assert.strictEqual(typeof pulseMiddleware, 'function')
+    it('exports lynktraceMiddleware as canonical Express request middleware', () => {
+      assert.strictEqual(typeof lynktraceMiddleware, 'function')
     })
 
-    it('exports pulseFastifyPlugin as canonical Fastify plugin', () => {
-      assert.strictEqual(typeof pulseFastifyPlugin, 'function')
+    it('exports lynktraceFastifyPlugin as canonical Fastify plugin', () => {
+      assert.strictEqual(typeof lynktraceFastifyPlugin, 'function')
+    })
+
+    it('exports lynktraceExpressErrorHandler and expressErrorHandler as canonical Express error handlers', () => {
+      assert.strictEqual(typeof lynktraceExpressErrorHandler, 'function')
+      assert.strictEqual(typeof expressErrorHandler, 'function')
     })
 
     it('exports captureException as standard APM exception capture', () => {
@@ -50,6 +57,22 @@ describe('Pure Canonical Standards Suite (Zero Legacy Baggage)', () => {
   })
 
   describe('2. Legacy Exports Completely Removed (Clean Break)', () => {
+    it('verifies pulseMiddleware is NOT exported', () => {
+      assert.strictEqual((sdk as any).pulseMiddleware, undefined)
+    })
+
+    it('verifies pulseFastifyPlugin is NOT exported', () => {
+      assert.strictEqual((sdk as any).pulseFastifyPlugin, undefined)
+    })
+
+    it('verifies pulseExpressErrorHandler is NOT exported', () => {
+      assert.strictEqual((sdk as any).pulseExpressErrorHandler, undefined)
+    })
+
+    it('verifies Pulse is NOT exported', () => {
+      assert.strictEqual((sdk as any).Pulse, undefined)
+    })
+
     it('verifies monitorMiddleware is NOT exported', () => {
       assert.strictEqual((sdk as any).monitorMiddleware, undefined)
     })
@@ -87,21 +110,25 @@ describe('Pure Canonical Standards Suite (Zero Legacy Baggage)', () => {
     })
   })
 
-  describe('3. Pulse Facade Namespace Canonical Parity', () => {
-    it('exposes canonical methods on Pulse facade', () => {
-      assert.strictEqual(Pulse.captureException, captureException)
-      assert.strictEqual(Pulse.emergencyFlush, emergencyFlush)
-      assert.strictEqual(Pulse.getHealth, getHealth)
-      assert.strictEqual(Pulse.pulseMiddleware, pulseMiddleware)
-      assert.strictEqual(Pulse.pulseFastifyPlugin, pulseFastifyPlugin)
+  describe('3. LynkTrace Facade Namespace Canonical Parity', () => {
+    it('exposes canonical methods on LynkTrace facade', () => {
+      assert.strictEqual(LynkTrace.captureException, captureException)
+      assert.strictEqual(LynkTrace.emergencyFlush, emergencyFlush)
+      assert.strictEqual(LynkTrace.getHealth, getHealth)
+      assert.strictEqual(LynkTrace.lynktraceMiddleware, lynktraceMiddleware)
+      assert.strictEqual(LynkTrace.lynktraceFastifyPlugin, lynktraceFastifyPlugin)
+      assert.strictEqual(LynkTrace.lynktraceExpressErrorHandler, lynktraceExpressErrorHandler)
     })
 
-    it('verifies Pulse facade does NOT have legacy aliases', () => {
-      assert.strictEqual((Pulse as any).captureError, undefined)
-      assert.strictEqual((Pulse as any).monitorMiddleware, undefined)
-      assert.strictEqual((Pulse as any).fastifyPulsePlugin, undefined)
-      assert.strictEqual((Pulse as any).crashFlush, undefined)
-      assert.strictEqual((Pulse as any).getDiagnostics, undefined)
+    it('verifies LynkTrace facade does NOT have legacy aliases', () => {
+      assert.strictEqual((LynkTrace as any).pulseMiddleware, undefined)
+      assert.strictEqual((LynkTrace as any).pulseFastifyPlugin, undefined)
+      assert.strictEqual((LynkTrace as any).pulseExpressErrorHandler, undefined)
+      assert.strictEqual((LynkTrace as any).captureError, undefined)
+      assert.strictEqual((LynkTrace as any).monitorMiddleware, undefined)
+      assert.strictEqual((LynkTrace as any).fastifyPulsePlugin, undefined)
+      assert.strictEqual((LynkTrace as any).crashFlush, undefined)
+      assert.strictEqual((LynkTrace as any).getDiagnostics, undefined)
     })
   })
 

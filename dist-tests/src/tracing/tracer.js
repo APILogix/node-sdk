@@ -22,7 +22,7 @@ import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION, ATTR_DEPLOYMENT_ENVIRONMENT_NA
 import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks';
 import { W3CTraceContextPropagator, CompositePropagator, W3CBaggagePropagator, suppressTracing, } from '@opentelemetry/core';
 import { TRACING_DEFAULTS } from '../constants/internal-defaults.js';
-import { LynkTraceSpan, PulseSpan } from './span.js';
+import { LynkTraceSpan } from './span.js';
 import { getLogger } from '../utils/logger.js';
 import { generateId } from '../utils/uuid.js';
 import { processEvent, drainPendingEventProcessing } from '../core/event-pipeline.js';
@@ -445,7 +445,7 @@ function snapshotActiveSpanId() {
     }
 }
 /**
- * Start a new span and return a `PulseSpan` wrapper.
+ * Start a new span and return a `LynkTraceSpan` wrapper.
  *
  * ⚠️  IMPORTANT — context semantics:
  *

@@ -94,8 +94,6 @@ export interface LynkTraceExpressOptions {
   readonly ignoreMiddlewares?: readonly (string | RegExp)[]
 }
 
-export type PulseExpressOptions = LynkTraceExpressOptions
-
 const LAYER_PATCH_GUARD = Symbol.for('lynktrace.express.layer-patched')
 const LEGACY_LAYER_PATCH_GUARD = Symbol.for('pulse-sdk.express.layer-patched')
 
@@ -626,8 +624,6 @@ export function lynktraceMiddleware(options: LynkTraceExpressOptions = {}) {
   }
 }
 
-export const pulseMiddleware = lynktraceMiddleware
-
 /**
  * Express error-handling middleware. Place after all routes and before custom error responses.
  * Automatically captures any error passed to next(err) or thrown in route handlers.
@@ -636,7 +632,7 @@ export const pulseMiddleware = lynktraceMiddleware
  * ```ts
  * app.use(lynktraceMiddleware())
  * // ... routes ...
- * app.use(expressErrorHandler())
+ * app.use(lynktraceExpressErrorHandler())
  * ```
  */
 export function expressErrorHandler() {
@@ -673,7 +669,6 @@ export function expressErrorHandler() {
 }
 
 export const lynktraceExpressErrorHandler = expressErrorHandler
-export const pulseExpressErrorHandler = expressErrorHandler
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 

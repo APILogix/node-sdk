@@ -53,5 +53,3 @@ export declare class LynkTraceMetricReader extends MetricReader {
     };
 }
 export declare function extractLabels(attributes: Record<string, unknown> | undefined): Record<string, string>;
-export declare const PulseMetricReader: typeof LynkTraceMetricReader;
-export type PulseMetricReader = LynkTraceMetricReader;

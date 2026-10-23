@@ -2,9 +2,9 @@
  * Instrumentation Module — exports all framework instrumentations
  */
 export { registerAutoInstrumentations, resetAutoInstrumentations } from './auto-instrument.js';
-export { lynktraceMiddleware, pulseMiddleware } from './express.js';
+export { lynktraceMiddleware, lynktraceExpressErrorHandler, expressErrorHandler } from './express.js';
 export { createGraphQLInstrumentation } from './graphql.js';
-export { createPrismaInstrumentation, lynktracePrismaExtension, pulsePrismaExtension, instrumentPrismaClientInstance } from './prisma.js';
+export { createPrismaInstrumentation, lynktracePrismaExtension, instrumentPrismaClientInstance } from './prisma.js';
 export { createMongoDBInstrumentation } from './mongodb.js';
 export { createMongooseInstrumentation, MongooseInstrumentation, LynkTraceMongooseInstrumentation } from './mongoose.js';
 export { createRedisInstrumentation, createIORedisInstrumentation, createRedisStatementSerializer } from './redis.js';
@@ -17,7 +17,7 @@ export { createElasticsearchInstrumentation } from './elasticsearch.js';
 export { createMSSQLInstrumentation } from './mssql.js';
 export { createSQLiteInstrumentation } from './sqlite.js';
 export { createTypeORMInstrumentation } from './typeorm.js';
-export { createDrizzleInstrumentation, LynkTraceDrizzleLogger, PulseDrizzleLogger } from './drizzle.js';
+export { createDrizzleInstrumentation, LynkTraceDrizzleLogger } from './drizzle.js';
 export { createMikroORMInstrumentation } from './mikro-orm.js';
 export { createSequelizeInstrumentation } from './sequelize.js';
 export { createKnexInstrumentation } from './knex.js';

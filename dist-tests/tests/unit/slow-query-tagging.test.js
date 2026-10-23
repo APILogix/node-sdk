@@ -1,6 +1,6 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { init, shutdown, withDbSpan, withDbSpanSync, Pulse, } from '../../src/index.js';
+import { init, shutdown, withDbSpan, withDbSpanSync, LynkTrace, } from '../../src/index.js';
 import { TEST_REMOTE_CONFIG } from '../fixtures/remote-config.js';
 const originalFetch = globalThis.fetch;
 function setupMockFetch() {
@@ -111,7 +111,7 @@ describe('Slow Database Query Detection & Tagging', () => {
         assert.ok(capturedSpan);
         assert.equal(capturedSpan.attributes['db.slow_query'], true);
     });
-    it('exposes withDbSpanSync on Pulse facade object', () => {
-        assert.equal(typeof Pulse.withDbSpanSync, 'function');
+    it('exposes withDbSpanSync on LynkTrace facade object', () => {
+        assert.equal(typeof LynkTrace.withDbSpanSync, 'function');
     });
 });

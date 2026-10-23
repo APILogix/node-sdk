@@ -6,7 +6,7 @@ import { gunzipSync } from 'node:zlib'
 import { trace, context as otelContext, SpanKind, SpanStatusCode } from '@opentelemetry/api'
 
 import { init } from '../../src/core/init.js'
-import { shutdown, flushTracer, pulseMiddleware } from '../../src/index.js'
+import { shutdown, flushTracer, lynktraceMiddleware } from '../../src/index.js'
 import { client } from '../../src/core/client.js'
 import { withSpan, startSpan } from '../../src/tracing/tracer.js'
 import { getTraceAggregator, resetTraceAggregator } from '../../src/tracing/trace-aggregator.js'
@@ -169,7 +169,7 @@ describe('Pulse APM Tracing Production Reliability Integration Suite', () => {
     assert.ok(client.initialized, 'SDK client must be initialized')
 
     expressApp = express()
-    expressApp.use(pulseMiddleware())
+    expressApp.use(lynktraceMiddleware())
 
     // Test 1 route: Normal request with handler span
     expressApp.get('/api/user/:id', async (req, res) => {

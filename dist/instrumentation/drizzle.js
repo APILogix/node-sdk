@@ -3,7 +3,7 @@
  * integration for Drizzle ORM.
  *
  * Provides:
- * - PulseDrizzleLogger: Drop-in logger implementing Drizzle's Logger interface
+ * - LynkTraceDrizzleLogger: Drop-in logger implementing Drizzle's Logger interface
  * - Auto-instrumentation wrapper for Drizzle database query executions
  */
 import { trace, SpanKind, SpanStatusCode } from '@opentelemetry/api';
@@ -27,11 +27,10 @@ export class LynkTraceDrizzleLogger {
         catch { }
     }
 }
-export const PulseDrizzleLogger = LynkTraceDrizzleLogger;
 export function createDrizzleInstrumentation(enabled, _options, _captureConfig) {
     if (!enabled)
         return null;
-    const logger = new PulseDrizzleLogger();
+    const logger = new LynkTraceDrizzleLogger();
     let active = true;
     return {
         enable: () => { active = true; },

@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { existsSync, rmSync, mkdirSync, writeFileSync } from 'node:fs'
 import { PersistentStorage, persistentStorage } from '../../src/storage/persistent-storage.js'
 import { wrapHandler } from '../../src/serverless/handler.js'
-import { init, shutdown, Pulse } from '../../src/index.js'
+import { init, shutdown, LynkTrace } from '../../src/index.js'
 import { client } from '../../src/core/client.js'
 import { TEST_REMOTE_CONFIG } from '../fixtures/remote-config.js'
 
@@ -133,7 +133,7 @@ describe('Serverless & Read-Only Storage Resilience', () => {
         assert.equal(client.initialized, true)
         assert.equal(persistentStorage.isInitialized, false)
 
-        const health = Pulse.getHealth()
+        const health = LynkTrace.getHealth()
         assert.equal(health.persistence.initialized, false)
       } finally {
         globalThis.fetch = originalFetch

@@ -1,12 +1,12 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { pulseMiddleware, expressErrorHandler, ensureExpressLayersInstrumented } from '../../src/instrumentation/express.js'
+import { lynktraceMiddleware, expressErrorHandler, ensureExpressLayersInstrumented } from '../../src/instrumentation/express.js'
 import { ConfigManager } from '../../src/core/config-manager.js'
 
 describe('SEC-03: Express Instrumentation Failsafe and Never Throws', () => {
   it('calls next() without throwing when ConfigManager is uninitialized', (t, done) => {
-    // ConfigManager may or may not be initialized; let's test pulseMiddleware directly
-    const middleware = pulseMiddleware()
+    // ConfigManager may or may not be initialized; let's test lynktraceMiddleware directly
+    const middleware = lynktraceMiddleware()
     const req: any = {
       method: 'GET',
       url: '/api/test',
@@ -29,7 +29,7 @@ describe('SEC-03: Express Instrumentation Failsafe and Never Throws', () => {
   })
 
   it('calls next() safely when req has throwing getters', (t, done) => {
-    const middleware = pulseMiddleware()
+    const middleware = lynktraceMiddleware()
     const req: any = {
       get method() { throw new Error('Exploding method getter') },
       get headers() { throw new Error('Exploding headers getter') },
@@ -50,7 +50,7 @@ describe('SEC-03: Express Instrumentation Failsafe and Never Throws', () => {
   })
 
   it('calls next() safely when req is null or undefined or empty', (t, done) => {
-    const middleware = pulseMiddleware()
+    const middleware = lynktraceMiddleware()
     const res: any = {
       statusCode: 200,
       once: () => {},

@@ -206,4 +206,3 @@ export function extractLabels(attributes) {
     }
     return labels;
 }
-export const PulseMetricReader = LynkTraceMetricReader;

@@ -253,9 +253,8 @@ export class BatchManager {
           }
         } catch {}
         // Estimate batch payload: if small single event or few events with small payload, skip worker IPC
-        const isProfileBatch = this.options.route === 'profiles' || events.some(ev => (ev as any)?.type === 'profile')
         const estimatedBytes = events.reduce((acc, ev) => acc + (typeof (ev as any).message === 'string' ? (ev as any).message.length : 256), 0)
-        const shouldOffload = Boolean(pool && (isProfileBatch || events.length > 5 || estimatedBytes >= offloadThreshold))
+        const shouldOffload = Boolean(pool && (this.options.route === 'profiles' || events.length > 5 || estimatedBytes >= offloadThreshold))
 
         if (shouldOffload && pool) {
           serializeResult = await pool.serializeBatch({
@@ -305,8 +304,19 @@ export class BatchManager {
         wireBody = serializeResult.buffer
         originalPayloadBytes = serializeResult.originalSize
       } catch (serializeErr) {
-        const isProfileBatch = this.options.route === 'profiles' || (events[0] as any)?.type === 'profile'
-        if (events.length > 1 && !isProfileBatch) {
+        if (this.options.route === 'profiles') {
+          this.totalDropped += events.length
+          this.options.onDrop?.({
+            route: this.options.route,
+            reason: 'serialization_failed',
+            count: events.length,
+            eventType: events[0]?.type,
+            eventId: events[0]?.eventId,
+          })
+          return
+        }
+
+        if (events.length > 1) {
           getLogger().warn('[TransportRouter] Batch serialization failed, isolating problematic events', {
             route: this.options.route,
             error: serializeErr,
@@ -638,9 +648,8 @@ export class BatchManager {
     for (const event of events) {
       const key = event.eventId || ((event as { eventId?: string }).eventId = generateId())
       const firstAttempt = this.firstAttemptTimestamps.get(key) ?? now
-      if (!this.firstAttemptTimestamps.has(key)) {
-        this.firstAttemptTimestamps.set(key, now)
-      }
+      this.firstAttemptTimestamps.delete(key)
+      this.firstAttemptTimestamps.set(key, firstAttempt)
 
       // Drop poisoned/stale batches exceeding max retention age
       if (now - firstAttempt > MAX_BATCH_RETENTION_AGE_MS) {
@@ -683,9 +692,6 @@ export class BatchManager {
       }
 
       this.retryAttempts.set(key, attempt)
-      // LRU refresh: move key to most recently used position in firstAttemptTimestamps
-      this.firstAttemptTimestamps.delete(key)
-      this.firstAttemptTimestamps.set(key, firstAttempt)
       highestAttempt = Math.max(highestAttempt, attempt)
       retryable.push(event)
     }

@@ -328,9 +328,6 @@ export function lynktraceFastifyPlugin(fastify, opts, done) {
 ;
 lynktraceFastifyPlugin[Symbol.for('skip-override')] = true;
 lynktraceFastifyPlugin[Symbol.for('fastify.display-name')] = 'lynktrace-fastify';
-export const pulseFastifyPlugin = lynktraceFastifyPlugin;
-pulseFastifyPlugin[Symbol.for('skip-override')] = true;
-pulseFastifyPlugin[Symbol.for('fastify.display-name')] = 'pulse-fastify';
 function captureFastifyCompletion(request, reply, state) {
     if (state.captured)
         return;

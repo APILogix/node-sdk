@@ -256,6 +256,3 @@ export function extractLabels(attributes: Record<string, unknown> | undefined): 
   }
   return labels
 }
-
-export const PulseMetricReader = LynkTraceMetricReader
-export type PulseMetricReader = LynkTraceMetricReader

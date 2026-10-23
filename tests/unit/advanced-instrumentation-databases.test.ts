@@ -7,7 +7,7 @@ import { createElasticsearchInstrumentation } from '../../src/instrumentation/el
 import { createMSSQLInstrumentation } from '../../src/instrumentation/mssql.js'
 import { createSQLiteInstrumentation } from '../../src/instrumentation/sqlite.js'
 import { createTypeORMInstrumentation } from '../../src/instrumentation/typeorm.js'
-import { createDrizzleInstrumentation, PulseDrizzleLogger } from '../../src/instrumentation/drizzle.js'
+import { createDrizzleInstrumentation, LynkTraceDrizzleLogger } from '../../src/instrumentation/drizzle.js'
 import { createMikroORMInstrumentation } from '../../src/instrumentation/mikro-orm.js'
 import { createSequelizeInstrumentation } from '../../src/instrumentation/sequelize.js'
 import { createKnexInstrumentation } from '../../src/instrumentation/knex.js'

@@ -217,5 +217,4 @@ export default createNodemailerInstrumentation
 
 export {
   NodemailerInstrumentation as LynkTraceNodemailerInstrumentation,
-  NodemailerInstrumentation as PulseNodemailerInstrumentation,
 }

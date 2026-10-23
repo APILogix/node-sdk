@@ -24,7 +24,7 @@ import type { ResourceAttributes } from '../utils/resource-detector.js';
  */
 export declare function initTracer(config: Readonly<RemoteConfigResponse>, customResources?: ResourceAttributes): void;
 /**
- * Start a new span and return a `PulseSpan` wrapper.
+ * Start a new span and return a `LynkTraceSpan` wrapper.
  *
  * ⚠️  IMPORTANT — context semantics:
  *

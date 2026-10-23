@@ -48,7 +48,7 @@ export { persistenceGovernor } from './storage/persistence-governor.js';
 // ─── Session ────────────────────────────────────────────────────────────────
 export { getSessionManager } from './session/session-manager.js';
 // ─── Span class (advanced tracing access) ───────────────────────────────────
-export { LynkTraceSpan, PulseSpan } from './tracing/span.js';
+export { LynkTraceSpan } from './tracing/span.js';
 // ─── Logging plumbing ───────────────────────────────────────────────────────
 export { getLogger, jsonLogger, setLogFormat, getLogFormat } from './utils/logger.js';
 export { REMOTE_CONFIG_SCHEMA_VERSION } from './types/config.js';

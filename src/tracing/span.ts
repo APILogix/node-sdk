@@ -1,10 +1,10 @@
 /**
- * PulseSpan — minimal ergonomic wrapper around OTel Span.
+ * LynkTraceSpan — minimal ergonomic wrapper around OTel Span.
  *
  * Design principles (v3.0):
  *   - ZERO duplicated state. Every getter reads LIVE from the OTel span.
  *   - The OTel ReadableSpan is the single source of truth.
- *   - PulseSpan only adds:
+ *   - LynkTraceSpan only adds:
  *     1. Idempotent end() — safe to call multiple times
  *     2. Never-throw safety — all operations wrapped in try/catch
  *     3. Fluent API — setAttribute/addEvent return `this`
@@ -49,7 +49,7 @@ export interface SpanOptions {
      * Explicit parent for cases where the active async context is unavailable
      * (custom queues, worker bridges, or manual context handoff).
      */
-    parent?: LynkTraceSpan | PulseSpan | OTelSpan | SpanContext | Context
+    parent?: LynkTraceSpan | OTelSpan | SpanContext | Context
     /** ISO timestamp to use as span start time. */
     startTime?: TimeInput
     /** Span links — for batch processing, fan-out, or queue consumer patterns. */
@@ -329,6 +329,3 @@ export class LynkTraceSpan implements OTelSpan {
         })
     }
 }
-
-export const PulseSpan = LynkTraceSpan
-export type PulseSpan = LynkTraceSpan

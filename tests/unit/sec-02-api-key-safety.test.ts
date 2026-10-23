@@ -1,6 +1,6 @@
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { init, Pulse, shutdown } from '../../src/index.js'
+import { init, LynkTrace, shutdown } from '../../src/index.js'
 import { client } from '../../src/core/client.js'
 import { BackgroundRecoveryWorker } from '../../src/core/recovery-worker.js'
 import { TransportRouter } from '../../src/transport/transport-router.js'
@@ -165,7 +165,7 @@ describe('SEC-02: Missing or Invalid API Key Never Crashes Host Application', ()
   describe('Test 5 — Host application survival', () => {
     it('host application continues working normally after unconfigured init()', async () => {
       // Simulate realistic customer code
-      await Pulse.init({})
+      await LynkTrace.init({})
 
       // Host application performs its normal business logic
       async function hostApplicationService(a: number, b: number): Promise<number> {
@@ -177,19 +177,19 @@ describe('SEC-02: Missing or Invalid API Key Never Crashes Host Application', ()
 
       // SDK capture APIs fail-open safely without throwing
       assert.doesNotThrow(() => {
-        Pulse.captureException(new Error('simulated customer error during disabled state'))
+        LynkTrace.captureException(new Error('simulated customer error during disabled state'))
       })
 
       assert.doesNotThrow(() => {
-        Pulse.captureMessage('test message')
+        LynkTrace.captureMessage('test message')
       })
 
       // Function decorators fail-open safely
-      const wrapped = Pulse.wrap('custom.func', (x: number) => x * 2)
-      assert.equal(wrapped(21), 42, 'Pulse.wrap must pass through when SDK is disabled')
+      const wrapped = LynkTrace.wrap('custom.func', (x: number) => x * 2)
+      assert.equal(wrapped(21), 42, 'LynkTrace.wrap must pass through when SDK is disabled')
 
-      const traceResult = await Pulse.trace('custom.async', async () => 'app_value')
-      assert.equal(traceResult, 'app_value', 'Pulse.trace must pass through when SDK is disabled')
+      const traceResult = await LynkTrace.trace('custom.async', async () => 'app_value')
+      assert.equal(traceResult, 'app_value', 'LynkTrace.trace must pass through when SDK is disabled')
     })
   })
 
@@ -206,9 +206,9 @@ describe('SEC-02: Missing or Invalid API Key Never Crashes Host Application', ()
       process.on('unhandledRejection', rejectionHandler)
 
       try {
-        await Pulse.init({})
-        await Pulse.init({ apiKey: '' })
-        await Pulse.init({ apiKey: 'invalid\x00key' })
+        await LynkTrace.init({})
+        await LynkTrace.init({ apiKey: '' })
+        await LynkTrace.init({ apiKey: 'invalid\x00key' })
 
         // Give the event loop a few turns to catch any asynchronous escapes
         await new Promise(resolve => setImmediate(resolve))

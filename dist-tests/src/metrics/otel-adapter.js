@@ -23,7 +23,7 @@ import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION, ATTR_DEPLOYMENT_ENVIRONMENT_NA
 import { metrics, context } from '@opentelemetry/api';
 import { suppressTracing } from '@opentelemetry/core';
 import { getLogger } from '../utils/logger.js';
-import { LynkTraceMetricReader, PulseMetricReader } from './pulse-metric-reader.js';
+import { LynkTraceMetricReader } from './pulse-metric-reader.js';
 import { SDK_NAME, SDK_VERSION } from '../constants/version.js';
 import os from 'node:os';
 const METER_PROVIDER_SYMBOL = Symbol.for('lynktrace.otel.meter-provider');

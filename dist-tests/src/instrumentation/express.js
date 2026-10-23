@@ -550,7 +550,6 @@ export function lynktraceMiddleware(options = {}) {
         }
     };
 }
-export const pulseMiddleware = lynktraceMiddleware;
 /**
  * Express error-handling middleware. Place after all routes and before custom error responses.
  * Automatically captures any error passed to next(err) or thrown in route handlers.
@@ -559,7 +558,7 @@ export const pulseMiddleware = lynktraceMiddleware;
  * ```ts
  * app.use(lynktraceMiddleware())
  * // ... routes ...
- * app.use(expressErrorHandler())
+ * app.use(lynktraceExpressErrorHandler())
  * ```
  */
 export function expressErrorHandler() {
@@ -600,7 +599,6 @@ export function expressErrorHandler() {
     };
 }
 export const lynktraceExpressErrorHandler = expressErrorHandler;
-export const pulseExpressErrorHandler = expressErrorHandler;
 // ─── Helpers ────────────────────────────────────────────────────────────────
 function normalizeRoute(req) {
     try {

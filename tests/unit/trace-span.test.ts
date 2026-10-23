@@ -90,8 +90,8 @@ describe('Pulse SDK Trace/Span Consistency', () => {
     rootSpan.end()
   })
 
-  it('pulseMiddleware extracts incoming W3C traceparent into server span and child spans', async () => {
-    const { pulseMiddleware } = await import('../../src/instrumentation/express.js')
+  it('lynktraceMiddleware extracts incoming W3C traceparent into server span and child spans', async () => {
+    const { lynktraceMiddleware } = await import('../../src/instrumentation/express.js')
     const { trace } = await import('@opentelemetry/api')
 
     await init({
@@ -124,7 +124,7 @@ describe('Pulse SDK Trace/Span Consistency', () => {
 
     let capturedTraceId: string | undefined
     let childTraceId: string | undefined
-    const middleware = pulseMiddleware()
+    const middleware = lynktraceMiddleware()
 
     await new Promise<void>((resolve) => {
       middleware(req, res, () => {

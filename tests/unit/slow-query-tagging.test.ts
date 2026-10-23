@@ -5,7 +5,7 @@ import {
   shutdown,
   withDbSpan,
   withDbSpanSync,
-  Pulse,
+  LynkTrace,
 } from '../../src/index.js'
 import { TEST_REMOTE_CONFIG } from '../fixtures/remote-config.js'
 
@@ -152,7 +152,7 @@ describe('Slow Database Query Detection & Tagging', () => {
     assert.equal(capturedSpan.attributes['db.slow_query'], true)
   })
 
-  it('exposes withDbSpanSync on Pulse facade object', () => {
-    assert.equal(typeof Pulse.withDbSpanSync, 'function')
+  it('exposes withDbSpanSync on LynkTrace facade object', () => {
+    assert.equal(typeof LynkTrace.withDbSpanSync, 'function')
   })
 })

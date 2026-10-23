@@ -1,6 +1,6 @@
 import type { Attributes } from '@opentelemetry/api'
 import { startSpan, withSpan, withSpanSync } from './tracer.js'
-import type { LynkTraceSpan, PulseSpan, SpanOptions } from './span.js'
+import type { LynkTraceSpan, SpanOptions } from './span.js'
 import { ConfigManager } from '../core/config-manager.js'
 
 export type DbSystem = 'postgresql' | 'mysql' | 'mongodb' | 'redis' | 'prisma' | string

@@ -3,7 +3,7 @@ import { monitorEventLoopDelay } from 'node:perf_hooks';
 import express from 'express';
 import { init } from '../../src/core/init.js';
 import { shutdown } from '../../src/core/lifecycle.js';
-import { pulseMiddleware } from '../../src/instrumentation/express.js';
+import { lynktraceMiddleware } from '../../src/instrumentation/express.js';
 import { TEST_REMOTE_CONFIG as BAKED_IN_REMOTE_CONFIG } from '../fixtures/remote-config.js';
 async function startMockTelemetryServer() {
     const server = http.createServer((req, res) => {
@@ -195,7 +195,7 @@ export async function runHttpComparativeBenchmark(tiers = [
             initTimeoutMs: 3_000,
         });
         const sdkApp = express();
-        sdkApp.use(pulseMiddleware({
+        sdkApp.use(lynktraceMiddleware({
             ignorePaths: ['/healthz'],
         }));
         sdkApp.get('/api/v1/orders/:id', (req, res) => {

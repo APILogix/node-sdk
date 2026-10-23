@@ -4,13 +4,13 @@ import { trace, SpanKind, SpanStatusCode } from '@opentelemetry/api'
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node'
 import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base'
 import { MongooseInstrumentation } from '../../src/instrumentation/mongoose.js'
-import { PulsePrismaInstrumentation, instrumentPrismaClientInstance } from '../../src/instrumentation/prisma.js'
+import { LynkTracePrismaInstrumentation, instrumentPrismaClientInstance } from '../../src/instrumentation/prisma.js'
 
 describe('End-to-End Sign-In Autoinstrumentation & Span Hierarchy Test', () => {
   let memoryExporter: InMemorySpanExporter
   let provider: NodeTracerProvider
   let mongooseInstrumentation: MongooseInstrumentation
-  let prismaInstrumentation: PulsePrismaInstrumentation
+  let prismaInstrumentation: LynkTracePrismaInstrumentation
 
   beforeEach(() => {
     memoryExporter = new InMemorySpanExporter()
@@ -23,7 +23,7 @@ describe('End-to-End Sign-In Autoinstrumentation & Span Hierarchy Test', () => {
     mongooseInstrumentation.setTracerProvider(provider)
     mongooseInstrumentation.enable()
 
-    prismaInstrumentation = new PulsePrismaInstrumentation({ enabled: true, captureQueries: true, captureParams: false })
+    prismaInstrumentation = new LynkTracePrismaInstrumentation({ enabled: true, captureQueries: true, captureParams: false })
     prismaInstrumentation.setTracerProvider(provider)
     prismaInstrumentation.enable()
   })

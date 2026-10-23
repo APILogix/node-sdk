@@ -17,8 +17,8 @@ import { createMongoDBInstrumentation } from '../../src/instrumentation/mongodb.
 import { createMySQLInstrumentation } from '../../src/instrumentation/mysql.js';
 import { createPgInstrumentation } from '../../src/instrumentation/pg.js';
 import { createGraphQLInstrumentation } from '../../src/instrumentation/graphql.js';
-import { pulseMiddleware, expressErrorHandler } from '../../src/instrumentation/express.js';
-import { pulseFastifyPlugin } from '../../src/instrumentation/fastify.js';
+import { lynktraceMiddleware, expressErrorHandler } from '../../src/instrumentation/express.js';
+import { lynktraceFastifyPlugin } from '../../src/instrumentation/fastify.js';
 import { trace, context as otelContext } from '@opentelemetry/api';
 describe('Comprehensive Edge Cases — All 10 SDK Subsystems', () => {
     // ──────────────────────────────────────────────────────────────────────────
@@ -163,8 +163,8 @@ describe('Comprehensive Edge Cases — All 10 SDK Subsystems', () => {
             const gqlEnabled = createGraphQLInstrumentation({ enabled: true, captureResolvers: true });
             assert.equal(gqlEnabled._config.ignoreResolveSpans, false);
         });
-        it('Express pulseMiddleware handles requests with undefined headers and non-Error next(err)', () => {
-            const middleware = pulseMiddleware();
+        it('Express lynktraceMiddleware handles requests with undefined headers and non-Error next(err)', () => {
+            const middleware = lynktraceMiddleware();
             const req = {
                 method: 'GET',
                 url: '/test-edge',
@@ -185,7 +185,7 @@ describe('Comprehensive Edge Cases — All 10 SDK Subsystems', () => {
             if (listeners['finish'])
                 listeners['finish']();
         });
-        it('Express pulseMiddleware captures errors passed to next(err) even as non-Error primitives', () => {
+        it('Express lynktraceMiddleware captures errors passed to next(err) even as non-Error primitives', () => {
             const req = {
                 method: 'POST',
                 url: '/api/error-test',
@@ -201,14 +201,14 @@ describe('Comprehensive Edge Cases — All 10 SDK Subsystems', () => {
                 handler('string error failure', req, res, () => { });
             });
         });
-        it('Fastify pulse plugin handles requests with undefined headers safely', () => {
+        it('Fastify lynktrace plugin handles requests with undefined headers safely', () => {
             let registeredHooks = {};
             const fakeFastify = {
                 addHook: (name, fn) => {
                     registeredHooks[name] = fn;
                 },
             };
-            pulseFastifyPlugin(fakeFastify, {}, () => { });
+            lynktraceFastifyPlugin(fakeFastify, {}, () => { });
             assert.ok(registeredHooks['onRequest']);
             const request = {
                 method: 'GET',
