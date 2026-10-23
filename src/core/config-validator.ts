@@ -294,6 +294,9 @@ function validatePrivacy(value: unknown, errors: string[]): void {
     validateBoolean(scrubbing, 'enabled', 'privacy.scrubbing.enabled', errors)
     validateStringArray(scrubbing, 'headers', 'privacy.scrubbing.headers', errors)
     validateStringArray(scrubbing, 'fields', 'privacy.scrubbing.fields', errors)
+    if (scrubbing['maxDepth'] !== undefined) {
+      validateInteger(scrubbing, 'maxDepth', errors, SAFETY_CEILINGS.minScrubbingMaxDepth, SAFETY_CEILINGS.scrubbingMaxDepth, 'privacy.scrubbing')
+    }
   }
 
   const pii = value['piiDetection']
@@ -369,6 +372,17 @@ function validateTransport(value: unknown, errors: string[]): void {
   }
 
   validateBoolean(value, 'keepAlive', 'transport.keepAlive', errors)
+
+  if (value['workerOffloadThresholdBytes'] !== undefined) {
+    validateInteger(
+      value,
+      'workerOffloadThresholdBytes',
+      errors,
+      SAFETY_CEILINGS.minWorkerOffloadThresholdBytes,
+      SAFETY_CEILINGS.workerOffloadThresholdBytes,
+      'transport',
+    )
+  }
 
   const connections = value['connections']
   if (isConfigSection(connections, 'transport.connections', errors)) {
@@ -447,6 +461,12 @@ function validateErrors(value: unknown, errors: string[]): void {
   validateBoolean(value, 'captureConsoleErrors', 'errors.captureConsoleErrors', errors)
   validateInteger(value, 'stackTraceLimit', errors, SAFETY_CEILINGS.minStackTraceLimit, SAFETY_CEILINGS.stackTraceLimit, 'errors')
   validateBoolean(value, 'attachSourceContext', 'errors.attachSourceContext', errors)
+  if (value['contextLines'] !== undefined) {
+    validateInteger(value, 'contextLines', errors, SAFETY_CEILINGS.minContextLines, SAFETY_CEILINGS.contextLines, 'errors')
+  }
+  if (value['maxCachedFiles'] !== undefined) {
+    validateInteger(value, 'maxCachedFiles', errors, SAFETY_CEILINGS.minCachedFiles, SAFETY_CEILINGS.maxCachedFiles, 'errors')
+  }
   const grouping = value['grouping']
   if (isConfigSection(grouping, 'errors.grouping', errors)) {
     validateBoolean(grouping, 'enabled', 'errors.grouping.enabled', errors)
@@ -459,6 +479,9 @@ function validateTracing(value: unknown, errors: string[]): void {
   validateInteger(value, 'maxSpansPerTrace', errors, SAFETY_CEILINGS.minSpansPerTrace, SAFETY_CEILINGS.maxSpansPerTrace, 'tracing')
   validateInteger(value, 'maxSpanAttributes', errors, SAFETY_CEILINGS.minSpanAttributes, SAFETY_CEILINGS.maxSpanAttributes, 'tracing')
   validateInteger(value, 'maxTraceDurationMs', errors, SAFETY_CEILINGS.minTraceDurationMs, SAFETY_CEILINGS.maxTraceDurationMs, 'tracing')
+  if (value['slowQueryThresholdMs'] !== undefined) {
+    validateInteger(value, 'slowQueryThresholdMs', errors, SAFETY_CEILINGS.minSlowQueryThresholdMs, SAFETY_CEILINGS.slowQueryThresholdMs, 'tracing')
+  }
   const propagation = value['propagation']
   if (isConfigSection(propagation, 'tracing.propagation', errors)) {
     validateBoolean(propagation, 'w3c', 'tracing.propagation.w3c', errors)
@@ -474,6 +497,15 @@ function validateMetrics(value: unknown, errors: string[]): void {
   validateBoolean(value, 'gcMonitoring', 'metrics.gcMonitoring', errors)
   validateInteger(value, 'pushIntervalMs', errors, 1_000, 5 * 60 * 1_000, 'metrics')
   validateInteger(value, 'cardinalityLimit', errors, 10, 100_000, 'metrics')
+  if (value['maxDimensionsPerMetric'] !== undefined) {
+    validateInteger(value, 'maxDimensionsPerMetric', errors, SAFETY_CEILINGS.minDimensionsPerMetric, SAFETY_CEILINGS.maxDimensionsPerMetric, 'metrics')
+  }
+  if (value['maxSeriesPerMetric'] !== undefined) {
+    validateInteger(value, 'maxSeriesPerMetric', errors, SAFETY_CEILINGS.minSeriesPerMetric, SAFETY_CEILINGS.maxSeriesPerMetric, 'metrics')
+  }
+  if (value['eventLoopResolutionMs'] !== undefined) {
+    validateInteger(value, 'eventLoopResolutionMs', errors, SAFETY_CEILINGS.minEventLoopResolutionMs, SAFETY_CEILINGS.eventLoopResolutionMs, 'metrics')
+  }
 }
 
 function validateLogs(value: unknown, errors: string[]): void {

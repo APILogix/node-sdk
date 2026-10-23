@@ -20,3 +20,17 @@ export declare function startProfile(profileId: string): Promise<boolean>;
  * @param profileId The unique identifier passed to `startProfile()`.
  */
 export declare function stopProfile(profileId: string): Promise<void>;
+/**
+ * Manually start a Heap allocation profile.
+ * Samples allocations via the V8 SamplingHeapProfiler.
+ *
+ * @param profileId A unique identifier for this profile session.
+ * @returns boolean indicating if profiling successfully started.
+ */
+export declare function startHeapProfile(profileId: string): Promise<boolean>;
+/**
+ * Stop a manually started Heap allocation profile.
+ *
+ * @param profileId The unique identifier passed to `startHeapProfile()`.
+ */
+export declare function stopHeapProfile(profileId: string): Promise<void>;

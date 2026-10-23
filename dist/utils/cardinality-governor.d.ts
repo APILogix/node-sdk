@@ -13,15 +13,15 @@
  */
 export interface CardinalityGovernorOptions {
     /** Max attribute keys per metric instrument. Default: 10 */
-    readonly maxDimensionsPerMetric?: number;
+    readonly maxDimensionsPerMetric?: number | undefined;
     /** Max unique timeseries per instrument. Default: 1000 */
-    readonly maxSeriesPerMetric?: number;
+    readonly maxSeriesPerMetric?: number | undefined;
     /** Max total timeseries across all instruments. Default: 5000 */
-    readonly maxTotalSeries?: number;
+    readonly maxTotalSeries?: number | undefined;
     /** Attribute names that are ALWAYS blocked as metric labels. */
-    readonly blockedAttributes?: readonly string[];
+    readonly blockedAttributes?: readonly string[] | undefined;
     /** Enable automatic route path normalization. Default: true */
-    readonly enableRouteNormalization?: boolean;
+    readonly enableRouteNormalization?: boolean | undefined;
 }
 export interface CardinalityStats {
     readonly totalSeries: number;
@@ -30,9 +30,9 @@ export interface CardinalityStats {
     readonly instrumentCount: number;
 }
 export declare class CardinalityGovernor {
-    private readonly maxDimensionsPerMetric;
-    private readonly maxSeriesPerMetric;
-    private readonly maxTotalSeries;
+    private maxDimensionsPerMetric;
+    private maxSeriesPerMetric;
+    private maxTotalSeries;
     private readonly blockedAttributes;
     private readonly enableRouteNormalization;
     private seriesTracker;
@@ -42,6 +42,7 @@ export declare class CardinalityGovernor {
     private evictionTimer;
     private static readonly EVICTION_INTERVAL_MS;
     constructor(options?: CardinalityGovernorOptions);
+    configure(options: Partial<CardinalityGovernorOptions>): void;
     /**
      * Sanitize metric attributes — removes blocked keys, normalizes routes,
      * enforces dimension limits.

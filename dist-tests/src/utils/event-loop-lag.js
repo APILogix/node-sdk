@@ -19,23 +19,35 @@ import { monitorEventLoopDelay } from 'perf_hooks';
  * Monitors the Node.js event loop delay using a high-resolution histogram.
  *
  * Emits:
- *   'lag' → { min, max, mean, p50, p95, p99, stddev } (all in ms)
+ *   'lag' → { min, max, mean, p50, p90, p95, p99, stddev } (all in ms)
  */
 export class EventLoopLagMonitor extends EventEmitter {
     emitIntervalMs;
-    resolutionNs;
+    resolutionMs;
     histogram = null;
     timer = null;
     constructor(options = {}) {
         super();
         this.emitIntervalMs = options.emitIntervalMs ?? 10_000;
-        this.resolutionNs = options.resolutionNs ?? 20_000_000;
+        // Node.js perf_hooks.monitorEventLoopDelay({ resolution }) expects MILLISECONDS (default: 10).
+        // Normalize resolutionNs if passed (e.g. 20_000_000 ns -> 20 ms).
+        if (options.resolutionMs !== undefined && options.resolutionMs > 0) {
+            this.resolutionMs = Math.max(1, Math.min(1000, Math.floor(options.resolutionMs)));
+        }
+        else if (options.resolutionNs !== undefined && options.resolutionNs > 0) {
+            this.resolutionMs = options.resolutionNs >= 1_000_000
+                ? Math.max(1, Math.min(1000, Math.floor(options.resolutionNs / 1_000_000)))
+                : Math.max(1, Math.min(1000, Math.floor(options.resolutionNs)));
+        }
+        else {
+            this.resolutionMs = 20;
+        }
     }
     /** Start monitoring the event loop. */
     start() {
         if (this.histogram)
             return;
-        this.histogram = monitorEventLoopDelay({ resolution: this.resolutionNs });
+        this.histogram = monitorEventLoopDelay({ resolution: this.resolutionMs });
         this.histogram.enable();
         this.timer = setInterval(() => {
             this.emitStats();
@@ -94,13 +106,14 @@ export class EventLoopLagMonitor extends EventEmitter {
         const minRaw = h.min;
         // When count === 0, perf_hooks reports min as 9223372036854776000 (2^63 - 1) and mean as NaN
         if (!Number.isFinite(h.mean) || minRaw > h.max || h.mean < 0) {
-            return this.lastStats ?? { min: 0, max: 0, mean: 0, p50: 0, p95: 0, p99: 0, stddev: 0 };
+            return this.lastStats ?? { min: 0, max: 0, mean: 0, p50: 0, p90: 0, p95: 0, p99: 0, stddev: 0 };
         }
         const stats = {
             min: nsToMs(minRaw),
             max: nsToMs(h.max),
             mean: nsToMs(h.mean),
             p50: nsToMs(h.percentile(50)),
+            p90: nsToMs(h.percentile(90)),
             p95: nsToMs(h.percentile(95)),
             p99: nsToMs(h.percentile(99)),
             stddev: nsToMs(h.stddev),

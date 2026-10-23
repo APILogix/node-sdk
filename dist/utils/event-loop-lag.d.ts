@@ -23,6 +23,8 @@ export interface EventLoopLagStats {
     readonly mean: number;
     /** 50th percentile (median) lag in milliseconds */
     readonly p50: number;
+    /** 90th percentile lag in milliseconds */
+    readonly p90: number;
     /** 95th percentile lag in milliseconds */
     readonly p95: number;
     /** 99th percentile lag in milliseconds */
@@ -33,18 +35,20 @@ export interface EventLoopLagStats {
 export interface EventLoopLagOptions {
     /** How often to emit 'lag' events (milliseconds). Default: 10000 */
     readonly emitIntervalMs?: number;
-    /** Resolution for the histogram (nanoseconds). Default: 20_000_000 (20ms) */
+    /** Resolution for the histogram in milliseconds. Default: 20 */
+    readonly resolutionMs?: number;
+    /** Legacy resolution option. Automatically normalized to milliseconds. */
     readonly resolutionNs?: number;
 }
 /**
  * Monitors the Node.js event loop delay using a high-resolution histogram.
  *
  * Emits:
- *   'lag' → { min, max, mean, p50, p95, p99, stddev } (all in ms)
+ *   'lag' → { min, max, mean, p50, p90, p95, p99, stddev } (all in ms)
  */
 export declare class EventLoopLagMonitor extends EventEmitter {
     private readonly emitIntervalMs;
-    private readonly resolutionNs;
+    private readonly resolutionMs;
     private histogram;
     private timer;
     constructor(options?: EventLoopLagOptions);

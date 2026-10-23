@@ -19,6 +19,7 @@ import { extname, normalize } from 'node:path'
 import type { StackFrame } from '../types/event.js'
 import { getLogger } from '../utils/logger.js'
 import { SecurityScrubber } from '../processors/security-scrubber.js'
+import { ConfigManager } from '../core/config-manager.js'
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -133,6 +134,13 @@ export async function attachSourceContext(frames: readonly StackFrame[]): Promis
 
   try {
     const result: StackFrame[] = []
+    let contextWindow = CONTEXT_LINES
+    try {
+      const remoteLines = ConfigManager.getCurrent()?.getConfigOrNull()?.errors?.contextLines
+      if (typeof remoteLines === 'number' && remoteLines > 0) {
+        contextWindow = remoteLines
+      }
+    } catch {}
 
     for (const frame of frames) {
       // Check total timeout
@@ -169,8 +177,8 @@ export async function attachSourceContext(frames: readonly StackFrame[]): Promis
           continue
         }
 
-        const preStart = Math.max(0, lineIndex - CONTEXT_LINES)
-        const postEnd = Math.min(lines.length, lineIndex + CONTEXT_LINES + 1)
+        const preStart = Math.max(0, lineIndex - contextWindow)
+        const postEnd = Math.min(lines.length, lineIndex + contextWindow + 1)
 
         const sourceContext = {
           pre: scrubLines(lines.slice(preStart, lineIndex)),

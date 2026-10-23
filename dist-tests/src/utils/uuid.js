@@ -141,3 +141,19 @@ const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-
 export function isValidUUID(value) {
     return typeof value === 'string' && value.length === 36 && UUID_REGEX.test(value);
 }
+/**
+ * Validates specifically that a UUID is version 7 per RFC 9562.
+ */
+export function isValidUUIDv7(value) {
+    return typeof value === 'string' && value.length === 36 && /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+/**
+ * Extracts the 48-bit Unix epoch millisecond timestamp embedded in a UUIDv7.
+ * Returns `null` if the provided string is not a valid RFC 9562 UUIDv7.
+ */
+export function extractTimestampFromUUIDv7(uuid) {
+    if (!isValidUUIDv7(uuid))
+        return null;
+    const clean = uuid.replace(/-/g, '');
+    return parseInt(clean.slice(0, 12), 16);
+}

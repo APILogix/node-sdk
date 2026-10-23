@@ -15,17 +15,17 @@ import type { MetricType } from '../types/event.js';
  * @param options - Optional tags and unit
  */
 export declare function captureMetric(name: string, value: number, type?: MetricType, options?: {
-    tags?: Record<string, string>;
-    unit?: string;
-}): void;
+    tags?: Record<string, string> | undefined;
+    unit?: string | undefined;
+} | undefined): void;
 /** Increment a counter metric by the given value (default: 1). */
-export declare function incrementCounter(name: string, value?: number, tags?: Record<string, string>): void;
+export declare function incrementCounter(name: string, value?: number, tags?: Record<string, string> | undefined, unit?: string | undefined): void;
 /** Set a gauge metric to the given value. */
-export declare function setGauge(name: string, value: number, tags?: Record<string, string>): void;
+export declare function setGauge(name: string, value: number, tags?: Record<string, string> | undefined, unit?: string | undefined): void;
 /** Record a histogram value (e.g., latency, size) using OTel exponential histogram. */
-export declare function recordHistogram(name: string, value: number, tags?: Record<string, string>, unit?: string): void;
+export declare function recordHistogram(name: string, value: number, tags?: Record<string, string> | undefined, unit?: string | undefined): void;
 /**
  * Add to an up-down counter (can go negative).
  * Used for tracking active connections, queue depth, etc.
  */
-export declare function addUpDownCounter(name: string, value: number, tags?: Record<string, string>): void;
+export declare function addUpDownCounter(name: string, value: number, tags?: Record<string, string> | undefined, unit?: string | undefined): void;

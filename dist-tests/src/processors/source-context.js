@@ -17,6 +17,7 @@ import { readFile } from 'node:fs/promises';
 import { extname, normalize } from 'node:path';
 import { getLogger } from '../utils/logger.js';
 import { SecurityScrubber } from '../processors/security-scrubber.js';
+import { ConfigManager } from '../core/config-manager.js';
 // ─── Constants ──────────────────────────────────────────────────────────────
 /** Max files cached in LRU. */
 const MAX_CACHED_FILES = 50;
@@ -111,6 +112,14 @@ export async function attachSourceContext(frames) {
     const startTime = Date.now();
     try {
         const result = [];
+        let contextWindow = CONTEXT_LINES;
+        try {
+            const remoteLines = ConfigManager.getCurrent()?.getConfigOrNull()?.errors?.contextLines;
+            if (typeof remoteLines === 'number' && remoteLines > 0) {
+                contextWindow = remoteLines;
+            }
+        }
+        catch { }
         for (const frame of frames) {
             // Check total timeout
             if (Date.now() - startTime > TOTAL_TIMEOUT_MS) {
@@ -140,8 +149,8 @@ export async function attachSourceContext(frames) {
                     result.push(frame);
                     continue;
                 }
-                const preStart = Math.max(0, lineIndex - CONTEXT_LINES);
-                const postEnd = Math.min(lines.length, lineIndex + CONTEXT_LINES + 1);
+                const preStart = Math.max(0, lineIndex - contextWindow);
+                const postEnd = Math.min(lines.length, lineIndex + contextWindow + 1);
                 const sourceContext = {
                     pre: scrubLines(lines.slice(preStart, lineIndex)),
                     line: scrubLine(lines[lineIndex] ?? ''),

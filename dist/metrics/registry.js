@@ -63,7 +63,7 @@ class MetricsRegistry {
             return;
         }
         if (otelMetrics.isInitialized()) {
-            otelMetrics.recordHistogram(name, value, sanitized);
+            otelMetrics.recordHistogram(name, value, sanitized, options.unit);
             this.totalFlushed++;
         }
         else {
@@ -85,7 +85,7 @@ class MetricsRegistry {
             return;
         }
         if (otelMetrics.isInitialized()) {
-            otelMetrics.incrementCounter(name, value, sanitized);
+            otelMetrics.incrementCounter(name, value, sanitized, options.unit);
             this.totalFlushed++;
         }
     }
@@ -104,7 +104,7 @@ class MetricsRegistry {
             return;
         }
         if (otelMetrics.isInitialized()) {
-            otelMetrics.addUpDownCounter(name, value, sanitized);
+            otelMetrics.addUpDownCounter(name, value, sanitized, options.unit);
             this.totalFlushed++;
         }
     }
@@ -123,18 +123,12 @@ class MetricsRegistry {
             return;
         }
         if (otelMetrics.isInitialized()) {
-            otelMetrics.setGauge(name, value, sanitized);
+            otelMetrics.setGauge(name, value, sanitized, options.unit);
             this.totalFlushed++;
         }
     }
     /**
      * Flush pending metrics through the OTel reader → event pipeline.
-     *
-     * Returns a Promise so callers (especially shutdown) can `await`
-     * the actual completion. The previous void return + floated
-     * `.catch(() => {})` chain made shutdown-time metrics best-effort
-     * even on graceful exit, since the lifecycle moved on before the
-     * OTel reader had finished collecting and emitting.
      */
     async flush(internalTelemetry = false) {
         if (otelMetrics.isInitialized()) {

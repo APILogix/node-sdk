@@ -1,6 +1,7 @@
 import type { Attributes } from '@opentelemetry/api'
 import { startSpan, withSpan, withSpanSync } from './tracer.js'
 import type { LynkTraceSpan, PulseSpan, SpanOptions } from './span.js'
+import { ConfigManager } from '../core/config-manager.js'
 
 export type DbSystem = 'postgresql' | 'mysql' | 'mongodb' | 'redis' | 'prisma' | string
 
@@ -20,12 +21,23 @@ export interface DbSpanOptions {
     readonly slowQueryThresholdMs?: number | undefined
 }
 
+function getSlowQueryThreshold(options: DbSpanOptions): number {
+    if (options.slowQueryThresholdMs !== undefined) {
+        return options.slowQueryThresholdMs
+    }
+    try {
+        const remoteThreshold = ConfigManager.getCurrent()?.getConfigOrNull()?.tracing?.slowQueryThresholdMs
+        if (remoteThreshold !== undefined) return remoteThreshold
+    } catch {}
+    return 100
+}
+
 export function startDbSpan(options: DbSpanOptions): LynkTraceSpan {
     return startSpan(getDbSpanName(options), toSpanOptions(options))
 }
 
 export async function withDbSpan<T>(options: DbSpanOptions, fn: (span: LynkTraceSpan) => T | Promise<T>): Promise<T> {
-    const thresholdMs = options.slowQueryThresholdMs ?? 100
+    const thresholdMs = getSlowQueryThreshold(options)
     const start = Date.now()
     return withSpan(getDbSpanName(options), toSpanOptions(options), async (span) => {
         try {
@@ -48,7 +60,7 @@ export async function withDbSpan<T>(options: DbSpanOptions, fn: (span: LynkTrace
 }
 
 export function withDbSpanSync<T>(options: DbSpanOptions, fn: (span: LynkTraceSpan) => T): T {
-    const thresholdMs = options.slowQueryThresholdMs ?? 100
+    const thresholdMs = getSlowQueryThreshold(options)
     const start = Date.now()
     return withSpanSync(getDbSpanName(options), toSpanOptions(options), (span) => {
         try {

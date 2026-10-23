@@ -54,19 +54,19 @@ declare class OtelMetricsManager {
      * Record a histogram value using OTel exponential histogram.
      * O(1) per record — no raw value storage, no sorting.
      */
-    recordHistogram(name: string, value: number, labels?: Record<string, string>): void;
+    recordHistogram(name: string, value: number, labels?: Record<string, string>, unit?: string): void;
     /**
      * Increment a counter using OTel.
      */
-    incrementCounter(name: string, value: number, labels?: Record<string, string>): void;
+    incrementCounter(name: string, value: number, labels?: Record<string, string>, unit?: string): void;
     /**
      * Record an up-down counter value using OTel.
      */
-    addUpDownCounter(name: string, value: number, labels?: Record<string, string>): void;
+    addUpDownCounter(name: string, value: number, labels?: Record<string, string>, unit?: string): void;
     /**
      * Set a gauge value using OTel.
      */
-    setGauge(name: string, value: number, labels?: Record<string, string>): void;
+    setGauge(name: string, value: number, labels?: Record<string, string>, unit?: string): void;
     /**
      * Force-flush all pending metrics through the event pipeline.
      */

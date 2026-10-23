@@ -28,3 +28,12 @@ export declare function generateShortId(): string;
  * Validates a standard UUID string format (supporting RFC 9562 v7 and RFC 4122 v1-v5).
  */
 export declare function isValidUUID(value: string): boolean;
+/**
+ * Validates specifically that a UUID is version 7 per RFC 9562.
+ */
+export declare function isValidUUIDv7(value: string): boolean;
+/**
+ * Extracts the 48-bit Unix epoch millisecond timestamp embedded in a UUIDv7.
+ * Returns `null` if the provided string is not a valid RFC 9562 UUIDv7.
+ */
+export declare function extractTimestampFromUUIDv7(uuid: string): number | null;

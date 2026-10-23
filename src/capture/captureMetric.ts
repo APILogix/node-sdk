@@ -26,7 +26,7 @@ export function captureMetric(
   name: string,
   value: number,
   type: MetricType = 'gauge',
-  options?: { tags?: Record<string, string>; unit?: string }
+  options?: { tags?: Record<string, string> | undefined; unit?: string | undefined } | undefined
 ): void {
   const logger = getLogger()
 
@@ -34,16 +34,17 @@ export function captureMetric(
     if (!admitMetric(name, options?.tags)) return
 
     const labels = options?.tags ?? {}
+    const unit = options?.unit
     if (type === 'histogram') {
-      metricsRegistry.recordHistogram(name, value, { labels })
+      metricsRegistry.recordHistogram(name, value, { labels, unit })
       return
     }
     if (type === 'counter') {
-      metricsRegistry.incrementCounter(name, value, { labels })
+      metricsRegistry.incrementCounter(name, value, { labels, unit })
       return
     }
     if (type === 'gauge') {
-      metricsRegistry.setGauge(name, value, { labels })
+      metricsRegistry.setGauge(name, value, { labels, unit })
       return
     }
 
@@ -63,7 +64,7 @@ export function captureMetric(
   }
 }
 
-function admitMetric(_name: string, _tags?: Record<string, string>): boolean {
+function admitMetric(_name: string, _tags?: Record<string, string> | undefined): boolean {
   if (!EntitlementGate.isAllowed('customMetrics')) return false
   return !KillswitchEngine.getInstance()?.isKilled('disableMetrics')
 }
@@ -74,31 +75,33 @@ function admitMetric(_name: string, _tags?: Record<string, string>): boolean {
 export function incrementCounter(
   name: string,
   value = 1,
-  tags?: Record<string, string>
+  tags?: Record<string, string> | undefined,
+  unit?: string | undefined
 ): void {
   if (!admitMetric(name, tags)) return
-  metricsRegistry.incrementCounter(name, value, { labels: tags ?? {} })
+  metricsRegistry.incrementCounter(name, value, { labels: tags ?? {}, unit })
 }
 
 /** Set a gauge metric to the given value. */
 export function setGauge(
   name: string,
   value: number,
-  tags?: Record<string, string>
+  tags?: Record<string, string> | undefined,
+  unit?: string | undefined
 ): void {
   if (!admitMetric(name, tags)) return
-  metricsRegistry.setGauge(name, value, { labels: tags ?? {} })
+  metricsRegistry.setGauge(name, value, { labels: tags ?? {}, unit })
 }
 
 /** Record a histogram value (e.g., latency, size) using OTel exponential histogram. */
 export function recordHistogram(
   name: string,
   value: number,
-  tags?: Record<string, string>,
-  unit?: string
+  tags?: Record<string, string> | undefined,
+  unit?: string | undefined
 ): void {
   if (!admitMetric(name, tags)) return
-  metricsRegistry.recordHistogram(name, value, { labels: tags ?? {} })
+  metricsRegistry.recordHistogram(name, value, { labels: tags ?? {}, unit })
 }
 
 /**
@@ -108,8 +111,9 @@ export function recordHistogram(
 export function addUpDownCounter(
   name: string,
   value: number,
-  tags?: Record<string, string>
+  tags?: Record<string, string> | undefined,
+  unit?: string | undefined
 ): void {
   if (!admitMetric(name, tags)) return
-  metricsRegistry.addUpDownCounter(name, value, { labels: tags ?? {} })
+  metricsRegistry.addUpDownCounter(name, value, { labels: tags ?? {}, unit })
 }

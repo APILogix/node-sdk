@@ -73,6 +73,17 @@ export class CardinalityGovernor {
         ]);
         this.enableRouteNormalization = options.enableRouteNormalization ?? true;
     }
+    configure(options) {
+        if (options.maxDimensionsPerMetric !== undefined) {
+            this.maxDimensionsPerMetric = options.maxDimensionsPerMetric;
+        }
+        if (options.maxSeriesPerMetric !== undefined) {
+            this.maxSeriesPerMetric = options.maxSeriesPerMetric;
+        }
+        if (options.maxTotalSeries !== undefined) {
+            this.maxTotalSeries = options.maxTotalSeries;
+        }
+    }
     /**
      * Sanitize metric attributes — removes blocked keys, normalizes routes,
      * enforces dimension limits.

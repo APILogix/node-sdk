@@ -51,3 +51,41 @@ export async function stopProfile(profileId) {
         return;
     return subsystem.stopCpuProfile(profileId);
 }
+/**
+ * Manually start a Heap allocation profile.
+ * Samples allocations via the V8 SamplingHeapProfiler.
+ *
+ * @param profileId A unique identifier for this profile session.
+ * @returns boolean indicating if profiling successfully started.
+ */
+export async function startHeapProfile(profileId) {
+    if (!EntitlementGate.isAllowed('profiling'))
+        return false;
+    if (!client.initialized)
+        return false;
+    const subsystem = ProfilingSubsystem.getInstance();
+    if (!subsystem)
+        return false;
+    const samplingEngine = SamplingEngine.getInstance();
+    if (samplingEngine) {
+        const decision = samplingEngine.shouldSampleProfile(profileId);
+        if (!decision.sampled)
+            return false;
+    }
+    return subsystem.startHeapProfile(profileId);
+}
+/**
+ * Stop a manually started Heap allocation profile.
+ *
+ * @param profileId The unique identifier passed to `startHeapProfile()`.
+ */
+export async function stopHeapProfile(profileId) {
+    if (!EntitlementGate.isAllowed('profiling'))
+        return;
+    if (!client.initialized)
+        return;
+    const subsystem = ProfilingSubsystem.getInstance();
+    if (!subsystem)
+        return;
+    return subsystem.stopHeapProfile(profileId);
+}

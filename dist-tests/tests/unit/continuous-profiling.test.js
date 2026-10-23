@@ -157,4 +157,42 @@ describe('Continuous Wall-Clock CPU Profiler (Continuous Profiling)', () => {
         assert.equal(subsystem.isContinuousActive(), false);
         await subsystem.stop();
     });
+    it('F-04: enforces cooling duty cycle between continuous chunks', async () => {
+        EntitlementGate.initialize({ ...TEST_REMOTE_CONFIG.entitlements, profiling: true });
+        const emitted = [];
+        const baseConfig = makeRemoteConfig(true, 5000, 99);
+        const config = {
+            ...baseConfig,
+            profiling: {
+                ...baseConfig.profiling,
+                coolingIntervalMs: 50,
+            },
+        };
+        const subsystem = ProfilingSubsystem.initialize(config, event => emitted.push(event), TEST_METADATA);
+        const posts = [];
+        installMockSession(subsystem, posts);
+        await subsystem.start();
+        assert.equal(subsystem.isContinuousActive(), true);
+        assert.equal(subsystem.isContinuousCooling(), false);
+        assert.equal(subsystem.getContinuousConfig().coolingIntervalMs, 50);
+        // Initial start invoked Profiler.start
+        assert.equal(posts[posts.length - 1]?.method, 'Profiler.start');
+        // Flush chunk -> must enter cooling mode and NOT immediately start profiler
+        await subsystem.flushContinuousChunk();
+        assert.equal(emitted.length, 1);
+        assert.equal(subsystem.isContinuousCooling(), true);
+        // Most recent inspector call must be Profiler.stop (Profiler.start is delayed)
+        assert.equal(posts[posts.length - 1]?.method, 'Profiler.stop');
+        // Wait for cooling period (50ms) to elapse
+        await new Promise(resolve => setTimeout(resolve, 80));
+        // After cooling period, profiler should have restarted automatically
+        assert.equal(subsystem.isContinuousCooling(), false);
+        assert.equal(posts[posts.length - 1]?.method, 'Profiler.start');
+        // Test safe shutdown during cooling
+        await subsystem.flushContinuousChunk();
+        assert.equal(subsystem.isContinuousCooling(), true);
+        await subsystem.stop();
+        assert.equal(subsystem.isContinuousActive(), false);
+        assert.equal(subsystem.isContinuousCooling(), false);
+    });
 });

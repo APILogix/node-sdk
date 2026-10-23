@@ -215,9 +215,16 @@ export async function activateSDK(remoteClient, response, options, mode = 'cold_
         });
         costGovernor.updateFromConfig({
             maxSpansPerTrace: config.limits.maxSpansPerTrace,
-            maxTraceDurationMs: TRACING_DEFAULTS.maxTraceDurationMs,
+            maxTraceDurationMs: config.tracing?.maxTraceDurationMs ?? TRACING_DEFAULTS.maxTraceDurationMs,
         });
         costGovernor.start();
+        if (config.metrics) {
+            cardinalityGovernor.configure({
+                maxTotalSeries: config.metrics.cardinalityLimit,
+                maxDimensionsPerMetric: config.metrics.maxDimensionsPerMetric,
+                maxSeriesPerMetric: config.metrics.maxSeriesPerMetric,
+            });
+        }
         cardinalityGovernor.start();
         eventQueue.configure(config.limits.maxQueueSize);
         if (options.plugins?.length)
@@ -376,10 +383,10 @@ export async function activateSDK(remoteClient, response, options, mode = 'cold_
                     configureAdaptivePressure(current);
                 if (diff.changes.has('limits.maxQueueSize'))
                     eventQueue.configure(current.limits.maxQueueSize);
-                if (diff.changes.has('limits.maxSpansPerTrace')) {
+                if (diff.changes.has('limits.maxSpansPerTrace') || diff.changes.has('tracing.maxTraceDurationMs')) {
                     costGovernor.updateFromConfig({
                         maxSpansPerTrace: current.limits.maxSpansPerTrace,
-                        maxTraceDurationMs: TRACING_DEFAULTS.maxTraceDurationMs,
+                        maxTraceDurationMs: current.tracing?.maxTraceDurationMs ?? TRACING_DEFAULTS.maxTraceDurationMs,
                     });
                 }
             },
@@ -444,6 +451,22 @@ export async function activateSDK(remoteClient, response, options, mode = 'cold_
                         ioTimeoutMs: current.offlineQueue?.ioTimeoutMs,
                     });
                 }
+            },
+            metrics: ({ diff, current }) => {
+                RuntimeMetricsSubsystem.getInstance().handleConfigChange(diff, current);
+                if (current.metrics) {
+                    cardinalityGovernor.configure({
+                        maxTotalSeries: current.metrics.cardinalityLimit,
+                        maxDimensionsPerMetric: current.metrics.maxDimensionsPerMetric,
+                        maxSeriesPerMetric: current.metrics.maxSeriesPerMetric,
+                    });
+                }
+            },
+            tracing: ({ current }) => {
+                costGovernor.updateFromConfig({
+                    maxSpansPerTrace: current.limits.maxSpansPerTrace,
+                    maxTraceDurationMs: current.tracing?.maxTraceDurationMs ?? TRACING_DEFAULTS.maxTraceDurationMs,
+                });
             },
         }));
         // Await any asynchronous instrumentation setups (e.g. Axios ESM patching)

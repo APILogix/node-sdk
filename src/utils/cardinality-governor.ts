@@ -18,15 +18,15 @@ import { getLogger } from './logger.js'
 
 export interface CardinalityGovernorOptions {
     /** Max attribute keys per metric instrument. Default: 10 */
-    readonly maxDimensionsPerMetric?: number
+    readonly maxDimensionsPerMetric?: number | undefined
     /** Max unique timeseries per instrument. Default: 1000 */
-    readonly maxSeriesPerMetric?: number
+    readonly maxSeriesPerMetric?: number | undefined
     /** Max total timeseries across all instruments. Default: 5000 */
-    readonly maxTotalSeries?: number
+    readonly maxTotalSeries?: number | undefined
     /** Attribute names that are ALWAYS blocked as metric labels. */
-    readonly blockedAttributes?: readonly string[]
+    readonly blockedAttributes?: readonly string[] | undefined
     /** Enable automatic route path normalization. Default: true */
-    readonly enableRouteNormalization?: boolean
+    readonly enableRouteNormalization?: boolean | undefined
 }
 
 export interface CardinalityStats {
@@ -76,9 +76,9 @@ const ULID_OR_TOKEN_SEGMENT = /^(?=[a-zA-Z0-9_-]{16,}$)(?=.*[0-9])(?=.*[a-zA-Z])
 // ─── Implementation ─────────────────────────────────────────────────────────
 
 export class CardinalityGovernor {
-    private readonly maxDimensionsPerMetric: number
-    private readonly maxSeriesPerMetric: number
-    private readonly maxTotalSeries: number
+    private maxDimensionsPerMetric: number
+    private maxSeriesPerMetric: number
+    private maxTotalSeries: number
     private readonly blockedAttributes: ReadonlySet<string>
     private readonly enableRouteNormalization: boolean
 
@@ -104,6 +104,18 @@ export class CardinalityGovernor {
             ...(options.blockedAttributes ?? []),
         ])
         this.enableRouteNormalization = options.enableRouteNormalization ?? true
+    }
+
+    configure(options: Partial<CardinalityGovernorOptions>): void {
+        if (options.maxDimensionsPerMetric !== undefined) {
+            this.maxDimensionsPerMetric = options.maxDimensionsPerMetric
+        }
+        if (options.maxSeriesPerMetric !== undefined) {
+            this.maxSeriesPerMetric = options.maxSeriesPerMetric
+        }
+        if (options.maxTotalSeries !== undefined) {
+            this.maxTotalSeries = options.maxTotalSeries
+        }
     }
 
     /**

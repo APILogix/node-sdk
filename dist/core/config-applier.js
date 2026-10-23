@@ -22,7 +22,11 @@ export class ConfigApplier {
             || diff.limitsChanged
             || diff.instrumentationChanged
             || diff.entitlementsChanged
-            || Boolean(diff.offlineQueueChanged);
+            || Boolean(diff.offlineQueueChanged)
+            || Boolean(diff.metricsSectionChanged)
+            || Boolean(diff.metricsChanged)
+            || Boolean(diff.tracingSectionChanged)
+            || Boolean(diff.tracingChanged);
     }
     async apply(diff, previous, current) {
         const context = { diff, previous, current };
@@ -40,6 +44,8 @@ export class ConfigApplier {
             ['instrumentation', this.handlers.instrumentation, diff.instrumentationChanged || diff.privacyChanged],
             ['entitlements', this.handlers.entitlements, diff.entitlementsChanged],
             ['offlineQueue', this.handlers.offlineQueue, Boolean(diff.offlineQueueChanged)],
+            ['metrics', this.handlers.metrics, Boolean(diff.metricsSectionChanged || diff.metricsChanged)],
+            ['tracing', this.handlers.tracing, Boolean(diff.tracingSectionChanged || diff.tracingChanged)],
         ];
         for (const [name, handler, changed] of work) {
             if (!changed || !handler)

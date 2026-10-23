@@ -54,6 +54,7 @@ export declare const PROFILING_DEFAULTS: Readonly<{
     readonly continuousIntervalMs: 60000;
     readonly continuousSampleRateHz: 99;
     readonly sampleIntervalMicroseconds: 10100;
+    readonly coolingIntervalMs: 0;
 }>;
 /**
  * Tracing internals. Anything that's not in the wire schema lives here.

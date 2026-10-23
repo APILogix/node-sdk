@@ -60,6 +60,7 @@ export class SecurityScrubber {
     sensitiveFields;
     normalizedHeaders;
     normalizedFields;
+    maxDepth = 10;
     keySensitivityCache = new Map();
     static MAX_CACHE_SIZE = 2000;
     // PII patterns
@@ -98,6 +99,7 @@ export class SecurityScrubber {
         this.captureConfig = { ...config.capture };
         this.scrubbingConfig = { ...config.scrubbing };
         this.piiConfig = { ...config.piiDetection };
+        this.maxDepth = config.scrubbing?.maxDepth ?? 10;
         this.sensitiveHeaders = new Set(config.scrubbing.headers.map((h) => h.toLowerCase()));
         this.sensitiveFields = new Set(config.scrubbing.fields.map((f) => f.toLowerCase()));
         this.normalizedHeaders = new Set(config.scrubbing.headers.map((h) => h.toLowerCase().replace(/[-_]/g, '')));
@@ -111,6 +113,7 @@ export class SecurityScrubber {
                 enabled: this.scrubbingConfig.enabled,
                 headers: [...this.sensitiveHeaders],
                 fields: [...this.sensitiveFields],
+                maxDepth: this.maxDepth,
             },
             piiDetection: { ...this.piiConfig },
         };
@@ -280,7 +283,7 @@ export class SecurityScrubber {
     scrubValue(value, depth = 0, seen = new WeakSet()) {
         if (this.destroyed || !this.hasScrubRules)
             return value;
-        if (depth > 10)
+        if (depth > this.maxDepth)
             return REDACTED;
         try {
             if (typeof value === 'string') {
@@ -384,6 +387,7 @@ export class SecurityScrubber {
         this.captureConfig = { ...newPrivacy.capture };
         this.scrubbingConfig = { ...newPrivacy.scrubbing };
         this.piiConfig = { ...newPrivacy.piiDetection };
+        this.maxDepth = newPrivacy.scrubbing?.maxDepth ?? 10;
         this.sensitiveHeaders = new Set(newPrivacy.scrubbing.headers.map((h) => h.toLowerCase()));
         this.sensitiveFields = new Set(newPrivacy.scrubbing.fields.map((f) => f.toLowerCase()));
         this.normalizedHeaders = new Set(newPrivacy.scrubbing.headers.map((h) => h.toLowerCase().replace(/[-_]/g, '')));
@@ -448,7 +452,7 @@ export class SecurityScrubber {
         }
     }
     scrubBodyFields(obj, depth = 0) {
-        if (depth > 10)
+        if (depth > this.maxDepth)
             return obj; // Prevent infinite recursion
         const result = Object.create(null);
         for (const [key, value] of Object.entries(obj)) {
@@ -476,7 +480,7 @@ export class SecurityScrubber {
         return result;
     }
     scrubPiiInObject(obj, depth = 0) {
-        if (depth > 10)
+        if (depth > this.maxDepth)
             return;
         for (const key of Object.keys(obj)) {
             if (SecurityScrubber.DANGEROUS_KEYS.has(key))
@@ -499,7 +503,7 @@ export class SecurityScrubber {
         }
     }
     scrubPiiInArray(arr, depth = 0) {
-        if (depth > 10)
+        if (depth > this.maxDepth)
             return arr;
         return arr.map(item => {
             if (typeof item === 'string') {

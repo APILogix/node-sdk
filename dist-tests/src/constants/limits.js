@@ -68,4 +68,21 @@ export const SAFETY_CEILINGS = Object.freeze({
     offlineQueueMinEventTtlMs: 60_000, // 1 minute
     offlineQueueIoTimeoutMs: 60_000, // 60 seconds
     offlineQueueMinIoTimeoutMs: 500,
+    // Remote Config Refactored Safety Ceilings
+    slowQueryThresholdMs: 60_000, // 60 seconds
+    minSlowQueryThresholdMs: 1,
+    maxDimensionsPerMetric: 100,
+    minDimensionsPerMetric: 1,
+    maxSeriesPerMetric: 100_000,
+    minSeriesPerMetric: 10,
+    eventLoopResolutionMs: 1_000, // 1 second
+    minEventLoopResolutionMs: 1,
+    contextLines: 50,
+    minContextLines: 1,
+    maxCachedFiles: 1_000,
+    minCachedFiles: 5,
+    scrubbingMaxDepth: 50,
+    minScrubbingMaxDepth: 1,
+    workerOffloadThresholdBytes: 10 * 1024 * 1024, // 10 MB
+    minWorkerOffloadThresholdBytes: 1_024, // 1 KB
 });

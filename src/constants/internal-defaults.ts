@@ -57,6 +57,7 @@ export const PROFILING_DEFAULTS = Object.freeze({
   continuousIntervalMs: 60_000,
   continuousSampleRateHz: 99,
   sampleIntervalMicroseconds: 10_100,
+  coolingIntervalMs: 0,
 } as const)
 
 /**

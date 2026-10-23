@@ -1,4 +1,4 @@
-/** CPU profiling subsystem driven by the authoritative remote snapshot. */
+/** CPU and Heap profiling subsystem driven by the authoritative remote snapshot. */
 import type { RemoteConfigResponse } from '../types/config.js';
 import type { ProfileEvent, EventMetadata } from '../types/event.js';
 type ProfileEmitter = (event: ProfileEvent) => void;
@@ -9,12 +9,15 @@ export declare class ProfilingSubsystem {
     private metadata;
     private readonly activeProfiles;
     private activeCpuProfileKey;
+    private activeHeapProfileKey;
     private inspectorSession;
     private inspectorAvailable;
     private destroyed;
     private continuousTimer;
+    private coolingTimer;
     private continuousChunkStartTime;
     private isContinuousRunning;
+    private isCooling;
     private readonly activeTracesInChunk;
     private constructor();
     static initialize(config: Readonly<RemoteConfigResponse>, emitter: ProfileEmitter, metadata: EventMetadata): ProfilingSubsystem;
@@ -26,9 +29,10 @@ export declare class ProfilingSubsystem {
      * Periodically flushes chunked profiles to the backend ingestion queue.
      */
     startContinuousProfiling(): Promise<boolean>;
+    private scheduleNextContinuousChunk;
     /**
      * Stops the current continuous profiling chunk, emits the profile event,
-     * and immediately restarts the next chunk.
+     * and restarts the next chunk after any enforced cooling interval.
      */
     flushContinuousChunk(): Promise<void>;
     /**
@@ -44,15 +48,28 @@ export declare class ProfilingSubsystem {
      */
     isContinuousActive(): boolean;
     /**
+     * Returns whether continuous profiling is currently in a cooling-off interval.
+     */
+    isContinuousCooling(): boolean;
+    /**
      * Returns current continuous profiling configuration.
      */
     getContinuousConfig(): {
         continuous: boolean;
         intervalMs: number;
         sampleRateHz: number;
+        coolingIntervalMs: number;
     };
     startCpuProfile(traceId?: string, spanId?: string): Promise<boolean>;
     stopCpuProfile(traceId: string): Promise<void>;
+    /**
+     * Starts a heap allocation profile using the V8 SamplingHeapProfiler.
+     */
+    startHeapProfile(traceId?: string, spanId?: string): Promise<boolean>;
+    /**
+     * Stops a heap allocation profile and emits the profile event.
+     */
+    stopHeapProfile(traceId: string): Promise<void>;
     /** Apply a validated complete snapshot selected by ConfigManager. */
     handleConfigChange(config: Readonly<RemoteConfigResponse>): void;
     stop(): Promise<void>;

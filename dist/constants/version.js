@@ -8,4 +8,4 @@
 /** SDK package name used in telemetry, tracers, and exporters. */
 export const SDK_NAME = '@lynktrace/node';
 /** SDK semantic version — corresponds to increments in `package.json`. */
-export const SDK_VERSION = '0.1.0-beta.2';
+export const SDK_VERSION = '0.1.0-beta.3';

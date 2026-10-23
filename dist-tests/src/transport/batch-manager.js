@@ -200,7 +200,19 @@ export class BatchManager {
             let originalPayloadBytes;
             try {
                 let serializeResult;
-                if (pool) {
+                let offloadThreshold = WORKER_SERIALIZATION_THRESHOLD_BYTES;
+                try {
+                    const remoteThreshold = ConfigManager.getCurrent()?.getConfigOrNull()?.transport?.workerOffloadThresholdBytes;
+                    if (typeof remoteThreshold === 'number') {
+                        offloadThreshold = remoteThreshold;
+                    }
+                }
+                catch { }
+                // Estimate batch payload: if small single event or few events with small payload, skip worker IPC
+                const isProfileBatch = this.options.route === 'profiles' || events.some(ev => ev?.type === 'profile');
+                const estimatedBytes = events.reduce((acc, ev) => acc + (typeof ev.message === 'string' ? ev.message.length : 256), 0);
+                const shouldOffload = Boolean(pool && (isProfileBatch || events.length > 5 || estimatedBytes >= offloadThreshold));
+                if (shouldOffload && pool) {
                     serializeResult = await pool.serializeBatch({
                         events,
                         route: this.options.route,
@@ -247,7 +259,8 @@ export class BatchManager {
                 originalPayloadBytes = serializeResult.originalSize;
             }
             catch (serializeErr) {
-                if (events.length > 1) {
+                const isProfileBatch = this.options.route === 'profiles' || events[0]?.type === 'profile';
+                if (events.length > 1 && !isProfileBatch) {
                     getLogger().warn('[TransportRouter] Batch serialization failed, isolating problematic events', {
                         route: this.options.route,
                         error: serializeErr,
@@ -612,6 +625,9 @@ export class BatchManager {
                 continue;
             }
             this.retryAttempts.set(key, attempt);
+            // LRU refresh: move key to most recently used position in firstAttemptTimestamps
+            this.firstAttemptTimestamps.delete(key);
+            this.firstAttemptTimestamps.set(key, firstAttempt);
             highestAttempt = Math.max(highestAttempt, attempt);
             retryable.push(event);
         }

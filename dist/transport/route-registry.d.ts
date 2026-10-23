@@ -16,7 +16,11 @@ export declare class TransportConfigurationError extends Error {
 export declare class RouteRegistry {
     private readonly definitions;
     constructor(config: TransportRemoteConfig);
-    resolve(event: SDKEvent): RouteDefinition;
+    isCanonicalType(type: string): boolean;
+    resolve(event: SDKEvent | {
+        type?: string;
+        [key: string]: unknown;
+    }): RouteDefinition;
     get(route: EnterpriseRoute): RouteDefinition;
     getRoutes(): readonly EnterpriseRoute[];
     routes(): readonly EnterpriseRoute[];

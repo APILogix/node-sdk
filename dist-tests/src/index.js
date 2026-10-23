@@ -28,6 +28,7 @@ import { captureMessage } from './capture/captureMessage.js';
 import { captureEvent } from './capture/captureEvent.js';
 import { captureMetric } from './capture/captureMetric.js';
 import { captureLog } from './capture/captureLog.js';
+import { startProfile, stopProfile, startHeapProfile, stopHeapProfile } from './capture/captureProfile.js';
 import { addBreadcrumb, getTraceId, getSpanId } from './core/context.js';
 import { setUser, setTag, setTags, setContext } from './core/scope.js';
 import { startSpan, withSpan, withSpanSync, withBackgroundSpan, startBackgroundSpan, trace, wrap, } from './tracing/tracer.js';
@@ -56,7 +57,11 @@ export { captureMessage } from './capture/captureMessage.js';
 export { captureEvent } from './capture/captureEvent.js';
 export { captureCronCheckIn } from './capture/captureCronCheckIn.js';
 export { captureLog } from './capture/captureLog.js';
-export { startProfile, stopProfile } from './capture/captureProfile.js';
+export { startProfile, stopProfile, startHeapProfile, stopHeapProfile } from './capture/captureProfile.js';
+export { cpuMonitor } from './utils/cpu-monitor.js';
+export { StorageDetector } from './utils/storage-detector.js';
+export { gpuMonitor } from './utils/gpu-monitor.js';
+export { generateId, generateShortId, isValidUUID, isValidUUIDv7, extractTimestampFromUUIDv7 } from './utils/uuid.js';
 export { captureMetric, incrementCounter, setGauge, recordHistogram, addUpDownCounter, } from './capture/captureMetric.js';
 // ─── Context & breadcrumbs ──────────────────────────────────────────────────
 export { addBreadcrumb, getRequestContext, getTraceId, getSpanId, withContext, createContextStore, bindContext } from './core/context.js';
@@ -214,6 +219,10 @@ export const LynkTrace = {
     setGauge,
     recordHistogram,
     addUpDownCounter,
+    startProfile,
+    stopProfile,
+    startHeapProfile,
+    stopHeapProfile,
     addBreadcrumb,
     setUser,
     setTag,

@@ -112,6 +112,10 @@ export class TransportRouter {
         }
         try {
             const definition = this.registry.resolve(event);
+            if (!this.registry.isCanonicalType(event.type) && event.customType === undefined) {
+                ;
+                event.customType = event.type;
+            }
             const manager = this.batchManagers.get(definition.route);
             if (!manager) {
                 throw new TransportConfigurationError('Route has no batch manager', {

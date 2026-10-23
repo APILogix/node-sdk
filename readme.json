@@ -1,0 +1,171 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "name": "@lynktrace/node",
+  "version": "0.1.0-beta.3",
+  "description": "Enterprise-grade observability and distributed tracing SDK for Node.js applications, built natively on OpenTelemetry with automated framework and database interception, truthful timing attribution, adaptive load shedding, resilient offline disk spooling, continuous CPU profiling with duty-cycle cooling, system hardware metrics, and isolated multi-route event transport.",
+  "license": "ISC",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lynktrace/sdk-node"
+  },
+  "compatibility": {
+    "node": ">=18.0.0",
+    "operatingSystems": ["Linux", "macOS", "Windows"],
+    "architectures": ["x64", "arm64"],
+    "moduleSystems": ["ESM", "CommonJS"],
+    "typescript": ">=5.0.0"
+  },
+  "installation": {
+    "npm": "npm install @lynktrace/node",
+    "pnpm": "pnpm add @lynktrace/node",
+    "yarn": "yarn add @lynktrace/node",
+    "bun": "bun add @lynktrace/node",
+    "zeroCodePreload": {
+      "esm": "node --import @lynktrace/node/register dist/index.js",
+      "cjs": "node -r @lynktrace/node/register dist/index.js",
+      "envOption": "NODE_OPTIONS='--import @lynktrace/node/register'"
+    },
+    "peerDependencies": {
+      "@prisma/client": "^5.0.0 || ^6.0.0 || ^7.0.0",
+      "bullmq": "^2.0.0 || ^3.0.0 || ^4.0.0 || ^5.0.0 || ^6.0.0"
+    }
+  },
+  "workloadProfiles": {
+    "standardSaaS": {
+      "recommendedFeatures": {
+        "tracing": true,
+        "errors": true,
+        "requests": true,
+        "metrics": true,
+        "logging": true,
+        "profiling": false,
+        "crons": true,
+        "runtimeMetrics": true,
+        "offlineQueue": true
+      },
+      "batching": {
+        "errors": { "batchSize": 50, "flushIntervalMs": 2000, "compression": "gzip" },
+        "spans": { "batchSize": 500, "flushIntervalMs": 5000, "compression": "gzip" },
+        "traces": { "batchSize": 100, "flushIntervalMs": 5000, "compression": "gzip" },
+        "metrics": { "batchSize": 200, "flushIntervalMs": 10000, "compression": "gzip" }
+      }
+    },
+    "highThroughput": {
+      "recommendedFeatures": {
+        "tracing": true,
+        "errors": true,
+        "requests": true,
+        "metrics": true,
+        "logging": true,
+        "profiling": true,
+        "continuousProfiling": true,
+        "coolingIntervalMs": 15000,
+        "runtimeMetrics": true,
+        "offlineQueue": true
+      },
+      "batching": {
+        "errors": { "batchSize": 100, "flushIntervalMs": 1000, "compression": "gzip" },
+        "spans": { "batchSize": 1000, "flushIntervalMs": 2500, "compression": "gzip" },
+        "traces": { "batchSize": 250, "flushIntervalMs": 3000, "compression": "gzip" },
+        "requests": { "batchSize": 500, "flushIntervalMs": 2000, "compression": "gzip" },
+        "profiles": { "batchSize": 1, "flushIntervalMs": 60000, "compression": "gzip" }
+      }
+    },
+    "serverlessLambda": {
+      "recommendedFeatures": {
+        "tracing": true,
+        "errors": true,
+        "requests": true,
+        "metrics": true,
+        "logging": true,
+        "profiling": false,
+        "crons": true,
+        "offlineQueue": false
+      },
+      "handlerWrapper": "wrapHandler(fn, { flushTimeoutMs: 1500, captureErrors: true })",
+      "batching": {
+        "errors": { "batchSize": 1, "flushIntervalMs": 100, "compression": "none" },
+        "spans": { "batchSize": 25, "flushIntervalMs": 250, "compression": "none" }
+      }
+    }
+  },
+  "features": [
+    {
+      "id": "errorTracking",
+      "name": "Exception & Error Tracking",
+      "description": "Automatic capture of uncaught exceptions, unhandled promise rejections, and console.error with stack frame parsing, 5 source context lines, and trace correlation.",
+      "methods": ["captureException", "captureMessage"]
+    },
+    {
+      "id": "distributedTracing",
+      "name": "Distributed Tracing",
+      "description": "Full W3C traceparent context propagation across HTTP, Redis, Postgres, MySQL, Mongo, Prisma, BullMQ, and GraphQL.",
+      "methods": ["withSpan", "withSpanSync", "withDbSpan", "withBackgroundSpan", "getTraceId", "getSpanId"]
+    },
+    {
+      "id": "metrics",
+      "name": "OpenTelemetry Metrics",
+      "description": "High-precision OTel Exponential Histograms (p50, p75, p90, p95, p99), counters, and gauges with cardinality protection.",
+      "methods": ["captureMetric", "incrementCounter", "recordHistogram", "setGauge"]
+    },
+    {
+      "id": "v8Profiling",
+      "name": "V8 CPU & Heap Profiling",
+      "description": "On-demand and continuous CPU/Heap profiling via Node.js inspector. Hardened with duty-cycle cooling and main-thread serialization protection.",
+      "methods": ["startProfile", "stopProfile", "startHeapProfile", "stopHeapProfile"]
+    },
+    {
+      "id": "hardwareMonitoring",
+      "name": "Hardware & System Monitoring",
+      "description": "Automated CPU load and throttling monitor, NVIDIA and Apple Metal GPU detection, storage and disk capacity detector, V8 GC event logger, event-loop lag monitor, and container memory pressure hysteresis state machine.",
+      "modules": ["CpuMonitor", "GpuMonitor", "StorageDetector", "RuntimeMetricsSubsystem", "MemoryPressureMonitor"]
+    },
+    {
+      "id": "structuredLogging",
+      "name": "Structured Logging & Breadcrumbs",
+      "description": "Structured logging ingestion with log levels and request-scoped AsyncLocalStorage breadcrumbs.",
+      "methods": ["captureLog", "addBreadcrumb"]
+    },
+    {
+      "id": "cronMonitoring",
+      "name": "Cron & Job Check-ins",
+      "description": "Periodic heartbeat and duration monitoring for cron jobs and background workers.",
+      "methods": ["captureCronCheckIn"]
+    },
+    {
+      "id": "customEvents",
+      "name": "Custom Business Events",
+      "description": "Ingestion of arbitrary custom business events routed to /v1/events with preserved type metadata.",
+      "methods": ["captureEvent"]
+    },
+    {
+      "id": "transportResilience",
+      "name": "Resilient Multi-Route Transport",
+      "description": "Dedicated per-route dual ring queues with critical reserves, worker-thread serialization, strict LRU retry bookkeeping, circuit breakers, and persistent disk spooling.",
+      "modules": ["TransportRouter", "BatchManager", "TransportEventQueue", "SerializationPool", "HealthMonitor", "PersistentStorage"]
+    }
+  ],
+  "configurationOptions": {
+    "apiKey": { "type": "string", "required": true, "description": "LynkTrace API key or env LYNKTRACE_API_KEY." },
+    "applicationName": { "type": "string", "required": false, "description": "Consuming application name (default: package.json name)." },
+    "applicationVersion": { "type": "string", "required": false, "description": "Application version (default: package.json version)." },
+    "environment": { "type": "string", "required": false, "description": "Deployment environment (default: process.env.NODE_ENV ?? 'development')." },
+    "release": { "type": "string", "required": false, "description": "Optional release version override." },
+    "debug": { "type": "boolean", "required": false, "default": false, "description": "Enable verbose diagnostic logging." },
+    "offlineQueue": { "type": "boolean", "required": false, "default": true, "description": "Enable persistent disk queue. Set false in serverless/Lambda." },
+    "beforeSend": { "type": "function", "required": false, "description": "Inspection hook to filter or mutate events before transport." },
+    "beforeBreadcrumb": { "type": "function", "required": false, "description": "Filter or mutate breadcrumbs before storage." }
+  },
+  "routes": [
+    { "name": "errors", "endpoint": "/v1/errors", "priority": "critical" },
+    { "name": "traces", "endpoint": "/v1/traces", "priority": "normal" },
+    { "name": "spans", "endpoint": "/v1/spans", "priority": "normal" },
+    { "name": "requests", "endpoint": "/v1/requests", "priority": "high" },
+    { "name": "metrics", "endpoint": "/v1/metrics", "priority": "normal" },
+    { "name": "logs", "endpoint": "/v1/logs", "priority": "low" },
+    { "name": "profiles", "endpoint": "/v1/profiles", "priority": "normal" },
+    { "name": "crons", "endpoint": "/v1/crons", "priority": "critical" },
+    { "name": "events", "endpoint": "/v1/events", "priority": "normal" }
+  ]
+}
+

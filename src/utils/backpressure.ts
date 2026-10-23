@@ -92,16 +92,20 @@ export class MemoryPressureMonitor extends EventEmitter {
       ? this.maxMemoryMb
       : 0
 
+    let v8LimitMb = 0
+    try {
+      const v8Limit = v8.getHeapStatistics().heap_size_limit
+      if (v8Limit > 0) v8LimitMb = v8Limit / (1024 * 1024)
+    } catch {}
+
     if (effectiveLimitMb <= 0) {
-      try {
-        const v8Limit = v8.getHeapStatistics().heap_size_limit
-        effectiveLimitMb = v8Limit > 0 ? v8Limit / (1024 * 1024) : 1024
-      } catch {
-        effectiveLimitMb = 1024
-      }
+      effectiveLimitMb = v8LimitMb > 0 ? v8LimitMb : 1024
     }
 
-    const effectiveUtilization = effectiveLimitMb > 0 ? heapUsedMb / effectiveLimitMb : 0
+    // In enterprise runtimes with large heaps (e.g. --max-old-space-size),
+    // compute utilization against the active headroom ceiling to prevent false OOM shedding.
+    const activeCeilingMb = Math.max(effectiveLimitMb, v8LimitMb)
+    const effectiveUtilization = activeCeilingMb > 0 ? heapUsedMb / activeCeilingMb : 0
 
     // Compute pressure level with hysteresis
     let level: PressureLevel = this.lastLevel

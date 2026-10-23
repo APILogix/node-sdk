@@ -125,6 +125,7 @@ export const DEFAULT_TRANSPORT: Readonly<TransportRemoteConfig> = Object.freeze(
   }),
   keepAlive: true,
   routes: DEFAULT_TRANSPORT_ROUTES,
+  workerOffloadThresholdBytes: 50 * 1024,
 })
 
 export const DEFAULT_OFFLINE_QUEUE: Readonly<OfflineQueueConfig> = Object.freeze({
@@ -149,6 +150,8 @@ export const DEFAULT_ERRORS: Readonly<ErrorsConfig> = Object.freeze({
   captureConsoleErrors: true,
   stackTraceLimit: 50,
   attachSourceContext: true,
+  contextLines: 5,
+  maxCachedFiles: 50,
   grouping: Object.freeze({
     enabled: true,
     normalizePaths: true,
@@ -159,6 +162,7 @@ export const DEFAULT_TRACING: Readonly<TracingConfig> = Object.freeze({
   maxSpansPerTrace: 5_000,
   maxSpanAttributes: 200,
   maxTraceDurationMs: 5 * 60 * 1000,
+  slowQueryThresholdMs: 100,
   propagation: Object.freeze({
     w3c: true,
     baggage: true,
@@ -172,6 +176,9 @@ export const DEFAULT_METRICS: Readonly<MetricsConfig> = Object.freeze({
   gcMonitoring: true,
   pushIntervalMs: 10_000,
   cardinalityLimit: 2_000,
+  maxDimensionsPerMetric: 10,
+  maxSeriesPerMetric: 1_000,
+  eventLoopResolutionMs: 20,
 })
 
 export const DEFAULT_LOGS: Readonly<LogsConfig> = Object.freeze({
@@ -233,6 +240,7 @@ export const DEFAULT_PRIVACY: Readonly<PrivacyConfig> = Object.freeze({
       'password', 'token', 'secret', 'creditCard', 'ssn', 'nationalId', 'apiKey',
       'code', 'id_token', 'access_token', 'refresh_token', 'client_secret', 'assertion',
     ]),
+    maxDepth: 10,
   }),
   piiDetection: Object.freeze({
     enabled: true,

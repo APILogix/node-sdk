@@ -10,6 +10,7 @@ import { MetricReader } from '@opentelemetry/sdk-metrics';
 export interface AggregatedHistogramPoint {
     name: string;
     metricType: string;
+    unit?: string | undefined;
     labels: Record<string, string>;
     timestamp: number;
     count: number;

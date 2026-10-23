@@ -23,6 +23,7 @@ export class TransportConfigurationError extends Error {
 const EVENT_TYPE_TO_ROUTE: Readonly<Record<string, EnterpriseRoute>> = Object.freeze({
   error: 'errors',
   message: 'events',
+  event: 'events',
   span: 'spans',
   trace: 'traces',
   request: 'requests',
@@ -49,13 +50,13 @@ export class RouteRegistry {
     })
   }
 
-  resolve(event: SDKEvent): RouteDefinition {
-    const route = EVENT_TYPE_TO_ROUTE[event.type]
-    if (!route) {
-      throw new TransportConfigurationError('No transport route registered for event type', {
-        eventType: event.type,
-      })
-    }
+  isCanonicalType(type: string): boolean {
+    return Object.prototype.hasOwnProperty.call(EVENT_TYPE_TO_ROUTE, type)
+  }
+
+  resolve(event: SDKEvent | { type?: string; [key: string]: unknown }): RouteDefinition {
+    const eventType = (event && typeof event === 'object' && typeof event.type === 'string') ? event.type : 'message'
+    const route = EVENT_TYPE_TO_ROUTE[eventType] ?? 'events'
     return this.definitions[route]
   }
 

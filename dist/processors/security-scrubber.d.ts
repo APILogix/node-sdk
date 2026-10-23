@@ -23,6 +23,7 @@ export declare class SecurityScrubber {
     private sensitiveFields;
     private normalizedHeaders;
     private normalizedFields;
+    private maxDepth;
     private readonly keySensitivityCache;
     private static readonly MAX_CACHE_SIZE;
     private static readonly EMAIL_PATTERN;

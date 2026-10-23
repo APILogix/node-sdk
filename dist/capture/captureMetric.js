@@ -25,16 +25,17 @@ export function captureMetric(name, value, type = 'gauge', options) {
         if (!admitMetric(name, options?.tags))
             return;
         const labels = options?.tags ?? {};
+        const unit = options?.unit;
         if (type === 'histogram') {
-            metricsRegistry.recordHistogram(name, value, { labels });
+            metricsRegistry.recordHistogram(name, value, { labels, unit });
             return;
         }
         if (type === 'counter') {
-            metricsRegistry.incrementCounter(name, value, { labels });
+            metricsRegistry.incrementCounter(name, value, { labels, unit });
             return;
         }
         if (type === 'gauge') {
-            metricsRegistry.setGauge(name, value, { labels });
+            metricsRegistry.setGauge(name, value, { labels, unit });
             return;
         }
         const event = {
@@ -59,29 +60,29 @@ function admitMetric(_name, _tags) {
 }
 // ─── Convenience Methods ────────────────────────────────────────────────────
 /** Increment a counter metric by the given value (default: 1). */
-export function incrementCounter(name, value = 1, tags) {
+export function incrementCounter(name, value = 1, tags, unit) {
     if (!admitMetric(name, tags))
         return;
-    metricsRegistry.incrementCounter(name, value, { labels: tags ?? {} });
+    metricsRegistry.incrementCounter(name, value, { labels: tags ?? {}, unit });
 }
 /** Set a gauge metric to the given value. */
-export function setGauge(name, value, tags) {
+export function setGauge(name, value, tags, unit) {
     if (!admitMetric(name, tags))
         return;
-    metricsRegistry.setGauge(name, value, { labels: tags ?? {} });
+    metricsRegistry.setGauge(name, value, { labels: tags ?? {}, unit });
 }
 /** Record a histogram value (e.g., latency, size) using OTel exponential histogram. */
 export function recordHistogram(name, value, tags, unit) {
     if (!admitMetric(name, tags))
         return;
-    metricsRegistry.recordHistogram(name, value, { labels: tags ?? {} });
+    metricsRegistry.recordHistogram(name, value, { labels: tags ?? {}, unit });
 }
 /**
  * Add to an up-down counter (can go negative).
  * Used for tracking active connections, queue depth, etc.
  */
-export function addUpDownCounter(name, value, tags) {
+export function addUpDownCounter(name, value, tags, unit) {
     if (!admitMetric(name, tags))
         return;
-    metricsRegistry.addUpDownCounter(name, value, { labels: tags ?? {} });
+    metricsRegistry.addUpDownCounter(name, value, { labels: tags ?? {}, unit });
 }

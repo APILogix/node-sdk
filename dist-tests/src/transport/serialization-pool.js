@@ -169,7 +169,8 @@ export class SerializationPool {
         if (this.destroyed) {
             return this.fallbackSerializeBatch(options);
         }
-        const isLarge = SerializationPool.isLargeBatch(options.events);
+        const isProfileBatch = options.route === 'profiles' || (Array.isArray(options.events) && options.events.some(e => e?.type === 'profile'));
+        const isLarge = SerializationPool.isLargeBatch(options.events) || isProfileBatch;
         // Lazy initialization: Spawn worker threads ONLY when payload exceeds the offload
         // threshold (e.g. >= 50KB or large batches).
         // Small batches process in < 0.1ms on the main thread via libuv without inter-thread
@@ -177,11 +178,13 @@ export class SerializationPool {
         if (isLarge && !this.started && this.poolSize > 0) {
             this.startWorkers();
         }
-        // If workers were just launched, give them up to 150ms to become ready before falling back
+        // If workers were just launched, give them time to become ready before falling back.
+        // For profile batches that cannot use main-thread fallback, allow up to 2500ms for worker initialization.
         if (isLarge && this.readyWorkers.size === 0 && this.workerEntries.length > 0) {
+            const waitTime = isProfileBatch ? 2500 : 250;
             await Promise.race([
                 Promise.all(this.workerEntries.map(e => e.onlinePromise)),
-                new Promise(r => setTimeout(r, 150)),
+                new Promise(r => setTimeout(r, waitTime)),
             ]);
         }
         const ready = [...this.readyWorkers];
@@ -220,6 +223,11 @@ export class SerializationPool {
     }
     async fallbackSerializeBatch(options) {
         const { events, route, timestamp, privacyConfig, compression, maxPayloadBytes } = options;
+        const isProfileBatch = route === 'profiles' || (Array.isArray(events) && events.some(e => e?.type === 'profile'));
+        if (isProfileBatch) {
+            getLogger().warn('[SerializationPool] Profile serialization failed or unavailable in worker thread; refusing main-thread fallback to protect event loop', { route });
+            throw new Error('Profile serialization failed in worker; main-thread fallback rejected to avoid event-loop stall');
+        }
         let safeEvents = events;
         if (Array.isArray(events)) {
             const scrubber = SecurityScrubber.getInstance() ?? (privacyConfig ? SecurityScrubber.initialize(privacyConfig) : null);

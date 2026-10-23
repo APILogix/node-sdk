@@ -1,4 +1,4 @@
-/** CPU profiling subsystem driven by the authoritative remote snapshot. */
+/** CPU and Heap profiling subsystem driven by the authoritative remote snapshot. */
 import { PROFILING_DEFAULTS } from '../constants/internal-defaults.js';
 import { getRequestContext } from '../core/context.js';
 import { getLogger } from '../utils/logger.js';
@@ -12,13 +12,16 @@ export class ProfilingSubsystem {
     metadata;
     activeProfiles = new Map();
     activeCpuProfileKey = null;
+    activeHeapProfileKey = null;
     inspectorSession = null;
     inspectorAvailable = false;
     destroyed = false;
     // Continuous wall-clock profiling state
     continuousTimer = null;
+    coolingTimer = null;
     continuousChunkStartTime = 0;
     isContinuousRunning = false;
+    isCooling = false;
     activeTracesInChunk = new Set();
     constructor(config, emitter, metadata) {
         this.config = resolveProfilingConfig(config);
@@ -113,16 +116,13 @@ export class ProfilingSubsystem {
             }
             await session.post('Profiler.start');
             this.isContinuousRunning = true;
+            this.isCooling = false;
             this.continuousChunkStartTime = Date.now();
             this.activeTracesInChunk.clear();
-            if (this.continuousTimer)
-                clearInterval(this.continuousTimer);
-            this.continuousTimer = setInterval(() => {
-                void this.flushContinuousChunk();
-            }, this.config.continuousIntervalMs);
-            this.continuousTimer.unref?.();
+            this.scheduleNextContinuousChunk();
             getLogger().info('[ProfilingSubsystem] Continuous wall-clock CPU profiling started', {
                 intervalMs: this.config.continuousIntervalMs,
+                coolingIntervalMs: this.config.coolingIntervalMs,
                 sampleRateHz: this.config.sampleRateHz,
             });
             return true;
@@ -130,18 +130,29 @@ export class ProfilingSubsystem {
         catch (error) {
             getLogger().warn('[ProfilingSubsystem] Failed to start continuous CPU profiling', { error });
             this.isContinuousRunning = false;
+            this.isCooling = false;
             return false;
         }
     }
+    scheduleNextContinuousChunk() {
+        if (this.continuousTimer)
+            clearTimeout(this.continuousTimer);
+        this.continuousTimer = setTimeout(() => {
+            void this.flushContinuousChunk();
+        }, this.config.continuousIntervalMs);
+        this.continuousTimer.unref?.();
+    }
     /**
      * Stops the current continuous profiling chunk, emits the profile event,
-     * and immediately restarts the next chunk.
+     * and restarts the next chunk after any enforced cooling interval.
      */
     async flushContinuousChunk() {
         if (!this.isContinuousRunning)
             return;
         const session = this.inspectorSession;
         if (!session)
+            return;
+        if (this.isCooling)
             return;
         try {
             const result = await session.post('Profiler.stop');
@@ -150,12 +161,32 @@ export class ProfilingSubsystem {
             const traceIds = Array.from(this.activeTracesInChunk);
             this.activeTracesInChunk.clear();
             this.continuousChunkStartTime = endTime;
-            // Immediately restart profiler for the next chunk
-            try {
-                await session.post('Profiler.start');
+            const restartContinuousProfiler = async () => {
+                if (!this.isContinuousRunning)
+                    return;
+                this.isCooling = false;
+                this.continuousChunkStartTime = Date.now();
+                try {
+                    await session.post('Profiler.start');
+                }
+                catch (startErr) {
+                    getLogger().debug('[ProfilingSubsystem] Failed to restart continuous profiler chunk', { error: startErr });
+                }
+                this.scheduleNextContinuousChunk();
+            };
+            // Enforce cooling duty cycle if configured
+            if (this.config.coolingIntervalMs > 0) {
+                this.isCooling = true;
+                if (this.coolingTimer)
+                    clearTimeout(this.coolingTimer);
+                this.coolingTimer = setTimeout(() => {
+                    this.coolingTimer = null;
+                    void restartContinuousProfiler();
+                }, this.config.coolingIntervalMs);
+                this.coolingTimer.unref?.();
             }
-            catch (startErr) {
-                getLogger().debug('[ProfilingSubsystem] Failed to restart continuous profiler chunk', { error: startErr });
+            else {
+                await restartContinuousProfiler();
             }
             const scrubber = SecurityScrubber.getInstance();
             const profile = scrubber ? scrubber.scrubValue(result?.profile) : result?.profile;
@@ -188,14 +219,20 @@ export class ProfilingSubsystem {
      */
     async stopContinuousProfiling() {
         if (this.continuousTimer) {
-            clearInterval(this.continuousTimer);
+            clearTimeout(this.continuousTimer);
             this.continuousTimer = null;
+        }
+        if (this.coolingTimer) {
+            clearTimeout(this.coolingTimer);
+            this.coolingTimer = null;
         }
         if (!this.isContinuousRunning)
             return;
+        const wasCooling = this.isCooling;
         this.isContinuousRunning = false;
+        this.isCooling = false;
         const session = this.inspectorSession;
-        if (session) {
+        if (session && !wasCooling) {
             try {
                 await session.post('Profiler.stop');
             }
@@ -222,6 +259,12 @@ export class ProfilingSubsystem {
         return this.isContinuousRunning;
     }
     /**
+     * Returns whether continuous profiling is currently in a cooling-off interval.
+     */
+    isContinuousCooling() {
+        return this.isCooling;
+    }
+    /**
      * Returns current continuous profiling configuration.
      */
     getContinuousConfig() {
@@ -229,6 +272,7 @@ export class ProfilingSubsystem {
             continuous: this.config.continuous,
             intervalMs: this.config.continuousIntervalMs,
             sampleRateHz: this.config.sampleRateHz,
+            coolingIntervalMs: this.config.coolingIntervalMs,
         };
     }
     async startCpuProfile(traceId, spanId) {
@@ -347,12 +391,109 @@ export class ProfilingSubsystem {
             this.activeCpuProfileKey = null;
         }
     }
+    /**
+     * Starts a heap allocation profile using the V8 SamplingHeapProfiler.
+     */
+    async startHeapProfile(traceId, spanId) {
+        if (!this.canProfile('heap'))
+            return false;
+        const session = this.inspectorSession;
+        if (!session)
+            return false;
+        const activeSpan = trace.getActiveSpan();
+        const activeSpanContext = activeSpan?.spanContext();
+        const resolvedTraceId = traceId ?? activeSpanContext?.traceId;
+        if (!resolvedTraceId || !this.shouldProfile(resolvedTraceId))
+            return false;
+        const resolvedSpanId = spanId ?? activeSpanContext?.spanId;
+        const requestId = getRequestContext()?.requestId;
+        const key = `heap:${resolvedTraceId}`;
+        if (this.activeHeapProfileKey !== null)
+            return false;
+        if (this.activeProfiles.has(key))
+            return false;
+        try {
+            await session.post('HeapProfiler.enable');
+            await session.post('HeapProfiler.startSampling', { samplingInterval: 524288 });
+            this.activeHeapProfileKey = key;
+            const startTime = Date.now();
+            const timeoutHandle = setTimeout(() => void this.stopHeapProfile(resolvedTraceId), this.config.maxDurationMs);
+            timeoutHandle.unref?.();
+            this.activeProfiles.set(key, {
+                traceId: resolvedTraceId,
+                spanId: resolvedSpanId,
+                requestId,
+                profileType: 'heap',
+                startTime,
+                timeoutHandle,
+            });
+            activeSpan?.addEvent('pulse.profile.heap.start', { 'profile.type': 'heap', 'profile.id': key });
+            return true;
+        }
+        catch (error) {
+            getLogger().warn('[ProfilingSubsystem] Failed to start heap profile', { error });
+            return false;
+        }
+    }
+    /**
+     * Stops a heap allocation profile and emits the profile event.
+     */
+    async stopHeapProfile(traceId) {
+        const key = `heap:${traceId}`;
+        const active = this.activeProfiles.get(key);
+        if (!active)
+            return;
+        if (this.activeHeapProfileKey !== key)
+            return;
+        this.activeProfiles.delete(key);
+        if (active.timeoutHandle)
+            clearTimeout(active.timeoutHandle);
+        const session = this.inspectorSession;
+        if (!session) {
+            this.activeHeapProfileKey = null;
+            return;
+        }
+        try {
+            const result = await session.post('HeapProfiler.stopSampling');
+            const endTime = Date.now();
+            const scrubber = SecurityScrubber.getInstance();
+            const profile = scrubber ? scrubber.scrubValue(result.profile) : result.profile;
+            const event = {
+                type: 'profile',
+                profileType: 'heap',
+                traceId: active.traceId,
+                spanId: active.spanId,
+                requestId: active.requestId,
+                startTime: active.startTime,
+                endTime,
+                duration: endTime - active.startTime,
+                profile,
+                timestamp: endTime,
+                metadata: this.metadata,
+            };
+            this.emitter(event);
+            const activeSpan = trace.getActiveSpan();
+            if (activeSpan?.spanContext().traceId === active.traceId) {
+                activeSpan.addEvent('pulse.profile.heap.stop', {
+                    'profile.type': 'heap',
+                    'profile.duration_ms': endTime - active.startTime,
+                });
+            }
+        }
+        catch (error) {
+            getLogger().warn('[ProfilingSubsystem] Failed to stop heap profile', { error });
+        }
+        finally {
+            this.activeHeapProfileKey = null;
+        }
+    }
     /** Apply a validated complete snapshot selected by ConfigManager. */
     handleConfigChange(config) {
         if (this.destroyed)
             return;
         const prevContinuous = this.config.continuous;
         const prevInterval = this.config.continuousIntervalMs;
+        const prevCooling = this.config.coolingIntervalMs;
         this.config = resolveProfilingConfig(config);
         // Dynamic continuous profiling transition driven by remote config
         if (!prevContinuous && this.config.continuous) {
@@ -363,11 +504,14 @@ export class ProfilingSubsystem {
         else if (prevContinuous && !this.config.continuous) {
             void this.stopContinuousProfiling();
         }
-        else if (this.isContinuousRunning && prevInterval !== this.config.continuousIntervalMs) {
-            // Re-arm timer with updated interval from remote config
+        else if (this.isContinuousRunning && (prevInterval !== this.config.continuousIntervalMs || prevCooling !== this.config.coolingIntervalMs)) {
+            // Re-arm timer with updated interval/cooling from remote config
             if (this.continuousTimer)
-                clearInterval(this.continuousTimer);
-            this.continuousTimer = setInterval(() => {
+                clearTimeout(this.continuousTimer);
+            if (this.coolingTimer)
+                clearTimeout(this.coolingTimer);
+            this.isCooling = false;
+            this.continuousTimer = setTimeout(() => {
                 void this.flushContinuousChunk();
             }, this.config.continuousIntervalMs);
             this.continuousTimer.unref?.();
@@ -381,6 +525,7 @@ export class ProfilingSubsystem {
         }
         this.activeProfiles.clear();
         this.activeCpuProfileKey = null;
+        this.activeHeapProfileKey = null;
         if (this.inspectorSession && this.inspectorAvailable) {
             try {
                 ;
@@ -430,6 +575,10 @@ function resolveProfilingConfig(config) {
     const sampleRateHz = config.profiling?.sampleRateHz ?? PROFILING_DEFAULTS.continuousSampleRateHz;
     const sampleIntervalMicroseconds = config.profiling?.sampleIntervalMicroseconds ??
         (sampleRateHz > 0 ? Math.round(1_000_000 / sampleRateHz) : PROFILING_DEFAULTS.sampleIntervalMicroseconds);
+    const coolingIntervalMs = Math.max(0, config.profiling?.coolingIntervalMs ??
+        config.profiling?.continuousCoolingMs ??
+        config.features?.continuousCoolingMs ??
+        PROFILING_DEFAULTS.coolingIntervalMs);
     return {
         enabled: config.features.profiling,
         cpu: PROFILING_DEFAULTS.cpu,
@@ -438,6 +587,7 @@ function resolveProfilingConfig(config) {
         maxDurationMs: config.profiling?.maxDurationMs ?? PROFILING_DEFAULTS.maxDurationMs,
         continuous,
         continuousIntervalMs: config.profiling?.continuousIntervalMs ?? PROFILING_DEFAULTS.continuousIntervalMs,
+        coolingIntervalMs,
         sampleIntervalMicroseconds,
         sampleRateHz,
     };

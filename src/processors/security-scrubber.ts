@@ -67,6 +67,7 @@ export class SecurityScrubber {
   private sensitiveFields: Set<string>
   private normalizedHeaders: Set<string>
   private normalizedFields: Set<string>
+  private maxDepth: number = 10
   private readonly keySensitivityCache = new Map<string, boolean>()
   private static readonly MAX_CACHE_SIZE = 2000
 
@@ -105,6 +106,7 @@ export class SecurityScrubber {
     this.captureConfig = { ...config.capture }
     this.scrubbingConfig = { ...config.scrubbing }
     this.piiConfig = { ...config.piiDetection }
+    this.maxDepth = config.scrubbing?.maxDepth ?? 10
 
     this.sensitiveHeaders = new Set(config.scrubbing.headers.map((h: string) => h.toLowerCase()))
     this.sensitiveFields = new Set(config.scrubbing.fields.map((f: string) => f.toLowerCase()))
@@ -120,6 +122,7 @@ export class SecurityScrubber {
         enabled: this.scrubbingConfig.enabled,
         headers: [...this.sensitiveHeaders],
         fields: [...this.sensitiveFields],
+        maxDepth: this.maxDepth,
       },
       piiDetection: { ...this.piiConfig },
     }
@@ -308,7 +311,7 @@ export class SecurityScrubber {
    */
   scrubValue(value: unknown, depth: number = 0, seen: WeakSet<object> = new WeakSet()): unknown {
     if (this.destroyed || !this.hasScrubRules) return value
-    if (depth > 10) return REDACTED
+    if (depth > this.maxDepth) return REDACTED
 
     try {
       if (typeof value === 'string') {
@@ -417,6 +420,7 @@ export class SecurityScrubber {
     this.captureConfig = { ...newPrivacy.capture }
     this.scrubbingConfig = { ...newPrivacy.scrubbing }
     this.piiConfig = { ...newPrivacy.piiDetection }
+    this.maxDepth = newPrivacy.scrubbing?.maxDepth ?? 10
 
     this.sensitiveHeaders = new Set(newPrivacy.scrubbing.headers.map((h: string) => h.toLowerCase()))
     this.sensitiveFields = new Set(newPrivacy.scrubbing.fields.map((f: string) => f.toLowerCase()))
@@ -487,7 +491,7 @@ export class SecurityScrubber {
   }
 
   private scrubBodyFields(obj: Record<string, unknown>, depth: number = 0): Record<string, unknown> {
-    if (depth > 10) return obj // Prevent infinite recursion
+    if (depth > this.maxDepth) return obj // Prevent infinite recursion
 
     const result: Record<string, unknown> = Object.create(null)
     for (const [key, value] of Object.entries(obj)) {
@@ -515,7 +519,7 @@ export class SecurityScrubber {
   }
 
   private scrubPiiInObject(obj: Record<string, unknown>, depth: number = 0): void {
-    if (depth > 10) return
+    if (depth > this.maxDepth) return
 
     for (const key of Object.keys(obj)) {
       if (SecurityScrubber.DANGEROUS_KEYS.has(key)) continue
@@ -536,7 +540,7 @@ export class SecurityScrubber {
   }
 
   private scrubPiiInArray(arr: unknown[], depth: number = 0): unknown[] {
-    if (depth > 10) return arr
+    if (depth > this.maxDepth) return arr
 
     return arr.map(item => {
       if (typeof item === 'string') {

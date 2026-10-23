@@ -68,6 +68,7 @@ export class LynkTraceMetricReader extends MetricReader {
     }
     processMetricData(metricData) {
         const points = [];
+        const unit = metricData.descriptor.unit;
         if (metricData.dataPointType === DataPointType.EXPONENTIAL_HISTOGRAM) {
             for (const dataPoint of metricData.dataPoints) {
                 const value = dataPoint.value;
@@ -91,6 +92,7 @@ export class LynkTraceMetricReader extends MetricReader {
                 points.push({
                     name: metricData.descriptor.name,
                     metricType: 'histogram',
+                    unit,
                     labels,
                     timestamp: epochMs(),
                     count: value.count ?? 0,
@@ -111,6 +113,7 @@ export class LynkTraceMetricReader extends MetricReader {
                 points.push({
                     name: metricData.descriptor.name,
                     metricType: 'histogram',
+                    unit,
                     labels,
                     timestamp: epochMs(),
                     count: value.count ?? 0,
@@ -129,6 +132,7 @@ export class LynkTraceMetricReader extends MetricReader {
                 points.push({
                     name: metricData.descriptor.name,
                     metricType: 'counter',
+                    unit,
                     labels,
                     timestamp: epochMs(),
                     count: 1,
@@ -147,6 +151,7 @@ export class LynkTraceMetricReader extends MetricReader {
                 points.push({
                     name: metricData.descriptor.name,
                     metricType: 'gauge',
+                    unit,
                     labels,
                     timestamp: epochMs(),
                     count: 1,
@@ -166,6 +171,7 @@ export class LynkTraceMetricReader extends MetricReader {
             metricName: point.name,
             metricType: point.metricType,
             value: point.avg,
+            unit: point.unit || (point.metricType === 'histogram' ? 'ms' : '1'),
             timestamp: point.timestamp,
             tags: point.labels,
             count: point.count,

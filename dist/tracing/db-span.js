@@ -1,9 +1,22 @@
 import { startSpan, withSpan, withSpanSync } from './tracer.js';
+import { ConfigManager } from '../core/config-manager.js';
+function getSlowQueryThreshold(options) {
+    if (options.slowQueryThresholdMs !== undefined) {
+        return options.slowQueryThresholdMs;
+    }
+    try {
+        const remoteThreshold = ConfigManager.getCurrent()?.getConfigOrNull()?.tracing?.slowQueryThresholdMs;
+        if (remoteThreshold !== undefined)
+            return remoteThreshold;
+    }
+    catch { }
+    return 100;
+}
 export function startDbSpan(options) {
     return startSpan(getDbSpanName(options), toSpanOptions(options));
 }
 export async function withDbSpan(options, fn) {
-    const thresholdMs = options.slowQueryThresholdMs ?? 100;
+    const thresholdMs = getSlowQueryThreshold(options);
     const start = Date.now();
     return withSpan(getDbSpanName(options), toSpanOptions(options), async (span) => {
         try {
@@ -26,7 +39,7 @@ export async function withDbSpan(options, fn) {
     });
 }
 export function withDbSpanSync(options, fn) {
-    const thresholdMs = options.slowQueryThresholdMs ?? 100;
+    const thresholdMs = getSlowQueryThreshold(options);
     const start = Date.now();
     return withSpanSync(getDbSpanName(options), toSpanOptions(options), (span) => {
         try {

@@ -242,6 +242,8 @@ export interface ScrubbingConfig {
     readonly headers: readonly string[];
     /** Body and query parameter keys that should be redacted. */
     readonly fields: readonly string[];
+    /** Maximum recursion depth for object/array scrubbing. Default: 10. */
+    readonly maxDepth?: number | undefined;
 }
 export interface PiiDetectionConfig {
     readonly enabled: boolean;
@@ -349,6 +351,8 @@ export interface ProfilingConfig {
     readonly sampleIntervalMicroseconds?: number | undefined;
     readonly continuous?: boolean | undefined;
     readonly continuousIntervalMs?: number | undefined;
+    readonly continuousCoolingMs?: number | undefined;
+    readonly coolingIntervalMs?: number | undefined;
     readonly sampleRateHz?: number | undefined;
 }
 export interface ErrorsConfig {
@@ -357,6 +361,10 @@ export interface ErrorsConfig {
     readonly captureConsoleErrors: boolean;
     readonly stackTraceLimit: number;
     readonly attachSourceContext: boolean;
+    /** Number of source code context lines captured before and after error line. Default: 5. */
+    readonly contextLines?: number | undefined;
+    /** Maximum source files cached in memory for context extraction. Default: 50. */
+    readonly maxCachedFiles?: number | undefined;
     readonly grouping: {
         readonly enabled: boolean;
         readonly normalizePaths: boolean;
@@ -366,6 +374,8 @@ export interface TracingConfig {
     readonly maxSpansPerTrace: number;
     readonly maxSpanAttributes: number;
     readonly maxTraceDurationMs: number;
+    /** Threshold in milliseconds above which queries are flagged with db.slow_query. Default: 100. */
+    readonly slowQueryThresholdMs?: number | undefined;
     readonly propagation: {
         readonly w3c: boolean;
         readonly baggage: boolean;
@@ -378,6 +388,12 @@ export interface MetricsConfig {
     readonly gcMonitoring: boolean;
     readonly pushIntervalMs: number;
     readonly cardinalityLimit: number;
+    /** Maximum attribute keys per metric instrument. Default: 10. */
+    readonly maxDimensionsPerMetric?: number | undefined;
+    /** Maximum unique timeseries per metric instrument before rejection. Default: 1000. */
+    readonly maxSeriesPerMetric?: number | undefined;
+    /** Resolution in milliseconds for event loop delay histogram monitoring. Default: 20. */
+    readonly eventLoopResolutionMs?: number | undefined;
 }
 export interface LogsConfig {
     readonly enabled: boolean;
@@ -420,6 +436,8 @@ export interface TransportRemoteConfig {
     readonly connections: TransportConnectionConfig;
     readonly keepAlive: boolean;
     readonly routes: Readonly<Record<TransportRouteName, TransportRouteConfig>>;
+    /** Threshold in bytes above which batch serialization/compression offloads to worker thread. Default: 51200 (50KB). */
+    readonly workerOffloadThresholdBytes?: number | undefined;
 }
 export interface TransportConnectionConfig {
     readonly maxTotalConnections: number;

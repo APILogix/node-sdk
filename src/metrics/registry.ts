@@ -32,8 +32,9 @@ export interface MetricLabels {
 }
 
 export interface MetricOptions {
-    labels?: MetricLabels
-    timestamp?: number
+    labels?: MetricLabels | undefined
+    timestamp?: number | undefined
+    unit?: string | undefined
 }
 
 export interface HistogramOptions {
@@ -120,7 +121,7 @@ class MetricsRegistry {
         }
 
         if (otelMetrics.isInitialized()) {
-            otelMetrics.recordHistogram(name, value, sanitized)
+            otelMetrics.recordHistogram(name, value, sanitized, options.unit)
             this.totalFlushed++
         } else {
             getLogger().debug('Histogram recorded but OTel metrics not initialized', { name })
@@ -145,7 +146,7 @@ class MetricsRegistry {
         }
 
         if (otelMetrics.isInitialized()) {
-            otelMetrics.incrementCounter(name, value, sanitized)
+            otelMetrics.incrementCounter(name, value, sanitized, options.unit)
             this.totalFlushed++
         }
     }
@@ -168,7 +169,7 @@ class MetricsRegistry {
         }
 
         if (otelMetrics.isInitialized()) {
-            otelMetrics.addUpDownCounter(name, value, sanitized)
+            otelMetrics.addUpDownCounter(name, value, sanitized, options.unit)
             this.totalFlushed++
         }
     }
@@ -191,19 +192,13 @@ class MetricsRegistry {
         }
 
         if (otelMetrics.isInitialized()) {
-            otelMetrics.setGauge(name, value, sanitized)
+            otelMetrics.setGauge(name, value, sanitized, options.unit)
             this.totalFlushed++
         }
     }
 
     /**
      * Flush pending metrics through the OTel reader → event pipeline.
-     *
-     * Returns a Promise so callers (especially shutdown) can `await`
-     * the actual completion. The previous void return + floated
-     * `.catch(() => {})` chain made shutdown-time metrics best-effort
-     * even on graceful exit, since the lifecycle moved on before the
-     * OTel reader had finished collecting and emitting.
      */
     async flush(internalTelemetry = false): Promise<void> {
         if (otelMetrics.isInitialized()) {

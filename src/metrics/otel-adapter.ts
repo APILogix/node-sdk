@@ -33,6 +33,7 @@ import { metrics, context, type Meter, type Histogram, type Counter, type UpDown
 import { suppressTracing } from '@opentelemetry/core'
 import { getLogger } from '../utils/logger.js'
 import { LynkTraceMetricReader, PulseMetricReader } from './pulse-metric-reader.js'
+import { SDK_NAME, SDK_VERSION } from '../constants/version.js'
 import type { ResourceAttributes } from '../utils/resource-detector.js'
 import os from 'node:os'
 
@@ -88,7 +89,7 @@ class OtelMetricsManager {
     try {
       const globalState = globalThis as typeof globalThis & GlobalWithMeterProvider
       if (globalState[METER_PROVIDER_SYMBOL] || globalState[METER_PROVIDER_SYMBOL_LEGACY]) {
-        this.meter = metrics.getMeter('@lynktrace/node', '0.1.0-beta.2')
+        this.meter = metrics.getMeter(SDK_NAME, SDK_VERSION)
         this.initialized = true
         this.ownsProvider = false
         logger.info('OpenTelemetry meter provider already registered by APM telemetry; reusing global provider')
@@ -110,8 +111,8 @@ class OtelMetricsManager {
         'process.pid': process.pid,
         'process.runtime.name': 'node',
         'process.runtime.version': process.version,
-        'telemetry.sdk.name': '@lynktrace/node',
-        'telemetry.sdk.version': '0.1.0-beta.2',
+        'telemetry.sdk.name': SDK_NAME,
+        'telemetry.sdk.version': SDK_VERSION,
         'telemetry.sdk.language': 'nodejs',
         ...(customResources ?? {}),
       })
@@ -138,17 +139,12 @@ class OtelMetricsManager {
             instrumentName: '*.size',
             aggregation: { type: AggregationType.EXPONENTIAL_HISTOGRAM, options: { maxSize: maxBuckets } },
           },
-          // NOTE: no bare '*' catch-all view here. The previous wildcard
-          // forced EXPONENTIAL_HISTOGRAM aggregation onto EVERY instrument —
-          // including counters and gauges — corrupting their semantics and
-          // inflating memory/cardinality. Instruments that match none of
-          // the suffix views above now keep their default aggregation.
         ],
       }
 
       this.provider = new MeterProvider(meterProviderOptions)
 
-      this.meter = this.provider.getMeter('@lynktrace/node', '0.1.0-beta.2')
+      this.meter = this.provider.getMeter(SDK_NAME, SDK_VERSION)
 
       metrics.setGlobalMeterProvider(this.provider)
       globalState[METER_PROVIDER_SYMBOL] = true
@@ -180,7 +176,7 @@ class OtelMetricsManager {
    * Record a histogram value using OTel exponential histogram.
    * O(1) per record — no raw value storage, no sorting.
    */
-  recordHistogram(name: string, value: number, labels: Record<string, string> = {}): void {
+  recordHistogram(name: string, value: number, labels: Record<string, string> = {}, unit?: string): void {
     if (!this.initialized || !this.meter) return
 
     try {
@@ -188,7 +184,7 @@ class OtelMetricsManager {
       if (!histogram) {
         histogram = this.meter.createHistogram(name, {
           description: `Histogram for ${name}`,
-          unit: 'ms',
+          unit: unit || 'ms',
         })
         this.histograms.set(name, histogram)
       }
@@ -201,7 +197,7 @@ class OtelMetricsManager {
   /**
    * Increment a counter using OTel.
    */
-  incrementCounter(name: string, value: number, labels: Record<string, string> = {}): void {
+  incrementCounter(name: string, value: number, labels: Record<string, string> = {}, unit?: string): void {
     if (!this.initialized || !this.meter) return
 
     try {
@@ -209,7 +205,7 @@ class OtelMetricsManager {
       if (!counter) {
         counter = this.meter.createCounter(name, {
           description: `Counter for ${name}`,
-          unit: '1',
+          unit: unit || '1',
         })
         this.counters.set(name, counter)
       }
@@ -222,7 +218,7 @@ class OtelMetricsManager {
   /**
    * Record an up-down counter value using OTel.
    */
-  addUpDownCounter(name: string, value: number, labels: Record<string, string> = {}): void {
+  addUpDownCounter(name: string, value: number, labels: Record<string, string> = {}, unit?: string): void {
     if (!this.initialized || !this.meter) return
 
     try {
@@ -230,7 +226,7 @@ class OtelMetricsManager {
       if (!upDownCounter) {
         upDownCounter = this.meter.createUpDownCounter(name, {
           description: `UpDownCounter for ${name}`,
-          unit: '1',
+          unit: unit || '1',
         })
         this.upDownCounters.set(name, upDownCounter)
       }
@@ -243,7 +239,7 @@ class OtelMetricsManager {
   /**
    * Set a gauge value using OTel.
    */
-  setGauge(name: string, value: number, labels: Record<string, string> = {}): void {
+  setGauge(name: string, value: number, labels: Record<string, string> = {}, unit?: string): void {
     if (!this.initialized || !this.meter) return
 
     try {
@@ -251,7 +247,7 @@ class OtelMetricsManager {
       if (!gauge) {
         gauge = this.meter.createGauge(name, {
           description: `Gauge for ${name}`,
-          unit: '1',
+          unit: unit || '1',
         })
         this.gauges.set(name, gauge)
       }
