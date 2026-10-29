@@ -38,3 +38,12 @@ export function toError(value) {
     }
     return new Error(String(value));
 }
+export function extractErrorCauseChain(error, maxDepth = 5) {
+    const chain = [];
+    let cur = error;
+    while (cur && cur.cause && chain.length < maxDepth) {
+        cur = cur.cause;
+        chain.push({ name: cur.name ?? 'Error', message: cur.message ?? String(cur), stack: cur.stack });
+    }
+    return chain;
+}

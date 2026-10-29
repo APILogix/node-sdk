@@ -199,6 +199,54 @@ export function serializeLabels(labels) {
         }
         return `${k1}=${labels[k1] ?? ''},${k0}=${labels[k0] ?? ''}`;
     }
+    if (len === 3) {
+        let k0 = keys[0], k1 = keys[1], k2 = keys[2];
+        if (k0 > k1) {
+            const t = k0;
+            k0 = k1;
+            k1 = t;
+        }
+        if (k1 > k2) {
+            const t = k1;
+            k1 = k2;
+            k2 = t;
+        }
+        if (k0 > k1) {
+            const t = k0;
+            k0 = k1;
+            k1 = t;
+        }
+        return `${k0}=${labels[k0] ?? ''},${k1}=${labels[k1] ?? ''},${k2}=${labels[k2] ?? ''}`;
+    }
+    if (len === 4) {
+        let k0 = keys[0], k1 = keys[1], k2 = keys[2], k3 = keys[3];
+        if (k0 > k1) {
+            const t = k0;
+            k0 = k1;
+            k1 = t;
+        }
+        if (k2 > k3) {
+            const t = k2;
+            k2 = k3;
+            k3 = t;
+        }
+        if (k0 > k2) {
+            const t = k0;
+            k0 = k2;
+            k2 = t;
+        }
+        if (k1 > k3) {
+            const t = k1;
+            k1 = k3;
+            k3 = t;
+        }
+        if (k1 > k2) {
+            const t = k1;
+            k1 = k2;
+            k2 = t;
+        }
+        return `${k0}=${labels[k0] ?? ''},${k1}=${labels[k1] ?? ''},${k2}=${labels[k2] ?? ''},${k3}=${labels[k3] ?? ''}`;
+    }
     keys.sort();
     let result = '';
     for (let i = 0; i < len; i++) {

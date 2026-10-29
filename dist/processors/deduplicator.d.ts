@@ -33,6 +33,7 @@ declare class ErrorDeduplicator {
      * window expiry. This makes eviction O(k) instead of O(n log n).
      */
     isDuplicate(fingerprint: string): boolean;
+    delete(fingerprint: string): boolean;
     /**
      * Get deduplication statistics.
      */

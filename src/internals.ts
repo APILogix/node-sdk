@@ -91,7 +91,19 @@ export { LynkTraceSpan } from './tracing/span.js'
 
 // ─── Logging plumbing ───────────────────────────────────────────────────────
 
-export { getLogger, jsonLogger, setLogFormat, getLogFormat } from './utils/logger.js'
+export {
+  getLogger,
+  jsonLogger,
+  setLogFormat,
+  getLogFormat,
+  NonBlockingStreamWriter,
+  stdoutDrainer,
+  stderrDrainer,
+  getLoggerWriterStats,
+} from './utils/logger.js'
+export { LogRateLimiter } from './subsystems/logging-subsystem.js'
+export { createWinstonTransport, LynkTraceWinstonTransport } from './instrumentation/winston.js'
+export { createPinoStream, LynkTracePinoStream, pinoTraceMixin } from './instrumentation/pino.js'
 
 // ─── Remote-config sub-types (advanced) ─────────────────────────────────────
 

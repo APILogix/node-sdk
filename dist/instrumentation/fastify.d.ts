@@ -24,6 +24,8 @@ export interface LynkTraceFastifyOptions {
      * and takes precedence when available.
      */
     readonly trustedProxies?: readonly string[];
+    /** Capture schema validation responses (HTTP 422). Other 4xx responses are ignored. Default: false. */
+    readonly captureValidationErrors?: boolean;
 }
 type FastifyInstance = {
     addHook(name: 'onRequest', handler: (request: FastifyRequest, reply: FastifyReply, done: HookDone) => void): void;

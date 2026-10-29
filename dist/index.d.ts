@@ -99,8 +99,13 @@ export { computeExclusiveDuration, SpanDurationTracker, spanDurationTracker } fr
 export type { SpanInterval, DurationBreakdown } from './tracing/span-duration.js';
 export { LynkTraceDrizzleLogger, createDrizzleInstrumentation } from './instrumentation/drizzle.js';
 export type { DrizzleInstrumentationOptions } from './instrumentation/drizzle.js';
-export { setLogger, setDebugMode, setLogLevel } from './utils/logger.js';
+export { setLogger, setDebugMode, setLogLevel, setLogFormat, getLogFormat, getLogger, isDebugMode, getLogLevel, setLogPrefix, getLogPrefix, getLoggerWriterStats, } from './utils/logger.js';
 export type { Logger, LogFormat } from './utils/logger.js';
+export { createWinstonTransport, LynkTraceWinstonTransport } from './instrumentation/winston.js';
+export type { LynkTraceWinstonOptions } from './instrumentation/winston.js';
+export { createPinoStream, LynkTracePinoStream, pinoTraceMixin } from './instrumentation/pino.js';
+export type { LynkTracePinoOptions } from './instrumentation/pino.js';
+export { LoggingSubsystem, LogRateLimiter } from './subsystems/logging-subsystem.js';
 export type { SDKInitOptions, RemoteConfigResponse, EntitlementsConfig, OfflineQueueConfig, OfflineQueueInitOptions, } from './types/config.js';
 export type { SDKEvent, RequestEvent, ErrorEvent, MessageEvent, MetricEvent, EventMetadata, StackFrame, LogEvent, ProfileEvent, CronCheckInEvent, SpanEvent, TraceEvent, AggregatedSpanEvent, } from './types/event.js';
 export type { Breadcrumb, BreadcrumbInput, BreadcrumbHint } from './types/breadcrumb.js';

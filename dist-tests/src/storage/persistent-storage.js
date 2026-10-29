@@ -62,7 +62,7 @@
  * malformed lines so a partial write at the tail of the file (the only
  * unprotected window) doesn't poison replay.
  */
-import { existsSync, unlinkSync, statSync, readdirSync, createReadStream, createWriteStream } from 'fs';
+import { existsSync, unlinkSync, statSync, readdirSync, createReadStream, createWriteStream, appendFileSync } from 'fs';
 import { appendFile, copyFile, mkdir, readFile, readdir, rename, stat, unlink, writeFile } from 'fs/promises';
 import { createInterface } from 'readline';
 import { join, dirname } from 'path';
@@ -107,6 +107,8 @@ class PersistentStorage {
     writeChain = Promise.resolve();
     persistedIds = new Set();
     customDirectoryConfigured = false;
+    /** Tracks the whole flush operation, including chunked serialization before disk enqueue. */
+    flushChain = Promise.resolve();
     configure(options = {}) {
         if (options.enabled !== undefined) {
             this.enabled = options.enabled;
@@ -168,7 +170,9 @@ class PersistentStorage {
             }
         }
         this.initialized = true;
-        const replayed = await withIoTimeout(this.replay(Date.now() + this.ioTimeoutMs * 2), this.ioTimeoutMs * 2, 'persistent-storage replay').catch(() => []);
+        const replayController = new AbortController();
+        const replayTimeoutMs = this.ioTimeoutMs * 2;
+        const replayed = await withIoTimeout(this.replay(Date.now() + replayTimeoutMs, replayController.signal), replayTimeoutMs, 'persistent-storage replay', () => replayController.abort()).catch(() => []);
         this.totalReplayed = replayed.length;
         logger.info('Persistent storage initialized', {
             directory: this.directoryPath,
@@ -191,7 +195,6 @@ class PersistentStorage {
             this.buffer.shift();
         }
         this.buffer.push(event);
-        this.eventCount++;
         if (this.buffer.length >= FLUSH_STRINGIFY_CHUNK_SIZE) {
             void this.flush();
         }
@@ -234,7 +237,6 @@ class PersistentStorage {
         }
         for (const event of toAdd) {
             this.buffer.push(event);
-            this.eventCount++;
         }
         if (this.buffer.length >= FLUSH_STRINGIFY_CHUNK_SIZE) {
             void this.flush();
@@ -244,6 +246,38 @@ class PersistentStorage {
         }
     }
     /**
+     * Synchronous flush for crash paths (SIGKILL, uncaughtException).
+     * Appends all buffered and extra events directly to disk using appendFileSync.
+     */
+    flushSync(extraEvents) {
+        if (!this.initialized || !this.enabled)
+            return;
+        if (this.flushTimer) {
+            clearTimeout(this.flushTimer);
+            this.flushTimer = null;
+        }
+        const toFlush = [...this.buffer, ...(extraEvents ?? [])];
+        this.buffer.length = 0;
+        if (toFlush.length === 0)
+            return;
+        try {
+            const entries = [];
+            const now = epochMs();
+            for (const event of toFlush) {
+                entries.push(JSON.stringify({ event, persistedAt: now }));
+            }
+            const content = entries.join('\n') + '\n';
+            appendFileSync(this.dataFile, content, { encoding: 'utf8', mode: 0o600 });
+            this.totalPersisted += toFlush.length;
+            this.eventCount += toFlush.length;
+            for (const event of toFlush) {
+                if (event.eventId)
+                    this.persistedIds.add(event.eventId);
+            }
+        }
+        catch { }
+    }
+    /**
      * Force-flush all buffered events to disk immediately.
      */
     async flush() {
@@ -251,6 +285,14 @@ class PersistentStorage {
             clearTimeout(this.flushTimer);
             this.flushTimer = null;
         }
+        // A flush can spend many event-loop turns stringifying a large batch
+        // before it enters writeChain. Tracking only writeChain let shutdown
+        // return while this pre-write work was still pending, losing the queue.
+        const operation = this.flushChain.then(() => this.flushBuffer());
+        this.flushChain = operation.catch(() => { });
+        await operation;
+    }
+    async flushBuffer() {
         if (this.buffer.length === 0)
             return;
         // Atomically snapshot and drain the buffer so concurrent flush() calls
@@ -353,9 +395,9 @@ class PersistentStorage {
         const beforeBuffer = this.buffer.length;
         this.buffer = this.buffer.filter(event => !deliveredIds.has(event.eventId ?? ''));
         const removedFromBuffer = beforeBuffer - this.buffer.length;
-        // Fast-path: Check if any delivered event ID was actually written to persistent storage.
-        // In normal operation, batches are delivered without ever being written to disk.
-        // If no delivered event was persisted to disk, avoid expensive readFile/parse/rewrite.
+        // In normal operation, batches are delivered without ever being written
+        // to disk. Replay and failed sends register IDs here so acknowledged rows
+        // can be removed from every rotated or orphaned queue segment.
         let hasPersistedDelivered = false;
         for (const id of deliveredIds) {
             if (this.persistedIds.has(id)) {
@@ -363,76 +405,155 @@ class PersistentStorage {
                 break;
             }
         }
-        if (!hasPersistedDelivered || !existsSync(this.dataFile)) {
+        if (!hasPersistedDelivered) {
             // Nothing on disk or delivered events were not persisted — discard count is purely the buffer trim.
             this.totalDiscarded += removedFromBuffer;
             return;
         }
         try {
             await this.enqueueWrite(async () => {
-                if (!existsSync(this.dataFile))
-                    return;
-                const tempFile = this.createTempFilePath();
-                let retainedCount = 0;
+                const files = await this.listReplayableFiles();
                 let removedFromDisk = 0;
-                try {
-                    const readStream = createReadStream(this.dataFile, { encoding: 'utf8', highWaterMark: 64 * 1024 });
-                    const writeStream = createWriteStream(tempFile, { encoding: 'utf8', mode: 0o600 });
-                    const rl = createInterface({ input: readStream, crlfDelay: Infinity });
-                    let lineCounter = 0;
-                    for await (const line of rl) {
-                        const trimmed = line.trim();
-                        if (trimmed.length === 0)
-                            continue;
-                        // Fast regex heuristic to extract eventId without full JSON.parse
-                        const match = trimmed.match(/"eventId"\s*:\s*"([^"]+)"/);
-                        let eid = match ? match[1] : undefined;
-                        if (!eid) {
+                let activeFileRetained = null;
+                for (const filePath of files) {
+                    if (!existsSync(filePath))
+                        continue;
+                    const tempFile = this.createTempFilePath();
+                    let retainedCount = 0;
+                    let removedInFile = 0;
+                    try {
+                        const readStream = createReadStream(filePath, { encoding: 'utf8', highWaterMark: 64 * 1024 });
+                        const writeStream = createWriteStream(tempFile, { encoding: 'utf8', mode: 0o600 });
+                        const rl = createInterface({ input: readStream, crlfDelay: Infinity });
+                        let lineCounter = 0;
+                        for await (const line of rl) {
+                            const trimmed = line.trim();
+                            if (trimmed.length === 0)
+                                continue;
+                            let eventId;
                             try {
                                 const entry = JSON.parse(trimmed);
-                                eid = entry.event?.eventId;
+                                eventId = entry.event?.eventId;
                             }
                             catch {
-                                // Drop malformed lines while compacting acknowledged events.
+                                // Drop malformed rows while compacting acknowledged segments.
                                 continue;
                             }
+                            if (eventId && deliveredIds.has(eventId)) {
+                                removedInFile++;
+                            }
+                            else {
+                                writeStream.write(trimmed + '\n');
+                                retainedCount++;
+                            }
+                            if (++lineCounter % 250 === 0)
+                                await new Promise(resolve => setImmediate(resolve));
                         }
-                        if (eid && deliveredIds.has(eid)) {
-                            removedFromDisk++;
-                            this.persistedIds.delete(eid);
+                        await new Promise((resolve, reject) => {
+                            writeStream.once('error', reject);
+                            writeStream.end(resolve);
+                        });
+                        if (removedInFile > 0) {
+                            if (retainedCount === 0) {
+                                await unlink(filePath).catch(() => { });
+                                await unlink(tempFile).catch(() => { });
+                            }
+                            else {
+                                await safeAtomicRename(tempFile, filePath);
+                            }
+                            removedFromDisk += removedInFile;
                         }
                         else {
-                            writeStream.write(trimmed + '\n');
-                            retainedCount++;
+                            await unlink(tempFile).catch(() => { });
                         }
-                        lineCounter++;
-                        if (lineCounter % 250 === 0) {
-                            await new Promise(resolve => setImmediate(resolve));
-                        }
+                        if (filePath === this.dataFile)
+                            activeFileRetained = retainedCount;
                     }
-                    await new Promise((resolve, reject) => {
-                        writeStream.end(() => resolve());
-                        writeStream.on('error', reject);
-                    });
-                    if (retainedCount === 0) {
-                        await unlink(this.dataFile).catch(() => { });
+                    catch (streamErr) {
                         await unlink(tempFile).catch(() => { });
-                        this.persistedIds.clear();
+                        throw streamErr;
                     }
-                    else {
-                        await safeAtomicRename(tempFile, this.dataFile);
-                    }
-                    this.eventCount = retainedCount + this.buffer.length;
-                    this.totalDiscarded += removedFromBuffer + removedFromDisk;
                 }
-                catch (streamErr) {
-                    await unlink(tempFile).catch(() => { });
-                    throw streamErr;
+                for (const id of deliveredIds)
+                    this.persistedIds.delete(id);
+                if (activeFileRetained !== null)
+                    this.eventCount = activeFileRetained + this.buffer.length;
+                else if (!existsSync(this.dataFile))
+                    this.eventCount = this.buffer.length;
+                this.totalDiscarded += removedFromBuffer + removedFromDisk;
+                if (this.persistedIds.size === 0) {
+                    // Keep unrelated backlog IDs already represented in the queue by
+                    // loading the active file lazily on the next replay.
+                    this.persistedIds.clear();
                 }
             });
         }
         catch (error) {
             getLogger().warn('Persistent storage: discard failed', { error });
+        }
+    }
+    /** List queue segments owned by this key, excluding live sibling writers. */
+    async listReplayableFiles() {
+        const names = await readdir(this.directoryPath).catch(() => []);
+        const legacyPrefix = `pulse-events${this.filePrefix.startsWith('lynktrace-events') ? this.filePrefix.slice('lynktrace-events'.length) : ''}`;
+        const filePattern = new RegExp(`^(?:${this.filePrefix}|${legacyPrefix})(?:-(\\d+))?\\.ndjson(?:\\.(\\d+)\\.bak)?$`);
+        const files = [];
+        for (const name of names) {
+            const match = filePattern.exec(name);
+            if (!match)
+                continue;
+            const pidText = match[1];
+            if (pidText !== undefined) {
+                const pid = Number.parseInt(pidText, 10);
+                if (pid !== process.pid && isPidAlive(pid))
+                    continue;
+            }
+            files.push(join(this.directoryPath, name));
+        }
+        return files;
+    }
+    async restoreClaim(claimPath, originalPath) {
+        if (existsSync(originalPath)) {
+            const contents = await readFile(claimPath);
+            await appendFile(originalPath, contents);
+            await unlink(claimPath);
+            return;
+        }
+        try {
+            await safeAtomicRename(claimPath, originalPath);
+        }
+        catch (error) {
+            if (!existsSync(originalPath))
+                throw error;
+            // If another writer recreated the original name, append the still-owned
+            // claim before removing it. A crash during this fallback can duplicate
+            // rows, which are safe because event IDs are stable and backend-deduped.
+            const contents = await readFile(claimPath);
+            await appendFile(originalPath, contents);
+            await unlink(claimPath);
+        }
+    }
+    async recoverOrphanedClaims(entries) {
+        const legacyPrefix = `pulse-events${this.filePrefix.startsWith('lynktrace-events') ? this.filePrefix.slice('lynktrace-events'.length) : ''}`;
+        const claimPattern = /^\.(.+\.ndjson(?:\.\d+\.bak)?)\.claim-(\d+)-\d+-[a-z0-9]+\.tmp$/i;
+        for (const name of entries) {
+            const match = claimPattern.exec(name);
+            if (!match || !match[1] || !match[2])
+                continue;
+            const originalName = match[1];
+            if (!originalName.startsWith(this.filePrefix) && !originalName.startsWith(legacyPrefix))
+                continue;
+            const ownerPid = Number.parseInt(match[2], 10);
+            if (ownerPid === process.pid || isPidAlive(ownerPid))
+                continue;
+            const claimPath = join(this.directoryPath, name);
+            const originalPath = join(this.directoryPath, originalName);
+            try {
+                await this.restoreClaim(claimPath, originalPath);
+            }
+            catch {
+                // Leave an unrecoverable claim in place so a later startup can retry.
+            }
         }
     }
     /**
@@ -446,7 +567,7 @@ class PersistentStorage {
      * 4. Exclusively claims candidate files via atomic rename before reading to
      *    prevent multiple workers from racing or duplicating replay batches.
      */
-    async replay(deadlineMs) {
+    async replay(deadlineMs, signal) {
         const logger = getLogger();
         const now = epochMs();
         const validEvents = [];
@@ -455,7 +576,9 @@ class PersistentStorage {
             return [];
         }
         try {
-            const dirEntries = await readdir(this.directoryPath).catch(() => []);
+            let dirEntries = await readdir(this.directoryPath).catch(() => []);
+            await this.recoverOrphanedClaims(dirEntries);
+            dirEntries = await readdir(this.directoryPath).catch(() => []);
             const prefix = this.filePrefix;
             const legacyPrefix = `pulse-events${this.filePrefix.startsWith('lynktrace-events') ? this.filePrefix.slice('lynktrace-events'.length) : ''}`;
             const candidateList = [];
@@ -483,7 +606,7 @@ class PersistentStorage {
             candidateList.sort((a, b) => a.orderTimestamp - b.orderTimestamp);
             const candidateFiles = candidateList.map(c => c.name);
             for (const fileName of candidateFiles) {
-                if (deadlineMs !== undefined && Date.now() >= deadlineMs) {
+                if (signal?.aborted || (deadlineMs !== undefined && Date.now() >= deadlineMs)) {
                     logger.debug('Persistent storage: replay deadline reached, remaining files deferred to next startup');
                     break;
                 }
@@ -502,11 +625,17 @@ class PersistentStorage {
                 if (!claimed)
                     continue;
                 let completedFile = false;
+                const firstEventIndex = validEvents.length;
                 try {
                     const readStream = createReadStream(claimPath, { encoding: 'utf8', highWaterMark: 64 * 1024 });
                     const rl = createInterface({ input: readStream, crlfDelay: Infinity });
                     let lineCounter = 0;
                     for await (const line of rl) {
+                        if (signal?.aborted || (deadlineMs !== undefined && Date.now() >= deadlineMs)) {
+                            rl.close();
+                            readStream.destroy();
+                            throw new Error('Persistent storage replay aborted at deadline');
+                        }
                         const trimmed = line.trim();
                         if (trimmed.length === 0)
                             continue;
@@ -532,10 +661,22 @@ class PersistentStorage {
                 }
                 finally {
                     if (completedFile) {
-                        await unlink(claimPath).catch(() => { });
+                        if (validEvents.length > firstEventIndex) {
+                            // Keep the durable source until the backend acknowledges these
+                            // event IDs. This makes replay at-least-once across queue
+                            // saturation, shutdown, and process termination.
+                            await this.restoreClaim(claimPath, fullPath);
+                            for (const event of validEvents.slice(firstEventIndex)) {
+                                if (event.eventId)
+                                    this.persistedIds.add(event.eventId);
+                            }
+                        }
+                        else {
+                            await unlink(claimPath).catch(() => { });
+                        }
                     }
                     else {
-                        await safeAtomicRename(claimPath, fullPath).catch(() => { });
+                        await this.restoreClaim(claimPath, fullPath).catch(() => { });
                     }
                 }
             }
@@ -660,6 +801,7 @@ class PersistentStorage {
         // Catching here ensures shutdown never throws — the upstream lifecycle
         // step error handler will record any failure for observability.
         try {
+            await this.flushChain;
             await this.writeChain;
         }
         catch (err) {
@@ -668,6 +810,7 @@ class PersistentStorage {
         // Re-arm the chain to a fresh resolved promise so a subsequent init()
         // does not chain new writes onto an old (possibly rejected) chain.
         this.writeChain = Promise.resolve();
+        this.flushChain = Promise.resolve();
     }
     // ─── Internal ─────────────────────────────────────────────────────────
     scheduleFlush() {
@@ -825,11 +968,16 @@ export { PersistentStorage };
  * Rejects with a descriptive error so the caller can record the failure
  * and continue without blocking the shutdown drain.
  */
-function withIoTimeout(promise, timeoutMs, label) {
+function withIoTimeout(promise, timeoutMs, label, onTimeout) {
     let timer;
     const timeout = new Promise((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
-        timer.unref?.();
+        timer = setTimeout(() => {
+            onTimeout?.();
+            reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+        }, timeoutMs);
+        // The caller is awaiting this bounded I/O operation. Keep its deadline
+        // referenced so shutdown cannot be abandoned while a filesystem promise
+        // remains pending without any other active handles.
     });
     return Promise.race([promise, timeout]).finally(() => {
         if (timer)
@@ -854,7 +1002,7 @@ async function safeAtomicRename(source, target) {
             const code = err.code;
             if (code === 'EPERM' || code === 'EBUSY' || code === 'EACCES' || code === 'EEXIST') {
                 if (attempt < maxAttempts - 1) {
-                    if (isWindows) {
+                    if (isWindows && (target.endsWith('.tmp') || target.includes('.claim'))) {
                         await unlink(target).catch(() => { });
                     }
                     await new Promise(r => setTimeout(r, (attempt + 1) * 10));

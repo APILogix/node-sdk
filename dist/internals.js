@@ -50,6 +50,9 @@ export { getSessionManager } from './session/session-manager.js';
 // ─── Span class (advanced tracing access) ───────────────────────────────────
 export { LynkTraceSpan } from './tracing/span.js';
 // ─── Logging plumbing ───────────────────────────────────────────────────────
-export { getLogger, jsonLogger, setLogFormat, getLogFormat } from './utils/logger.js';
+export { getLogger, jsonLogger, setLogFormat, getLogFormat, NonBlockingStreamWriter, stdoutDrainer, stderrDrainer, getLoggerWriterStats, } from './utils/logger.js';
+export { LogRateLimiter } from './subsystems/logging-subsystem.js';
+export { createWinstonTransport, LynkTraceWinstonTransport } from './instrumentation/winston.js';
+export { createPinoStream, LynkTracePinoStream, pinoTraceMixin } from './instrumentation/pino.js';
 export { REMOTE_CONFIG_SCHEMA_VERSION } from './types/config.js';
 export { RuntimeMetricsSubsystem, RUNTIME_METRIC_NAMES } from './subsystems/runtime-metrics-subsystem.js';

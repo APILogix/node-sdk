@@ -16,8 +16,8 @@ export interface BatchManagerOptions {
     readonly maxWaitTimeMs: number;
     readonly maxPayloadBytes: number;
     readonly socketTimeoutMs: number;
-    /** Retained for config compatibility; telemetry batches are always sent gzip-compressed. */
-    readonly compression: 'gzip' | 'none';
+    /** Compression algorithm used. Defaults to 'none' for crons, 'gzip' for all other telemetry routes. */
+    readonly compression?: 'gzip' | 'none' | undefined;
     readonly keepAlive: boolean;
     readonly retry: TransportRetryConfig;
     readonly onDrop?: (info: QueueDropInfo) => void;
@@ -68,6 +68,8 @@ export declare class BatchManager {
      */
     shutdown(timeoutMs?: number): Promise<SDKEvent[]>;
     getStats(): BatchManagerStats;
+    /** Snapshot all unsent work synchronously for the process `exit` hook. */
+    drainForExit(): SDKEvent[];
     /** Backward-compatible alias */
     stats(): BatchManagerStats;
     private pump;

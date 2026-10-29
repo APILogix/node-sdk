@@ -5,6 +5,12 @@
 import { type SeverityLevel } from '../types/severity.js';
 import type { ErrorSeverity } from '../types/error.js';
 export type { ErrorSeverity };
+/** Per-call capture options. `mechanism`/`handled` override request-store defaults. */
+export interface CaptureExceptionOptions {
+    readonly severity?: ErrorSeverity;
+    readonly mechanism?: string;
+    readonly handled?: boolean;
+}
 /**
  * Capture an error/exception.
  *
@@ -19,6 +25,4 @@ export type { ErrorSeverity };
  * @param error - The error to capture (Error, string, or unknown)
  * @param severity - Optional severity level ('fatal' | 'error' | 'warning' | 'info' | 'debug') or options object with severity. Defaults to 'error'.
  */
-export declare function captureException(error: unknown, severity?: ErrorSeverity | {
-    severity?: ErrorSeverity;
-} | SeverityLevel): void;
+export declare function captureException(error: unknown, severity?: ErrorSeverity | CaptureExceptionOptions | SeverityLevel): void;

@@ -56,7 +56,10 @@ export type { MetricRegistryOptions, HistogramOptions, CounterOptions, MetricLab
 export { getSessionManager } from './session/session-manager.js';
 export type { Session, SessionManagerOptions } from './session/session-manager.js';
 export { LynkTraceSpan } from './tracing/span.js';
-export { getLogger, jsonLogger, setLogFormat, getLogFormat } from './utils/logger.js';
+export { getLogger, jsonLogger, setLogFormat, getLogFormat, NonBlockingStreamWriter, stdoutDrainer, stderrDrainer, getLoggerWriterStats, } from './utils/logger.js';
+export { LogRateLimiter } from './subsystems/logging-subsystem.js';
+export { createWinstonTransport, LynkTraceWinstonTransport } from './instrumentation/winston.js';
+export { createPinoStream, LynkTracePinoStream, pinoTraceMixin } from './instrumentation/pino.js';
 export type { RemoteConfigResponse, FeaturesConfig, SamplingConfig, RouteSamplingRates, InstrumentationConfig, PrivacyConfig, PrivacyCaptureConfig, ScrubbingConfig, PiiDetectionConfig, LimitsConfig, PersistenceGovernanceConfig, KillswitchesConfig, TransportRemoteConfig, TransportRouteConfig, TransportRouteName, TransportRetryConfig, TransportQueueConfig, ConfigMeta, ConfigDiff, } from './types/config.js';
 export { REMOTE_CONFIG_SCHEMA_VERSION } from './types/config.js';
 export type { TransportResult, IngestPayload, TransportHealth, TransportAdapter, RouteTransportHealth, MultiRouteTransportHealth, } from './types/transport.js';

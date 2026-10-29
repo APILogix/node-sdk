@@ -32,10 +32,12 @@ export function validateRemoteConfig(payload) {
     if (!isRecord(payload))
         return invalid('payload is not a JSON object');
     const config = payload;
-    // 1. Schema Version
-    validateInteger(config, 'schemaVersion', errors, 1, REMOTE_CONFIG_SCHEMA_VERSION);
-    if (typeof config['schemaVersion'] === 'number' && config['schemaVersion'] > REMOTE_CONFIG_SCHEMA_VERSION) {
-        errors.push(`schemaVersion ${config['schemaVersion']} is newer than client-supported ${REMOTE_CONFIG_SCHEMA_VERSION}; package upgrade required`);
+    // 1. Schema Version (defaults to REMOTE_CONFIG_SCHEMA_VERSION if omitted)
+    if (config['schemaVersion'] !== undefined) {
+        validateInteger(config, 'schemaVersion', errors, 1, REMOTE_CONFIG_SCHEMA_VERSION);
+        if (typeof config['schemaVersion'] === 'number' && config['schemaVersion'] > REMOTE_CONFIG_SCHEMA_VERSION) {
+            errors.push(`schemaVersion ${config['schemaVersion']} is newer than client-supported ${REMOTE_CONFIG_SCHEMA_VERSION}; package upgrade required`);
+        }
     }
     // 2. Mandatory Sections
     validateIdentity(config['sdk'], errors);
@@ -118,15 +120,25 @@ export function normalizeRemoteConfig(payload, fallback = DEFAULT_REMOTE_CONFIG)
     }
     const hash = createHash('sha256').update(stableStringify(hashSource)).digest('hex');
     const canonicalHash = `sha256:${hash}`;
+    const rawRev = clone.meta.configRevision ??
+        clone.sdk.configRevision ??
+        clone.sdk.configversion ??
+        clone.sdk.configVersion;
+    const configRevision = (typeof rawRev === 'number' && Number.isFinite(rawRev)) || rawRev === null
+        ? rawRev
+        : (typeof rawRev === 'string' && !isNaN(Number(rawRev)) ? Number(rawRev) : undefined);
     const normalized = {
         ...clone,
+        schemaVersion: clone.schemaVersion ?? REMOTE_CONFIG_SCHEMA_VERSION,
         sdk: {
             ...clone.sdk,
             service: clone.sdk.service ?? clone.sdk.projectId,
+            ...(configRevision !== undefined ? { configRevision } : {}),
         },
         meta: {
             ...clone.meta,
             configHash: clone.meta.configHash ?? canonicalHash,
+            ...(configRevision !== undefined ? { configRevision } : {}),
         },
     };
     return deepFreeze(normalized);
@@ -159,6 +171,14 @@ function validateIdentity(value, errors) {
     validateOptionalNonEmptyString(value, 'service', 'sdk.service', errors);
     validateNonEmptyString(value, 'environment', 'sdk.environment', errors);
     validateNonEmptyString(value, 'release', 'sdk.release', errors);
+    const rev = value['configRevision'] ??
+        value['configversion'] ??
+        value['configVersion'];
+    if (rev !== undefined && rev !== null) {
+        if (typeof rev !== 'number' || !Number.isInteger(rev) || rev < 0) {
+            errors.push('sdk.configRevision must be a non-negative integer or null');
+        }
+    }
 }
 function validateSampling(value, errors) {
     if (!isConfigSection(value, 'sampling', errors))
@@ -189,27 +209,51 @@ function validateSampling(value, errors) {
     }
 }
 function validateInstrumentation(value, errors) {
+    if (typeof value === 'boolean') {
+        // Single master boolean toggle for all 31+ instrumentations
+        return;
+    }
     if (!isConfigSection(value, 'instrumentation', errors))
         return;
-    for (const key of ['http', 'https', 'fetch', 'axios', 'mongodb', 'eventEmitterPatch']) {
-        validateBoolean(value, key, `instrumentation.${key}`, errors);
-    }
-    isBooleanOrObject(value, 'redis', ['enabled'], errors);
-    if (isRecord(value['redis']) && value['redis']['keyPolicy'] !== undefined) {
-        const kp = String(value['redis']['keyPolicy']);
-        if (!['command-only', 'sanitized-key', 'full', 'hash'].includes(kp)) {
-            errors.push('instrumentation.redis.keyPolicy is invalid');
+    // Optional polymorphic hybrid flags:
+    if (value['enabled'] !== undefined)
+        validateBoolean(value, 'enabled', 'instrumentation.enabled', errors);
+    if (value['disabled'] !== undefined) {
+        if (!Array.isArray(value['disabled']) || !value['disabled'].every(item => typeof item === 'string')) {
+            errors.push('instrumentation.disabled must be an array of strings');
         }
     }
-    isBooleanOrObject(value, 'express', ['enabled'], errors);
-    isBooleanOrObject(value, 'fastify', ['enabled', 'captureHooks', 'captureValidationErrors'], errors);
-    isBooleanOrObject(value, 'graphql', ['enabled', 'captureResolvers'], errors);
-    isBooleanOrObject(value, 'prisma', ['enabled', 'captureQueries', 'captureParams'], errors);
-    isBooleanOrObject(value, 'pg', ['enabled', 'captureQueries', 'captureParams'], errors);
-    isBooleanOrObject(value, 'mysql2', ['enabled', 'captureQueries'], errors);
-    isBooleanOrObject(value, 'bullmq', ['enabled'], errors, [
-        'emitCreateSpansForBulk', 'emitCreateSpansForFlow', 'requireParentSpanForPublish',
-    ]);
+    // Detailed per-library flags (only validate when explicitly present):
+    for (const key of ['http', 'https', 'fetch', 'axios', 'mongodb', 'eventEmitterPatch']) {
+        if (value[key] !== undefined)
+            validateBoolean(value, key, `instrumentation.${key}`, errors);
+    }
+    if (value['redis'] !== undefined) {
+        isBooleanOrObject(value, 'redis', ['enabled'], errors);
+        if (isRecord(value['redis']) && value['redis']['keyPolicy'] !== undefined) {
+            const kp = String(value['redis']['keyPolicy']);
+            if (!['command-only', 'sanitized-key', 'full', 'hash'].includes(kp)) {
+                errors.push('instrumentation.redis.keyPolicy is invalid');
+            }
+        }
+    }
+    if (value['express'] !== undefined)
+        isBooleanOrObject(value, 'express', ['enabled'], errors);
+    if (value['fastify'] !== undefined)
+        isBooleanOrObject(value, 'fastify', ['enabled', 'captureHooks', 'captureValidationErrors'], errors);
+    if (value['graphql'] !== undefined)
+        isBooleanOrObject(value, 'graphql', ['enabled', 'captureResolvers'], errors);
+    if (value['prisma'] !== undefined)
+        isBooleanOrObject(value, 'prisma', ['enabled', 'captureQueries', 'captureParams'], errors);
+    if (value['pg'] !== undefined)
+        isBooleanOrObject(value, 'pg', ['enabled', 'captureQueries', 'captureParams'], errors);
+    if (value['mysql2'] !== undefined)
+        isBooleanOrObject(value, 'mysql2', ['enabled', 'captureQueries'], errors);
+    if (value['bullmq'] !== undefined) {
+        isBooleanOrObject(value, 'bullmq', ['enabled'], errors, [
+            'emitCreateSpansForBulk', 'emitCreateSpansForFlow', 'requireParentSpanForPublish',
+        ]);
+    }
     // Optional Cloud & NoSQL Databases
     if (value['dynamodb'] !== undefined)
         isBooleanOrObject(value, 'dynamodb', ['enabled'], errors, ['captureQueries', 'captureParams']);
@@ -369,7 +413,7 @@ function validateTransport(value, errors) {
         validateInteger(route, 'batchSize', errors, SAFETY_CEILINGS.minBatchSize, SAFETY_CEILINGS.batchSize, `transport.routes.${name}`);
         validateInteger(route, 'flushIntervalMs', errors, SAFETY_CEILINGS.minFlushIntervalMs, SAFETY_CEILINGS.flushIntervalMs, `transport.routes.${name}`);
         validateInteger(route, 'timeoutMs', errors, SAFETY_CEILINGS.minTimeoutMs, SAFETY_CEILINGS.timeoutMs, `transport.routes.${name}`);
-        if (route['compression'] !== 'gzip' && route['compression'] !== 'none') {
+        if (route['compression'] !== undefined && route['compression'] !== 'gzip' && route['compression'] !== 'none') {
             errors.push(`transport.routes.${name}.compression is invalid`);
         }
         if (!['critical', 'high', 'normal', 'low'].includes(String(route['priority']))) {

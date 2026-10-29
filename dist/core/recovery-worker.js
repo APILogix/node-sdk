@@ -129,7 +129,7 @@ export class BackgroundRecoveryWorker {
                 try {
                     const remoteClient = new RemoteConfigClient({
                         apiKey: this.options.apiKey,
-                        initTimeoutMs: this.options.initTimeoutMs ?? 5_000,
+                        initTimeoutMs: this.options.initTimeoutMs ?? 10_000,
                         initRetries: 0,
                     });
                     const initResponse = await remoteClient.initialize();

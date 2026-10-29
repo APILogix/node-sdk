@@ -69,6 +69,8 @@ export declare class TransportRouter {
      * tests can run without it.
      */
     drainAllQueues(): SDKEvent[];
+    /** Snapshot queued, retrying, and active batches for a synchronous exit hook. */
+    drainAllForExit(): SDKEvent[];
     shutdown(): Promise<SDKEvent[]>;
     static reset(): Promise<void>;
     private buildRuntime;

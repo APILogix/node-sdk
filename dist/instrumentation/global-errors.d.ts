@@ -8,6 +8,7 @@
  * On unhandledRejection: captures the error and continues
  * (rejections don't crash the process by default in modern Node.js).
  */
+export declare const CAPTURED_ERROR_MARKER: unique symbol;
 /**
  * Returns whether the SDK is actively executing an emergency crash flush sequence.
  */

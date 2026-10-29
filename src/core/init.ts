@@ -4,7 +4,7 @@ import { sdkInitOptionsSchema } from '../types/config.js'
 import { client } from './client.js'
 import { SDKError } from './errors.js'
 import { BACKEND_BASE_URL } from '../constants/defaults.js'
-import { waitForShutdownCompletion, registerSignalHandlers, isSDKShuttingDown } from './lifecycle.js'
+import { waitForShutdownCompletion, registerSignalHandlers, registerExitPersistenceHandler, isSDKShuttingDown } from './lifecycle.js'
 import { getLogger, setDebugMode, setLogLevel } from '../utils/logger.js'
 import { RemoteConfigClient, type InitResponse } from './remote-config-client.js'
 import { validateApiKey } from './api-key.js'
@@ -87,8 +87,40 @@ export async function init(options?: string | Partial<SDKInitOptions> | Record<s
     client.setState('created')
   }
 
+  // Initialization owns lifecycle state from the moment its promise is
+  // published. A concurrent malformed call is an inert no-op; it must never
+  // reset instrumentation, buffers, or the state machine underneath startup.
+  const existing = client.getInitPromise()
+  if (existing) {
+    const validationError = checkInitOptions(normalizedOptions)
+    if (validationError) {
+      getLogger().warn('Ignoring invalid init options while initialization is in progress', {
+        error: validationError.message,
+      })
+      return existing
+    }
+    if (!client.hasSamePendingIdentity(normalizedOptions)) {
+      throw new SDKError('Telemetry initialization already in progress with different options', 'SDK_INIT_IN_PROGRESS')
+    }
+    return existing
+  }
+
   setDebugMode(normalizedOptions.debug ?? false)
   if (normalizedOptions.logLevel) setLogLevel(normalizedOptions.logLevel)
+
+  if (client.initialized) {
+    const validationError = checkInitOptions(normalizedOptions)
+    if (validationError) {
+      getLogger().warn('Ignoring invalid re-initialization options; keeping current SDK configuration', {
+        error: validationError.message,
+      })
+      return ConfigManager.getInstance().getConfig()
+    }
+    if (!client.hasSameIdentity(normalizedOptions)) {
+      throw new SDKError('Telemetry already initialized with different options', 'SDK_ALREADY_INITIALIZED')
+    }
+    return ConfigManager.getInstance().getConfig()
+  }
 
   const validationError = checkInitOptions(normalizedOptions)
   if (validationError) {
@@ -109,22 +141,7 @@ export async function init(options?: string | Partial<SDKInitOptions> | Record<s
     return undefined
   }
 
-  if (client.initialized) {
-    if (!client.hasSameIdentity(normalizedOptions)) {
-      throw new SDKError('Telemetry already initialized with different options', 'SDK_ALREADY_INITIALIZED')
-    }
-    return ConfigManager.getInstance().getConfig()
-  }
-
   registerBootstrapAutoInstrumentations()
-
-  const existing = client.getInitPromise()
-  if (existing) {
-    if (!client.hasSamePendingIdentity(normalizedOptions)) {
-      throw new SDKError('Telemetry initialization already in progress with different options', 'SDK_INIT_IN_PROGRESS')
-    }
-    return existing
-  }
 
   if (client.getState() === 'recovering') {
     if (!client.hasSameIdentity(normalizedOptions)) {
@@ -539,6 +556,7 @@ export async function activateSDK(
     }
 
     const persistedEvents = await persistedEventsPromise
+    registerExitPersistenceHandler()
     client.markInitialized()
     filterBufferedEvents(config)
     await replayBufferedEvents(persistedEvents)
@@ -648,10 +666,28 @@ async function replayBufferedEvents(persisted: readonly unknown[]): Promise<void
   const killswitch = KillswitchEngine.getInstance()
 
   if (router && !killswitch?.isSDKDisabled() && persisted.length > 0) {
+    let chunkCount = 0
     for (let index = 0; index < persisted.length; index++) {
       const ev = persisted[index] as import('../types/event.js').SDKEvent | undefined
       if (ev && typeof ev === 'object' && 'type' in ev) {
-        router.send(ev)
+        if (!router.send(ev)) {
+          // Queue saturation is recoverable because replay files remain on
+          // disk until their event IDs are acknowledged. Drain once and retry
+          // admission so startup can continue through large offline queues.
+          await router.flushAll()
+          if (!router.send(ev)) {
+            getLogger().warn('Offline event replay deferred because the transport queue is full', {
+              eventId: ev.eventId,
+              eventType: ev.type,
+            })
+            continue
+          }
+        }
+        chunkCount++
+      }
+      if (chunkCount >= 1_000) {
+        await router.flushAll()
+        chunkCount = 0
       }
       if ((index + 1) % 100 === 0) {
         await new Promise<void>(resolve => setImmediate(resolve))
@@ -751,7 +787,7 @@ async function enterDormantState(_error?: unknown, options?: SDKInitOptions): Pr
       activateFn: async (response) => {
         const recoveryRemoteClient = new RemoteConfigClient({
           apiKey: recoveryOptions.apiKey,
-          initTimeoutMs: recoveryOptions.initTimeoutMs ?? 5_000,
+          initTimeoutMs: recoveryOptions.initTimeoutMs ?? 10_000,
           initRetries: 0,
         })
         await activateSDK(recoveryRemoteClient, response, recoveryOptions, 'recovery')

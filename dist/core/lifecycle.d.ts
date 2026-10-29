@@ -48,6 +48,11 @@ export declare function isSDKShuttingDown(): boolean;
  */
 export declare function onBeforeShutdown(hook: () => Promise<void>): void;
 /**
+ * Persist transport work synchronously if the host owns SIGTERM and later
+ * calls process.exit() without awaiting SDK shutdown.
+ */
+export declare function registerExitPersistenceHandler(): void;
+/**
  * Graceful shutdown — flushes telemetry, tears down subsystems, and resets
  * all global state so a subsequent init() starts from a clean slate.
  *

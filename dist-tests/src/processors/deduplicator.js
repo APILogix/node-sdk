@@ -93,7 +93,7 @@ class ErrorDeduplicator {
             this.entries.set(fingerprint, { firstSeen: now, lastSeen: now, count: 1 });
             return false;
         }
-        if (now - existing.lastSeen > this.suppressionWindowMs) {
+        if (now - existing.firstSeen > this.suppressionWindowMs) {
             this.entries.set(fingerprint, { firstSeen: now, lastSeen: now, count: 1 });
             return false;
         }
@@ -101,6 +101,9 @@ class ErrorDeduplicator {
         existing.count += 1;
         this.suppressedCount += 1;
         return true;
+    }
+    delete(fingerprint) {
+        return this.entries.delete(fingerprint);
     }
     /**
      * Get deduplication statistics.

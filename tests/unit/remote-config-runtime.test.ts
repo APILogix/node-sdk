@@ -276,12 +276,12 @@ describe('single-source remote configuration runtime', () => {
     assert.equal(manager.getConfig().sampling.traces, 0.8)
   })
 
-  it('defaults to a 3-second startup deadline when initTimeoutMs is not provided', async () => {
+  it('defaults to a 10-second startup deadline when initTimeoutMs is not provided', async () => {
     const remote = new RemoteConfigClient({
       apiKey: 'key',
     })
     // Inspect private initTimeoutMs and initRetries defaults
-    assert.equal((remote as unknown as { initTimeoutMs: number }).initTimeoutMs, 3000)
+    assert.equal((remote as unknown as { initTimeoutMs: number }).initTimeoutMs, 10000)
     assert.equal((remote as unknown as { initRetries: number }).initRetries, 2)
   })
 

@@ -8,7 +8,7 @@ import { hmacSha256, sha256 } from '../utils/hash.js';
 import { getLogger } from '../utils/logger.js';
 import { isRetryableError } from './retry-classifier.js';
 const CONTROL_PLANE_TIMEOUT_MS = 5_000;
-const INIT_TIMEOUT_MS = 3_000;
+const INIT_TIMEOUT_MS = 10_000;
 const DEFAULT_INIT_RETRIES = 2;
 const MAX_INIT_RETRIES = 3;
 const INIT_RETRY_BASE_DELAY_MS = 150;
@@ -44,11 +44,19 @@ export class RemoteConfigClient {
             throw new SDKError('Init response is missing project, environment, release, or complete configuration', 'INVALID_INIT_RESPONSE');
         }
         const sdk = normalized.config.sdk;
-        if (!isRecord(sdk)
-            || normalized.projectId !== sdk['projectId']
-            || normalized.environment !== sdk['environment']
-            || normalized.release !== sdk['release']) {
-            throw new SDKError('Init response identity does not match config.sdk', 'INVALID_INIT_RESPONSE');
+        if (!isRecord(sdk)) {
+            throw new SDKError('Init response is missing config.sdk', 'INVALID_INIT_RESPONSE');
+        }
+        if (isRecord(payload)) {
+            if (payload['projectId'] !== undefined && payload['projectId'] !== sdk['projectId']) {
+                throw new SDKError('Init response identity does not match config.sdk', 'INVALID_INIT_RESPONSE');
+            }
+            if (payload['environment'] !== undefined && payload['environment'] !== sdk['environment']) {
+                throw new SDKError('Init response identity does not match config.sdk', 'INVALID_INIT_RESPONSE');
+            }
+            if (payload['release'] !== undefined && payload['release'] !== sdk['release']) {
+                throw new SDKError('Init response identity does not match config.sdk', 'INVALID_INIT_RESPONSE');
+            }
         }
         getLogger().info('[RemoteConfigClient] Init response accepted', {
             endpoint: '/v1/init',
@@ -186,6 +194,17 @@ export class RemoteConfigClient {
                 responseBytes: Buffer.byteLength(text),
                 contentType: response.headers.get('content-type') ?? undefined,
             });
+            if (!response.ok) {
+                const retryAfter = retryAfterMs(response.headers.get('retry-after'));
+                throw new SDKError('Control-plane request failed', 'HTTP_ERROR', {
+                    statusCode: response.status,
+                    status: response.status,
+                    bodySnippet: text.slice(0, 200),
+                    ...(retryAfter !== undefined
+                        ? { retryAfterMs: retryAfter }
+                        : {}),
+                });
+            }
             let payload = null;
             if (text) {
                 try {
@@ -199,16 +218,6 @@ export class RemoteConfigClient {
             }
             if (path === '/v1/init') {
                 getLogger().debug('[RemoteConfigClient] Init route response served', summarizeInitRoutePayload(payload));
-            }
-            if (!response.ok) {
-                const retryAfter = retryAfterMs(response.headers.get('retry-after'));
-                throw new SDKError('Control-plane request failed', 'HTTP_ERROR', {
-                    statusCode: response.status,
-                    status: response.status,
-                    ...(retryAfter !== undefined
-                        ? { retryAfterMs: retryAfter }
-                        : {}),
-                });
             }
             return payload;
         }
@@ -297,23 +306,48 @@ function normalizeInitResponse(payload) {
         return null;
     const sdk = config['sdk'];
     const meta = isRecord(config['meta']) ? config['meta'] : null;
-    const projectId = isNonEmptyString(payload['projectId']) ? payload['projectId'] : null;
-    const environment = isNonEmptyString(payload['environment']) ? payload['environment'] : null;
-    const release = isNonEmptyString(payload['release']) ? payload['release'] : null;
+    // Check if root envelope has identity fields
+    const hasAnyRootIdentity = payload['projectId'] !== undefined ||
+        payload['environment'] !== undefined ||
+        payload['release'] !== undefined;
+    let projectId;
+    let environment;
+    let release;
+    if (hasAnyRootIdentity) {
+        // If root envelope contains identity fields, all 3 must be non-empty strings
+        projectId = isNonEmptyString(payload['projectId']) ? payload['projectId'] : null;
+        environment = isNonEmptyString(payload['environment']) ? payload['environment'] : null;
+        release = isNonEmptyString(payload['release']) ? payload['release'] : null;
+    }
+    else {
+        // If root envelope omitted identity (e.g. simplified payload), extract from config.sdk
+        projectId = isNonEmptyString(sdk['projectId']) ? sdk['projectId'] : null;
+        environment = isNonEmptyString(sdk['environment']) ? sdk['environment'] : null;
+        release = isNonEmptyString(sdk['release']) ? sdk['release'] : null;
+    }
     if (!projectId || !environment || !release)
         return null;
+    const organizationId = firstNonEmptyString(payload['organizationId'], sdk['organizationId']);
+    const environmentId = firstNonEmptyString(payload['environmentId'], sdk['environmentId']);
+    const rawRevision = payload['configRevision'] ??
+        sdk['configRevision'] ??
+        sdk['configversion'] ??
+        sdk['configVersion'] ??
+        (meta ? meta['configRevision'] : undefined);
+    const configRevision = (typeof rawRevision === 'number' && Number.isFinite(rawRevision)) || rawRevision === null
+        ? rawRevision
+        : (typeof rawRevision === 'string' && !isNaN(Number(rawRevision)) ? Number(rawRevision) : undefined);
+    const configHash = firstNonEmptyString(payload['configHash'], meta?.['configHash']);
     return {
         success: payload['success'] === undefined ? true : payload['success'] === true,
         projectId,
-        ...(isNonEmptyString(payload['organizationId']) ? { organizationId: payload['organizationId'] } : {}),
-        ...(isNonEmptyString(payload['environmentId']) ? { environmentId: payload['environmentId'] } : {}),
+        ...(organizationId ? { organizationId } : {}),
+        ...(environmentId ? { environmentId } : {}),
         environment,
         release,
         ...(isRecord(payload['project']) ? { project: payload['project'] } : {}),
-        ...(typeof payload['configRevision'] === 'number' || payload['configRevision'] === null
-            ? { configRevision: payload['configRevision'] }
-            : {}),
-        ...(isNonEmptyString(meta?.['configHash']) ? { configHash: meta['configHash'] } : {}),
+        ...(configRevision !== undefined ? { configRevision } : {}),
+        ...(configHash ? { configHash } : {}),
         config: config,
     };
 }

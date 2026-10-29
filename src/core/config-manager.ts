@@ -171,7 +171,7 @@ export class ConfigManager {
     const ttlSeconds = this.currentConfig.runtime?.configTtlSeconds ?? 300
     if (typeof ttlSeconds !== 'number' || ttlSeconds <= 0) return
 
-    const delayMs = Math.max(1000, ttlSeconds * 1000)
+    const delayMs = Math.min(2_147_483_647, Math.max(1000, ttlSeconds * 1000))
     this.ttlTimer = setTimeout(() => {
       if (this.destroyed || this.refreshPromise) return
       const operation = this.refreshOnce()

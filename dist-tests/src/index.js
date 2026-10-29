@@ -90,8 +90,11 @@ export { patchEventEmitter, unpatchEventEmitter } from './instrumentation/event-
 export { installHttpLifecycleGuard, uninstallHttpLifecycleGuard, isOtelInstrumentationError } from './instrumentation/http-lifecycle-guard.js';
 export { computeExclusiveDuration, SpanDurationTracker, spanDurationTracker } from './tracing/span-duration.js';
 export { LynkTraceDrizzleLogger, createDrizzleInstrumentation } from './instrumentation/drizzle.js';
-// ─── Logger control (apps wiring SDK into their own logger) ─────────────────
-export { setLogger, setDebugMode, setLogLevel } from './utils/logger.js';
+// ─── Logger control & enterprise integrations ──────────────────────────────
+export { setLogger, setDebugMode, setLogLevel, setLogFormat, getLogFormat, getLogger, isDebugMode, getLogLevel, setLogPrefix, getLogPrefix, getLoggerWriterStats, } from './utils/logger.js';
+export { createWinstonTransport, LynkTraceWinstonTransport } from './instrumentation/winston.js';
+export { createPinoStream, LynkTracePinoStream, pinoTraceMixin } from './instrumentation/pino.js';
+export { LoggingSubsystem, LogRateLimiter } from './subsystems/logging-subsystem.js';
 export { Severity, severityFromString, isSeverityGte, doesSeverityMeetThreshold } from './types/severity.js';
 export { classifyError } from './core/error-classifier.js';
 // ─── Health snapshot ────────────────────────────────────────────────────────

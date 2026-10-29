@@ -13,6 +13,10 @@ export function classifyError(error) {
             return { retryable: true, permanent: false, reason: 'network_error' };
         }
         if (error.code === 'INVALID_JSON') {
+            const status = error.context['statusCode'];
+            if (typeof status === 'number' && (status >= 500 || status === 408 || status === 425 || status === 429)) {
+                return { retryable: true, permanent: false, reason: `http_${status}_transient_invalid_json` };
+            }
             return { retryable: false, permanent: true, reason: 'invalid_json' };
         }
         if (error.code === 'INVALID_INIT_RESPONSE' ||

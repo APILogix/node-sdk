@@ -74,8 +74,7 @@ export class QuotaController extends EventEmitter {
 
   static reset(): void {
     if (QuotaController.instance) {
-      QuotaController.instance.destroy()
-      QuotaController.instance = null
+      QuotaController.instance.reset()
     }
   }
 
@@ -229,11 +228,12 @@ export class QuotaController extends EventEmitter {
     }
   }
 
-  destroy(): void {
-    this.destroyed = true
+  reset(): void {
     this.clearRecoveryTimer()
     this.removeAllListeners()
     this.state = 'QUOTA_OK'
+    this.retryAfterMs = null
+    this.backoffUntilMs = null
     this.droppedEventsCount = 0
     this.droppedByPriority = {
       p0_critical: 0,
@@ -241,6 +241,11 @@ export class QuotaController extends EventEmitter {
       p2_request: 0,
       p3_low: 0,
     }
+    this.destroyed = false
+  }
+
+  destroy(): void {
+    this.reset()
   }
 
   private checkAutoRecovery(): void {

@@ -22,8 +22,8 @@ export function isNormalizedRemoteConfig(value) {
     if (value === null || typeof value !== 'object' || Array.isArray(value))
         return false;
     const c = value;
-    return (typeof c['schemaVersion'] === 'number' &&
-        c['schemaVersion'] >= 1 &&
+    return ((typeof c['schemaVersion'] === 'number' || c['schemaVersion'] === undefined) &&
+        (typeof c['schemaVersion'] !== 'number' || c['schemaVersion'] >= 1) &&
         c['sdk'] !== null && typeof c['sdk'] === 'object' &&
         c['features'] !== null && typeof c['features'] === 'object' &&
         c['sampling'] !== null && typeof c['sampling'] === 'object' &&
@@ -31,7 +31,7 @@ export function isNormalizedRemoteConfig(value) {
         c['limits'] !== null && typeof c['limits'] === 'object' &&
         c['killswitches'] !== null && typeof c['killswitches'] === 'object' &&
         c['privacy'] !== null && typeof c['privacy'] === 'object' &&
-        c['instrumentation'] !== null && typeof c['instrumentation'] === 'object' &&
+        (typeof c['instrumentation'] === 'boolean' || (c['instrumentation'] !== null && typeof c['instrumentation'] === 'object')) &&
         c['entitlements'] !== null && typeof c['entitlements'] === 'object' &&
         c['meta'] !== null && typeof c['meta'] === 'object');
 }
@@ -71,6 +71,7 @@ export const sdkInitOptionsSchema = z.object({
     beforeSend: z
         .custom(value => typeof value === 'function')
         .optional(),
+    beforeSendTimeoutMs: z.number().int().min(1).max(30000).optional(),
     debug: z.boolean().optional(),
     logLevel: z.enum(['debug', 'info', 'warning', 'error', 'fatal']).optional(),
     shutdownTimeoutMs: z.number().int().min(1000).max(60000).optional(),

@@ -3,7 +3,7 @@
  * Features canonical signature: captureException(error, severity?).
  */
 
-import { toError } from '../core/errors.js'
+import { toError, extractErrorCauseChain } from '../core/errors.js'
 import { getLogger } from '../utils/logger.js'
 import { parseStack } from '../processors/stack-parser.js'
 import { generateFingerprint } from '../processors/fingerprint.js'
@@ -22,6 +22,13 @@ import { classifyError } from '../core/error-classifier.js'
 
 export type { ErrorSeverity }
 
+/** Per-call capture options. `mechanism`/`handled` override request-store defaults. */
+export interface CaptureExceptionOptions {
+  readonly severity?: ErrorSeverity
+  readonly mechanism?: string
+  readonly handled?: boolean
+}
+
 /**
  * Capture an error/exception.
  *
@@ -38,7 +45,7 @@ export type { ErrorSeverity }
  */
 export function captureException(
   error: unknown,
-  severity?: ErrorSeverity | { severity?: ErrorSeverity } | SeverityLevel
+  severity?: ErrorSeverity | CaptureExceptionOptions | SeverityLevel
 ): void {
   const logger = getLogger()
 
@@ -62,8 +69,18 @@ export function captureException(
     }
 
     let severityInput = severity
-    if (typeof severity === 'object' && severity !== null && 'severity' in severity) {
-      severityInput = (severity as { severity?: ErrorSeverity }).severity
+    let mechanismOverride: string | undefined = undefined
+    let handledOverride: boolean | undefined = undefined
+    if (typeof severity === 'object' && severity !== null) {
+      if ('severity' in severity) {
+        severityInput = (severity as { severity?: ErrorSeverity }).severity
+      }
+      if ('mechanism' in severity && typeof (severity as any).mechanism === 'string') {
+        mechanismOverride = (severity as any).mechanism
+      }
+      if ('handled' in severity && typeof (severity as any).handled === 'boolean') {
+        handledOverride = (severity as any).handled
+      }
     }
     const resolvedSeverity: SeverityLevel = severityInput ? severityFromString(severityInput, Severity.Error) : Severity.Error
 
@@ -72,8 +89,8 @@ export function captureException(
     let method: string | undefined = undefined
     let route: string | undefined = undefined
     let url: string | undefined = undefined
-    let mechanism = 'manual'
-    let handled = true
+    let mechanism = mechanismOverride ?? 'manual'
+    let handled = handledOverride ?? true
 
     const ctx = getRequestContext()
 
@@ -93,10 +110,11 @@ export function captureException(
       if (typeof ctx.extra.getUrl === 'function') {
         try { url = ctx.extra.getUrl() } catch {}
       }
-      if (typeof ctx.extra.mechanism === 'string' && ctx.extra.mechanism) {
+      // Explicit per-call overrides win over request-store defaults.
+      if (mechanismOverride === undefined && typeof ctx.extra.mechanism === 'string' && ctx.extra.mechanism) {
         mechanism = ctx.extra.mechanism
       }
-      if (typeof ctx.extra.handled === 'boolean') {
+      if (handledOverride === undefined && typeof ctx.extra.handled === 'boolean') {
         handled = ctx.extra.handled
       }
     }
@@ -112,7 +130,10 @@ export function captureException(
 
     // Parse stack frames synchronously — uses V8 CallSite API when available,
     // falls back to regex for pre-serialized stacks
-    const stackFrames = parseStack(normalized.stack, normalized)
+    // Let parseStack install its scoped V8 CallSite hook before touching the
+    // lazy .stack accessor. Reading .stack first serializes message text and
+    // makes injected fake frame lines indistinguishable from real frames.
+    const stackFrames = parseStack(undefined, normalized)
 
     // ─── Path Normalization for Grouping ──────────────────────────────
     let normalizedFrames = stackFrames
@@ -151,7 +172,7 @@ export function captureException(
       fingerprint,
       severity: resolvedSeverity,
       timestamp: epochMs(),
-      context: {},
+      context: (normalized as any).cause ? { causeChain: extractErrorCauseChain(normalized) } : {},
       mechanism,
       handled,
       classification,

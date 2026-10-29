@@ -52,6 +52,8 @@ const PII_PATTERNS = Object.freeze([
     { pattern: /\b(api[-_]?key|api[-_]?secret|access[-_]?token|refresh[-_]?token|client[-_]?secret|password|secret|token|authorization|x-api-key|x-auth-token)=([^&\s]+)/gi, replacement: '$1=[REDACTED]' },
 ]);
 const REDACTED = '[REDACTED]';
+/** Hard bound for synchronous text scrubbing across every fallback path. */
+export const MAX_SCRUB_STRING_LENGTH = 8 * 1024;
 const MAX_SANITIZE_DEPTH = 10;
 const MAX_OBJECT_KEYS = 200;
 class ApiPayloadScrubber {
@@ -171,6 +173,19 @@ class ApiPayloadScrubber {
         if (typeof value !== 'object')
             return value;
         const obj = value;
+        if (obj instanceof Date)
+            return obj.toISOString();
+        if (obj instanceof RegExp)
+            return obj.toString();
+        if (typeof Buffer !== 'undefined' && Buffer.isBuffer(obj)) {
+            return `[Binary:${obj.byteLength}b]`;
+        }
+        if (obj instanceof Uint8Array) {
+            return `[Binary:${obj.byteLength}b]`;
+        }
+        if (obj instanceof Map || obj instanceof Set) {
+            return Array.from(obj);
+        }
         if (seen.has(obj))
             return '[Circular]';
         seen.add(obj);
@@ -187,7 +202,13 @@ class ApiPayloadScrubber {
                 return result;
             }
             const result = Object.create(null);
-            const entries = Object.entries(value);
+            let entries = [];
+            try {
+                entries = Object.entries(value);
+            }
+            catch {
+                return '[Unserializable]';
+            }
             const limit = Math.min(entries.length, MAX_OBJECT_KEYS);
             for (let i = 0; i < limit; i++) {
                 const entry = entries[i];
@@ -213,16 +234,45 @@ class ApiPayloadScrubber {
         }
     }
     sanitizeString(value) {
-        let sanitized = value;
+        // Never run regexes against unbounded caller-controlled text. Discard the
+        // suffix instead of forwarding it untouched; otherwise secrets beyond the
+        // scan window could bypass redaction.
+        const truncated = value.length > MAX_SCRUB_STRING_LENGTH;
+        let sanitized = truncated ? value.slice(0, MAX_SCRUB_STRING_LENGTH) : value;
         // PII_PATTERNS is module-frozen — compiled once, reused across every
         // call. The previous implementation rebuilt the regex array per call
         // which was a measurable hot-path cost when scrubbing breadcrumbs and
         // context strings on error events.
         for (const { pattern, replacement } of PII_PATTERNS) {
-            sanitized = sanitized.replace(pattern, replacement);
+            if (pattern.source.startsWith('\\beyJ')) {
+                sanitized = replaceJwtTokens(sanitized);
+            }
+            else {
+                sanitized = sanitized.replace(pattern, replacement);
+            }
         }
-        return sanitized;
+        return truncated ? `${sanitized}…[truncated]` : sanitized;
     }
+}
+/** Linear token walk with an anchored JWT shape check. */
+function replaceJwtTokens(value) {
+    return value.replace(/[A-Za-z0-9_.-]+/g, token => {
+        const firstDot = token.indexOf('.');
+        const secondDot = firstDot < 0 ? -1 : token.indexOf('.', firstDot + 1);
+        if (firstDot < 4 || secondDot < 0 || secondDot === token.length - 1)
+            return token;
+        const header = token.slice(0, firstDot);
+        const payload = token.slice(firstDot + 1, secondDot);
+        const signature = token.slice(secondDot + 1);
+        return header.startsWith('eyJ') && header.length >= 11
+            && payload.startsWith('eyJ') && payload.length >= 11
+            && signature.length >= 8
+            && /^[A-Za-z0-9_-]+$/.test(header)
+            && /^[A-Za-z0-9_-]+$/.test(payload)
+            && /^[A-Za-z0-9_-]+$/.test(signature)
+            ? '[jwt]'
+            : token;
+    });
 }
 export const apiPayloadScrubber = new ApiPayloadScrubber();
 // Backward compatibility exports

@@ -1,5 +1,5 @@
 /**
- * SDK Logger — Sentry-style debug logging.
+ * SDK Logger — Enterprise non-blocking, memory-bounded diagnostic logging.
  *
  * Output strategy (post v3 fix for the console-interception feedback loop):
  *   The SDK never writes through `console.log/info/warn/error`. Those
@@ -10,12 +10,18 @@
  *   producing more `log` events — a runaway storm we observed at
  *   thousands of events per second under `setDebugMode(true)`.
  *
- *   Both loggers below now write directly to `process.stdout` (info /
- *   debug) or `process.stderr` (warn / error). The LoggingSubsystem's
+ *   Both loggers below write directly to `process.stdout` (info /
+ *   debug / trace) or `process.stderr` (warn / error / fatal) via a
+ *   non-blocking, bounded stream writer. The LoggingSubsystem's
  *   wrapper never sees these writes, so the feedback loop is broken at
  *   the source.
  *
- *   PII redaction is always applied regardless of debug mode.
+ *   Non-blocking & Low-Memory guarantees:
+ *   - Direct fast path writes when stream is healthy.
+ *   - Backpressure-aware drain queue bounded to 256 entries to prevent
+ *     unbounded V8 heap expansion during slow I/O pipes.
+ *   - Drops low-priority diagnostic logs under pipe backpressure.
+ *   - PII redaction is always applied regardless of debug mode.
  */
 import { SDKError } from '../core/errors.js';
 import { Severity, doesSeverityMeetThreshold } from '../types/severity.js';
@@ -33,10 +39,22 @@ export function setDebugMode(enabled) {
     minimumLogLevel = enabled ? Severity.Debug : Severity.Info;
 }
 /**
+ * Get whether debug mode is currently enabled.
+ */
+export function isDebugMode() {
+    return debugMode;
+}
+/**
  * Set the minimum SDK internal log level.
  */
 export function setLogLevel(level) {
     minimumLogLevel = level;
+}
+/**
+ * Get the current minimum log level.
+ */
+export function getLogLevel() {
+    return minimumLogLevel;
 }
 /**
  * Set the log prefix (defaults to 'Telemetry').
@@ -44,10 +62,148 @@ export function setLogLevel(level) {
 export function setLogPrefix(prefix) {
     logPrefix = prefix;
 }
+/**
+ * Get the current log prefix.
+ */
+export function getLogPrefix() {
+    return logPrefix;
+}
+// ─── Non-Blocking Bounded Stream Writer ─────────────────────────────────────
+/**
+ * Non-blocking, bounded stream drainer.
+ * Prevents V8 heap memory explosion and event-loop stalls when process.stdout
+ * or process.stderr is backpressured (e.g. slow pipe consumer in Docker/K8s).
+ */
+export class NonBlockingStreamWriter {
+    getStream;
+    maxBufferSize;
+    buffer = [];
+    isDraining = false;
+    droppedCount = 0;
+    constructor(getStream, maxBufferSize = 256) {
+        this.getStream = getStream;
+        this.maxBufferSize = maxBufferSize;
+    }
+    write(line, isCritical = false) {
+        const formatted = line.endsWith('\n') ? line : line + '\n';
+        const stream = this.getStream();
+        // If stream is healthy and buffer is empty, write directly (fast path - 0 queue overhead)
+        if (!this.isDraining && this.buffer.length === 0) {
+            try {
+                const canContinue = stream.write(formatted);
+                if (canContinue === false) {
+                    this.startDraining(stream);
+                }
+                return;
+            }
+            catch {
+                // Stream closed or detached - swallow silently
+                return;
+            }
+        }
+        // Stream is backpressured
+        if (this.buffer.length < this.maxBufferSize) {
+            this.buffer.push(formatted);
+        }
+        else if (isCritical) {
+            // Prioritize error/fatal logs: drop oldest item to make space
+            this.buffer.shift();
+            this.buffer.push(formatted);
+            this.droppedCount++;
+        }
+        else {
+            // Drop low priority debug/info log under backpressure to protect memory
+            this.droppedCount++;
+        }
+    }
+    startDraining(stream) {
+        if (this.isDraining)
+            return;
+        this.isDraining = true;
+        const onDrain = () => {
+            this.drainChunk();
+        };
+        try {
+            if (typeof stream.once === 'function') {
+                stream.once('drain', onDrain);
+            }
+            else {
+                // Fallback if not an event emitter
+                setImmediate(onDrain);
+            }
+        }
+        catch {
+            this.isDraining = false;
+        }
+    }
+    drainChunk() {
+        const stream = this.getStream();
+        try {
+            while (this.buffer.length > 0) {
+                const item = this.buffer.shift();
+                const canContinue = stream.write(item);
+                if (canContinue === false) {
+                    // Still backpressured, re-arm drain listener
+                    if (typeof stream.once === 'function') {
+                        stream.once('drain', () => this.drainChunk());
+                    }
+                    else {
+                        setImmediate(() => this.drainChunk());
+                    }
+                    return;
+                }
+            }
+        }
+        catch {
+            this.buffer.length = 0;
+        }
+        finally {
+            if (this.buffer.length === 0) {
+                this.isDraining = false;
+            }
+        }
+    }
+    flushSync() {
+        const stream = this.getStream();
+        while (this.buffer.length > 0) {
+            const item = this.buffer.shift();
+            try {
+                stream.write(item);
+            }
+            catch { }
+        }
+        this.isDraining = false;
+    }
+    getDroppedCount() {
+        return this.droppedCount;
+    }
+    getBufferSize() {
+        return this.buffer.length;
+    }
+    reset() {
+        this.buffer = [];
+        this.isDraining = false;
+        this.droppedCount = 0;
+    }
+}
+export const stdoutDrainer = new NonBlockingStreamWriter(() => process.stdout, 256);
+export const stderrDrainer = new NonBlockingStreamWriter(() => process.stderr, 256);
+function writeStdout(line, isCritical = false) {
+    stdoutDrainer.write(line, isCritical);
+}
+function writeStderr(line, isCritical = true) {
+    stderrDrainer.write(line, isCritical);
+}
+export function getLoggerWriterStats() {
+    return {
+        stdoutDrops: stdoutDrainer.getDroppedCount(),
+        stderrDrops: stderrDrainer.getDroppedCount(),
+    };
+}
 // ─── Redaction ──────────────────────────────────────────────────────────────
 const SENSITIVE_KEY_PATTERN = /api[-_]?key|api[-_]?secret|authorization|cookie|token|password|secret|credential/i;
 export function redact(value, depth = 0, seen = new WeakSet()) {
-    if (depth > 8)
+    if (depth > 6)
         return '[max depth]';
     if (typeof value === 'string')
         return redactString(value);
@@ -64,7 +220,7 @@ export function redact(value, depth = 0, seen = new WeakSet()) {
         return '[Circular]';
     seen.add(value);
     if (Array.isArray(value)) {
-        const maxItems = Math.min(value.length, 50);
+        const maxItems = Math.min(value.length, 30);
         const out = new Array(maxItems);
         for (let i = 0; i < maxItems; i++) {
             out[i] = redact(value[i], depth + 1, seen);
@@ -93,7 +249,7 @@ export function redact(value, depth = 0, seen = new WeakSet()) {
     }
     const redacted = {};
     const keys = Object.keys(value);
-    const limit = Math.min(keys.length, 50);
+    const limit = Math.min(keys.length, 30);
     for (let i = 0; i < limit; i++) {
         const key = keys[i];
         const nestedValue = value[key];
@@ -116,8 +272,7 @@ function redactString(value) {
 // ─── Formatting ─────────────────────────────────────────────────────────────
 /**
  * Maximum size for a single serialized log context. Larger payloads are
- * truncated to prevent memory spikes from accidentally-large objects
- * (e.g., a user logging a giant request body or response object).
+ * truncated to prevent memory spikes from accidentally-large objects.
  */
 const MAX_LOG_CONTEXT_BYTES = 16 * 1024; // 16 KB
 function formatContext(context) {
@@ -136,65 +291,46 @@ function formatContext(context) {
         return ' [unserializable context]';
     }
 }
-// ─── Direct stream writers ─────────────────────────────────────────────────
-//
-// We intentionally do NOT use console.log / console.error here. The
-// LoggingSubsystem patches those slots to capture user telemetry, and any
-// SDK-originated write would be re-captured as a `log` event, which would
-// itself trigger more debug logs, ad infinitum.
-//
-// `process.stdout.write` / `process.stderr.write` are unaffected by the
-// console interception because the wrapper only replaces `console.*`
-// methods, not the underlying streams.
-function writeStdout(line) {
-    // Best-effort. If stdout is detached (e.g., daemonised process), swallow
-    // silently rather than throwing — the SDK should never crash the host
-    // because we couldn't print a log.
-    try {
-        process.stdout.write(line + '\n');
-    }
-    catch {
-        /* stdout closed — nothing we can do */
-    }
-}
-function writeStderr(line) {
-    try {
-        process.stderr.write(line + '\n');
-    }
-    catch {
-        /* stderr closed — nothing we can do */
-    }
-}
 function stripPrefix(message) {
     if (message.startsWith(`[${logPrefix}]`)) {
         return message.slice(logPrefix.length + 2).trim();
     }
     return message.replace(/^\[(LynkTrace|Pulse|Telemetry|APM|SDK)\]\s*/i, '').trim();
 }
-// ─── Console Logger (Sentry-style) ─────────────────────────────────────────
+// ─── Console Logger (Standard Pretty / Dev output) ─────────────────────────
 export const consoleLogger = {
+    trace(message, context) {
+        if (!doesSeverityMeetThreshold(Severity.Debug, minimumLogLevel))
+            return;
+        writeStdout(`[${logPrefix}] TRACE: ${stripPrefix(message)}${formatContext(context)}`, false);
+    },
     debug(message, context) {
         if (!doesSeverityMeetThreshold(Severity.Debug, minimumLogLevel))
             return;
-        writeStdout(`[${logPrefix}] DEBUG: ${stripPrefix(message)}${formatContext(context)}`);
+        writeStdout(`[${logPrefix}] DEBUG: ${stripPrefix(message)}${formatContext(context)}`, false);
     },
     info(message, context) {
         if (!doesSeverityMeetThreshold(Severity.Info, minimumLogLevel))
             return;
-        writeStdout(`[${logPrefix}] INFO: ${stripPrefix(message)}${formatContext(context)}`);
+        writeStdout(`[${logPrefix}] INFO: ${stripPrefix(message)}${formatContext(context)}`, false);
     },
     warn(message, context) {
         if (!doesSeverityMeetThreshold(Severity.Warning, minimumLogLevel))
             return;
-        writeStderr(`[${logPrefix}] WARN: ${stripPrefix(message)}${formatContext(context)}`);
+        writeStderr(`[${logPrefix}] WARN: ${stripPrefix(message)}${formatContext(context)}`, true);
     },
     error(message, context) {
         if (!doesSeverityMeetThreshold(Severity.Error, minimumLogLevel))
             return;
-        writeStderr(`[${logPrefix}] ERROR: ${stripPrefix(message)}${formatContext(context)}`);
+        writeStderr(`[${logPrefix}] ERROR: ${stripPrefix(message)}${formatContext(context)}`, true);
+    },
+    fatal(message, context) {
+        if (!doesSeverityMeetThreshold(Severity.Fatal, minimumLogLevel))
+            return;
+        writeStderr(`[${logPrefix}] FATAL: ${stripPrefix(message)}${formatContext(context)}`, true);
     },
 };
-// ─── Structured JSON Logger (Production-grade) ─────────────────────────────
+// ─── Structured JSON Logger (Production-grade OpenTelemetry / ECS) ─────────
 /**
  * Get active trace context from the OTel API for log correlation.
  * Returns traceId and spanId if a span is active, otherwise undefined.
@@ -212,19 +348,33 @@ function getActiveTraceContext() {
     }
     return {};
 }
+const SEVERITY_NUMBER_MAP = Object.freeze({
+    trace: 1,
+    debug: 5,
+    info: 9,
+    warn: 13,
+    warning: 13,
+    error: 17,
+    fatal: 21,
+});
 /**
  * Structured JSON logger — emits newline-delimited JSON (NDJSON) suitable
  * for production log aggregation systems (ELK, Datadog, CloudWatch, etc.).
  *
  * Every log entry includes:
- * - ISO timestamp
- * - Log level
+ * - ISO timestamp + timestamp_ms
+ * - Log level & OpenTelemetry severity number
  * - Message
  * - Active traceId/spanId (if OTel tracing is active)
  * - SDK prefix tag
  * - Redacted structured context
  */
 export const jsonLogger = {
+    trace(message, context) {
+        if (!doesSeverityMeetThreshold(Severity.Debug, minimumLogLevel))
+            return;
+        emitJsonLog('trace', message, context);
+    },
     debug(message, context) {
         if (!doesSeverityMeetThreshold(Severity.Debug, minimumLogLevel))
             return;
@@ -245,20 +395,32 @@ export const jsonLogger = {
             return;
         emitJsonLog('error', message, context);
     },
+    fatal(message, context) {
+        if (!doesSeverityMeetThreshold(Severity.Fatal, minimumLogLevel))
+            return;
+        emitJsonLog('fatal', message, context);
+    },
 };
 function emitJsonLog(level, message, context) {
     const trace = getActiveTraceContext();
+    const now = new Date();
     const entry = {
-        timestamp: new Date().toISOString(),
+        timestamp: now.toISOString(),
+        timestamp_ms: now.getTime(),
         level,
+        severity_number: SEVERITY_NUMBER_MAP[level] ?? 9,
         logger: logPrefix,
         message: stripPrefix(message),
     };
-    // Inject trace correlation if available
-    if (trace.traceId)
+    // Inject trace correlation (both OpenTelemetry trace_id and dot notation for legacy)
+    if (trace.traceId) {
         entry['trace.id'] = trace.traceId;
-    if (trace.spanId)
+        entry['trace_id'] = trace.traceId;
+    }
+    if (trace.spanId) {
         entry['span.id'] = trace.spanId;
+        entry['span_id'] = trace.spanId;
+    }
     // Merge redacted context — bounded so a single oversized log entry can't
     // OOM the process.
     if (context && Object.keys(context).length > 0) {
@@ -277,13 +439,14 @@ function emitJsonLog(level, message, context) {
             entry['context'] = '[unserializable]';
         }
     }
-    const writer = level === 'error' || level === 'warn' ? writeStderr : writeStdout;
+    const isCritical = level === 'error' || level === 'fatal' || level === 'warn';
+    const writer = isCritical ? writeStderr : writeStdout;
     try {
-        writer(JSON.stringify(entry));
+        writer(JSON.stringify(entry), isCritical);
     }
     catch {
         // Fallback if JSON.stringify fails on the entry itself
-        writer(`{"timestamp":"${entry.timestamp}","level":"${level}","message":"${message}","error":"log_serialization_failed"}`);
+        writer(`{"timestamp":"${entry['timestamp']}","level":"${level}","message":"${message}","error":"log_serialization_failed"}`, isCritical);
     }
 }
 let currentLogFormat = 'text';

@@ -73,6 +73,7 @@ const SUBSYSTEM_STEP_TIMEOUT_MS = 5_000
 let signalHandlersRegistered = false
 let sigTermHandler: (() => void) | null = null
 let sigIntHandler: (() => void) | null = null
+let exitPersistenceHandler: (() => void) | null = null
 let signalShutdownInFlight = false
 
 let shuttingDown = false
@@ -114,6 +115,31 @@ export function isSDKShuttingDown(): boolean {
  */
 export function onBeforeShutdown(hook: () => Promise<void>): void {
   beforeShutdownHooks.push(hook)
+}
+
+/**
+ * Persist transport work synchronously if the host owns SIGTERM and later
+ * calls process.exit() without awaiting SDK shutdown.
+ */
+export function registerExitPersistenceHandler(): void {
+  if (exitPersistenceHandler || !persistentStorage.isInitialized) return
+  exitPersistenceHandler = () => {
+    if (!persistentStorage.isInitialized) return
+    try {
+      const transport = TransportRouter.getInstance()?.drainAllForExit() ?? []
+      const legacy = eventQueue.drainAll()
+      persistentStorage.flushSync([...transport, ...legacy] as unknown as readonly import('../types/event.js').Event[])
+    } catch {
+      // Process exit callbacks must stay synchronous and non-throwing.
+    }
+  }
+  process.on('exit', exitPersistenceHandler)
+}
+
+function resetExitPersistenceHandler(): void {
+  if (!exitPersistenceHandler) return
+  process.removeListener('exit', exitPersistenceHandler)
+  exitPersistenceHandler = null
 }
 
 /**
@@ -184,7 +210,7 @@ export async function flush(): Promise<void> {
   try { await flushTracer() } catch {}
   try { await metricsRegistry.flush() } catch {}
 
-  await drainPendingEventProcessing()
+  await drainPendingEventProcessing(false)
   const router = TransportRouter.getInstance()
   if (router) {
     await router.flushAll()
@@ -211,12 +237,11 @@ export async function emergencyFlush(timeoutMs = 2_000): Promise<void> {
     let timer: NodeJS.Timeout | undefined
     const timeoutPromise = new Promise<void>(resolve => {
       timer = setTimeout(resolve, timeoutMs)
-      timer.unref()
     })
 
     const drainPromise = (async () => {
       try {
-        await drainPendingEventProcessing()
+        await drainPendingEventProcessing(false)
       } catch {
         // Best-effort — pipeline drain failure must not block transport flush
       }
@@ -232,6 +257,24 @@ export async function emergencyFlush(timeoutMs = 2_000): Promise<void> {
     await Promise.race([drainPromise, timeoutPromise])
 
     if (timer) clearTimeout(timer)
+
+    // Crash persistence: if the backend is down or hung, persist undelivered events to disk synchronously
+    try {
+      if (persistentStorage.isInitialized) {
+        const router = TransportRouter.getInstance()
+        let residual: import('../types/event.js').SDKEvent[] = []
+        if (router) {
+          try {
+            residual = await withTimeout(router.shutdown(), 600, 'emergency router shutdown')
+          } catch {
+            residual = router.drainAllForExit()
+          }
+        }
+        const legacy = eventQueue.drainAll()
+        const undelivered = [...residual, ...legacy] as unknown as readonly import('../types/event.js').Event[]
+        persistentStorage.flushSync(undelivered)
+      }
+    } catch {}
   } catch {
     // Best-effort — swallow all errors during emergency flush.
     // The process is about to terminate; throwing here would only
@@ -250,6 +293,12 @@ export function registerSignalHandlers(): void {
   const logger = getLogger()
 
   const handleSignal = async (signal: NodeJS.Signals) => {
+    // If the host application registered its own handler for this signal (graceful drain handler),
+    // allow the host to control process lifecycle.
+    if (process.listenerCount(signal) > 1) {
+      return
+    }
+
     const exitCode = 128 + (signal === 'SIGINT' ? 2 : 15)
 
     if (signalShutdownInFlight) {
@@ -271,7 +320,6 @@ export function registerSignalHandlers(): void {
         process.exit(exitCode)
       }
     }, 5000)
-    watchdogTimer.unref?.()
 
     try {
       await shutdown(4000)
@@ -339,7 +387,6 @@ async function runShutdown(timeoutMs?: number): Promise<ShutdownResult> {
   let timer: NodeJS.Timeout | undefined
   const timeoutPromise = new Promise<'timeout'>(resolve => {
     timer = setTimeout(() => resolve('timeout'), timeout)
-    timer.unref?.()
   })
 
   // Cleanup owns SDK resources until it settles. The public deadline may win
@@ -452,7 +499,7 @@ async function runOrchestratedShutdown(stepErrors: ShutdownStepError[]): Promise
 
   // 5. Drain in-flight event pipeline work (setImmediate-deferred async work).
   await runStep('event-pipeline.drain', () =>
-    withTimeout(drainPendingEventProcessing(), SUBSYSTEM_STEP_TIMEOUT_MS, 'event pipeline drain timed out'),
+    withTimeout(drainPendingEventProcessing(true), SUBSYSTEM_STEP_TIMEOUT_MS, 'event pipeline drain timed out'),
     stepErrors
   )
 
@@ -571,8 +618,8 @@ async function runUnconditionalCleanup(stepErrors: ShutdownStepError[]): Promise
   runSync('sampling-engine.reset', () => SamplingEngine.reset(), stepErrors)
   runSync('limits-engine.reset', () => LimitsEngine.reset(), stepErrors)
   runSync('security-scrubber.reset', () => SecurityScrubber.reset(), stepErrors)
-  runSync('global-errors.reset', () => resetGlobalErrorHandlers(), stepErrors)
   runSync('logging-subsystem.reset', () => LoggingSubsystem.reset(), stepErrors)
+  runSync('global-errors.reset', () => resetGlobalErrorHandlers(), stepErrors)
   runSync('profiling-subsystem.reset', () => ProfilingSubsystem.reset(), stepErrors)
   runSync('cron-subsystem.reset', () => CronSubsystem.reset(), stepErrors)
   runSync('runtime-metrics-subsystem.reset', () => RuntimeMetricsSubsystem.resetInstance(), stepErrors)
@@ -606,6 +653,7 @@ async function runUnconditionalCleanup(stepErrors: ShutdownStepError[]): Promise
   // Clear lifecycle-local state last so beforeShutdown hooks added during
   // teardown have already executed before we drop the references.
   beforeShutdownHooks.length = 0
+  runSync('exit-persistence-handler.reset', () => resetExitPersistenceHandler(), stepErrors)
 }
 
 // ─── Internal: Step Execution ───────────────────────────────────────────────
@@ -643,7 +691,6 @@ async function withTimeout<T>(
       Promise.resolve(promise),
       new Promise<never>((_, reject) => {
         timer = setTimeout(() => reject(new Error(message)), timeoutMs)
-        timer.unref?.()
       }),
     ])
   } finally {

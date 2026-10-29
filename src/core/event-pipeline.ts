@@ -78,7 +78,7 @@ import { sdkConsoleDebug } from '../utils/console-debug.js'
 
 const PLUGIN_TIMEOUT_MS = 50
 const EVENT_PROCESSOR_TIMEOUT_MS = 50
-const BEFORE_SEND_TIMEOUT_MS = 100
+const DEFAULT_BEFORE_SEND_TIMEOUT_MS = 1_000
 /**
  * Source-context attachment reads files from disk — bound it so slow I/O
  * can never stall the pipeline. On timeout the original frames are kept.
@@ -265,16 +265,28 @@ export function processEvent(rawEvent: SDKEvent | Event): boolean {
 }
 
 /**
- * Drain all in-flight pipeline work to completion.
+ * Drain in-flight pipeline work to completion.
+ * @param rejectNew Whether to reject new incoming events while draining (true during shutdown, false during flush).
  */
-export async function drainPendingEventProcessing(): Promise<void> {
-  pipelineDraining = true
+export async function drainPendingEventProcessing(rejectNew = false): Promise<void> {
+  if (rejectNew) {
+    pipelineDraining = true
+  }
   try {
+    if (!rejectNew) {
+      const snapshot = [...pendingPipelines]
+      if (snapshot.length > 0) {
+        await Promise.allSettled(snapshot)
+      }
+      return
+    }
     while (pendingPipelines.size > 0) {
       await Promise.allSettled([...pendingPipelines])
     }
   } finally {
-    pipelineDraining = false
+    if (rejectNew) {
+      pipelineDraining = false
+    }
   }
 }
 
@@ -354,9 +366,15 @@ export async function processEventAsync(rawEvent: SDKEvent | Event, assignedEven
     event = normalizeEvent(event, client.metadata)
     event = enrichFromContext(event)
 
+    let errorDedupKey: string | null = null
     // Step 6.5: Error deduplication — suppress duplicate errors within window
     if (event.type === 'error' && 'fingerprint' in event && typeof event.fingerprint === 'string') {
       const eventRecord = event as unknown as Record<string, any>
+      const isFatal = eventRecord['severity'] === 'fatal' ||
+        eventRecord['classification']?.fatal === true ||
+        eventRecord['mechanism'] === 'uncaughtException' ||
+        (eventRecord['handled'] === false && eventRecord['mechanism'] === 'uncaughtException')
+
       const tenantId = eventRecord['tenantId']
         ?? eventRecord['context']?.['tenantId']
         ?? getRequestContext()?.extra?.['tenantId']
@@ -372,7 +390,9 @@ export async function processEventAsync(rawEvent: SDKEvent | Event, assignedEven
       const projectId = event.metadata?.projectId ?? client.metadata.projectId
       const release = event.metadata?.release ?? client.metadata.release
       const compositeKey = `${event.fingerprint}:${projectId}:${release}:${tenantId}:${route}:${statusCode}`
-      if (errorDeduplicator.isDuplicate(compositeKey)) {
+      errorDedupKey = compositeKey
+
+      if (!isFatal && errorDeduplicator.isDuplicate(compositeKey)) {
         logger.debug('Event dropped — duplicate error within suppression window', {
           fingerprint: event.fingerprint,
           eventType: event.type,
@@ -484,11 +504,12 @@ export async function processEventAsync(rawEvent: SDKEvent | Event, assignedEven
     }
 
     // beforeSend hook (user-provided)
+    const beforeSendTimeoutMs = client.options?.beforeSendTimeoutMs ?? DEFAULT_BEFORE_SEND_TIMEOUT_MS
     if (client.options?.beforeSend) {
       try {
         const result = await withTimeout(
           Promise.resolve(client.options.beforeSend(event as unknown as Record<string, unknown>)),
-          BEFORE_SEND_TIMEOUT_MS,
+          beforeSendTimeoutMs,
           'beforeSend timed out'
         )
         if (result === null) {
@@ -496,11 +517,18 @@ export async function processEventAsync(rawEvent: SDKEvent | Event, assignedEven
             eventType: event.type,
             eventId: event.eventId,
           })
+          if (errorDedupKey) {
+            errorDeduplicator.delete(errorDedupKey)
+          }
           return false
         }
         event = result as unknown as SDKEvent
       } catch (beforeSendError) {
-        logger.warn('beforeSend threw', { error: beforeSendError })
+        logger.warn('beforeSend threw or timed out — dropping event (fail-closed)', { error: beforeSendError })
+        if (errorDedupKey) {
+          errorDeduplicator.delete(errorDedupKey)
+        }
+        return false
       }
     }
 
@@ -510,7 +538,7 @@ export async function processEventAsync(rawEvent: SDKEvent | Event, assignedEven
         try {
           const result = await withTimeout(
             Promise.resolve(plugin.beforeSend(event)),
-            BEFORE_SEND_TIMEOUT_MS,
+            beforeSendTimeoutMs,
             `Plugin beforeSend timed out: ${plugin.meta.name}`
           )
           if (result === null) {
@@ -518,14 +546,21 @@ export async function processEventAsync(rawEvent: SDKEvent | Event, assignedEven
               pluginName: plugin.meta.name,
               eventType: event.type,
             })
+            if (errorDedupKey) {
+              errorDeduplicator.delete(errorDedupKey)
+            }
             return false
           }
           event = result
         } catch (pluginError) {
-          logger.warn('Plugin beforeSend threw', {
+          logger.warn('Plugin beforeSend threw or timed out — dropping event (fail-closed)', {
             pluginName: plugin.meta.name,
             error: pluginError,
           })
+          if (errorDedupKey) {
+            errorDeduplicator.delete(errorDedupKey)
+          }
+          return false
         }
       }
     }

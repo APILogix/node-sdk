@@ -8,8 +8,8 @@ export declare const REMOTE_CONFIG_SCHEMA_VERSION = 1;
  * Represents the authoritative, fully validated, and deep-frozen state of the SDK.
  */
 export interface NormalizedRemoteConfig {
-    /** Schema version. Must equal REMOTE_CONFIG_SCHEMA_VERSION on the SDK. */
-    readonly schemaVersion: number;
+    /** Schema version. Defaults to REMOTE_CONFIG_SCHEMA_VERSION when omitted. */
+    readonly schemaVersion?: number | undefined;
     readonly sdk: SdkIdentityConfig;
     readonly features: FeaturesConfig;
     readonly sampling: SamplingConfig;
@@ -41,6 +41,12 @@ export interface SdkIdentityConfig {
     readonly service?: string | undefined;
     readonly environment: string;
     readonly release: string;
+    /** Remote configuration revision version */
+    readonly configRevision?: number | null | undefined;
+    readonly configversion?: number | null | undefined;
+    readonly configVersion?: number | null | undefined;
+    readonly organizationId?: string | undefined;
+    readonly environmentId?: string | undefined;
 }
 /**
  * Top-level feature toggles. When false, the SDK never instantiates the
@@ -94,21 +100,24 @@ export interface SamplingConfig {
     readonly routes: Readonly<Record<string, RouteSamplingRates>>;
     readonly adaptive?: boolean | undefined;
 }
-export interface InstrumentationConfig {
-    readonly http: boolean;
-    readonly https: boolean;
-    readonly fetch: boolean;
-    readonly axios: boolean;
-    readonly fastify: FastifyInstrumentationConfig | boolean;
-    readonly express: ExpressInstrumentationConfig | boolean;
-    readonly graphql: GraphQLInstrumentationConfig | boolean;
-    readonly prisma: PrismaInstrumentationConfig | boolean;
-    readonly mongodb: boolean;
-    readonly redis: RedisInstrumentationConfig | boolean;
-    readonly bullmq: BullMQInstrumentationConfig | boolean;
-    readonly pg: PgInstrumentationConfig | boolean;
-    readonly mysql2: MySQLInstrumentationConfig | boolean;
-    readonly eventEmitterPatch: boolean;
+export type InstrumentationConfig = boolean | DetailedInstrumentationConfig;
+export interface DetailedInstrumentationConfig {
+    readonly enabled?: boolean | undefined;
+    readonly disabled?: readonly string[] | undefined;
+    readonly http?: boolean | undefined;
+    readonly https?: boolean | undefined;
+    readonly fetch?: boolean | undefined;
+    readonly axios?: boolean | undefined;
+    readonly fastify?: FastifyInstrumentationConfig | boolean | undefined;
+    readonly express?: ExpressInstrumentationConfig | boolean | undefined;
+    readonly graphql?: GraphQLInstrumentationConfig | boolean | undefined;
+    readonly prisma?: PrismaInstrumentationConfig | boolean | undefined;
+    readonly mongodb?: boolean | undefined;
+    readonly redis?: RedisInstrumentationConfig | boolean | undefined;
+    readonly bullmq?: BullMQInstrumentationConfig | boolean | undefined;
+    readonly pg?: PgInstrumentationConfig | boolean | undefined;
+    readonly mysql2?: MySQLInstrumentationConfig | boolean | undefined;
+    readonly eventEmitterPatch?: boolean | undefined;
     readonly dynamodb?: DynamoDBInstrumentationConfig | boolean | undefined;
     readonly cassandra?: CassandraInstrumentationConfig | boolean | undefined;
     readonly elasticsearch?: ElasticsearchInstrumentationConfig | boolean | undefined;
@@ -127,6 +136,7 @@ export interface InstrumentationConfig {
     readonly grpc?: boolean | undefined;
     readonly nestjs?: boolean | undefined;
     readonly dns?: DNSInstrumentationConfig | boolean | undefined;
+    readonly [key: string]: unknown;
 }
 export interface FastifyInstrumentationConfig {
     readonly enabled: boolean;
@@ -426,7 +436,11 @@ export interface TransportRouteConfig {
     readonly batchSize: number;
     readonly flushIntervalMs: number;
     readonly timeoutMs: number;
-    readonly compression: CompressionType;
+    /**
+     * @deprecated Retained for wire backward-compatibility. Effective compression
+     * is now governed by SDK enterprise route policy ('none' for crons, 'gzip' for telemetry).
+     */
+    readonly compression?: CompressionType | undefined;
     /** Internal scheduling priority. */
     readonly priority: RoutePriority;
 }
@@ -531,7 +545,7 @@ export declare function isMemoryLimit(mem: unknown): mem is MemoryLimit;
  */
 export interface SDKInitOptions {
     readonly apiKey: string;
-    /** Startup request deadline in milliseconds (default: 3000). Failure leaves telemetry disabled. */
+    /** Startup request deadline in milliseconds (default: 10000). Failure leaves telemetry disabled. */
     readonly initTimeoutMs?: number | undefined;
     /**
      * Number of retries for transient /v1/init failures (default: 2). The
@@ -547,6 +561,8 @@ export interface SDKInitOptions {
     readonly eventProcessors?: readonly EventProcessor[] | undefined;
     readonly beforeBreadcrumb?: BreadcrumbProcessor | undefined;
     readonly beforeSend?: ((event: Record<string, unknown>) => Record<string, unknown> | null | Promise<Record<string, unknown> | null>) | undefined;
+    /** Maximum wait for user/plugin beforeSend hooks (default: 1000ms). Timed-out events are dropped. */
+    readonly beforeSendTimeoutMs?: number | undefined;
     readonly debug?: boolean | undefined;
     readonly logLevel?: SeverityLevel | undefined;
     readonly shutdownTimeoutMs?: number | undefined;
@@ -586,6 +602,7 @@ export declare const sdkInitOptionsSchema: z.ZodObject<{
     eventProcessors: z.ZodOptional<z.ZodReadonly<z.ZodArray<z.ZodCustom<EventProcessor, EventProcessor>>>>;
     beforeBreadcrumb: z.ZodOptional<z.ZodCustom<BreadcrumbProcessor, BreadcrumbProcessor>>;
     beforeSend: z.ZodOptional<z.ZodCustom<(event: Record<string, unknown>) => Record<string, unknown> | null | Promise<Record<string, unknown> | null>, (event: Record<string, unknown>) => Record<string, unknown> | null | Promise<Record<string, unknown> | null>>>;
+    beforeSendTimeoutMs: z.ZodOptional<z.ZodNumber>;
     debug: z.ZodOptional<z.ZodBoolean>;
     logLevel: z.ZodOptional<z.ZodEnum<{
         debug: "debug";

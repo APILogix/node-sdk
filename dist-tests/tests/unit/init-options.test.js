@@ -9,6 +9,7 @@ describe('SDK initialization option boundary', () => {
             applicationVersion: '1.2.3',
             debug: true,
             shutdownTimeoutMs: 5_000,
+            beforeSendTimeoutMs: 1_000,
             initTimeoutMs: 500,
             initRetries: 2,
             sourceMaps: { paths: ['./dist'], allowRemote: false },
@@ -23,6 +24,12 @@ describe('SDK initialization option boundary', () => {
     it('bounds startup retry count', () => {
         for (const initRetries of [-1, 1.5, 4, Infinity, NaN]) {
             assert.equal(sdkInitOptionsSchema.safeParse({ apiKey: 'test-key', initRetries }).success, false);
+        }
+    });
+    it('accepts configurable beforeSend deadlines and rejects invalid values', () => {
+        assert.equal(sdkInitOptionsSchema.safeParse({ apiKey: 'test-key', beforeSendTimeoutMs: 150 }).success, true);
+        for (const beforeSendTimeoutMs of [0, -1, 30_001, Infinity, NaN, 100.5]) {
+            assert.equal(sdkInitOptionsSchema.safeParse({ apiKey: 'test-key', beforeSendTimeoutMs }).success, false);
         }
     });
     for (const [name, value] of Object.entries({

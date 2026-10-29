@@ -88,9 +88,25 @@ export class BatchManager {
         const deadline = Date.now() + 4_000;
         const failedAtStart = this.totalFailed;
         const droppedAtStart = this.totalDropped;
-        while (!this.options.queue.isEmpty() || this.activeSendPromises.size > 0 || this.pendingRetryPromises.size > 0) {
+        let deferBackoffRetries = quotaController.isExhausted();
+        while (true) {
+            // A Retry-After timer is not useful work during an active quota
+            // backoff: its event is already durable, and waiting for that timer
+            // makes explicit flush/shutdown consume the whole lifecycle budget.
+            // Continue draining queued and active work (including fatal events),
+            // but leave delayed retries for automatic recovery after the backoff.
+            if (quotaController.isExhausted())
+                deferBackoffRetries = true;
+            const hasWork = !this.options.queue.isEmpty()
+                || this.activeSendPromises.size > 0
+                || (!deferBackoffRetries && this.pendingRetryPromises.size > 0);
+            if (!hasWork)
+                break;
             this.pump(true);
-            const work = [...this.activeSendPromises, ...this.pendingRetryPromises];
+            const work = [
+                ...this.activeSendPromises,
+                ...(deferBackoffRetries ? [] : this.pendingRetryPromises),
+            ];
             if (work.length === 0)
                 break;
             const remainingMs = deadline - Date.now();
@@ -139,6 +155,24 @@ export class BatchManager {
             avgBatchSize: this.totalRequests > 0 ? this.totalBatchEvents / this.totalRequests : 0,
         };
     }
+    /** Snapshot all unsent work synchronously for the process `exit` hook. */
+    drainForExit() {
+        const events = this.options.queue.drain(this.options.queue.size());
+        for (const batch of this.activeBatches)
+            events.push(...batch);
+        for (const retry of this.pendingRetryTimers.values())
+            events.push(...retry.events);
+        const seen = new Set();
+        return events.filter(event => {
+            const key = event.eventId ?? '';
+            if (!key)
+                return true;
+            if (seen.has(key))
+                return false;
+            seen.add(key);
+            return true;
+        });
+    }
     /** Backward-compatible alias */
     stats() {
         return this.getStats();
@@ -186,12 +220,12 @@ export class BatchManager {
             this.activeSends--;
             this.batched -= events.length;
             this.totalFailed += events.length;
-            this.persistOnFailure(events, 'connection_acquire_failed');
+            await this.persistOnFailure(events, 'connection_acquire_failed');
             this.retryOrRetain(events);
             return;
         }
         try {
-            const isGzip = this.options.compression === 'gzip';
+            const isGzip = (this.options.compression ?? (this.options.route === 'crons' ? 'none' : 'gzip')) === 'gzip';
             const compressionAlgo = isGzip ? 'gzip' : 'none';
             const scrubber = SecurityScrubber.getInstance();
             const privacyConfig = scrubber?.getPrivacyConfig();
@@ -347,7 +381,9 @@ export class BatchManager {
             const timeout = setTimeout(() => {
                 controller.abort();
             }, this.options.socketTimeoutMs);
-            timeout.unref?.();
+            // This timer bounds an active request whose promise may be awaited by
+            // flush()/shutdown(). Keep it referenced so Node cannot exit while the
+            // lifecycle is waiting for the request to settle.
             try {
                 // Zero-copy Uint8Array view over existing wireBody buffer for fetch BodyInit compatibility
                 const requestBody = new Uint8Array(wireBody.buffer, wireBody.byteOffset, wireBody.byteLength);
@@ -356,7 +392,7 @@ export class BatchManager {
                     method: this.options.definition.method,
                     eventCount: events.length,
                     eventTypes: [...new Set(events.map(event => event.type))],
-                    compression: 'gzip',
+                    compression: compressionAlgo,
                     configuredCompression: this.options.compression,
                 });
                 sdkConsoleDebug('batch sending', {
@@ -364,21 +400,21 @@ export class BatchManager {
                     method: this.options.definition.method,
                     eventCount: events.length,
                     eventTypes: [...new Set(events.map(event => event.type))],
-                    compression: 'gzip',
+                    compression: compressionAlgo,
                 });
                 logTransportConsole('request', {
                     route: this.options.route,
                     method: this.options.definition.method,
                     eventCount: events.length,
                     eventTypes: [...new Set(events.map(event => event.type))],
-                    compression: 'gzip',
+                    compression: compressionAlgo,
                 });
                 sdkConsoleDebug('batch send request', {
                     route: this.options.route,
                     method: this.options.definition.method,
                     eventCount: events.length,
                     eventTypes: [...new Set(events.map(event => event.type))],
-                    compression: 'gzip',
+                    compression: compressionAlgo,
                 });
                 const response = await this.fetchImpl(this.options.definition.url, {
                     method: this.options.definition.method,
@@ -416,7 +452,7 @@ export class BatchManager {
                         this.firstAttemptTimestamps.delete(key);
                     }
                     costGovernor.recordBytesSent(originalPayloadBytes);
-                    this.discardOnSuccess(events);
+                    await this.discardOnSuccess(events);
                     getLogger().debug('[TransportRouter] Batch send successful', {
                         route: this.options.route,
                         statusCode: response.status,
@@ -466,7 +502,7 @@ export class BatchManager {
                     });
                     this.options.healthMonitor.recordFailure(this.options.route);
                     this.totalFailed += events.length;
-                    this.persistOnFailure(events, `http_${response.status}`);
+                    await this.persistOnFailure(events, `http_${response.status}`);
                     const retryAfterMs = retryAfterHeader ? parseRetryAfterHeader(retryAfterHeader) : null;
                     this.retryOrRetain(events, retryAfterMs);
                 }
@@ -522,7 +558,7 @@ export class BatchManager {
             const abortReason = aborted ? (this.destroyed ? 'shutdown' : 'timeout') : undefined;
             this.options.healthMonitor.recordFailure(this.options.route);
             this.totalFailed += events.length;
-            this.persistOnFailure(events, 'network_error');
+            await this.persistOnFailure(events, 'network_error');
             this.retryOrRetain(events);
             getLogger().warn('[TransportRouter] Batch send failed', {
                 route: this.options.route,
@@ -663,7 +699,7 @@ export class BatchManager {
         this.pendingRetryTimers.clear();
         this.pendingRetryPromises.clear();
     }
-    persistOnFailure(batch, reason) {
+    async persistOnFailure(batch, reason) {
         try {
             if (!persistentStorage.isInitialized)
                 return;
@@ -677,6 +713,9 @@ export class BatchManager {
             });
             if (survivable.length > 0) {
                 persistentStorage.persistBatch(survivable);
+                // Failed sends leave the hot path here, so persist asynchronously and
+                // wait for the durable write before scheduling an in-memory retry.
+                await persistentStorage.flush();
             }
         }
         catch (error) {
@@ -688,10 +727,10 @@ export class BatchManager {
             });
         }
     }
-    discardOnSuccess(batch) {
+    async discardOnSuccess(batch) {
         if (!persistentStorage.isInitialized)
             return;
-        void persistentStorage.discard(batch).catch(error => {
+        await persistentStorage.discard(batch).catch(error => {
             getLogger().debug('[TransportRouter] Failed to discard delivered batch', {
                 route: this.options.route,
                 eventCount: batch.length,
@@ -786,7 +825,6 @@ async function settleWithin(promises, timeoutMs) {
             Promise.allSettled(promises).then(() => true),
             new Promise(resolve => {
                 timer = setTimeout(() => resolve(false), timeoutMs);
-                timer.unref?.();
             }),
         ]);
     }

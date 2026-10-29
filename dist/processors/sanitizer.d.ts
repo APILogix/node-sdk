@@ -7,6 +7,8 @@
  * - String sanitization using PII detection patterns
  */
 import type { SDKEvent } from '../types/event.js';
+/** Hard bound for synchronous text scrubbing across every fallback path. */
+export declare const MAX_SCRUB_STRING_LENGTH: number;
 export interface ScrubberConfig {
     sensitiveHeaders?: string[];
     sensitiveKeys?: string[];

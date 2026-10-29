@@ -7,8 +7,8 @@
  *
  * Unlike the core `captureMessage()` (which is always available and emits a
  * `message` event), `captureLog()` emits a structured `log` event routed to
- * the `logs` ingestion route, with level filtering, argument scrubbing and
- * trace correlation applied by the LoggingSubsystem.
+ * the `logs` ingestion route, with level filtering, argument scrubbing,
+ * rate limiting, and trace correlation applied by the LoggingSubsystem.
  */
 import { LoggingSubsystem } from '../subsystems/logging-subsystem.js';
 import { EntitlementGate } from '../core/entitlement-gate.js';
@@ -25,7 +25,7 @@ import { getLogger } from '../utils/logger.js';
  *   - the `logging` entitlement is revoked by remote config, or
  *   - the SDK is not initialized / the logging subsystem is disabled.
  *
- * @param level - Log level ('debug', 'info', 'warning'/'warn', 'error', 'fatal')
+ * @param level - Log level ('trace', 'debug', 'info', 'warning'/'warn', 'error', 'fatal')
  * @param message - Human-readable log message (truncated to configured max size)
  * @param args - Optional structured arguments (max 10 kept, scrubbed)
  */
@@ -37,7 +37,7 @@ export function captureLog(level, message, ...args) {
         if (!subsystem)
             return;
         const normalizedLevel = level === 'warn' ? 'warning' : level === 'log' ? 'info' : level;
-        subsystem.captureLog(normalizedLevel, message, args);
+        subsystem.captureLog(normalizedLevel, message, args, 'api');
     }
     catch (err) {
         // Public capture APIs must never throw into user code.

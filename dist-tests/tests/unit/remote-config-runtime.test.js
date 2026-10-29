@@ -239,12 +239,12 @@ describe('single-source remote configuration runtime', () => {
         assert.equal(refreshAttempts, 2);
         assert.equal(manager.getConfig().sampling.traces, 0.8);
     });
-    it('defaults to a 3-second startup deadline when initTimeoutMs is not provided', async () => {
+    it('defaults to a 10-second startup deadline when initTimeoutMs is not provided', async () => {
         const remote = new RemoteConfigClient({
             apiKey: 'key',
         });
         // Inspect private initTimeoutMs and initRetries defaults
-        assert.equal(remote.initTimeoutMs, 3000);
+        assert.equal(remote.initTimeoutMs, 10000);
         assert.equal(remote.initRetries, 2);
     });
     it('stops immediately on 401, 403, 404 and invalid JSON without wasting retries', async () => {

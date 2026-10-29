@@ -123,12 +123,17 @@ export class FeatureController {
     destroy() {
         this.destroyed = true;
         this.subsystems.clear();
-        FeatureController.instance = null;
+        if (FeatureController.instance === this) {
+            FeatureController.instance = null;
+        }
     }
     static reset() {
         if (FeatureController.instance) {
-            void FeatureController.instance.teardownAll();
-            FeatureController.instance.destroy();
+            const inst = FeatureController.instance;
+            FeatureController.instance = null;
+            void inst.teardownAll().finally(() => {
+                inst.destroy();
+            });
         }
     }
 }

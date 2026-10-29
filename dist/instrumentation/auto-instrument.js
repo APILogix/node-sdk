@@ -98,109 +98,121 @@ function resolveInstrumentationOptions() {
     const config = configManager.getConfig();
     const instr = config.instrumentation;
     const captureConfig = config.privacy.capture;
-    const httpEnabled = instr.http;
-    const httpsEnabled = instr.https;
-    const expressEnabled = typeof instr.express === 'object'
-        ? instr.express.enabled
-        : instr.express;
-    const fastifyConfig = typeof instr.fastify === 'object'
+    const isMasterEnabled = typeof instr === 'boolean' ? instr : (Boolean(instr.enabled ?? true));
+    const disabledSet = new Set(typeof instr === 'object' && instr !== null && Array.isArray(instr.disabled)
+        ? instr.disabled.map(s => String(s).toLowerCase().trim())
+        : []);
+    function isPluginActive(name, defaultWhenNotSpecified = true) {
+        if (!isMasterEnabled)
+            return false;
+        if (disabledSet.has(name.toLowerCase()))
+            return false;
+        if (typeof instr === 'object' && instr !== null) {
+            const val = instr[name];
+            if (typeof val === 'boolean')
+                return val;
+            if (typeof val === 'object' && val !== null && 'enabled' in val) {
+                return Boolean(val['enabled']);
+            }
+        }
+        return defaultWhenNotSpecified;
+    }
+    const httpEnabled = isPluginActive('http');
+    const httpsEnabled = isPluginActive('https');
+    const expressEnabled = isPluginActive('express');
+    const fastifyEnabled = isPluginActive('fastify');
+    const fastifyConfig = typeof instr === 'object' && instr !== null && typeof instr.fastify === 'object'
         ? instr.fastify
-        : { enabled: instr.fastify, captureHooks: true, captureValidationErrors: true };
-    const fetchEnabled = instr.fetch;
-    const graphqlEnabled = typeof instr.graphql === 'object'
-        ? instr.graphql.enabled
-        : instr.graphql;
-    const graphqlConfig = typeof instr.graphql === 'object'
+        : { enabled: fastifyEnabled, captureHooks: true, captureValidationErrors: true };
+    const fetchEnabled = isPluginActive('fetch');
+    const graphqlEnabled = isPluginActive('graphql');
+    const graphqlConfig = typeof instr === 'object' && instr !== null && typeof instr.graphql === 'object'
         ? { enabled: graphqlEnabled, captureResolvers: instr.graphql.captureResolvers }
         : { enabled: graphqlEnabled, captureResolvers: true };
-    const prismaEnabled = typeof instr.prisma === 'object'
-        ? instr.prisma.enabled
-        : instr.prisma;
-    const prismaConfig = typeof instr.prisma === 'object'
+    const prismaEnabled = isPluginActive('prisma');
+    const prismaConfig = typeof instr === 'object' && instr !== null && typeof instr.prisma === 'object'
         ? { enabled: prismaEnabled, captureQueries: instr.prisma.captureQueries, captureParams: instr.prisma.captureParams }
         : { enabled: prismaEnabled, captureQueries: true, captureParams: false };
-    const mongodbEnabled = instr.mongodb;
-    const redisEnabled = typeof instr.redis === 'object' ? instr.redis.enabled : Boolean(instr.redis);
-    const redisConfig = typeof instr.redis === 'object'
+    const mongodbEnabled = isPluginActive('mongodb');
+    const redisEnabled = isPluginActive('redis');
+    const redisConfig = typeof instr === 'object' && instr !== null && typeof instr.redis === 'object'
         ? instr.redis
         : { enabled: redisEnabled, keyPolicy: 'sanitized-key' };
-    const axiosEnabled = instr.axios;
+    const axiosEnabled = isPluginActive('axios');
     // BullMQ accepts an object form in remote config so the control plane can
     // tune span verbosity without a redeploy. Boolean form = enabled with
     // library defaults.
-    const bullmqEnabled = typeof instr.bullmq === 'object'
-        ? instr.bullmq.enabled
-        : instr.bullmq;
-    const bullmqRemote = typeof instr.bullmq === 'object' ? instr.bullmq : undefined;
+    const bullmqEnabled = isPluginActive('bullmq');
+    const bullmqRemote = typeof instr === 'object' && instr !== null && typeof instr.bullmq === 'object' ? instr.bullmq : undefined;
     const bullmqConfig = {
         enabled: bullmqEnabled,
         emitCreateSpansForBulk: bullmqRemote?.emitCreateSpansForBulk ?? true,
         emitCreateSpansForFlow: bullmqRemote?.emitCreateSpansForFlow ?? true,
         requireParentSpanForPublish: bullmqRemote?.requireParentSpanForPublish ?? false,
     };
-    const pgEnabled = typeof instr.pg === 'object' ? instr.pg.enabled : instr.pg;
-    const pgConfig = typeof instr.pg === 'object'
+    const pgEnabled = isPluginActive('pg');
+    const pgConfig = typeof instr === 'object' && instr !== null && typeof instr.pg === 'object'
         ? {
             enabled: pgEnabled,
             captureQueries: instr.pg.captureQueries,
             captureParams: instr.pg.captureParams,
         }
         : { enabled: pgEnabled, captureQueries: false, captureParams: false };
-    const mysql2Enabled = typeof instr.mysql2 === 'object' ? instr.mysql2.enabled : instr.mysql2;
-    const mysql2Config = typeof instr.mysql2 === 'object'
+    const mysql2Enabled = isPluginActive('mysql2');
+    const mysql2Config = typeof instr === 'object' && instr !== null && typeof instr.mysql2 === 'object'
         ? { enabled: mysql2Enabled, captureQueries: instr.mysql2.captureQueries }
         : { enabled: mysql2Enabled, captureQueries: false };
-    const eventEmitterPatchEnabled = instr.eventEmitterPatch;
+    const eventEmitterPatchEnabled = isPluginActive('eventEmitterPatch');
     const automaticTracingAllowed = EntitlementGate.isAllowed('tracing');
     const contextBindingAllowed = automaticTracingAllowed || EntitlementGate.isAllowed('customSpans');
     // New Databases & ORMs
-    const dynamodbEnabled = typeof instr.dynamodb === 'object' ? instr.dynamodb.enabled : (instr.dynamodb ?? true);
-    const dynamodbConfig = typeof instr.dynamodb === 'object'
+    const dynamodbEnabled = isPluginActive('dynamodb');
+    const dynamodbConfig = typeof instr === 'object' && instr !== null && typeof instr.dynamodb === 'object'
         ? { enabled: dynamodbEnabled, captureQueries: instr.dynamodb.captureQueries ?? true, captureParams: instr.dynamodb.captureParams ?? false }
         : { enabled: dynamodbEnabled, captureQueries: true, captureParams: false };
-    const cassandraEnabled = typeof instr.cassandra === 'object' ? instr.cassandra.enabled : (instr.cassandra ?? true);
-    const cassandraConfig = typeof instr.cassandra === 'object'
+    const cassandraEnabled = isPluginActive('cassandra');
+    const cassandraConfig = typeof instr === 'object' && instr !== null && typeof instr.cassandra === 'object'
         ? { enabled: cassandraEnabled, captureQueries: instr.cassandra.captureQueries ?? true, captureParams: instr.cassandra.captureParams ?? false }
         : { enabled: cassandraEnabled, captureQueries: true, captureParams: false };
-    const elasticsearchEnabled = typeof instr.elasticsearch === 'object' ? instr.elasticsearch.enabled : (instr.elasticsearch ?? true);
-    const elasticsearchConfig = typeof instr.elasticsearch === 'object'
+    const elasticsearchEnabled = isPluginActive('elasticsearch');
+    const elasticsearchConfig = typeof instr === 'object' && instr !== null && typeof instr.elasticsearch === 'object'
         ? { enabled: elasticsearchEnabled, captureQueries: instr.elasticsearch.captureQueries ?? true }
         : { enabled: elasticsearchEnabled, captureQueries: true };
-    const mssqlEnabled = typeof instr.mssql === 'object' ? instr.mssql.enabled : (instr.mssql ?? true);
-    const mssqlConfig = typeof instr.mssql === 'object'
+    const mssqlEnabled = isPluginActive('mssql');
+    const mssqlConfig = typeof instr === 'object' && instr !== null && typeof instr.mssql === 'object'
         ? { enabled: mssqlEnabled, captureQueries: instr.mssql.captureQueries ?? true, captureParams: instr.mssql.captureParams ?? false }
         : { enabled: mssqlEnabled, captureQueries: true, captureParams: false };
-    const sqliteEnabled = typeof instr.sqlite === 'object' ? instr.sqlite.enabled : (instr.sqlite ?? true);
-    const sqliteConfig = typeof instr.sqlite === 'object'
+    const sqliteEnabled = isPluginActive('sqlite');
+    const sqliteConfig = typeof instr === 'object' && instr !== null && typeof instr.sqlite === 'object'
         ? { enabled: sqliteEnabled, captureQueries: instr.sqlite.captureQueries ?? true, captureParams: instr.sqlite.captureParams ?? false }
         : { enabled: sqliteEnabled, captureQueries: true, captureParams: false };
-    const typeormEnabled = typeof instr.typeorm === 'object' ? instr.typeorm.enabled : (instr.typeorm ?? true);
-    const typeormConfig = typeof instr.typeorm === 'object'
+    const typeormEnabled = isPluginActive('typeorm');
+    const typeormConfig = typeof instr === 'object' && instr !== null && typeof instr.typeorm === 'object'
         ? { enabled: typeormEnabled, captureQueries: instr.typeorm.captureQueries ?? true, captureParams: instr.typeorm.captureParams ?? false }
         : { enabled: typeormEnabled, captureQueries: true, captureParams: false };
-    const drizzleEnabled = typeof instr.drizzle === 'object' ? instr.drizzle.enabled : (instr.drizzle ?? true);
-    const drizzleConfig = typeof instr.drizzle === 'object'
+    const drizzleEnabled = isPluginActive('drizzle');
+    const drizzleConfig = typeof instr === 'object' && instr !== null && typeof instr.drizzle === 'object'
         ? { enabled: drizzleEnabled, captureQueries: instr.drizzle.captureQueries ?? true, captureParams: instr.drizzle.captureParams ?? false }
         : { enabled: drizzleEnabled, captureQueries: true, captureParams: false };
-    const mikroormEnabled = instr.mikroorm ?? true;
-    const sequelizeEnabled = instr.sequelize ?? true;
-    const knexEnabled = instr.knex ?? true;
+    const mikroormEnabled = isPluginActive('mikroorm');
+    const sequelizeEnabled = isPluginActive('sequelize');
+    const knexEnabled = isPluginActive('knex');
     // New Messaging
-    const kafkaEnabled = typeof instr.kafkajs === 'object' ? instr.kafkajs.enabled : (instr.kafkajs ?? true);
-    const kafkaConfig = typeof instr.kafkajs === 'object'
+    const kafkaEnabled = isPluginActive('kafkajs');
+    const kafkaConfig = typeof instr === 'object' && instr !== null && typeof instr.kafkajs === 'object'
         ? { enabled: kafkaEnabled, emitConsumerBatchSpans: instr.kafkajs.emitConsumerBatchSpans ?? true, captureMessageKey: instr.kafkajs.captureMessageKey ?? false }
         : { enabled: kafkaEnabled, emitConsumerBatchSpans: true, captureMessageKey: false };
-    const amqpEnabled = typeof instr.amqplib === 'object' ? instr.amqplib.enabled : (instr.amqplib ?? true);
-    const amqpConfig = typeof instr.amqplib === 'object'
+    const amqpEnabled = isPluginActive('amqplib');
+    const amqpConfig = typeof instr === 'object' && instr !== null && typeof instr.amqplib === 'object'
         ? { enabled: amqpEnabled, captureMessageData: instr.amqplib.captureMessageData ?? false }
         : { enabled: amqpEnabled, captureMessageData: false };
-    const sqsEnabled = instr.sqs ?? true;
-    const snsEnabled = instr.sns ?? true;
-    const pubsubEnabled = instr.pubsub ?? true;
+    const sqsEnabled = isPluginActive('sqs');
+    const snsEnabled = isPluginActive('sns');
+    const pubsubEnabled = isPluginActive('pubsub');
     // RPC & Infrastructure
-    const grpcEnabled = instr.grpc ?? true;
-    const nestjsEnabled = instr.nestjs ?? true;
-    const dnsEnabled = typeof instr.dns === 'object' ? instr.dns.enabled : (instr.dns ?? false);
+    const grpcEnabled = isPluginActive('grpc');
+    const nestjsEnabled = isPluginActive('nestjs');
+    const dnsEnabled = isPluginActive('dns', false);
     return {
         http: httpEnabled && automaticTracingAllowed,
         https: httpsEnabled && automaticTracingAllowed,

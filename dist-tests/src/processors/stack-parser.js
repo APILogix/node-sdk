@@ -24,6 +24,7 @@
  * Classifies frames as in-app vs library (node_modules, node: internals).
  * Compatible with OTel exception.stacktrace semantic conventions.
  */
+import { registerTrustedStackFile } from './source-context.js';
 // ─── V8 Structured Parsing ──────────────────────────────────────────────────
 /**
  * Extract structured stack frames from a live Error object using V8's
@@ -156,16 +157,28 @@ function parseLineRegex(line) {
  * Parse an Error.stack string using regex fallback.
  * Bounded to prevent runaway CPU/memory on massive or malformed stacks.
  */
-function parseStackString(stack) {
+function parseStackString(stack, error) {
     const MAX_STACK_CHARS = 64_000;
     const MAX_STACK_LINES = 500;
     if (stack.length > MAX_STACK_CHARS) {
         stack = stack.slice(0, MAX_STACK_CHARS);
     }
-    const lines = stack.split('\n');
+    let stackBody = stack;
+    if (error) {
+        // A serialized Error.stack may have been read before its message was
+        // mutated. If its header no longer matches, no text frame is trustworthy:
+        // message text can itself contain lines that look exactly like V8 frames.
+        const errorPrefix = error.message
+            ? `${error.name || 'Error'}: ${error.message}`
+            : (error.name || 'Error');
+        if (!stackBody.startsWith(errorPrefix))
+            return [];
+        stackBody = stackBody.slice(errorPrefix.length);
+    }
+    const lines = stackBody.split('\n');
     const bounded = lines.length > MAX_STACK_LINES ? lines.slice(0, MAX_STACK_LINES) : lines;
     return bounded
-        .slice(1) // Skip the error message line
+        .filter((_, idx) => (!error || typeof error.message !== 'string' ? idx > 0 : true))
         .map(line => line.trim())
         .filter(line => line.startsWith('at '))
         .map(parseLineRegex)
@@ -197,16 +210,24 @@ export function parseStack(stack, error) {
     if (error) {
         const callSites = extractCallSites(error);
         if (callSites && callSites.length > 0) {
-            return callSites
+            const frames = callSites
                 .filter(site => !site.isNative())
                 .map(callSiteToFrame)
                 .filter(frame => !isInternalFrame(frame.filename));
+            for (const frame of frames) {
+                if (frame.filename)
+                    registerTrustedStackFile(frame.filename);
+            }
+            return frames;
         }
+        // Defer reading Error.stack until after attempting V8's structured API.
+        if (stack === undefined)
+            stack = error.stack;
     }
     // Path 2: Pre-serialized stack string — regex fallback
     if (!stack)
         return [];
-    return parseStackString(stack);
+    return parseStackString(stack, error);
 }
 // ─── Shared Helpers ─────────────────────────────────────────────────────────
 function createFrame(fn, filename, lineno, colno) {

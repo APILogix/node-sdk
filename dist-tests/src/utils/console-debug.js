@@ -1,10 +1,20 @@
+import { SDK_CONSOLE_BYPASS, SDK_CONSOLE_BYPASS_LEGACY } from './sdk-console.js';
 export function sdkConsoleDebug(label, details) {
     if (process.env['LYNKTRACE_SDK_CONSOLE_DEBUG'] !== 'true' &&
         process.env['PULSE_SDK_CONSOLE_DEBUG'] !== 'true' &&
         process.env['LYNKTRACE_TRANSPORT_CONSOLE'] !== 'true' &&
         process.env['PULSE_TRANSPORT_CONSOLE'] !== 'true')
         return;
-    console.log(`[Telemetry] ${label}`, publicDebugDetails(details));
+    const safeDetails = publicDebugDetails(details);
+    Object.defineProperty(safeDetails, SDK_CONSOLE_BYPASS, {
+        value: true,
+        enumerable: false,
+    });
+    Object.defineProperty(safeDetails, SDK_CONSOLE_BYPASS_LEGACY, {
+        value: true,
+        enumerable: false,
+    });
+    console.log(`[Telemetry] ${label}`, safeDetails);
 }
 function publicDebugDetails(details) {
     const eventCount = numberValue(details['eventCount']);

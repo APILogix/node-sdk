@@ -96,9 +96,16 @@ describe('ConfigValidator Unit Test Suite', () => {
                 assert.match(result.errors.join(' '), new RegExp(section));
             });
         }
-        it('rejects missing schemaVersion', () => {
+        it('accepts missing schemaVersion and defaults to version 1 during normalization', () => {
             const config = cloneConfig();
             delete config.schemaVersion;
+            const result = validateRemoteConfig(config);
+            assert.equal(result.valid, true);
+            const normalized = normalizeRemoteConfig(config);
+            assert.equal(normalized.schemaVersion, 1);
+        });
+        it('rejects invalid schemaVersion (negative or non-integer)', () => {
+            const config = cloneConfig({ schemaVersion: -1 });
             const result = validateRemoteConfig(config);
             assert.equal(result.valid, false);
             assert.match(result.errors.join(' '), /schemaVersion/);

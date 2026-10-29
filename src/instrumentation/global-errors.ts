@@ -24,6 +24,9 @@ import { ConfigManager } from "../core/config-manager.js"
 
 let registered = false
 let isCrashing = false
+export const CAPTURED_ERROR_MARKER = Symbol.for('lynktrace.captured_error')
+/** Rejections this module rethrows to preserve Node's crash semantics (already captured). */
+const rethrownRejections = new WeakSet<object>()
 
 /**
  * Returns whether the SDK is actively executing an emergency crash flush sequence.
@@ -35,8 +38,6 @@ export function isProcessCrashing(): boolean {
 // Store handler references for proper cleanup
 let uncaughtHandler: ((err: Error) => void) | null = null
 let rejectionHandler: ((reason: unknown) => void) | null = null
-let originalConsoleError: (typeof console.error) | null = null
-let consoleErrorWrapped = false
 
 /** Error-handler mechanics read remote config.errors when provided. */
 function getErrorsConfig(): {
@@ -106,17 +107,22 @@ export function setupGlobalErrorHandlers() {
         return
       }
 
-      try {
-        const store = createContextStore('uncaught', 10, {
-          extra: { mechanism: 'uncaughtException', handled: false },
-        })
-        withContext(store, () => {
-          captureException(err, 'fatal')
-        })
-      } catch (captureErr) {
+      // Rejections we rethrow on purpose were already captured by the rejection
+      // handler. Anything else — including errors a framework captured as
+      // "handled" earlier — is a real crash and must be reported as fatal.
+      if (!(err && typeof err === 'object' && rethrownRejections.has(err))) {
         try {
-          process.stderr.write(`[Telemetry] Failed to capture uncaught exception: ${captureErr}\n`)
-        } catch {}
+          const store = createContextStore('uncaught', 10, {
+            extra: { mechanism: 'uncaughtException', handled: false },
+          })
+          withContext(store, () => {
+            captureException(err, 'fatal')
+          })
+        } catch (captureErr) {
+          try {
+            process.stderr.write(`[Telemetry] Failed to capture uncaught exception: ${captureErr}\n`)
+          } catch {}
+        }
       }
 
       logger.error("Uncaught exception detected — flushing telemetry before process termination", {
@@ -124,16 +130,19 @@ export function setupGlobalErrorHandlers() {
         stack: err.stack,
       })
 
-      // Installing an uncaughtException listener suppresses Node's default
-      // non-zero termination. Preserve fatal process semantics.
-      if (!process.exitCode || process.exitCode === 0) {
-        process.exitCode = 1
-      }
-
       const clientOptions = client.options
       // By default, terminate the process after crash flush completes.
-      // Callers can opt out explicitly by setting `exitOnUncaughtException: false`.
-      const shouldExit = clientOptions?.exitOnUncaughtException !== false
+      // If the host application registered its own uncaughtException handler,
+      // allow the host to control process lifecycle (do not force exit).
+      const hasHostHandler = process.listenerCount('uncaughtException') > 1
+      const shouldExit = clientOptions?.exitOnUncaughtException === true ||
+        (clientOptions?.exitOnUncaughtException !== false && !hasHostHandler)
+      // A host-owned uncaughtException listener retains its own exit policy.
+      // Do not leak the SDK's fatal exit code into an application that elected
+      // to recover and continue serving.
+      if (shouldExit && (!process.exitCode || process.exitCode === 0)) {
+        process.exitCode = 1
+      }
       const crashTimeoutMs = clientOptions?.crashTimeoutMs ?? 2_000
       const onFatalError = clientOptions?.onFatalError
       const targetExitCode = process.exitCode || 1
@@ -171,7 +180,7 @@ export function setupGlobalErrorHandlers() {
           }
           if (shouldExit) {
             // Allow libuv to process pending handle close callbacks (uv_process_endgames) on Windows
-            await new Promise(r => setTimeout(r, 30))
+            await new Promise(r => setTimeout(r, 200))
             process.exit(targetExitCode)
           } else {
             isCrashing = false
@@ -187,15 +196,29 @@ export function setupGlobalErrorHandlers() {
   // ─── Unhandled Rejection Handler ────────────────────────────────────
   if (errorsConfig.captureUnhandledRejections !== false) {
     rejectionHandler = (reason: unknown) => {
+      const err = toError(reason)
       try {
         const store = createContextStore('unhandled', 10, {
           extra: { mechanism: 'unhandledRejection', handled: false },
         })
         withContext(store, () => {
-          captureException(toError(reason), 'error')
+          captureException(err, 'error')
         })
       } catch {
         // Isolated — never crash the host
+      }
+
+      // Adding an unhandledRejection listener changes Node's default behavior.
+      // Reproduce the selected runtime policy only when the SDK is the sole
+      // listener; explicit operator modes such as `warn` must remain intact.
+      if (process.listenerCount('unhandledRejection') <= 1) {
+        const mode = getUnhandledRejectionMode()
+        if (mode === 'throw' || mode === 'strict') {
+          rethrownRejections.add(err)
+          setImmediate(() => { throw err })
+        } else if (mode === 'warn-with-error-code') {
+          process.exitCode = 1
+        }
       }
     }
 
@@ -230,52 +253,118 @@ function isProcessWarning(error?: Error, message?: string): boolean {
   return false
 }
 
+type UnhandledRejectionMode = 'strict' | 'throw' | 'warn' | 'warn-with-error-code' | 'none'
+
+function getUnhandledRejectionMode(): UnhandledRejectionMode {
+  const parse = (args: readonly string[]): UnhandledRejectionMode | undefined => {
+    let selected: UnhandledRejectionMode | undefined
+    for (let i = 0; i < args.length; i++) {
+      const arg = args[i] ?? ''
+      const value = arg.startsWith('--unhandled-rejections=')
+        ? arg.slice('--unhandled-rejections='.length)
+        : arg === '--unhandled-rejections' ? args[i + 1] : undefined
+      if (value === 'strict' || value === 'throw' || value === 'warn' || value === 'warn-with-error-code' || value === 'none') {
+        selected = value
+      }
+    }
+    return selected
+  }
+
+  // An explicit CLI option takes precedence over NODE_OPTIONS.
+  const cliMode = parse(process.execArgv)
+  if (cliMode) return cliMode
+  const nodeOptions = process.env['NODE_OPTIONS'] ?? ''
+  const envArgs = nodeOptions.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g)?.map(value => value.replace(/^['"]|['"]$/g, '')) ?? []
+  return parse(envArgs) ?? 'throw'
+}
+
 interface MarkedConsoleError {
-  (...args: unknown[]): void
+  (...args: unknown[]): unknown
   [CONSOLE_ERROR_MARKER]?: true
   [CONSOLE_ERROR_MARKER_LEGACY]?: true
 }
 
-function wrapConsoleError(): void {
-  if (consoleErrorWrapped) return
-  consoleErrorWrapped = true
-  originalConsoleError = console.error
+/**
+ * Per-wrapper state. The call target is captured once, at wrap time, in the
+ * wrapper's own closure — never read from shared module state — so a wrapper
+ * can never end up calling itself, no matter how init/shutdown cycles and
+ * third-party wrappers interleave.
+ */
+interface ConsoleErrorWrapperState {
+  readonly target: (...args: unknown[]) => unknown
+  /** When false the wrapper is a pure pass-through (no capture). */
+  active: boolean
+}
 
-  const wrapped: MarkedConsoleError = (...args: unknown[]) => {
-    // Always call the original first
-    if (originalConsoleError) {
-      originalConsoleError.apply(console, args)
-    }
+/**
+ * Every console.error wrapper this module ever installed (including ones from
+ * earlier init cycles that could not be unwound because something wrapped on
+ * top of them). Keyed by wrapper function so re-init can recognise and reuse
+ * them instead of stacking a new layer.
+ */
+const consoleErrorWrappers = new WeakMap<object, ConsoleErrorWrapperState>()
+let activeConsoleErrorWrapper: MarkedConsoleError | null = null
+
+function wrapConsoleError(): void {
+  if (activeConsoleErrorWrapper) return
+
+  const current = console.error as unknown as MarkedConsoleError
+  const existing = consoleErrorWrappers.get(current)
+  if (existing) {
+    // Our own wrapper from a previous cycle is still on top: re-activate it.
+    existing.active = true
+    activeConsoleErrorWrapper = current
+    return
+  }
+
+  const state: ConsoleErrorWrapperState = {
+    target: current as unknown as (...args: unknown[]) => unknown,
+    active: true,
+  }
+
+  const wrapped: MarkedConsoleError = function (this: unknown, ...args: unknown[]) {
+    // Always run the host's console.error first and preserve its behaviour
+    // (return value, thrown errors) exactly.
+    const result = state.target.apply(this ?? console, args)
+
+    if (!state.active) return result
 
     // Re-entry guard. If captureException below logs anything via the SDK
-    // logger (which now writes directly to process.stderr, not
-    // console.error, so this is mostly defensive), or if a plugin in the
+    // logger (which writes directly to process.stderr), or if a plugin in the
     // pipeline calls console.error during processing, we'd recurse here.
-    // The flag is module-local so unrelated user console.error calls are
-    // unaffected.
-    if (consoleErrorReentry) return
+    if (consoleErrorReentry) return result
     consoleErrorReentry = true
 
     // Create an error event from the console.error call
     try {
+      const store = getRequestContext()
+
       // Scrub args before stringifying — `console.error('creds', { password })`
       // must never exfiltrate secrets into the error message. Error instances
       // pass through untouched (scrubValue would strip their non-enumerable
       // message/stack); their message/stack go through transport scrubbing.
-      // The scrubber exists before handlers are installed; lifecycle races
-      // redact non-Error arguments rather than forwarding them unchanged.
       const scrubber = SecurityScrubber.getInstance()
       const scrubbedArgs = scrubber
         ? args.map(a => (a instanceof Error ? a : scrubber.scrubValue(a)))
         : args.map(a => (a instanceof Error ? a : '[Redacted]'))
+
+      const error = scrubbedArgs.find(a => a instanceof Error) as Error | undefined
+      // Already captured by a framework handler (Express) — don't report twice.
+      if (error && (error as any)[CAPTURED_ERROR_MARKER]) {
+        return result
+      }
+      // Express's final handler logs `console.error(err.stack)` — a string,
+      // not the Error — for an error the error middleware already captured.
+      const captured = store?.extra && (store.extra as Record<string, unknown>).expressCapturedStack
+      if (!error && typeof captured === 'string' && args.length === 1 && args[0] === captured) {
+        return result
+      }
 
       const message = scrubbedArgs.map(a => {
         if (a instanceof Error) return a.message
         if (typeof a === 'string') return a
         try { return JSON.stringify(a) } catch { return String(a) }
       }).join(' ')
-
-      const error = scrubbedArgs.find(a => a instanceof Error) as Error | undefined
 
       // Route runtime/library process warnings to captureMessage (Severity.Warning)
       // instead of logging an APM application error that taints healthy HTTP 200 requests.
@@ -284,24 +373,43 @@ function wrapConsoleError(): void {
           mechanism: 'console.error.warning',
           warning: true,
         })
-        return
+        return result
       }
 
-      const store = getRequestContext()
-      if (store?.extra) {
-        ;(store.extra as Record<string, unknown>).mechanism = 'console.error'
-        ;(store.extra as Record<string, unknown>).handled = true
-      }
-      captureException(error ?? new Error(message), 'error')
+      // Label this capture without mutating the shared request store, so
+      // later captures in the same request keep their own mechanism.
+      captureException(error ?? new Error(message), { severity: 'error', mechanism: 'console.error', handled: true })
     } catch {
       // Never crash the host from console.error wrapping
     } finally {
       consoleErrorReentry = false
     }
+    return result
   }
   wrapped[CONSOLE_ERROR_MARKER] = true
   wrapped[CONSOLE_ERROR_MARKER_LEGACY] = true
-  console.error = wrapped
+  consoleErrorWrappers.set(wrapped, state)
+  activeConsoleErrorWrapper = wrapped
+  console.error = wrapped as unknown as typeof console.error
+}
+
+/**
+ * Detach our console.error wrapper. If it is still on top, restore exactly the
+ * function it wrapped. If something wrapped on top of it, it can't be removed
+ * safely — turn it into a pure pass-through instead (it keeps calling its own
+ * captured target, so output is never lost and nothing recurses).
+ */
+function unwrapConsoleError(): void {
+  const wrapper = activeConsoleErrorWrapper
+  if (!wrapper) return
+  activeConsoleErrorWrapper = null
+  const state = consoleErrorWrappers.get(wrapper)
+  if (!state) return
+  state.active = false
+  if (console.error === (wrapper as unknown as typeof console.error)) {
+    console.error = state.target as unknown as typeof console.error
+    consoleErrorWrappers.delete(wrapper)
+  }
 }
 
 /**
@@ -330,17 +438,7 @@ export function resetGlobalErrorHandlers() {
     rejectionHandler = null
   }
 
-  // Restore console.error only if our wrapper is still the active method.
-  // If the host (or another monitoring SDK) wrapped on top of us, leave
-  // their wrapper in place — they own the restore path.
-  if (consoleErrorWrapped && originalConsoleError) {
-    const current = console.error as MarkedConsoleError
-    if (current && (current[CONSOLE_ERROR_MARKER] === true || current[CONSOLE_ERROR_MARKER_LEGACY] === true)) {
-      console.error = originalConsoleError
-    }
-    originalConsoleError = null
-    consoleErrorWrapped = false
-  }
+  unwrapConsoleError()
 
   registered = false
 }

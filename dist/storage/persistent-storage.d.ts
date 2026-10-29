@@ -109,6 +109,8 @@ declare class PersistentStorage {
     private writeChain;
     private persistedIds;
     private customDirectoryConfigured;
+    /** Tracks the whole flush operation, including chunked serialization before disk enqueue. */
+    private flushChain;
     configure(options?: PersistentStorageOptions): void;
     private createTempFilePath;
     init(): Promise<Event[]>;
@@ -140,9 +142,15 @@ declare class PersistentStorage {
      */
     persistBatch(events: readonly Event[]): void;
     /**
+     * Synchronous flush for crash paths (SIGKILL, uncaughtException).
+     * Appends all buffered and extra events directly to disk using appendFileSync.
+     */
+    flushSync(extraEvents?: readonly Event[]): void;
+    /**
      * Force-flush all buffered events to disk immediately.
      */
     flush(): Promise<void>;
+    private flushBuffer;
     /**
      * Remove events that were successfully delivered.
      *
@@ -159,6 +167,10 @@ declare class PersistentStorage {
      * event. The transport layer batches discards naturally.
      */
     discard(events: readonly Event[]): Promise<void>;
+    /** List queue segments owned by this key, excluding live sibling writers. */
+    private listReplayableFiles;
+    private restoreClaim;
+    private recoverOrphanedClaims;
     /**
      * Replay persisted events from disk.
      * Returns events that are still valid (within TTL).
@@ -170,7 +182,7 @@ declare class PersistentStorage {
      * 4. Exclusively claims candidate files via atomic rename before reading to
      *    prevent multiple workers from racing or duplicating replay batches.
      */
-    replay(deadlineMs?: number): Promise<Event[]>;
+    replay(deadlineMs?: number, signal?: AbortSignal): Promise<Event[]>;
     /**
      * Get storage statistics for operational dashboards / health endpoints.
      *

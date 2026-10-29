@@ -10,4 +10,4 @@
 export const SDK_NAME = '@lynktrace/node'
 
 /** SDK semantic version — corresponds to increments in `package.json`. */
-export const SDK_VERSION = '3.1.1'
+export const SDK_VERSION = '3.3.0'

@@ -7,8 +7,8 @@
  *
  * Unlike the core `captureMessage()` (which is always available and emits a
  * `message` event), `captureLog()` emits a structured `log` event routed to
- * the `logs` ingestion route, with level filtering, argument scrubbing and
- * trace correlation applied by the LoggingSubsystem.
+ * the `logs` ingestion route, with level filtering, argument scrubbing,
+ * rate limiting, and trace correlation applied by the LoggingSubsystem.
  */
 
 import type { SeverityLevel } from '../types/severity.js'
@@ -17,7 +17,7 @@ import { EntitlementGate } from '../core/entitlement-gate.js'
 import { getLogger } from '../utils/logger.js'
 
 /** Levels accepted by the public log capture API. */
-export type CaptureLogLevel = SeverityLevel | 'log' | 'warn'
+export type CaptureLogLevel = SeverityLevel | 'log' | 'warn' | 'trace'
 
 /**
  * Capture a structured log event.
@@ -31,11 +31,15 @@ export type CaptureLogLevel = SeverityLevel | 'log' | 'warn'
  *   - the `logging` entitlement is revoked by remote config, or
  *   - the SDK is not initialized / the logging subsystem is disabled.
  *
- * @param level - Log level ('debug', 'info', 'warning'/'warn', 'error', 'fatal')
+ * @param level - Log level ('trace', 'debug', 'info', 'warning'/'warn', 'error', 'fatal')
  * @param message - Human-readable log message (truncated to configured max size)
  * @param args - Optional structured arguments (max 10 kept, scrubbed)
  */
-export function captureLog(level: CaptureLogLevel, message: string, ...args: unknown[]): void {
+export function captureLog(
+  level: CaptureLogLevel,
+  message: string,
+  ...args: unknown[]
+): void {
   try {
     if (!EntitlementGate.isAllowed('logging')) return
 
@@ -43,7 +47,7 @@ export function captureLog(level: CaptureLogLevel, message: string, ...args: unk
     if (!subsystem) return
 
     const normalizedLevel = level === 'warn' ? 'warning' : level === 'log' ? 'info' : level
-    subsystem.captureLog(normalizedLevel, message, args)
+    subsystem.captureLog(normalizedLevel, message, args, 'api')
   } catch (err) {
     // Public capture APIs must never throw into user code.
     getLogger().warn('captureLog failed', { error: err })

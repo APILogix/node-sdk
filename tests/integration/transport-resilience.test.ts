@@ -14,6 +14,7 @@ describe('Transport Resilience & Quota Recovery Integration', () => {
   let serverUrl: string
   let responseMode: 'ok' | '429_retry_after' | '500_transient' | '400_poisoned' = 'ok'
   let requestsReceived: Array<{ path: string; headers: http.IncomingHttpHeaders; body: unknown }> = []
+  let beforeSendDelayMs = 0
 
   before(async () => {
     server = http.createServer((req, res) => {
@@ -133,6 +134,13 @@ describe('Transport Resilience & Quota Recovery Integration', () => {
     await init({
       apiKey: 'pv_test_resilience_key',
       debug: false,
+      beforeSendTimeoutMs: 1_000,
+      beforeSend: async event => {
+        if (beforeSendDelayMs > 0) {
+          await new Promise(resolve => setTimeout(resolve, beforeSendDelayMs))
+        }
+        return event
+      },
     })
 
     // 1. Initial capture in OK state
@@ -202,5 +210,32 @@ describe('Transport Resilience & Quota Recovery Integration', () => {
     // Automatic recovery verified without server restart!
     assert.equal(quotaController.getState(), 'QUOTA_OK')
     assert.equal(quotaController.isExhausted(), false)
+  })
+
+  it('keeps events allowed by a 150ms beforeSend hook when the configured deadline is 1s', async () => {
+    requestsReceived = []
+    responseMode = 'ok'
+    beforeSendDelayMs = 150
+    const messages = [
+      'slow privacy lookup alpha',
+      'slow privacy lookup bravo',
+      'slow privacy lookup charlie',
+      'slow privacy lookup delta',
+      'slow privacy lookup echo',
+    ]
+    try {
+      for (const message of messages) captureException(new Error(message))
+      await flush()
+      const errorPayloads = requestsReceived
+        .filter(request => request.path.includes('/errors'))
+        .map(request => JSON.stringify(request.body))
+        .join('\n')
+      assert.ok(errorPayloads.length > 0, 'beforeSend should route allowed events')
+      for (const message of messages) {
+        assert.ok(errorPayloads.includes(message), `allowed event did not reach the backend: ${message}`)
+      }
+    } finally {
+      beforeSendDelayMs = 0
+    }
   })
 })

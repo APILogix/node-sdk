@@ -14,6 +14,10 @@
  * - Never throws — all errors are swallowed and logged at debug level
  */
 import type { StackFrame } from '../types/event.js';
+/** Register a file path obtained from V8 CallSites, never from stack text. */
+export declare function registerTrustedStackFile(filename: string): void;
+/** Source reads require an application-root file known to the runtime. */
+export declare function isTrustedSourceContextFile(filename: string): boolean;
 /**
  * Attach source context to stack frames.
  *

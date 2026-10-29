@@ -70,6 +70,18 @@ export function normalizeEvent(event, metadata) {
                     }))
                     : undefined,
             };
+        case 'log':
+            return {
+                ...base,
+                message: truncateString(base.message, MAX_MESSAGE_LENGTH),
+                level: typeof base.level === 'string' ? base.level.toLowerCase() : 'info',
+                args: Array.isArray(base.args)
+                    ? base.args.slice(0, 10).map(arg => truncateObject(arg, MAX_OBJECT_DEPTH))
+                    : undefined,
+                attributes: base.attributes
+                    ? truncateObject(base.attributes, MAX_OBJECT_DEPTH)
+                    : undefined,
+            };
         default:
             return base;
     }

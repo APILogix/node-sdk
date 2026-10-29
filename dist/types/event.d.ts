@@ -171,6 +171,12 @@ export interface LogEvent {
     readonly traceId?: string | undefined;
     readonly spanId?: string | undefined;
     readonly metadata?: EventMetadata | undefined;
+    /** Logger source name (e.g. 'console', 'winston', 'pino', 'custom') */
+    readonly logger?: string | undefined;
+    /** OpenTelemetry-compliant severity number (1-24) */
+    readonly severityNumber?: number | undefined;
+    /** Structured key-value attributes */
+    readonly attributes?: Readonly<Record<string, unknown>> | undefined;
 }
 /** Profiling event containing CPU or heap profile data. */
 export interface ProfileEvent {

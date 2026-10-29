@@ -2,7 +2,7 @@
  * Error capture — captures exceptions and routes them through the event pipeline.
  * Features canonical signature: captureException(error, severity?).
  */
-import { toError } from '../core/errors.js';
+import { toError, extractErrorCauseChain } from '../core/errors.js';
 import { getLogger } from '../utils/logger.js';
 import { parseStack } from '../processors/stack-parser.js';
 import { generateFingerprint } from '../processors/fingerprint.js';
@@ -49,8 +49,18 @@ export function captureException(error, severity) {
             }
         }
         let severityInput = severity;
-        if (typeof severity === 'object' && severity !== null && 'severity' in severity) {
-            severityInput = severity.severity;
+        let mechanismOverride = undefined;
+        let handledOverride = undefined;
+        if (typeof severity === 'object' && severity !== null) {
+            if ('severity' in severity) {
+                severityInput = severity.severity;
+            }
+            if ('mechanism' in severity && typeof severity.mechanism === 'string') {
+                mechanismOverride = severity.mechanism;
+            }
+            if ('handled' in severity && typeof severity.handled === 'boolean') {
+                handledOverride = severity.handled;
+            }
         }
         const resolvedSeverity = severityInput ? severityFromString(severityInput, Severity.Error) : Severity.Error;
         let statusCode = undefined;
@@ -58,8 +68,8 @@ export function captureException(error, severity) {
         let method = undefined;
         let route = undefined;
         let url = undefined;
-        let mechanism = 'manual';
-        let handled = true;
+        let mechanism = mechanismOverride ?? 'manual';
+        let handled = handledOverride ?? true;
         const ctx = getRequestContext();
         // Automatically enrich HTTP information and mechanism/handled metadata from the active request context store if present.
         if (ctx?.extra) {
@@ -90,10 +100,11 @@ export function captureException(error, severity) {
                 }
                 catch { }
             }
-            if (typeof ctx.extra.mechanism === 'string' && ctx.extra.mechanism) {
+            // Explicit per-call overrides win over request-store defaults.
+            if (mechanismOverride === undefined && typeof ctx.extra.mechanism === 'string' && ctx.extra.mechanism) {
                 mechanism = ctx.extra.mechanism;
             }
-            if (typeof ctx.extra.handled === 'boolean') {
+            if (handledOverride === undefined && typeof ctx.extra.handled === 'boolean') {
                 handled = ctx.extra.handled;
             }
         }
@@ -107,7 +118,10 @@ export function captureException(error, severity) {
         const classification = classifyError(handled, mechanism, resolvedSeverity);
         // Parse stack frames synchronously — uses V8 CallSite API when available,
         // falls back to regex for pre-serialized stacks
-        const stackFrames = parseStack(normalized.stack, normalized);
+        // Let parseStack install its scoped V8 CallSite hook before touching the
+        // lazy .stack accessor. Reading .stack first serializes message text and
+        // makes injected fake frame lines indistinguishable from real frames.
+        const stackFrames = parseStack(undefined, normalized);
         // ─── Path Normalization for Grouping ──────────────────────────────
         let normalizedFrames = stackFrames;
         try {
@@ -142,7 +156,7 @@ export function captureException(error, severity) {
             fingerprint,
             severity: resolvedSeverity,
             timestamp: epochMs(),
-            context: {},
+            context: normalized.cause ? { causeChain: extractErrorCauseChain(normalized) } : {},
             mechanism,
             handled,
             classification,

@@ -187,19 +187,20 @@ export function lynktraceFastifyPlugin(fastify, opts, done) {
     fastify.addHook('preSerialization', (request, reply, payload, hookDone) => {
         const state = request.lynktrace ?? request.pulse;
         if (state) {
-            const errStatusCode = payload?.statusCode
-                ?? (reply.statusCode && reply.statusCode !== 200 ? reply.statusCode : undefined)
-                ?? (reply.raw?.statusCode && reply.raw.statusCode !== 200 ? reply.raw.statusCode : undefined)
-                ?? 500;
-            if (payload instanceof Error || (payload && typeof payload === 'object' && payload.message && errStatusCode >= 400)) {
+            const actualStatusCode = payload?.statusCode
+                ?? reply.statusCode
+                ?? reply.raw?.statusCode
+                ?? 200;
+            if (shouldCaptureFastifyError(actualStatusCode, payload instanceof Error, options.captureValidationErrors === true)
+                && (payload instanceof Error || (payload && typeof payload === 'object' && payload.message))) {
                 withContext(state.store, () => {
                     try {
                         if (state.store.extra) {
                             ;
                             state.store.extra.mechanism = 'fastify.onError';
                             state.store.extra.handled = true;
-                            state.store.extra.statusCode = errStatusCode;
-                            state.store.extra.getStatusCode = () => errStatusCode;
+                            state.store.extra.statusCode = actualStatusCode;
+                            state.store.extra.getStatusCode = () => actualStatusCode;
                             state.store.extra.fastifyErrorCaptured = true;
                         }
                         attachRequestContextToActiveSpan(state.store);
@@ -225,6 +226,10 @@ export function lynktraceFastifyPlugin(fastify, opts, done) {
             ?? (reply.statusCode && reply.statusCode !== 200 ? reply.statusCode : undefined)
             ?? (reply.raw?.statusCode && reply.raw.statusCode !== 200 ? reply.raw.statusCode : undefined)
             ?? 500;
+        if (!shouldCaptureFastifyError(errStatusCode, true, options.captureValidationErrors === true)) {
+            hookDone();
+            return;
+        }
         withContext(state.store, () => {
             try {
                 if (state.store.extra) {
@@ -301,7 +306,7 @@ export function lynktraceFastifyPlugin(fastify, opts, done) {
                     catch { }
                 }
             }
-            if (errToCapture && effectiveStatusCode >= 400) {
+            if (errToCapture && shouldCaptureFastifyError(effectiveStatusCode, payload instanceof Error, options.captureValidationErrors === true)) {
                 withContext(state.store, () => {
                     try {
                         if (state.store.extra) {
@@ -324,6 +329,15 @@ export function lynktraceFastifyPlugin(fastify, opts, done) {
         hookDone(null, payload);
     });
     done();
+}
+function shouldCaptureFastifyError(statusCode, isError, captureValidationErrors) {
+    if (statusCode >= 500)
+        return true;
+    if (statusCode === 422)
+        return captureValidationErrors;
+    if (statusCode >= 400)
+        return false;
+    return isError;
 }
 ;
 lynktraceFastifyPlugin[Symbol.for('skip-override')] = true;

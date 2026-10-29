@@ -6,6 +6,9 @@ import { gunzipSync } from 'node:zlib'
 import { init } from '../../src/core/init.js'
 import { shutdown } from '../../src/core/lifecycle.js'
 import { TEST_REMOTE_CONFIG } from '../fixtures/remote-config.js'
+import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 describe('Crash Semantics & Process Termination Lifecycle', () => {
   let mockServer: http.Server
@@ -87,9 +90,13 @@ describe('Crash Semantics & Process Termination Lifecycle', () => {
     await new Promise<void>(resolve => mockServer.close(() => resolve()))
   })
 
-  function runChildScript(scriptContent: string, timeoutMs = 8000): Promise<{ code: number | null; stdout: string; stderr: string }> {
+  function runChildScript(
+    scriptContent: string,
+    timeoutMs = 8000,
+    nodeArgs: string[] = [],
+  ): Promise<{ code: number | null; stdout: string; stderr: string }> {
     return new Promise((resolve, reject) => {
-      const child = spawn(process.execPath, ['--input-type=module', '-e', scriptContent], {
+      const child = spawn(process.execPath, [...nodeArgs, '--input-type=module', '-e', scriptContent], {
         env: {
           ...process.env,
           PULSE_ENDPOINT: `http://127.0.0.1:${mockPort}`,
@@ -181,6 +188,60 @@ describe('Crash Semantics & Process Termination Lifecycle', () => {
     const result = await runChildScript(script, 6000)
     assert.strictEqual(result.code, 42, `Expected host exit code 42, got ${result.code}. stderr: ${result.stderr}`)
     assert.ok(result.stdout.includes('HOST_HANDLED_CRASH:Application handled error'))
+  })
+
+  it('leaves a host-owned uncaughtException recovery path with exit code 0', async () => {
+    const script = `
+      import { init } from './dist/index.js'
+      await init({ apiKey: 'test-api-key', initTimeoutMs: 1000 })
+      process.on('uncaughtException', () => {
+        setTimeout(() => console.log('HOST_RECOVERY_COMPLETE'), 100)
+      })
+      setTimeout(() => { throw new Error('host will recover') }, 50)
+    `
+    const result = await runChildScript(script, 6000)
+    assert.equal(result.code, 0, `SDK must not set the exit code for a recovering host: ${result.stderr}`)
+    assert.ok(result.stdout.includes('HOST_RECOVERY_COMPLETE'))
+  })
+
+  it('honors --unhandled-rejections=warn without crashing or setting an exit code', async () => {
+    const script = `
+      import { init, shutdown } from './dist/index.js'
+      await init({ apiKey: 'test-api-key', initTimeoutMs: 1000 })
+      Promise.reject(new Error('warn mode rejection'))
+      setTimeout(async () => {
+        console.log('WARN_MODE_EXIT_CODE:' + String(process.exitCode))
+        await shutdown(1000)
+      }, 100)
+    `
+    const result = await runChildScript(script, 6000, ['--unhandled-rejections=warn'])
+    assert.equal(result.code, 0, `warn mode must not be overridden: ${result.stderr}`)
+    assert.ok(result.stdout.includes('WARN_MODE_EXIT_CODE:undefined'))
+  })
+
+  it('persists queued telemetry when a host-owned SIGTERM handler calls process.exit', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'lynktrace-host-sigterm-'))
+    try {
+      const script = `
+        import { init } from './dist/index.js'
+        import { captureException } from './dist/capture/captureException.js'
+        await init({
+          apiKey: 'test-api-key',
+          offlineQueue: { directory: ${JSON.stringify(directory)} },
+        })
+        captureException(new Error('host sigterm queued event'))
+        process.on('SIGTERM', () => setTimeout(() => process.exit(0), 100))
+        setTimeout(() => process.emit('SIGTERM', 'SIGTERM'), 50)
+      `
+      const result = await runChildScript(script, 6000)
+      assert.equal(result.code, 0, result.stderr)
+      const queueFiles = (await readdir(directory)).filter(name => name.endsWith('.ndjson'))
+      assert.ok(queueFiles.length > 0, 'process exit handler should persist queued events')
+      const contents = await Promise.all(queueFiles.map(name => readFile(join(directory, name), 'utf8')))
+      assert.ok(contents.join('\n').includes('host sigterm queued event'))
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
   })
 
   it('invokes onFatalError callback prior to terminating process', async () => {

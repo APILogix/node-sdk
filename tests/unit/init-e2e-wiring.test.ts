@@ -113,6 +113,39 @@ describe('init() end-to-end wiring: Auto-instrumentation & Error Handlers', () =
     })
   })
 
+  it('ignores an invalid init call while the first valid initialization is in flight', async () => {
+    let notifyInitStarted!: () => void
+    let releaseInit!: () => void
+    const initStarted = new Promise<void>(resolve => { notifyInitStarted = resolve })
+    const initGate = new Promise<void>(resolve => { releaseInit = resolve })
+    const config = {
+      ...TEST_REMOTE_CONFIG,
+      features: { ...TEST_REMOTE_CONFIG.features, errors: true },
+    }
+    globalThis.fetch = (async url => {
+      if (String(url).includes('/v1/init')) {
+        notifyInitStarted()
+        await initGate
+        return new Response(JSON.stringify({ success: true, config }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+      return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } })
+    }) as typeof fetch
+
+    const validInit = init({ apiKey: 'in-flight-init-key' })
+    await initStarted
+    const invalidConcurrentInit = init({ apiKey: 'invalid\u0000key' })
+    releaseInit()
+
+    const [validConfig, concurrentResult] = await Promise.all([validInit, invalidConcurrentInit])
+    assert.ok(validConfig)
+    assert.equal(concurrentResult, validConfig, 'concurrent invalid init should join the active initialization')
+    assert.equal(client.initialized, true)
+    assert.equal(client.getState(), 'initialized')
+  })
+
   it('correctly wires Express lynktraceMiddleware and expressErrorHandler with active spans', async () => {
     await init({ apiKey: 'test-wiring-api-key' })
 

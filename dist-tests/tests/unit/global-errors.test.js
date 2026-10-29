@@ -4,6 +4,7 @@ import { setupGlobalErrorHandlers, resetGlobalErrorHandlers } from '../../src/in
 import { init } from '../../src/core/init.js';
 import { shutdown } from '../../src/core/lifecycle.js';
 import { TEST_REMOTE_CONFIG } from '../fixtures/remote-config.js';
+import { performance } from 'node:perf_hooks';
 describe('Global Errors Instrumentation & Process Warning Classification', () => {
     const originalConsoleError = console.error;
     beforeEach(() => {
@@ -80,5 +81,28 @@ describe('Global Errors Instrumentation & Process Warning Classification', () =>
         assert.notEqual(console.error, originalConsoleError);
         resetGlobalErrorHandlers();
         assert.equal(console.error, originalConsoleError);
+    });
+    it('preserves every console.error call across shutdown and reinitialization', () => {
+        const original = console.error;
+        let printed = 0;
+        console.error = (() => { printed++; });
+        try {
+            setupGlobalErrorHandlers();
+            console.error('before shutdown');
+            resetGlobalErrorHandlers();
+            console.error('after shutdown');
+            const started = performance.now();
+            setupGlobalErrorHandlers();
+            console.error('reinitialized 1');
+            console.error('reinitialized 2');
+            console.error('reinitialized 3');
+            const elapsed = performance.now() - started;
+            assert.equal(printed, 5, 'each call must reach the host console exactly once');
+            assert.ok(elapsed < 250, `console.error calls took ${elapsed.toFixed(1)}ms`);
+        }
+        finally {
+            resetGlobalErrorHandlers();
+            console.error = original;
+        }
     });
 });

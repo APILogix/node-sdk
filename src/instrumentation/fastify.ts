@@ -52,6 +52,8 @@ export interface LynkTraceFastifyOptions {
    * and takes precedence when available.
    */
   readonly trustedProxies?: readonly string[]
+  /** Capture schema validation responses (HTTP 422). Other 4xx responses are ignored. Default: false. */
+  readonly captureValidationErrors?: boolean
 }
 
 type FastifyInstance = {
@@ -296,18 +298,19 @@ export function lynktraceFastifyPlugin(
   fastify.addHook('preSerialization', (request, reply, payload, hookDone) => {
     const state = request.lynktrace ?? request.pulse
     if (state) {
-      const errStatusCode = (payload as unknown as { statusCode?: number })?.statusCode
-        ?? (reply.statusCode && reply.statusCode !== 200 ? reply.statusCode : undefined)
-        ?? (reply.raw?.statusCode && reply.raw.statusCode !== 200 ? reply.raw.statusCode : undefined)
-        ?? 500
-      if (payload instanceof Error || (payload && typeof payload === 'object' && (payload as Record<string, unknown>).message && errStatusCode >= 400)) {
+      const actualStatusCode = (payload as unknown as { statusCode?: number })?.statusCode
+        ?? reply.statusCode
+        ?? reply.raw?.statusCode
+        ?? 200
+      if (shouldCaptureFastifyError(actualStatusCode, payload instanceof Error, options.captureValidationErrors === true)
+        && (payload instanceof Error || (payload && typeof payload === 'object' && (payload as Record<string, unknown>).message))) {
         withContext(state.store, () => {
           try {
             if (state.store.extra) {
               ;(state.store.extra as Record<string, unknown>).mechanism = 'fastify.onError'
               ;(state.store.extra as Record<string, unknown>).handled = true
-              ;(state.store.extra as Record<string, unknown>).statusCode = errStatusCode
-              ;(state.store.extra as Record<string, unknown>).getStatusCode = () => errStatusCode
+              ;(state.store.extra as Record<string, unknown>).statusCode = actualStatusCode
+              ;(state.store.extra as Record<string, unknown>).getStatusCode = () => actualStatusCode
               ;(state.store.extra as Record<string, unknown>).fastifyErrorCaptured = true
             }
             attachRequestContextToActiveSpan(state.store)
@@ -333,6 +336,11 @@ export function lynktraceFastifyPlugin(
       ?? (reply.statusCode && reply.statusCode !== 200 ? reply.statusCode : undefined)
       ?? (reply.raw?.statusCode && reply.raw.statusCode !== 200 ? reply.raw.statusCode : undefined)
       ?? 500
+
+    if (!shouldCaptureFastifyError(errStatusCode, true, options.captureValidationErrors === true)) {
+      hookDone()
+      return
+    }
 
     withContext(state.store, () => {
       try {
@@ -408,7 +416,11 @@ export function lynktraceFastifyPlugin(
         }
       }
 
-      if (errToCapture && effectiveStatusCode >= 400) {
+      if (errToCapture && shouldCaptureFastifyError(
+        effectiveStatusCode,
+        payload instanceof Error,
+        options.captureValidationErrors === true,
+      )) {
         withContext(state.store, () => {
           try {
             if (state.store.extra) {
@@ -430,6 +442,13 @@ export function lynktraceFastifyPlugin(
   })
 
   done()
+}
+
+function shouldCaptureFastifyError(statusCode: number, isError: boolean, captureValidationErrors: boolean): boolean {
+  if (statusCode >= 500) return true
+  if (statusCode === 422) return captureValidationErrors
+  if (statusCode >= 400) return false
+  return isError
 }
 
 ;(lynktraceFastifyPlugin as any)[Symbol.for('skip-override')] = true

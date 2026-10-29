@@ -31,3 +31,13 @@ export function toError(value: unknown): Error {
   return new Error(String(value))
 }
 
+export function extractErrorCauseChain(error: unknown, maxDepth = 5): Array<{ name: string; message: string; stack?: string }> {
+  const chain: Array<{ name: string; message: string; stack?: string }> = []
+  let cur: any = error
+  while (cur && cur.cause && chain.length < maxDepth) {
+    cur = cur.cause
+    chain.push({ name: cur.name ?? 'Error', message: cur.message ?? String(cur), stack: cur.stack })
+  }
+  return chain
+}
+

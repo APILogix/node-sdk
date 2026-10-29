@@ -301,6 +301,21 @@ export class TransportRouter {
     return residual
   }
 
+  /** Snapshot queued, retrying, and active batches for a synchronous exit hook. */
+  drainAllForExit(): SDKEvent[] {
+    const residual: SDKEvent[] = []
+    const seen = new Set<string>()
+    for (const manager of this.batchManagers.values()) {
+      for (const event of manager.drainForExit()) {
+        const id = event.eventId ?? ''
+        if (id && seen.has(id)) continue
+        if (id) seen.add(id)
+        residual.push(event)
+      }
+    }
+    return residual
+  }
+
   async shutdown(): Promise<SDKEvent[]> {
     if (this.destroyed) return this.drainAllQueues()
     this.destroyed = true
@@ -365,13 +380,19 @@ export class TransportRouter {
       const priority = toQueuePriority(routeRemote.priority)
       if (!priority) throw new TransportConfigurationError('Route priority is invalid', { route })
       const maxSize = config.queue.maxSize
+      // Authoritative Enterprise Compression Policy:
+      // - 'crons' is NEVER compressed ('none') — tiny single check-ins (~150B); avoids negative gzip expansion.
+      // - All other telemetry routes ('traces', 'spans', 'requests', 'metrics', 'logs', 'profiles', 'errors', 'events')
+      //   are ALWAYS gzip-compressed ('gzip') irrespective of remote config.
+      const effectiveCompression: 'gzip' | 'none' = route === 'crons' ? 'none' : 'gzip'
+
       getLogger().debug('[TransportRouter] Configured route', {
         route,
         batchSize: routeRemote.batchSize,
         flushIntervalMs: routeRemote.flushIntervalMs,
         timeoutMs: routeRemote.timeoutMs,
         configuredCompression: routeRemote.compression,
-        effectiveCompression: 'gzip',
+        effectiveCompression,
         priority: routeRemote.priority,
       })
 
@@ -395,7 +416,7 @@ export class TransportRouter {
         maxWaitTimeMs: routeRemote.flushIntervalMs,
         maxPayloadBytes: limits.maxPayloadSize,
         socketTimeoutMs: routeRemote.timeoutMs,
-        compression: routeRemote.compression,
+        compression: effectiveCompression,
         keepAlive: config.keepAlive,
         retry: config.retry,
         onDrop: info => this.recordDrop(info),

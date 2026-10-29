@@ -69,6 +69,7 @@ const SUBSYSTEM_STEP_TIMEOUT_MS = 5_000;
 let signalHandlersRegistered = false;
 let sigTermHandler = null;
 let sigIntHandler = null;
+let exitPersistenceHandler = null;
 let signalShutdownInFlight = false;
 let shuttingDown = false;
 let shutdownPromise = null;
@@ -89,6 +90,33 @@ export function isSDKShuttingDown() {
  */
 export function onBeforeShutdown(hook) {
     beforeShutdownHooks.push(hook);
+}
+/**
+ * Persist transport work synchronously if the host owns SIGTERM and later
+ * calls process.exit() without awaiting SDK shutdown.
+ */
+export function registerExitPersistenceHandler() {
+    if (exitPersistenceHandler || !persistentStorage.isInitialized)
+        return;
+    exitPersistenceHandler = () => {
+        if (!persistentStorage.isInitialized)
+            return;
+        try {
+            const transport = TransportRouter.getInstance()?.drainAllForExit() ?? [];
+            const legacy = eventQueue.drainAll();
+            persistentStorage.flushSync([...transport, ...legacy]);
+        }
+        catch {
+            // Process exit callbacks must stay synchronous and non-throwing.
+        }
+    };
+    process.on('exit', exitPersistenceHandler);
+}
+function resetExitPersistenceHandler() {
+    if (!exitPersistenceHandler)
+        return;
+    process.removeListener('exit', exitPersistenceHandler);
+    exitPersistenceHandler = null;
 }
 /**
  * Graceful shutdown — flushes telemetry, tears down subsystems, and resets
@@ -162,7 +190,7 @@ export async function flush() {
         await metricsRegistry.flush();
     }
     catch { }
-    await drainPendingEventProcessing();
+    await drainPendingEventProcessing(false);
     const router = TransportRouter.getInstance();
     if (router) {
         await router.flushAll();
@@ -188,11 +216,10 @@ export async function emergencyFlush(timeoutMs = 2_000) {
         let timer;
         const timeoutPromise = new Promise(resolve => {
             timer = setTimeout(resolve, timeoutMs);
-            timer.unref();
         });
         const drainPromise = (async () => {
             try {
-                await drainPendingEventProcessing();
+                await drainPendingEventProcessing(false);
             }
             catch {
                 // Best-effort — pipeline drain failure must not block transport flush
@@ -209,6 +236,25 @@ export async function emergencyFlush(timeoutMs = 2_000) {
         await Promise.race([drainPromise, timeoutPromise]);
         if (timer)
             clearTimeout(timer);
+        // Crash persistence: if the backend is down or hung, persist undelivered events to disk synchronously
+        try {
+            if (persistentStorage.isInitialized) {
+                const router = TransportRouter.getInstance();
+                let residual = [];
+                if (router) {
+                    try {
+                        residual = await withTimeout(router.shutdown(), 600, 'emergency router shutdown');
+                    }
+                    catch {
+                        residual = router.drainAllForExit();
+                    }
+                }
+                const legacy = eventQueue.drainAll();
+                const undelivered = [...residual, ...legacy];
+                persistentStorage.flushSync(undelivered);
+            }
+        }
+        catch { }
     }
     catch {
         // Best-effort — swallow all errors during emergency flush.
@@ -225,6 +271,11 @@ export function registerSignalHandlers() {
         return;
     const logger = getLogger();
     const handleSignal = async (signal) => {
+        // If the host application registered its own handler for this signal (graceful drain handler),
+        // allow the host to control process lifecycle.
+        if (process.listenerCount(signal) > 1) {
+            return;
+        }
         const exitCode = 128 + (signal === 'SIGINT' ? 2 : 15);
         if (signalShutdownInFlight) {
             logger.warn(`Received secondary ${signal} during active shutdown — forcing immediate exit`);
@@ -243,7 +294,6 @@ export function registerSignalHandlers() {
                 process.exit(exitCode);
             }
         }, 5000);
-        watchdogTimer.unref?.();
         try {
             await shutdown(4000);
         }
@@ -303,7 +353,6 @@ async function runShutdown(timeoutMs) {
     let timer;
     const timeoutPromise = new Promise(resolve => {
         timer = setTimeout(() => resolve('timeout'), timeout);
-        timer.unref?.();
     });
     // Cleanup owns SDK resources until it settles. The public deadline may win
     // the race, but no second cleanup or re-init can begin while this promise is
@@ -401,7 +450,7 @@ async function runOrchestratedShutdown(stepErrors) {
     //    the transport itself shuts down.
     await runStep('tracer.flush', () => withTimeout(flushTracer(), SUBSYSTEM_STEP_TIMEOUT_MS, 'tracer flush timed out'), stepErrors);
     // 5. Drain in-flight event pipeline work (setImmediate-deferred async work).
-    await runStep('event-pipeline.drain', () => withTimeout(drainPendingEventProcessing(), SUBSYSTEM_STEP_TIMEOUT_MS, 'event pipeline drain timed out'), stepErrors);
+    await runStep('event-pipeline.drain', () => withTimeout(drainPendingEventProcessing(true), SUBSYSTEM_STEP_TIMEOUT_MS, 'event pipeline drain timed out'), stepErrors);
     // 6. Flush metrics (snapshot + export) and stop the metric reader.
     await runStep('metrics.flush', async () => {
         // metricsRegistry.flush() now returns a Promise — await it so any
@@ -494,8 +543,8 @@ async function runUnconditionalCleanup(stepErrors) {
     runSync('sampling-engine.reset', () => SamplingEngine.reset(), stepErrors);
     runSync('limits-engine.reset', () => LimitsEngine.reset(), stepErrors);
     runSync('security-scrubber.reset', () => SecurityScrubber.reset(), stepErrors);
-    runSync('global-errors.reset', () => resetGlobalErrorHandlers(), stepErrors);
     runSync('logging-subsystem.reset', () => LoggingSubsystem.reset(), stepErrors);
+    runSync('global-errors.reset', () => resetGlobalErrorHandlers(), stepErrors);
     runSync('profiling-subsystem.reset', () => ProfilingSubsystem.reset(), stepErrors);
     runSync('cron-subsystem.reset', () => CronSubsystem.reset(), stepErrors);
     runSync('runtime-metrics-subsystem.reset', () => RuntimeMetricsSubsystem.resetInstance(), stepErrors);
@@ -527,6 +576,7 @@ async function runUnconditionalCleanup(stepErrors) {
     // Clear lifecycle-local state last so beforeShutdown hooks added during
     // teardown have already executed before we drop the references.
     beforeShutdownHooks.length = 0;
+    runSync('exit-persistence-handler.reset', () => resetExitPersistenceHandler(), stepErrors);
 }
 // ─── Internal: Step Execution ───────────────────────────────────────────────
 async function runStep(step, fn, errors) {
@@ -554,7 +604,6 @@ async function withTimeout(promise, timeoutMs, message) {
             Promise.resolve(promise),
             new Promise((_, reject) => {
                 timer = setTimeout(() => reject(new Error(message)), timeoutMs);
-                timer.unref?.();
             }),
         ]);
     }

@@ -25,6 +25,7 @@ import { resolve, dirname, join, relative, isAbsolute, sep } from 'path'
 import { SourceMapConsumer, type RawSourceMap } from 'source-map-js'
 import { getLogger } from '../utils/logger.js'
 import type { StackFrame } from '../types/event.js'
+import { isTrustedSourceContextFile } from './source-context.js'
 
 interface MappedLocation {
   source: string
@@ -147,7 +148,10 @@ class SourceMapResolver {
   // ─── Internal ─────────────────────────────────────────────────────────
 
   private async resolveFrame(frame: StackFrame): Promise<StackFrame> {
-    if (!frame.lineno || !frame.colno) return frame
+    // Stack text is caller-controlled. Only inspect source files derived from
+    // an actual loaded application frame; this also protects source-map URL
+    // discovery from fabricated paths such as /dev/zero or database.js.
+    if (!frame.lineno || !frame.colno || !isTrustedSourceContextFile(frame.filename)) return frame
 
     const sourceMapUrl = await this.findSourceMapUrl(frame.filename)
     if (!sourceMapUrl) {
@@ -271,6 +275,7 @@ class SourceMapResolver {
         if (!this.isRemoteSourceMapUrlAllowed(sourceMapUrl)) return null
         const controller = new AbortController()
         const timeoutId = setTimeout(() => controller.abort(), 5000)
+        timeoutId.unref?.()
         try {
           const response = await fetch(sourceMapUrl, {
             signal: controller.signal,

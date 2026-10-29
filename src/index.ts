@@ -169,10 +169,27 @@ export type { SpanInterval, DurationBreakdown } from './tracing/span-duration.js
 export { LynkTraceDrizzleLogger, createDrizzleInstrumentation } from './instrumentation/drizzle.js'
 export type { DrizzleInstrumentationOptions } from './instrumentation/drizzle.js'
 
-// ─── Logger control (apps wiring SDK into their own logger) ─────────────────
+// ─── Logger control & enterprise integrations ──────────────────────────────
 
-export { setLogger, setDebugMode, setLogLevel } from './utils/logger.js'
+export {
+  setLogger,
+  setDebugMode,
+  setLogLevel,
+  setLogFormat,
+  getLogFormat,
+  getLogger,
+  isDebugMode,
+  getLogLevel,
+  setLogPrefix,
+  getLogPrefix,
+  getLoggerWriterStats,
+} from './utils/logger.js'
 export type { Logger, LogFormat } from './utils/logger.js'
+export { createWinstonTransport, LynkTraceWinstonTransport } from './instrumentation/winston.js'
+export type { LynkTraceWinstonOptions } from './instrumentation/winston.js'
+export { createPinoStream, LynkTracePinoStream, pinoTraceMixin } from './instrumentation/pino.js'
+export type { LynkTracePinoOptions } from './instrumentation/pino.js'
+export { LoggingSubsystem, LogRateLimiter } from './subsystems/logging-subsystem.js'
 
 // ─── Public types ───────────────────────────────────────────────────────────
 

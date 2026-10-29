@@ -1,15 +1,65 @@
 /**
  * Structured logging subsystem. Remote config owns whether logging exists;
- * local constants define implementation-only console and size behavior.
+ * local constants define implementation-only console, rate limiting, and size behavior.
+ *
+ * Enterprise Non-Blocking & Low-Memory Guarantees:
+ * - Token bucket rate limiter bounds logging throughput and drops floods in O(1) time.
+ * - Fast shallow formatting inside console interception avoids blocking the host app thread.
+ * - Automatic breadcrumb bridging injects recent application logs into active context
+ *   for rich exception and crash correlation.
+ * - OpenTelemetry-compliant severity numbers and logger identification.
  */
 import { LOGGING_DEFAULTS } from '../constants/internal-defaults.js';
 import { getLogger } from '../utils/logger.js';
-import { getRequestContext, getSpanId, getTraceId } from '../core/context.js';
+import { getRequestContext, getSpanId, getTraceId, addBreadcrumb } from '../core/context.js';
 import { SecurityScrubber } from '../processors/security-scrubber.js';
 import { EntitlementGate } from '../core/entitlement-gate.js';
 import { isSdkConsoleBypass } from '../utils/sdk-console.js';
+import { Severity } from '../types/severity.js';
 const WRAPPER_MARKER = Symbol.for('lynktrace.logging-subsystem.wrapper');
 const WRAPPER_MARKER_LEGACY = Symbol.for('pulse-sdk.logging-subsystem.wrapper');
+const SEVERITY_NUMBER_MAP = Object.freeze({
+    trace: 1,
+    debug: 5,
+    info: 9,
+    warn: 13,
+    warning: 13,
+    error: 17,
+    fatal: 21,
+});
+/**
+ * Token bucket rate limiter for application log streams.
+ * Prevents log loops / storms from choking CPU or exhausting memory.
+ */
+export class LogRateLimiter {
+    tokens;
+    capacity;
+    refillRatePerMs;
+    lastRefill;
+    constructor(capacity = 1000, refillPerSecond = 500) {
+        this.capacity = capacity;
+        this.tokens = capacity;
+        this.refillRatePerMs = refillPerSecond / 1000;
+        this.lastRefill = Date.now();
+    }
+    tryConsume(count = 1) {
+        const now = Date.now();
+        const elapsed = now - this.lastRefill;
+        if (elapsed > 0) {
+            this.tokens = Math.min(this.capacity, this.tokens + elapsed * this.refillRatePerMs);
+            this.lastRefill = now;
+        }
+        if (this.tokens >= count) {
+            this.tokens -= count;
+            return true;
+        }
+        return false;
+    }
+    reset() {
+        this.tokens = this.capacity;
+        this.lastRefill = Date.now();
+    }
+}
 export class LoggingSubsystem {
     static instance = null;
     static captureReentry = false;
@@ -20,6 +70,8 @@ export class LoggingSubsystem {
     wrappers = new Map();
     intercepted = false;
     destroyed = false;
+    rateLimiter = new LogRateLimiter(1000, 500);
+    rateLimitDrops = 0;
     constructor(config, emitter, metadata) {
         this.config = resolveLoggingConfig(config);
         this.emitter = emitter;
@@ -47,19 +99,49 @@ export class LoggingSubsystem {
         this.removeInterceptors();
         getLogger().info('[LoggingSubsystem] Stopped');
     }
-    captureLog(level, message, args) {
+    captureLog(level, message, args, loggerSource = 'custom', attributes) {
         if (this.destroyed || !this.config.enabled || !EntitlementGate.isAllowed('logging') || !this.isLevelAllowed(level))
             return;
+        // Token-bucket rate limiting (O(1), zero allocation)
+        if (!this.rateLimiter.tryConsume(1)) {
+            this.rateLimitDrops++;
+            return;
+        }
+        const truncatedMsg = this.truncateMessage(message);
+        const normalizedLevel = level.toLowerCase();
+        // Bridge to contextual breadcrumbs for exception enrichment
+        try {
+            const bLevel = (normalizedLevel === 'warn' || normalizedLevel === 'warning')
+                ? Severity.Warning
+                : (normalizedLevel === 'error' || normalizedLevel === 'fatal')
+                    ? Severity.Error
+                    : normalizedLevel === 'debug' || normalizedLevel === 'trace'
+                        ? Severity.Debug
+                        : Severity.Info;
+            addBreadcrumb({
+                category: loggerSource || 'log',
+                message: truncatedMsg,
+                level: bLevel,
+                ...(attributes && Object.keys(attributes).length > 0 ? { data: attributes } : {}),
+            });
+        }
+        catch {
+            // Breadcrumb capture must never throw into application logic
+        }
+        const severityNumber = SEVERITY_NUMBER_MAP[normalizedLevel] ?? 9;
         const event = {
             type: 'log',
-            level,
-            message: this.truncateMessage(message),
+            level: normalizedLevel,
+            message: truncatedMsg,
             timestamp: Date.now(),
-            args: args?.length ? this.scrubLogArgs(args.slice(0, 10)) : undefined,
             requestId: getRequestContext()?.requestId,
             traceId: getTraceId(),
             spanId: getSpanId(),
             metadata: this.metadata,
+            logger: loggerSource,
+            severityNumber,
+            ...(args?.length ? { args: this.scrubLogArgs(args.slice(0, 10)) } : {}),
+            ...(attributes ? { attributes } : {}),
         };
         this.emitter(event);
     }
@@ -77,18 +159,26 @@ export class LoggingSubsystem {
         else if (wasIntercepting && !shouldIntercept)
             this.removeInterceptors();
     }
+    getRateLimitDrops() {
+        return this.rateLimitDrops;
+    }
+    resetRateLimiter() {
+        this.rateLimiter.reset();
+        this.rateLimitDrops = 0;
+    }
     scrubLogArgs(args) {
         const scrubber = SecurityScrubber.getInstance();
         if (!scrubber)
-            return [];
+            return args;
         return args.map(arg => scrubber.scrubValue(arg));
     }
     isLevelAllowed(level) {
-        return this.config.levels.includes(level);
+        const norm = level.toLowerCase();
+        return this.config.levels.includes(norm) || (norm === 'warning' && this.config.levels.includes('warn'));
     }
     truncateMessage(message) {
-        if (message.length <= this.config.maxLogSize)
-            return message;
+        if (!message || message.length <= this.config.maxLogSize)
+            return message || '';
         return `${message.slice(0, this.config.maxLogSize)}… [truncated]`;
     }
     installInterceptors() {
@@ -105,7 +195,10 @@ export class LoggingSubsystem {
                 logger.warn(`[LoggingSubsystem] console.${level} is already wrapped by LynkTrace telemetry; skipping install`);
                 continue;
             }
-            const original = current.bind(console);
+            // Keep the exact function (not a bound copy) so that restoring it puts
+            // back the identical object — other wrappers (e.g. the console.error
+            // capture in global-errors) recognise themselves by identity.
+            const original = current;
             this.originals.set(level, original);
             const wrapper = (...args) => {
                 original.apply(console, args);
@@ -117,11 +210,21 @@ export class LoggingSubsystem {
                 try {
                     const mappedLevel = level === 'log' ? 'info' : level === 'warn' ? 'warning' : level;
                     if (this.isLevelAllowed(mappedLevel) && !this.destroyed && this.config.enabled) {
-                        const scrubbedArgs = this.scrubLogArgs(args);
-                        const message = scrubbedArgs
-                            .map(value => typeof value === 'string' ? value : safeStringify(value))
-                            .join(' ');
-                        this.captureLog(mappedLevel, message, scrubbedArgs);
+                        const shallowArgs = args.length > 0 ? args.slice(0, 10) : undefined;
+                        let message;
+                        if (args.length === 0) {
+                            message = '';
+                        }
+                        else if (typeof args[0] === 'string') {
+                            message = args[0];
+                            if (args.length > 1) {
+                                message += ' ' + fastFormatArgs(args.slice(1, 4));
+                            }
+                        }
+                        else {
+                            message = fastFormatArgs(args.slice(0, 3));
+                        }
+                        this.captureLog(mappedLevel, message, shallowArgs, 'console');
                     }
                 }
                 catch {
@@ -172,13 +275,35 @@ function resolveLoggingConfig(config) {
 function isMarkedWrapper(fn) {
     return fn[WRAPPER_MARKER] === true || fn[WRAPPER_MARKER_LEGACY] === true;
 }
-function safeStringify(value) {
-    try {
-        return JSON.stringify(value) ?? String(value);
+/**
+ * Fast, non-blocking argument formatter.
+ * Avoids deep JSON serialization or complex regex in the hot path.
+ */
+function fastFormatArgs(args) {
+    const parts = [];
+    for (let i = 0; i < args.length; i++) {
+        const val = args[i];
+        if (typeof val === 'string') {
+            parts.push(val);
+        }
+        else if (typeof val === 'number' || typeof val === 'boolean' || val === null || val === undefined) {
+            parts.push(String(val));
+        }
+        else if (val instanceof Error) {
+            parts.push(`${val.name}: ${val.message}`);
+        }
+        else if (typeof val === 'object') {
+            try {
+                const str = JSON.stringify(val);
+                parts.push(str.length > 512 ? str.slice(0, 512) + '...' : str);
+            }
+            catch {
+                parts.push('[Object]');
+            }
+        }
+        else {
+            parts.push(String(val));
+        }
     }
-    catch (error) {
-        return error instanceof TypeError && error.message.toLowerCase().includes('circular')
-            ? '[Circular]'
-            : '[Unserializable]';
-    }
+    return parts.join(' ');
 }

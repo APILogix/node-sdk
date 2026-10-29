@@ -362,7 +362,10 @@ export function lynktraceMiddleware(options: LynkTraceExpressOptions = {}) {
       let httpInstrumentationEnabled = false
       try {
         const config = configManager.getConfigOrNull()
-        httpInstrumentationEnabled = Boolean(config?.instrumentation?.http)
+        const instr = config?.instrumentation
+        httpInstrumentationEnabled = typeof instr === 'boolean'
+          ? instr
+          : Boolean((instr as Record<string, unknown> | undefined)?.http ?? (instr as Record<string, unknown> | undefined)?.enabled ?? true)
       } catch {}
       let activeSpan = trace.getActiveSpan() ?? (req as any)?.__lynktraceServerSpan ?? (req as any)?.__pulseServerSpan
       let createdServerSpan = false
@@ -641,12 +644,18 @@ export function expressErrorHandler() {
       if (err) {
         try {
           const store = getRequestContext()
-          if (store && store.extra) {
-            ;(store.extra as Record<string, unknown>).mechanism = 'express.next'
-            ;(store.extra as Record<string, unknown>).handled = true
-          }
           const error = err instanceof Error ? err : new Error(String(err))
-          captureException(error)
+          // Mark the error so the console.error wrapper doesn't report it a second
+          // time, and remember the exact stack text Express's final handler will
+          // print via console.error(err.stack).
+          if (err && typeof err === 'object') {
+            try { (err as any)[Symbol.for('lynktrace.captured_error')] = true } catch {}
+          }
+          try { (error as any)[Symbol.for('lynktrace.captured_error')] = true } catch {}
+          if (store && store.extra && typeof error.stack === 'string') {
+            ;(store.extra as Record<string, unknown>).expressCapturedStack = error.stack
+          }
+          captureException(error, { severity: 'error', mechanism: 'express.next', handled: true })
           const activeSpan = trace.getActiveSpan()
           if (activeSpan) {
             try {

@@ -40,8 +40,7 @@ export class QuotaController extends EventEmitter {
     }
     static reset() {
         if (QuotaController.instance) {
-            QuotaController.instance.destroy();
-            QuotaController.instance = null;
+            QuotaController.instance.reset();
         }
     }
     getState() {
@@ -177,11 +176,12 @@ export class QuotaController extends EventEmitter {
             isExhausted: this.state === 'QUOTA_EXHAUSTED',
         };
     }
-    destroy() {
-        this.destroyed = true;
+    reset() {
         this.clearRecoveryTimer();
         this.removeAllListeners();
         this.state = 'QUOTA_OK';
+        this.retryAfterMs = null;
+        this.backoffUntilMs = null;
         this.droppedEventsCount = 0;
         this.droppedByPriority = {
             p0_critical: 0,
@@ -189,6 +189,10 @@ export class QuotaController extends EventEmitter {
             p2_request: 0,
             p3_low: 0,
         };
+        this.destroyed = false;
+    }
+    destroy() {
+        this.reset();
     }
     checkAutoRecovery() {
         if (this.state === 'QUOTA_EXHAUSTED') {

@@ -277,7 +277,10 @@ export function lynktraceMiddleware(options = {}) {
             let httpInstrumentationEnabled = false;
             try {
                 const config = configManager.getConfigOrNull();
-                httpInstrumentationEnabled = Boolean(config?.instrumentation?.http);
+                const instr = config?.instrumentation;
+                httpInstrumentationEnabled = typeof instr === 'boolean'
+                    ? instr
+                    : Boolean(instr?.http ?? instr?.enabled ?? true);
             }
             catch { }
             let activeSpan = trace.getActiveSpan() ?? req?.__lynktraceServerSpan ?? req?.__pulseServerSpan;
@@ -567,13 +570,25 @@ export function expressErrorHandler() {
             if (err) {
                 try {
                     const store = getRequestContext();
-                    if (store && store.extra) {
-                        ;
-                        store.extra.mechanism = 'express.next';
-                        store.extra.handled = true;
-                    }
                     const error = err instanceof Error ? err : new Error(String(err));
-                    captureException(error);
+                    // Mark the error so the console.error wrapper doesn't report it a second
+                    // time, and remember the exact stack text Express's final handler will
+                    // print via console.error(err.stack).
+                    if (err && typeof err === 'object') {
+                        try {
+                            err[Symbol.for('lynktrace.captured_error')] = true;
+                        }
+                        catch { }
+                    }
+                    try {
+                        error[Symbol.for('lynktrace.captured_error')] = true;
+                    }
+                    catch { }
+                    if (store && store.extra && typeof error.stack === 'string') {
+                        ;
+                        store.extra.expressCapturedStack = error.stack;
+                    }
+                    captureException(error, { severity: 'error', mechanism: 'express.next', handled: true });
                     const activeSpan = trace.getActiveSpan();
                     if (activeSpan) {
                         try {

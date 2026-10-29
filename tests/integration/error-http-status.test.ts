@@ -284,30 +284,34 @@ describe('HTTP Status Enrichment', { timeout: 60_000 }, () => {
       assert.equal(ev.statusCode, 500)
     })
 
-    it('Fastify 422 error includes statusCode', async () => {
+    it('does not report Fastify client validation errors as exceptions by default', async () => {
       backend.reset()
       await makeRequest(`${baseUrl}/test-422`)
       await delay(200)
       await flush()
 
       const events = getErrorEvents(backend)
-      const ev = events.find(e => e.message?.includes('Fastify 422 error'))
-      assert.ok(ev, 'Event should be captured')
-      assert.equal(ev.handled, true)
-      assert.equal(ev.statusCode, 422)
+      assert.equal(events.some(e => e.message?.includes('Fastify 422 error')), false)
     })
 
-    it('Fastify 401 error includes statusCode', async () => {
+    it('does not report Fastify authorization errors as exceptions', async () => {
       backend.reset()
       await makeRequest(`${baseUrl}/test-401`)
       await delay(200)
       await flush()
 
       const events = getErrorEvents(backend)
-      const ev = events.find(e => e.message?.includes('Fastify 401 error'))
-      assert.ok(ev, 'Event should be captured')
-      assert.equal(ev.handled, true)
-      assert.equal(ev.statusCode, 401)
+      assert.equal(events.some(e => e.message?.includes('Fastify 401 error')), false)
+    })
+
+    it('does not report Fastify 404 bot-scan responses as exceptions', async () => {
+      backend.reset()
+      await makeRequest(`${baseUrl}/wp-login.php`)
+      await delay(200)
+      await flush()
+
+      const events = getErrorEvents(backend)
+      assert.equal(events.some(e => e.statusCode === 404), false)
     })
   })
 

@@ -15,7 +15,9 @@
  */
 
 import { readFile } from 'node:fs/promises'
-import { extname, normalize } from 'node:path'
+import { extname, normalize, resolve, relative, sep, dirname } from 'node:path'
+import { createRequire } from 'node:module'
+import { fileURLToPath } from 'node:url'
 import type { StackFrame } from '../types/event.js'
 import { getLogger } from '../utils/logger.js'
 import { SecurityScrubber } from '../processors/security-scrubber.js'
@@ -47,6 +49,51 @@ const SKIP_PATTERNS = [
   /\.min\.js$/,
   /\.bundle\.js$/,
 ] as const
+
+const cjsRequire = createRequire(import.meta.url)
+const trustedStackFiles = new Set<string>()
+const MAX_TRUSTED_STACK_FILES = 4096
+
+/** Register a file path obtained from V8 CallSites, never from stack text. */
+export function registerTrustedStackFile(filename: string): void {
+  const path = normalizeStackPath(filename)
+  if (!path || !isWithinApplicationRoot(path)) return
+  if (trustedStackFiles.size >= MAX_TRUSTED_STACK_FILES && !trustedStackFiles.has(path)) {
+    const oldest = trustedStackFiles.values().next().value
+    if (oldest) trustedStackFiles.delete(oldest)
+  }
+  trustedStackFiles.add(path)
+}
+
+/** Source reads require an application-root file known to the runtime. */
+export function isTrustedSourceContextFile(filename: string): boolean {
+  const path = normalizeStackPath(filename)
+  if (!path || !isAllowedFile(path) || !isWithinApplicationRoot(path)) return false
+  return trustedStackFiles.has(path) || Object.prototype.hasOwnProperty.call(cjsRequire.cache, path)
+}
+
+function normalizeStackPath(filename: string): string | null {
+  try {
+    let path = filename.startsWith('file:') ? fileURLToPath(filename) : filename
+    // stack-parser normalizes V8 filenames to forward slashes. On Windows a
+    // drive path therefore arrives as `/C:/...`; resolving that as a POSIX
+    // root turns it into `C:\\C:\\...` and rejects every genuine frame.
+    if (process.platform === 'win32' && /^\/[a-z]:\//i.test(path)) path = path.slice(1)
+    return resolve(path)
+  } catch {
+    return null
+  }
+}
+
+function isWithinApplicationRoot(filename: string): boolean {
+  const roots = new Set<string>([resolve(process.cwd())])
+  if (process.argv[1]) roots.add(resolve(dirname(process.argv[1])))
+  for (const root of roots) {
+    const pathFromRoot = relative(root, filename)
+    if (pathFromRoot === '' || (!pathFromRoot.startsWith(`..${sep}`) && pathFromRoot !== '..')) return true
+  }
+  return false
+}
 
 // ─── LRU Cache ──────────────────────────────────────────────────────────────
 
@@ -222,6 +269,7 @@ export function resetSourceContextCache(): void {
   fileCache.clear()
   failedFiles.clear()
   inflightLoads.clear()
+  trustedStackFiles.clear()
 }
 
 // ─── Internal ───────────────────────────────────────────────────────────────
@@ -246,28 +294,33 @@ function isAllowedFile(filename: string): boolean {
  * Returns null if the file can't be read.
  */
 async function getFileLines(filename: string): Promise<readonly string[] | null> {
+  const canonicalPath = normalizeStackPath(filename)
+  if (!canonicalPath) return null
+
   // Check negative cache
-  if (failedFiles.has(filename)) return null
+  if (failedFiles.has(canonicalPath)) return null
 
   // Check LRU cache
-  const cached = fileCache.get(filename)
+  const cached = fileCache.get(canonicalPath)
   if (cached) return cached
 
   // Deduplicate inflight file reads to avoid exhausting libuv threadpool during error bursts
-  const inflight = inflightLoads.get(filename)
+  const inflight = inflightLoads.get(canonicalPath)
   if (inflight) return inflight
 
-  const loadPromise = doReadFileLines(filename)
-  inflightLoads.set(filename, loadPromise)
+  const loadPromise = doReadFileLines(canonicalPath)
+  inflightLoads.set(canonicalPath, loadPromise)
 
   try {
     return await loadPromise
   } finally {
-    inflightLoads.delete(filename)
+    inflightLoads.delete(canonicalPath)
   }
 }
 
 async function doReadFileLines(filename: string): Promise<readonly string[] | null> {
+  if (!isTrustedSourceContextFile(filename)) return null
+
   // Read file with timeout
   try {
     const content = await withTimeout(

@@ -63,9 +63,10 @@ export declare function enqueueEvent(rawEvent: SDKEvent | Event): EventReceipt;
  */
 export declare function processEvent(rawEvent: SDKEvent | Event): boolean;
 /**
- * Drain all in-flight pipeline work to completion.
+ * Drain in-flight pipeline work to completion.
+ * @param rejectNew Whether to reject new incoming events while draining (true during shutdown, false during flush).
  */
-export declare function drainPendingEventProcessing(): Promise<void>;
+export declare function drainPendingEventProcessing(rejectNew?: boolean): Promise<void>;
 /**
  * Reset the pipeline-draining flag.
  */

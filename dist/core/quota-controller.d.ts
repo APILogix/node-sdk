@@ -81,6 +81,7 @@ export declare class QuotaController extends EventEmitter {
      */
     setQuotaOk(reason?: string): void;
     getSnapshot(): QuotaStatusSnapshot;
+    reset(): void;
     destroy(): void;
     private checkAutoRecovery;
     private scheduleAutoRecovery;

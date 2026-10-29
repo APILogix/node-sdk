@@ -15,6 +15,7 @@ import type { PrivacyConfig, PrivacyCaptureConfig, ScrubbingConfig, PiiDetection
 import type { SDKEvent } from '../types/event.js'
 import { getLogger } from '../utils/logger.js'
 import { isIP } from 'node:net'
+import { MAX_SCRUB_STRING_LENGTH } from './sanitizer.js'
 
 const REDACTED = '[Redacted]'
 const SYSTEM_ID_KEYS = new Set([
@@ -73,7 +74,9 @@ export class SecurityScrubber {
 
   // PII patterns
   private static readonly EMAIL_PATTERN = /(?<![a-zA-Z0-9._%+-])[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g
-  private static readonly PHONE_PATTERN = /(?<![a-zA-Z0-9])(\+?1?\s*[-.\s]?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4})(?![a-zA-Z0-9])/g
+  // Delimiters are optional but bounded; an unbounded whitespace quantifier
+  // here allowed a hostile run of spaces to trigger catastrophic backtracking.
+  private static readonly PHONE_PATTERN = /(?<![a-zA-Z0-9])((?:\+?1[-. ]?)?\(?\d{3}\)?[-. ]?\d{3}[-. ]?\d{4})(?![a-zA-Z0-9])/g
   private static readonly IPV4_PATTERN = /\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b/g
   private static readonly BRACKETED_IPV6_PATTERN = /\[([0-9A-Fa-f:.]+)(%[0-9A-Za-z_.-]+)?\](?::\d{1,5})?/g
   private static readonly IPV6_CANDIDATE_PATTERN = /(?<![0-9A-Za-z])([0-9A-Fa-f:.]+(?:%[0-9A-Za-z_.-]+)?)(?![0-9A-Za-z])/g
@@ -315,7 +318,8 @@ export class SecurityScrubber {
 
     try {
       if (typeof value === 'string') {
-        let str = value.length > 128 * 1024 ? value.slice(0, 128 * 1024) + '…[truncated]' : value
+        const truncated = value.length > MAX_SCRUB_STRING_LENGTH
+        let str = truncated ? value.slice(0, MAX_SCRUB_STRING_LENGTH) : value
 
         if (
           this.scrubbingConfig.enabled &&
@@ -350,7 +354,7 @@ export class SecurityScrubber {
             str = str.replace(/Basic\s+[A-Za-z0-9+/=]{10,}/gi, 'Basic [Redacted]')
           }
           if (str.includes('eyJ')) {
-            str = str.replace(/eyJ[a-zA-Z0-9_-]{10,}\.eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}/g, '[Redacted]')
+            str = replaceJwtTokens(str)
           }
           if (str.includes('_live_')) {
             str = str.replace(/\b(sk_live_[0-9a-zA-Z]{24,}|pk_live_[0-9a-zA-Z]{24,}|rk_live_[0-9a-zA-Z]{24,})\b/g, '[Redacted]')
@@ -375,7 +379,7 @@ export class SecurityScrubber {
             )
           }
         }
-        return str
+        return truncated ? `${str}…[truncated]` : str
       }
       if (typeof value === 'bigint') return value.toString()
       if (typeof value !== 'object' || value === null) return value
@@ -580,7 +584,14 @@ export class SecurityScrubber {
       }
 
       if (this.piiConfig.maskPhones) {
-        result = result.replace(SecurityScrubber.PHONE_PATTERN, '[phone]')
+        let digitCount = 0
+        for (let i = 0; i < result.length && digitCount < 10; i++) {
+          const ch = result.charCodeAt(i)
+          if (ch >= 48 && ch <= 57) digitCount++
+        }
+        if (digitCount >= 10) {
+          result = result.replace(SecurityScrubber.PHONE_PATTERN, '[phone]')
+        }
       }
     }
 
@@ -622,6 +633,25 @@ export class SecurityScrubber {
       SecurityScrubber.instance.destroy()
     }
   }
+}
+
+/** Match complete JWT-shaped tokens in one linear scan. */
+function replaceJwtTokens(value: string): string {
+  return value.replace(/[A-Za-z0-9_.-]+/g, token => {
+    const firstDot = token.indexOf('.')
+    const secondDot = firstDot < 0 ? -1 : token.indexOf('.', firstDot + 1)
+    if (firstDot < 11 || secondDot < 0 || secondDot === token.length - 1) return token
+    const header = token.slice(0, firstDot)
+    const payload = token.slice(firstDot + 1, secondDot)
+    const signature = token.slice(secondDot + 1)
+    return header.startsWith('eyJ') && payload.startsWith('eyJ')
+      && header.length >= 11 && payload.length >= 11 && signature.length >= 10
+      && /^[A-Za-z0-9_-]+$/.test(header)
+      && /^[A-Za-z0-9_-]+$/.test(payload)
+      && /^[A-Za-z0-9_-]+$/.test(signature)
+      ? '[Redacted]'
+      : token
+  })
 }
 
 function stripSensitiveSections<T extends SDKEvent>(event: T): T {

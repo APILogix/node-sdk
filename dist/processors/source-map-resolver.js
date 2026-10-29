@@ -23,6 +23,7 @@ import { readFile as fsReadFile } from 'fs/promises';
 import { resolve, dirname, join, relative, isAbsolute, sep } from 'path';
 import { SourceMapConsumer } from 'source-map-js';
 import { getLogger } from '../utils/logger.js';
+import { isTrustedSourceContextFile } from './source-context.js';
 const DEFAULT_MAX_CACHE_SIZE = 100;
 const DEFAULT_CACHE_TTL_MS = 300_000; // 5 minutes
 const SOURCE_MAP_URL_REGEX = /\/\/[#@]\s*sourceMappingURL\s*=\s*(\S+)/;
@@ -99,7 +100,10 @@ class SourceMapResolver {
     }
     // ─── Internal ─────────────────────────────────────────────────────────
     async resolveFrame(frame) {
-        if (!frame.lineno || !frame.colno)
+        // Stack text is caller-controlled. Only inspect source files derived from
+        // an actual loaded application frame; this also protects source-map URL
+        // discovery from fabricated paths such as /dev/zero or database.js.
+        if (!frame.lineno || !frame.colno || !isTrustedSourceContextFile(frame.filename))
             return frame;
         const sourceMapUrl = await this.findSourceMapUrl(frame.filename);
         if (!sourceMapUrl) {
@@ -215,6 +219,7 @@ class SourceMapResolver {
                     return null;
                 const controller = new AbortController();
                 const timeoutId = setTimeout(() => controller.abort(), 5000);
+                timeoutId.unref?.();
                 try {
                     const response = await fetch(sourceMapUrl, {
                         signal: controller.signal,

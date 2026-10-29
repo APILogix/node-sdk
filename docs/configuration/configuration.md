@@ -20,11 +20,14 @@ The Pulse SDK is initialized via `init(options)`. The options object conforms to
 | **`logLevel`** | `'debug'\|'info'\|'warn'\|'error'` | `'warn'` | Minimum log severity for internal SDK logs. |
 | **`initTimeoutMs`** | `number` | `5000` | Maximum milliseconds to await `/v1/init` before entering recovery mode. |
 | **`initRetries`** | `number` | `1` | Number of immediate synchronous retries during `init()`. |
+| **`beforeSendTimeoutMs`** | `number` | `1000` | Maximum time allowed for user and plugin `beforeSend` hooks. Valid range: 1–30000 ms; events are dropped if a hook throws or exceeds the deadline. |
 | **`maxQueueSize`** | `number` | `1000` | Maximum number of telemetry events retained in memory queue. |
 | **`sampleRate`** | `number` | `1.0` | Base static trace sampling rate ($0.0$ to $1.0$). |
 | **`maskCreditCards`**| `boolean` | `true` | Automatically detect and mask credit card numbers. |
 | **`scrubFields`** | `string[]` | `['password', 'token', 'secret', 'authorization']` | Additional sensitive object keys to redact from telemetry. |
 | **`autoInstrument`** | `boolean` | `true` | Automatically monkey-patch supported database and HTTP libraries. |
+
+String values longer than 8 KiB are scanned only through the first 8 KiB; the unscanned suffix is omitted from telemetry and the output ends with a `[truncated]` marker.
 
 ---
 
